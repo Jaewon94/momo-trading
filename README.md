@@ -255,6 +255,23 @@ pytest tests/api/test_health.py -v    # 단일 파일
 
 인메모리 SQLite(`sqlite+aiosqlite://`)로 실행되며, KIS API 호출 없이 독립 테스트 가능합니다.
 
+## 브로커 Smoke Test
+
+키움이나 KIS 계정을 실제로 붙이기 전후에 읽기 전용 smoke test로 연결 상태를 확인할 수 있습니다.
+
+```bash
+python -m tools.broker_smoke --symbol 005930 --market KRX
+```
+
+이 명령은 주문 없이 아래만 확인합니다.
+
+- 잔고 조회
+- 보유 종목 조회
+- 미체결 주문 조회
+- 현재가 조회
+
+`BROKER_PROVIDER=KIWOOM`으로 바꾼 뒤 키움 키를 `.env`에 넣으면 같은 명령으로 키움 경로를 바로 검증할 수 있습니다.
+
 ## 면책 조항
 
 이 프로젝트는 **교육 및 연구 목적**으로 제작되었습니다.
