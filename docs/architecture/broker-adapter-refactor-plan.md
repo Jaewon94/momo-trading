@@ -127,6 +127,11 @@ TDD:
 - KIS 어댑터가 기존 단일톤 클라이언트를 감싼다.
 - 앱 코어를 아직 바꾸지 않아도 독립 테스트 가능하다.
 
+상태:
+- 완료
+- 공통 DTO와 `BrokerAdapter` 계약이 추가되었다.
+- `KisBrokerAdapter`와 `KiwoomBrokerAdapter` 스캐폴딩 및 계약 테스트가 추가되었다.
+
 ### Phase 2. KIS Extraction
 
 목표:
@@ -144,6 +149,18 @@ TDD:
 
 완료 조건:
 - 코어 레이어에서 `mcp_client` 직접 참조가 사라진다.
+
+상태:
+- 진행 중
+- 완료:
+  - `admin` 계좌 조회 API
+  - `TradingService`
+  - `DecisionMaker` 주문 실행 및 체결 확인
+  - `TradingAgent` 포트폴리오 조회, 손절/익절 매도, 시세/차트 조회 일부
+  - `MarketScanner` 거래량/등락률 스캔
+- 남음:
+  - `TradingAgent` 내 브로커 전용 실시간/WebSocket 경로
+  - `kis_websocket`과 `stream_manager` 계층 분리
 
 ### Phase 3. Core Decoupling
 
@@ -164,6 +181,11 @@ TDD:
 완료 조건:
 - 브로커 교체 시 코어 수정이 필요 없다.
 
+상태:
+- 진행 중
+- `TradingAgent`와 `MarketScanner`는 주요 조회/주문 경로에서 어댑터를 사용한다.
+- 아직 `Scheduler`, `RealtimeMonitor`, `stream_manager`는 브로커 capability와 실시간 어댑터 분리가 남아 있다.
+
 ### Phase 4. Kiwoom Discovery Gate
 
 목표:
@@ -172,6 +194,12 @@ TDD:
 
 게이트:
 - 공식 문서 확인 전 구현 착수 금지
+
+상태:
+- 부분 완료
+- Context7에서는 공식 키움 문서 대신 비공식 래퍼만 확인되었다.
+- 현재 구현은 공식 사이트의 공개 가이드와 로컬 테스트 가능한 범위에서 REST 호스트/인증/기본 TR 기준으로 진행했다.
+- 실계정 연결 전에는 실제 키움 개발자 콘솔 기준 재확인이 필요하다.
 
 ### Phase 5. Kiwoom Adapter
 
@@ -187,6 +215,20 @@ TDD:
 완료 조건:
 - `BROKER_PROVIDER=KIWOOM` 설정으로 동일 코어 로직을 재사용할 수 있다.
 
+상태:
+- 진행 중
+- 완료:
+  - `KiwoomRESTClient`
+  - `KiwoomAccountClient`
+  - `KiwoomMarketDataClient`
+  - `KiwoomOrderExecutor`
+  - `KiwoomBrokerAdapter`
+  - 계좌/현재가/차트/주문 정규화 테스트
+- 남음:
+  - 실제 키움 키 기준 smoke test
+  - 취소주문과 실시간 시세 어댑터
+  - 조건검색 또는 브로커별 대체 스캔 전략
+
 ### Phase 6. Integration and Ops
 
 목표:
@@ -197,6 +239,16 @@ TDD:
 추가 설정 예시:
 - `BROKER_PROVIDER=KIS|KIWOOM`
 - `BROKER_ENVIRONMENT=PAPER|LIVE`
+
+상태:
+- 진행 중
+- 완료:
+  - `BROKER_PROVIDER` 설정 추가
+  - 키움 관련 `.env.example` 항목 추가
+  - 읽기 전용 smoke test CLI 추가: `python -m tools.broker_smoke --symbol 005930 --market KRX`
+- 남음:
+  - 실제 키움 인증키 주입 후 로컬 smoke test 실행
+  - 결과 기반 운영 가이드 보강
 
 ## Testing Strategy
 
@@ -229,9 +281,20 @@ TDD:
 
 ## Current Slice
 
-이번 작업 단위는 다음까지다.
+현재까지 완료된 작업은 다음과 같다.
 
-1. 계획 문서 추가
-2. 공통 계약과 DTO 보강
-3. `KisBrokerAdapter` 1차 스캐폴딩
-4. 관련 테스트 추가
+1. 공통 DTO와 `BrokerAdapter` 계약 도입
+2. `KisBrokerAdapter` 및 `KiwoomBrokerAdapter` 추가
+3. `TradingService`, `DecisionMaker`, `TradingAgent`, `MarketScanner` 주요 경로를 어댑터 기반으로 전환
+4. 키움 REST 클라이언트와 도메인 클라이언트 구현
+5. 읽기 전용 브로커 smoke test CLI와 서비스 추가
+6. 관련 테스트를 TDD 방식으로 누적 추가
+
+현재 테스트 기준:
+- `37 passed, 1 warning`
+
+다음 작업 단위는 다음이다.
+
+1. 키움 실연결 smoke test 실행
+2. 실시간 시세/이벤트 경로를 `RealtimeAdapter`로 분리
+3. `Scheduler`와 `stream_manager`의 브로커 capability 분기 정리
