@@ -17,6 +17,13 @@ class Settings(BaseSettings):
     KIS_MCP_URL: str = "http://localhost:3100/sse"
     BROKER_PROVIDER: str = "KIS"
 
+    # === Kiwoom REST API ===
+    KIWOOM_APP_KEY: str = ""
+    KIWOOM_SECRET_KEY: str = ""
+    KIWOOM_PAPER_APP_KEY: str = ""
+    KIWOOM_PAPER_SECRET_KEY: str = ""
+    KIWOOM_ACCOUNT_TYPE: str = "VIRTUAL"
+
     # KIS API 인증
     KIS_APP_KEY: str = ""
     KIS_APP_SECRET: str = ""
@@ -100,6 +107,13 @@ class Settings(BaseSettings):
                 "KIS API 키 미설정: KIS_APP_KEY, KIS_PAPER_APP_KEY 모두 비어있음. "
                 "실매매/모의투자 모두 불가합니다."
             )
+
+        if self.BROKER_PROVIDER.upper() == "KIWOOM":
+            if not self.KIWOOM_APP_KEY and not self.KIWOOM_PAPER_APP_KEY:
+                logger.warning(
+                    "Kiwoom API 키 미설정: KIWOOM_APP_KEY, KIWOOM_PAPER_APP_KEY 모두 비어있음. "
+                    "실매매/모의투자 모두 불가합니다."
+                )
 
         if not self.TRADING_ENABLED:
             logger.info("TRADING_ENABLED=false: 매매 기능이 비활성화 상태입니다.")

@@ -24,8 +24,11 @@ from strategy.aggressive_short import AggressiveShortStrategy
 from strategy.risk_manager import risk_manager
 from strategy.signal import TradeSignal
 from strategy.stable_short import StableShortStrategy
-from trading.enums import ActivityPhase, ActivityType, LLMTier, SignalAction, SignalUrgency
+from trading.adapters.base import BrokerAdapter
+from trading.broker_factory import get_broker_adapter
+from trading.enums import ActivityPhase, ActivityType, LLMTier, Market, SignalAction, SignalUrgency
 from trading.mcp_client import mcp_client
+from trading.models import MCPResponse
 
 
 class TradingAgent:
@@ -36,11 +39,12 @@ class TradingAgent:
     장외: 오늘 성과 리뷰 + 피드백 학습
     """
 
-    def __init__(self):
+    def __init__(self, broker_adapter: BrokerAdapter | None = None):
         self.strategies = {
             "STABLE_SHORT": StableShortStrategy(),
             "AGGRESSIVE_SHORT": AggressiveShortStrategy(),
         }
+        self._broker_adapter = broker_adapter or get_broker_adapter()
         self._running = False
         self._active_trading_rules: dict = {}  # 활성 트레이딩 규칙 (프리마켓에서 로드)
         self._cycle_lock = asyncio.Lock()  # 사이클 동시 실행 방지
@@ -307,6 +311,47 @@ class TradingAgent:
         logger.info("=== Agent 장중 사이클 종료: {} ===", results)
         return results
 
+    async def _fetch_symbol_market_data(
+        self,
+        symbol: str,
+    ) -> tuple[MCPResponse, MCPResponse, MCPResponse]:
+        """브로커 어댑터를 통해 종목 분석용 시세/차트 데이터를 조회한다."""
+        quote_result, daily_result, minute_result = await asyncio.gather(
+            self._broker_adapter.get_current_price(symbol, Market.KRX),
+            self._broker_adapter.get_daily_candles(symbol, count=60, market=Market.KRX),
+            self._broker_adapter.get_intraday_candles(symbol, interval="5", market=Market.KRX),
+            return_exceptions=True,
+        )
+        return (
+            self._wrap_quote_result(quote_result),
+            self._wrap_candle_result(daily_result, time_key="date"),
+            self._wrap_candle_result(minute_result, time_key="time"),
+        )
+
+    @staticmethod
+    def _wrap_quote_result(result: object) -> MCPResponse:
+        if isinstance(result, Exception):
+            return MCPResponse(success=False, error=str(result))
+        return MCPResponse(success=True, data=result.model_dump(mode="json"))
+
+    @staticmethod
+    def _wrap_candle_result(result: object, *, time_key: str) -> MCPResponse:
+        if isinstance(result, Exception):
+            return MCPResponse(success=False, error=str(result))
+        return MCPResponse(success=True, data={
+            "prices": [
+                {
+                    time_key: candle.time_key,
+                    "open": candle.open,
+                    "high": candle.high,
+                    "low": candle.low,
+                    "close": candle.close,
+                    "volume": candle.volume,
+                }
+                for candle in result
+            ]
+        })
+
     async def _analyze_and_trade(
         self, stock_info: dict, cycle_id: str,
         dynamic_limits: dict | None = None,
@@ -337,12 +382,7 @@ class TradingAgent:
         except Exception:
             pass
 
-        # MCP로 데이터 병렬 조회 (일봉 60일 + 분봉 5분 + 현재가)
-        price_resp, daily_resp, minute_resp = await asyncio.gather(
-            mcp_client.get_current_price(symbol),
-            mcp_client.get_daily_price(symbol, count=60),
-            mcp_client.get_minute_price(symbol, period="5"),
-        )
+        price_resp, daily_resp, minute_resp = await self._fetch_symbol_market_data(symbol)
 
         current_price = 0
         if price_resp.success and price_resp.data:

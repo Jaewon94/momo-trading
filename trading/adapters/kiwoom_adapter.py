@@ -30,7 +30,7 @@ class KiwoomBrokerAdapter(BrokerAdapter):
         supports_paper_trading=True,
         supports_live_trading=True,
         supports_realtime_quotes=True,
-        supports_order_cancellation=True,
+        supports_order_cancellation=False,
     )
 
     def __init__(
