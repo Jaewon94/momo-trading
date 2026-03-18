@@ -3,6 +3,7 @@ from enum import Enum
 
 class Market(str, Enum):
     """주식 시장"""
+    KRX = "KRX"
     KOSPI = "KOSPI"
     KOSDAQ = "KOSDAQ"
     NASDAQ = "NASDAQ"
