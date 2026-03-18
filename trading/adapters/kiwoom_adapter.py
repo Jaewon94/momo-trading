@@ -16,6 +16,7 @@ from trading.models import (
     HoldingInfo,
     OrderRequest,
     OrderResult,
+    OrderStatusInfo,
     PendingOrderInfo,
 )
 
@@ -107,6 +108,25 @@ class KiwoomBrokerAdapter(BrokerAdapter):
         market: Market = Market.KRX,
     ) -> OrderResult:
         return await self._require_order_executor().cancel(order_id, market=market.value)
+
+    async def get_order_status(self, order_id: str) -> OrderStatusInfo | None:
+        pending_orders = await self.get_pending_orders()
+        for order in pending_orders:
+            if order.order_id != order_id:
+                continue
+            return OrderStatusInfo(
+                order_id=order.order_id,
+                symbol=order.symbol,
+                filled_qty=order.filled_qty,
+                filled_price=order.order_price if order.filled_qty > 0 else 0.0,
+                remaining_qty=order.remaining_qty,
+                order_price=order.order_price,
+            )
+        return None
+
+    def invalidate_cache(self) -> None:
+        if hasattr(self._account_client, "invalidate_cache"):
+            self._account_client.invalidate_cache()
 
     def _require_account_client(self) -> AccountClientProtocol:
         if self._account_client is None:

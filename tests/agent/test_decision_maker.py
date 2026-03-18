@@ -6,17 +6,27 @@ from agent.decision_maker import DecisionMaker
 from core.events import EventType
 from strategy.signal import TradeSignal
 from trading.enums import Market, OrderSide, OrderType, SignalAction
-from trading.models import OrderRequest, OrderResult
+from trading.models import OrderRequest, OrderResult, OrderStatusInfo
 
 
 class FakeBrokerAdapter:
     def __init__(self, result: OrderResult) -> None:
         self.result = result
         self.requests: list[OrderRequest] = []
+        self.order_status: OrderStatusInfo | None = None
+        self.queried_order_ids: list[str] = []
+        self.cache_invalidated = False
 
     async def place_order(self, request: OrderRequest) -> OrderResult:
         self.requests.append(request)
         return self.result
+
+    async def get_order_status(self, order_id: str) -> OrderStatusInfo | None:
+        self.queried_order_ids.append(order_id)
+        return self.order_status
+
+    def invalidate_cache(self) -> None:
+        self.cache_invalidated = True
 
 
 @pytest.mark.asyncio
@@ -102,3 +112,45 @@ async def test_decision_maker_reports_failed_autonomous_order(monkeypatch) -> No
     assert "주문 실패" in result["message"]
     assert events[0].type == EventType.ORDER_EXECUTED
     assert len(logs) == 2
+
+
+@pytest.mark.asyncio
+async def test_decision_maker_confirms_fill_via_broker_adapter(monkeypatch) -> None:
+    adapter = FakeBrokerAdapter(
+        OrderResult(success=True, order_id="ORD-2", message="주문 접수")
+    )
+    adapter.order_status = OrderStatusInfo(
+        order_id="ORD-2",
+        symbol="005930",
+        filled_qty=3,
+        filled_price=70_500,
+        remaining_qty=0,
+        order_price=70_500,
+    )
+    decision_maker = DecisionMaker(broker_adapter=adapter)
+    recorded: dict = {}
+
+    async def fake_sleep(_: float) -> None:
+        return None
+
+    async def fake_record_trade_result(**kwargs) -> None:
+        recorded.update(kwargs)
+
+    monkeypatch.setattr("agent.decision_maker.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr(decision_maker, "_record_trade_result", fake_record_trade_result)
+
+    await decision_maker.confirm_and_record(
+        symbol="005930",
+        side="BUY",
+        order_id="ORD-2",
+        quantity=3,
+        expected_price=70_000,
+        analysis_context={"stock_name": "삼성전자"},
+        cycle_id="cycle-3",
+    )
+
+    assert adapter.queried_order_ids == ["ORD-2"]
+    assert adapter.cache_invalidated is True
+    assert recorded["filled_qty"] == 3
+    assert recorded["filled_price"] == 70_500
+    assert recorded["symbol"] == "005930"

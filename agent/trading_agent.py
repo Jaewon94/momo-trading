@@ -26,9 +26,9 @@ from strategy.signal import TradeSignal
 from strategy.stable_short import StableShortStrategy
 from trading.adapters.base import BrokerAdapter
 from trading.broker_factory import get_broker_adapter
-from trading.enums import ActivityPhase, ActivityType, LLMTier, Market, SignalAction, SignalUrgency
+from trading.enums import ActivityPhase, ActivityType, LLMTier, Market, OrderSide, OrderType, SignalAction, SignalUrgency
 from trading.mcp_client import mcp_client
-from trading.models import MCPResponse
+from trading.models import MCPResponse, OrderRequest
 
 
 class TradingAgent:
@@ -174,30 +174,21 @@ class TradingAgent:
             # AI가 결정한 모니터링 임계값을 event_detector에 설정
             self._apply_scan_thresholds(candidates)
 
-            # 3. 포트폴리오 스냅샷 (병렬 분석 전 공유 상태 조회, MCP 1회)
-            from trading.account_manager import account_manager
+            # 3. 포트폴리오 스냅샷 (병렬 분석 전 공유 상태 조회)
             snapshot = {
                 "cash": 0, "total_asset": 0,
                 "holding_count": 0, "today_trade_count": 0,
             }
             try:
-                balance, holdings = await account_manager.get_account_snapshot()
-                if not balance.is_valid:
-                    logger.error("계좌 조회 실패 → 매매 사이클 중단")
-                    await activity_logger.log(
-                        ActivityType.CYCLE, ActivityPhase.ERROR,
-                        "🛑 계좌 조회 실패 → 매매 사이클 중단 (데이터 신뢰성 보호)",
-                        cycle_id=cycle_id,
-                    )
-                    return results
-                snapshot["cash"] = balance.cash
-                snapshot["total_asset"] = balance.total_asset
-                snapshot["holding_count"] = len(holdings)
-                snapshot["holding_symbols"] = [h.symbol for h in holdings]
-                snapshot["today_trade_count"] = await self._get_today_trade_count()
-                # 인스턴스 레벨 현금 트래커 갱신
-                async with self._cash_lock:
-                    self._available_cash = balance.cash
+                snapshot = await self._build_portfolio_snapshot()
+            except RuntimeError:
+                logger.error("계좌 조회 실패 → 매매 사이클 중단")
+                await activity_logger.log(
+                    ActivityType.CYCLE, ActivityPhase.ERROR,
+                    "🛑 계좌 조회 실패 → 매매 사이클 중단 (데이터 신뢰성 보호)",
+                    cycle_id=cycle_id,
+                )
+                return results
             except Exception as e:
                 logger.warning("포트폴리오 스냅샷 조회 실패, 기본값 사용: {}", str(e))
 
@@ -351,6 +342,58 @@ class TradingAgent:
                 for candle in result
             ]
         })
+
+    async def _build_portfolio_snapshot(self) -> dict:
+        """브로커 어댑터 기준 포트폴리오 스냅샷을 만든다."""
+        balance, holdings = await asyncio.gather(
+            self._broker_adapter.get_balance(),
+            self._broker_adapter.get_holdings(),
+        )
+        if not balance.is_valid:
+            raise RuntimeError("계좌 조회 실패")
+        snapshot = {
+            "cash": balance.cash,
+            "total_asset": balance.total_asset,
+            "holding_count": len(holdings),
+            "today_trade_count": await self._get_today_trade_count(),
+            "holding_symbols": [holding.symbol for holding in holdings],
+        }
+        async with self._cash_lock:
+            self._available_cash = balance.cash
+        return snapshot
+
+    async def _execute_exit_order(
+        self,
+        *,
+        symbol: str,
+        expected_price: float,
+        exit_reason: str,
+    ):
+        """보유 수량 기준 시장가 매도 실행"""
+        holdings = await self._broker_adapter.get_holdings()
+        holding = next((item for item in holdings if item.symbol == symbol), None)
+        if not holding or holding.quantity <= 0:
+            return None
+
+        order_result = await self._broker_adapter.place_order(
+            OrderRequest(
+                symbol=symbol,
+                market=Market.KRX,
+                side=OrderSide.SELL,
+                order_type=OrderType.MARKET,
+                quantity=holding.quantity,
+            )
+        )
+        if order_result.success and order_result.order_id:
+            await decision_maker.confirm_and_record(
+                symbol=symbol,
+                side="SELL",
+                order_id=order_result.order_id,
+                quantity=holding.quantity,
+                expected_price=expected_price,
+                exit_reason=exit_reason,
+            )
+        return order_result
 
     async def _analyze_and_trade(
         self, stock_info: dict, cycle_id: str,
@@ -822,7 +865,6 @@ class TradingAgent:
     async def _run_after_hours_cycle(self) -> dict:
         """장외 사이클: 오늘 데이트레이딩 성과 리뷰 (피드백 학습용)"""
         from analysis.llm.claude_code_provider import ClaudeCodeProvider
-        from trading.account_manager import account_manager
         from util.time_util import now_kst
 
         ClaudeCodeProvider.start_session()
@@ -847,7 +889,7 @@ class TradingAgent:
             market_close_data, volume_rank_data, surge_data, drop_data = await self._collect_market_close_data()
 
             # 2. 포트폴리오 현황 (데이트레이딩이면 청산 완료 상태)
-            balance = await account_manager.get_balance()
+            balance = await self._broker_adapter.get_balance()
 
             cash_ratio = 0.0
             if balance.total_asset > 0:
@@ -1267,7 +1309,6 @@ class TradingAgent:
     async def _build_trading_context(self) -> str:
         """데이트레이딩 컨텍스트 (프롬프트 주입용)"""
         from util.time_util import now_kst
-        from trading.account_manager import account_manager
 
         now = now_kst()
 
@@ -1283,7 +1324,7 @@ class TradingAgent:
         daily_pnl_pct = 0.0
         if self._daily_start_balance > 0:
             try:
-                balance = await account_manager.get_balance()
+                balance = await self._broker_adapter.get_balance()
                 daily_pnl_pct = (
                     (balance.total_asset - self._daily_start_balance)
                     / self._daily_start_balance * 100
@@ -1579,21 +1620,13 @@ class TradingAgent:
             }
             cycle_id = activity_logger.start_cycle()
 
-            # 포트폴리오 스냅샷 조회 (리스크 체크용, MCP 1회)
+            # 포트폴리오 스냅샷 조회 (리스크 체크용)
             snapshot = {"cash": 0, "total_asset": 0, "holding_count": 0, "today_trade_count": 0}
             try:
-                from trading.account_manager import account_manager
-                balance, holdings = await account_manager.get_account_snapshot()
-                if not balance.is_valid:
-                    logger.error("실시간 이벤트: 계좌 조회 실패 → 분석 중단")
-                    return
-                # 인스턴스 트래커의 현금을 사용 (병렬 매수 추적)
-                async with self._cash_lock:
-                    snapshot["cash"] = self._available_cash
-                snapshot["total_asset"] = balance.total_asset
-                snapshot["holding_count"] = len(holdings)
-                snapshot["holding_symbols"] = [h.symbol for h in holdings]
-                snapshot["today_trade_count"] = await self._get_today_trade_count()
+                snapshot = await self._build_portfolio_snapshot()
+            except RuntimeError:
+                logger.error("실시간 이벤트: 계좌 조회 실패 → 분석 중단")
+                return
             except Exception as e:
                 logger.warning("실시간 이벤트 포트폴리오 스냅샷 조회 실패: {}", str(e))
 
@@ -1651,33 +1684,20 @@ class TradingAgent:
         # 즉시 시장가 매도
         if settings.TRADING_ENABLED:
             try:
-                from trading.account_manager import account_manager
-                holdings = await account_manager.get_holdings()
-                holding = next((h for h in holdings if h.symbol == symbol), None)
-                if holding and holding.quantity > 0:
-                    resp = await mcp_client.place_order(
-                        symbol=symbol, side="SELL",
-                        quantity=holding.quantity, price=None, market="KRX",
-                    )
+                resp = await self._execute_exit_order(
+                    symbol=symbol,
+                    expected_price=price,
+                    exit_reason="STOP_LOSS",
+                )
+                if resp:
                     await activity_logger.log(
                         ActivityType.ORDER, ActivityPhase.COMPLETE,
-                        f"\U0001f6a8 손절 매도: {symbol} {holding.quantity}주 "
-                        f"({'성공' if resp.success else '실패: ' + (resp.error or '')})",
+                        f"\U0001f6a8 손절 매도: {symbol} "
+                        f"({'성공' if resp.success else '실패: ' + (resp.message or '')})",
                         symbol=symbol,
                     )
                     if resp.success:
                         event_detector.remove_levels(symbol)
-                        # 체결 확인 + TradeResult 기록
-                        order_data = resp.data or {}
-                        order_id = order_data.get("order_id", "")
-                        await decision_maker.confirm_and_record(
-                            symbol=symbol,
-                            side="SELL",
-                            order_id=order_id,
-                            quantity=holding.quantity,
-                            expected_price=price,
-                            exit_reason="STOP_LOSS",
-                        )
             except Exception as e:
                 logger.error("손절 매도 실패 ({}): {}", symbol, str(e))
 
@@ -1701,33 +1721,20 @@ class TradingAgent:
         # 즉시 시장가 매도
         if settings.TRADING_ENABLED:
             try:
-                from trading.account_manager import account_manager
-                holdings = await account_manager.get_holdings()
-                holding = next((h for h in holdings if h.symbol == symbol), None)
-                if holding and holding.quantity > 0:
-                    resp = await mcp_client.place_order(
-                        symbol=symbol, side="SELL",
-                        quantity=holding.quantity, price=None, market="KRX",
-                    )
+                resp = await self._execute_exit_order(
+                    symbol=symbol,
+                    expected_price=price,
+                    exit_reason="TAKE_PROFIT",
+                )
+                if resp:
                     await activity_logger.log(
                         ActivityType.ORDER, ActivityPhase.COMPLETE,
-                        f"\U0001f3af 익절 매도: {symbol} {holding.quantity}주 "
-                        f"({'성공' if resp.success else '실패: ' + (resp.error or '')})",
+                        f"\U0001f3af 익절 매도: {symbol} "
+                        f"({'성공' if resp.success else '실패: ' + (resp.message or '')})",
                         symbol=symbol,
                     )
                     if resp.success:
                         event_detector.remove_levels(symbol)
-                        # 체결 확인 + TradeResult 기록
-                        order_data = resp.data or {}
-                        order_id = order_data.get("order_id", "")
-                        await decision_maker.confirm_and_record(
-                            symbol=symbol,
-                            side="SELL",
-                            order_id=order_id,
-                            quantity=holding.quantity,
-                            expected_price=price,
-                            exit_reason="TAKE_PROFIT",
-                        )
             except Exception as e:
                 logger.error("익절 매도 실패 ({}): {}", symbol, str(e))
 

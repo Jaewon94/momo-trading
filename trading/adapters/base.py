@@ -11,6 +11,7 @@ from trading.models import (
     HoldingInfo,
     OrderRequest,
     OrderResult,
+    OrderStatusInfo,
     PendingOrderInfo,
 )
 
@@ -86,3 +87,9 @@ class BrokerAdapter(ABC):
         order_id: str,
         market: Market = Market.KOSPI,
     ) -> OrderResult: ...
+
+    async def get_order_status(self, order_id: str) -> OrderStatusInfo | None:
+        return None
+
+    def invalidate_cache(self) -> None:
+        return None

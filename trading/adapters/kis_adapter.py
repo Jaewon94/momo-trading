@@ -18,6 +18,7 @@ from trading.models import (
     HoldingInfo,
     OrderRequest,
     OrderResult,
+    OrderStatusInfo,
     PendingOrderInfo,
 )
 from trading.order_executor import order_executor
@@ -111,6 +112,49 @@ class KisBrokerAdapter(BrokerAdapter):
     ) -> OrderResult:
         return await self._order_executor.cancel(order_id, market=market.value)
 
+    async def get_order_status(self, order_id: str) -> OrderStatusInfo | None:
+        response = await mcp_client.get_order_list()
+        if not response.success:
+            return None
+
+        orders = self._extract_orders(response.data or {})
+        for order in orders:
+            current_order_id = (
+                order.get("odno")
+                or order.get("ODNO")
+                or order.get("order_id")
+                or ""
+            )
+            if str(current_order_id) != str(order_id):
+                continue
+
+            order_qty = self._to_int(order.get("ord_qty") or order.get("order_qty"))
+            filled_qty = self._to_int(
+                order.get("tot_ccld_qty")
+                or order.get("filled_quantity")
+                or order.get("ccld_qty")
+            )
+            remaining_qty = self._to_int(order.get("rmn_qty") or order_qty - filled_qty)
+            filled_price = self._to_float(
+                order.get("avg_prvs")
+                or order.get("ccld_pric")
+                or order.get("filled_price")
+                or order.get("ord_unpr")
+            )
+            return OrderStatusInfo(
+                order_id=str(current_order_id),
+                symbol=str(order.get("pdno") or order.get("symbol") or ""),
+                filled_qty=filled_qty,
+                filled_price=filled_price,
+                remaining_qty=max(remaining_qty, 0),
+                order_price=self._to_float(order.get("ord_unpr") or order.get("order_price")),
+            )
+        return None
+
+    def invalidate_cache(self) -> None:
+        if hasattr(self._account_client, "invalidate_cache"):
+            self._account_client.invalidate_cache()
+
     @staticmethod
     def _normalize_candles(data: dict, time_key_field: str) -> list[Candle]:
         prices = data.get("prices", [])
@@ -132,3 +176,33 @@ class KisBrokerAdapter(BrokerAdapter):
     def _ensure_success(success: bool, error: str | None) -> None:
         if not success:
             raise RuntimeError(error or "브로커 요청 실패")
+
+    @staticmethod
+    def _extract_orders(data: dict) -> list[dict]:
+        if isinstance(data, list):
+            return [item for item in data if isinstance(item, dict)]
+
+        orders = data.get("output") or data.get("output1") or data.get("orders") or []
+        if isinstance(orders, dict):
+            return [orders]
+        if isinstance(orders, list):
+            return [item for item in orders if isinstance(item, dict)]
+        return []
+
+    @staticmethod
+    def _to_int(value: object) -> int:
+        if value in (None, "", "-"):
+            return 0
+        try:
+            return int(float(str(value).replace(",", "")))
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _to_float(value: object) -> float:
+        if value in (None, "", "-"):
+            return 0.0
+        try:
+            return float(str(value).replace(",", ""))
+        except (TypeError, ValueError):
+            return 0.0

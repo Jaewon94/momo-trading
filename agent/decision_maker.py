@@ -25,7 +25,6 @@ from trading.enums import (
     OrderType,
     RecommendationStatus,
 )
-from trading.mcp_client import mcp_client
 from trading.models import OrderRequest
 from util.time_util import now_kst
 
@@ -190,63 +189,18 @@ class DecisionMaker:
     ) -> None:
         """주문 접수 후 체결 확인 → TradeResult 기록
 
-        3초 대기 → get_order_list()로 체결 확인 → 체결 시 기록.
+        3초 대기 → 브로커 어댑터로 체결 확인 → 체결 시 기록.
         """
         try:
             await asyncio.sleep(3)  # KIS 체결 처리 대기
 
-            resp = await mcp_client.get_order_list()
-            if not resp.success:
-                logger.warning("[{}] 주문내역 조회 실패: {}", symbol, resp.error)
-                return
-
-            # 응답 구조 로깅 (첫 호출 디버깅용)
-            logger.debug("[체결확인] get_order_list 응답: {}", str(resp.data)[:500])
-
-            # KIS 주문내역 응답 파싱: output 또는 output1 배열
-            orders = []
-            if isinstance(resp.data, dict):
-                orders = (
-                    resp.data.get("output", [])
-                    or resp.data.get("output1", [])
-                    or resp.data.get("orders", [])
-                )
-                if isinstance(orders, dict):
-                    orders = [orders]
-            elif isinstance(resp.data, list):
-                orders = resp.data
-
-            # order_id 매칭으로 체결 확인
-            filled_order = None
-            for order in orders:
-                if not isinstance(order, dict):
-                    continue
-                # KIS 주문번호 키: odno (대소문자 혼용)
-                kis_odno = (
-                    order.get("odno") or order.get("ODNO")
-                    or order.get("order_id") or ""
-                )
-                if str(kis_odno) == str(order_id):
-                    filled_order = order
-                    break
-
-            if not filled_order:
+            order_status = await self._broker_adapter.get_order_status(order_id)
+            if not order_status:
                 logger.info("[{}] 주문 {} 미체결 (체결내역에서 미발견)", symbol, order_id)
                 return
 
-            # 체결 수량/가격 추출
-            filled_qty = mcp_client._to_int(
-                filled_order.get("tot_ccld_qty")
-                or filled_order.get("filled_quantity")
-                or filled_order.get("ccld_qty")
-                or quantity
-            )
-            filled_price = mcp_client._to_float(
-                filled_order.get("avg_prvs")
-                or filled_order.get("ccld_pric")
-                or filled_order.get("filled_price")
-                or expected_price
-            )
+            filled_qty = order_status.filled_qty or quantity
+            filled_price = order_status.filled_price or order_status.order_price or expected_price
 
             if filled_qty <= 0:
                 logger.info("[{}] 주문 {} 체결수량 0 → 미체결", symbol, order_id)
@@ -268,9 +222,7 @@ class DecisionMaker:
                 cycle_id=cycle_id,
             )
 
-            # 체결 확인 후 계좌 캐시 무효화 → 다음 조회 시 최신 반영
-            from trading.account_manager import account_manager
-            account_manager.invalidate_cache()
+            self._broker_adapter.invalidate_cache()
 
         except Exception as e:
             logger.error("[{}] 체결 확인/기록 실패: {}", symbol, str(e))

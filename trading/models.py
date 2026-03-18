@@ -91,6 +91,16 @@ class OrderResult(BaseModel):
     filled_price: float = 0.0
 
 
+class OrderStatusInfo(BaseModel):
+    """주문 상태/체결 요약"""
+    order_id: str
+    symbol: str
+    filled_qty: int = 0
+    filled_price: float = 0.0
+    remaining_qty: int = 0
+    order_price: float = 0.0
+
+
 class AccountBalance(BaseModel):
     """계좌 잔고"""
     total_asset: float
