@@ -13,8 +13,20 @@ from models.trade_result import TradeResult
 from repositories.trade_result_repository import TradeResultRepository
 from services.activity_logger import activity_logger
 from strategy.signal import TradeSignal
-from trading.enums import ActivityPhase, ActivityType, AutonomyMode, OrderSource, RecommendationStatus
+from trading.adapters.base import BrokerAdapter
+from trading.broker_factory import get_broker_adapter
+from trading.enums import (
+    ActivityPhase,
+    ActivityType,
+    AutonomyMode,
+    Market,
+    OrderSide,
+    OrderSource,
+    OrderType,
+    RecommendationStatus,
+)
 from trading.mcp_client import mcp_client
+from trading.models import OrderRequest
 from util.time_util import now_kst
 
 
@@ -26,8 +38,9 @@ class DecisionMaker:
     SEMI_AUTO: 스캔 → 분석 → 추천 생성 → 사용자 승인 대기
     """
 
-    def __init__(self):
+    def __init__(self, broker_adapter: BrokerAdapter | None = None):
         self._pending_tasks: set[asyncio.Task] = set()
+        self._broker_adapter = broker_adapter or get_broker_adapter()
 
     async def execute(
         self, signal: TradeSignal, analysis_id: str = "", cycle_id: str | None = None,
@@ -64,18 +77,35 @@ class DecisionMaker:
             symbol=signal.symbol,
         )
 
-        response = await mcp_client.place_order(
-            symbol=signal.symbol,
-            side=signal.action.value,
-            quantity=signal.suggested_quantity or 0,
-            price=signal.suggested_price,
-        )
+        if qty <= 0:
+            error_msg = "주문 수량이 유효하지 않습니다"
+            await activity_logger.log(
+                ActivityType.DECISION, ActivityPhase.ERROR,
+                f"\u274c [{signal.symbol}] 주문 실패: {error_msg}",
+                cycle_id=cycle_id, symbol=signal.symbol,
+                error_message=error_msg,
+            )
+            result = {
+                "mode": "AUTONOMOUS",
+                "symbol": signal.symbol,
+                "action": signal.action.value,
+                "success": False,
+                "order_id": "",
+                "message": error_msg,
+                "data": None,
+            }
+            await event_bus.publish(Event(
+                type=EventType.ORDER_EXECUTED,
+                data=result,
+                source="decision_maker",
+            ))
+            return result
 
-        # 주문 응답 검증: MCP success + 주문번호 존재 확인
-        # mcp_client.place_order()가 이미 order_id를 정규화함
-        order_data = response.data or {}
-        order_id = order_data.get("order_id", "")
-        is_submitted = response.success and bool(order_id)
+        order_result = await self._broker_adapter.place_order(self._build_order_request(signal))
+
+        order_id = order_result.order_id or ""
+        is_submitted = order_result.success and bool(order_id)
+        order_data = order_result.model_dump(mode="json")
 
         result = {
             "mode": "AUTONOMOUS",
@@ -83,8 +113,8 @@ class DecisionMaker:
             "action": signal.action.value,
             "success": is_submitted,
             "order_id": order_id,
-            "message": "주문 접수" if is_submitted else (response.error or "주문 응답 없음"),
-            "data": response.data,
+            "message": "주문 접수" if is_submitted else (order_result.message or "주문 응답 없음"),
+            "data": order_data,
         }
 
         if is_submitted:
@@ -109,7 +139,7 @@ class DecisionMaker:
             self._pending_tasks.add(task)
             task.add_done_callback(self._pending_tasks.discard)
         else:
-            error_msg = response.error or "주문번호 없음"
+            error_msg = order_result.message or "주문번호 없음"
             # 매매불가 종목 → 런타임 블록리스트 등록 (이후 스캔에서 제외)
             if "매매불가" in error_msg:
                 from agent.market_scanner import market_scanner
@@ -129,6 +159,23 @@ class DecisionMaker:
         ))
 
         return result
+
+    @staticmethod
+    def _build_order_request(signal: TradeSignal) -> OrderRequest:
+        market_code = str(signal.metadata.get("market", Market.KRX.value)).upper()
+        try:
+            market = Market(market_code)
+        except ValueError:
+            market = Market.KRX
+
+        return OrderRequest(
+            symbol=signal.symbol,
+            market=market,
+            side=OrderSide(signal.action.value),
+            order_type=OrderType.LIMIT if signal.suggested_price else OrderType.MARKET,
+            quantity=signal.suggested_quantity or 0,
+            price=signal.suggested_price,
+        )
 
     async def confirm_and_record(
         self,
