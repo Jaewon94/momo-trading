@@ -27,7 +27,6 @@ from strategy.stable_short import StableShortStrategy
 from trading.adapters.base import BrokerAdapter
 from trading.broker_factory import get_broker_adapter
 from trading.enums import ActivityPhase, ActivityType, LLMTier, Market, OrderSide, OrderType, SignalAction, SignalUrgency
-from trading.mcp_client import mcp_client
 from trading.models import MCPResponse, OrderRequest
 
 
@@ -1173,52 +1172,46 @@ class TradingAgent:
 
         try:
             # 병렬로 시장 데이터 수집
-            volume_resp, surge_resp, drop_resp = await asyncio.gather(
-                mcp_client.get_volume_rank(),
-                mcp_client.get_fluctuation_rank(sort="top"),
-                mcp_client.get_fluctuation_rank(sort="bottom"),
+            volume_items, surge_items, drop_items = await asyncio.gather(
+                self._broker_adapter.get_volume_rank(),
+                self._broker_adapter.get_fluctuation_rank(sort="top"),
+                self._broker_adapter.get_fluctuation_rank(sort="bottom"),
                 return_exceptions=True,
             )
 
             # 거래량 상위
-            if not isinstance(volume_resp, Exception) and volume_resp.success and volume_resp.data:
-                items = volume_resp.data.get("stocks", volume_resp.data.get("items", []))
-                if items:
-                    lines = []
-                    for i, item in enumerate(items[:15], 1):
-                        name = item.get("name", "")
-                        symbol = item.get("symbol", item.get("code", ""))
-                        price = item.get("price", item.get("current_price", ""))
-                        change_rate = item.get("change_rate", "")
-                        volume = item.get("volume", "")
-                        lines.append(f"{i}. {name}({symbol}) {price}원 {change_rate}% 거래량:{volume}")
-                    volume_rank_text = "\n".join(lines)
+            if not isinstance(volume_items, Exception) and volume_items:
+                lines = []
+                for i, item in enumerate(volume_items[:15], 1):
+                    name = item.get("name", "")
+                    symbol = item.get("symbol", item.get("code", ""))
+                    price = item.get("price", item.get("current_price", ""))
+                    change_rate = item.get("change_rate", "")
+                    volume = item.get("volume", "")
+                    lines.append(f"{i}. {name}({symbol}) {price}원 {change_rate}% 거래량:{volume}")
+                volume_rank_text = "\n".join(lines)
 
             # 등락률 상위 (급등)
-            if not isinstance(surge_resp, Exception) and surge_resp.success and surge_resp.data:
-                items = surge_resp.data.get("stocks", surge_resp.data.get("items", []))
-                if items:
-                    lines = []
-                    for i, item in enumerate(items[:15], 1):
-                        name = item.get("name", "")
-                        symbol = item.get("symbol", item.get("code", ""))
-                        price = item.get("price", item.get("current_price", ""))
-                        change_rate = item.get("change_rate", "")
-                        lines.append(f"{i}. {name}({symbol}) {price}원 {change_rate}%")
-                    surge_text = "\n".join(lines)
+            if not isinstance(surge_items, Exception) and surge_items:
+                lines = []
+                for i, item in enumerate(surge_items[:15], 1):
+                    name = item.get("name", "")
+                    symbol = item.get("symbol", item.get("code", ""))
+                    price = item.get("price", item.get("current_price", ""))
+                    change_rate = item.get("change_rate", "")
+                    lines.append(f"{i}. {name}({symbol}) {price}원 {change_rate}%")
+                surge_text = "\n".join(lines)
 
             # 등락률 하위 (급락)
-            if not isinstance(drop_resp, Exception) and drop_resp.success and drop_resp.data:
-                items = drop_resp.data.get("stocks", drop_resp.data.get("items", []))
-                if items:
-                    lines = []
-                    for i, item in enumerate(items[:15], 1):
-                        name = item.get("name", "")
-                        symbol = item.get("symbol", item.get("code", ""))
-                        price = item.get("price", item.get("current_price", ""))
-                        change_rate = item.get("change_rate", "")
-                        lines.append(f"{i}. {name}({symbol}) {price}원 {change_rate}%")
-                    drop_text = "\n".join(lines)
+            if not isinstance(drop_items, Exception) and drop_items:
+                lines = []
+                for i, item in enumerate(drop_items[:15], 1):
+                    name = item.get("name", "")
+                    symbol = item.get("symbol", item.get("code", ""))
+                    price = item.get("price", item.get("current_price", ""))
+                    change_rate = item.get("change_rate", "")
+                    lines.append(f"{i}. {name}({symbol}) {price}원 {change_rate}%")
+                drop_text = "\n".join(lines)
 
             # 시장 요약은 등락률 상위/하위 데이터로 판단
             market_close_data = "거래량/등락률 상위 데이터로 오늘 시장 흐름 파악"
@@ -1231,11 +1224,14 @@ class TradingAgent:
     async def _get_stock_trend_summary(self, symbol: str, name: str) -> str:
         """종목 일봉 기반 간단 추세 요약 (장 마감 후 사용)"""
         try:
-            resp = await mcp_client.get_daily_price(symbol, count=20)
-            if not resp.success or not resp.data:
-                return ""
-
-            prices = resp.data.get("prices", [])
+            candles = await self._broker_adapter.get_daily_candles(symbol, count=20, market=Market.KRX)
+            prices = [
+                {
+                    "close": candle.close,
+                    "volume": candle.volume,
+                }
+                for candle in candles
+            ]
             if len(prices) < 5:
                 return ""
 

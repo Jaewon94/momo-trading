@@ -102,6 +102,25 @@ class KisBrokerAdapter(BrokerAdapter):
         self._ensure_success(response.success, response.error)
         return self._normalize_candles(response.data or {}, time_key_field="time")
 
+    async def get_volume_rank(self, market: Market = Market.KRX) -> list[dict]:
+        response = await self._market_data_client.get_volume_rank(market=market.value)
+        if response.success and response.data:
+            return response.data.get("stocks", response.data.get("items", []))
+        return []
+
+    async def get_fluctuation_rank(
+        self,
+        sort: str,
+        market: Market = Market.KRX,
+    ) -> list[dict]:
+        response = await self._market_data_client.get_fluctuation_rank(
+            sort=sort,
+            market=market.value,
+        )
+        if response.success and response.data:
+            return response.data.get("stocks", response.data.get("items", []))
+        return []
+
     async def place_order(self, request: OrderRequest) -> OrderResult:
         return await self._order_executor.execute(request)
 

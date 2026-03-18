@@ -57,6 +57,18 @@ class FakeBrokerAdapter:
             )
         ]
 
+    async def get_volume_rank(self, market: Market = Market.KRX) -> list[dict]:
+        self.calls.append(("volume", "", market.value))
+        return [
+            {"symbol": "005930", "name": "삼성전자", "price": 71_500, "change_rate": 0.7, "volume": 123456}
+        ]
+
+    async def get_fluctuation_rank(self, sort: str, market: Market = Market.KRX) -> list[dict]:
+        self.calls.append((sort, "", market.value))
+        return [
+            {"symbol": "035720", "name": "카카오", "price": 52_000, "change_rate": 3.5, "volume": 654321}
+        ]
+
 
 @pytest.mark.asyncio
 async def test_trading_agent_fetches_market_data_via_broker_adapter() -> None:
@@ -74,6 +86,50 @@ async def test_trading_agent_fetches_market_data_via_broker_adapter() -> None:
         ("daily", "005930", 60),
         ("intraday", "005930", "5"),
     ]
+
+
+class FakeTrendBrokerAdapter:
+    async def get_daily_candles(
+        self,
+        symbol: str,
+        count: int = 30,
+        market: Market = Market.KRX,
+    ) -> list[Candle]:
+        return [
+            Candle(time_key="20260318", open=71000, high=72000, low=70500, close=72000, volume=300),
+            Candle(time_key="20260317", open=70000, high=71000, low=69500, close=71000, volume=180),
+            Candle(time_key="20260316", open=69500, high=70500, low=69000, close=70000, volume=160),
+            Candle(time_key="20260315", open=69000, high=70000, low=68800, close=69500, volume=140),
+            Candle(time_key="20260314", open=68500, high=69500, low=68000, close=69000, volume=120),
+            Candle(time_key="20260313", open=68000, high=69000, low=67500, close=68500, volume=110),
+            Candle(time_key="20260312", open=67500, high=68500, low=67000, close=68000, volume=100),
+            Candle(time_key="20260311", open=67000, high=68000, low=66500, close=67500, volume=95),
+            Candle(time_key="20260310", open=66500, high=67500, low=66000, close=67000, volume=90),
+            Candle(time_key="20260309", open=66000, high=67000, low=65500, close=66500, volume=85),
+        ]
+
+
+@pytest.mark.asyncio
+async def test_trading_agent_collects_market_close_data_via_broker_adapter() -> None:
+    adapter = FakeBrokerAdapter()
+    agent = TradingAgent(broker_adapter=adapter)
+
+    market_close_data, volume_text, surge_text, drop_text = await agent._collect_market_close_data()
+
+    assert market_close_data == "거래량/등락률 상위 데이터로 오늘 시장 흐름 파악"
+    assert "삼성전자(005930)" in volume_text
+    assert "카카오(035720)" in surge_text
+    assert "카카오(035720)" in drop_text
+
+
+@pytest.mark.asyncio
+async def test_trading_agent_summarizes_stock_trend_via_broker_adapter() -> None:
+    agent = TradingAgent(broker_adapter=FakeTrendBrokerAdapter())
+
+    summary = await agent._get_stock_trend_summary("005930", "삼성전자")
+
+    assert "삼성전자(005930)" in summary
+    assert "상승추세" in summary
 
 
 class FakePortfolioBrokerAdapter:

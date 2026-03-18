@@ -37,6 +37,8 @@ class MarketDataClientProtocol(Protocol):
         period: str = "5",
         market: str = "KRX",
     ): ...
+    async def get_volume_rank(self, market: str = "KRX"): ...
+    async def get_fluctuation_rank(self, sort: str, market: str = "KRX"): ...
 
 
 class OrderExecutorProtocol(Protocol):
@@ -93,3 +95,13 @@ class BrokerAdapter(ABC):
 
     def invalidate_cache(self) -> None:
         return None
+
+    async def get_volume_rank(self, market: Market = Market.KRX) -> list[dict]:
+        return []
+
+    async def get_fluctuation_rank(
+        self,
+        sort: str,
+        market: Market = Market.KRX,
+    ) -> list[dict]:
+        return []
