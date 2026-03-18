@@ -10,6 +10,12 @@ class Market(str, Enum):
     AMEX = "AMEX"
 
 
+class BrokerProvider(str, Enum):
+    """브로커 제공자"""
+    KIS = "KIS"
+    KIWOOM = "KIWOOM"
+
+
 class OrderSide(str, Enum):
     """주문 방향"""
     BUY = "BUY"

@@ -15,6 +15,7 @@ class Settings(BaseSettings):
 
     # === KIS MCP 서버 ===
     KIS_MCP_URL: str = "http://localhost:3100/sse"
+    BROKER_PROVIDER: str = "KIS"
 
     # KIS API 인증
     KIS_APP_KEY: str = ""

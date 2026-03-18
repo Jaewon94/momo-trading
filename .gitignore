@@ -38,6 +38,7 @@ MANIFEST
 # 가상환경
 .env/
 .venv/
+.venv*/
 env/
 venv/
 ENV/
@@ -60,6 +61,7 @@ data/kis_token.json
 
 # ===== Claude Code 관련 =====
 .claude
+.serena/
 .mcp.json
 CLAUDE.md
 *_custom_prompt.md

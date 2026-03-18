@@ -16,7 +16,7 @@ from schemas.activity_schema import ActivityResponse, CycleResponse
 from schemas.common import SuccessResponse
 from schemas.daily_report_schema import DailyReportResponse
 from services.activity_logger import activity_logger
-from trading.account_manager import account_manager
+from trading.broker_factory import get_broker_adapter
 from trading.enums import ActivityPhase, ActivityType
 from trading.mcp_client import mcp_client
 
@@ -143,7 +143,7 @@ async def get_report_by_date(
 async def get_account_balance():
     """계좌 잔고 조회"""
     try:
-        balance = await account_manager.get_balance()
+        balance = await get_broker_adapter().get_balance()
         return SuccessResponse(data={
             "total_asset": balance.total_asset,
             "cash": balance.cash,
@@ -160,7 +160,7 @@ async def get_account_balance():
 async def get_account_holdings():
     """보유 종목 조회"""
     try:
-        holdings = await account_manager.get_holdings()
+        holdings = await get_broker_adapter().get_holdings()
         return SuccessResponse(data=[
             {
                 "symbol": h.symbol,
@@ -182,7 +182,7 @@ async def get_account_holdings():
 async def get_pending_orders():
     """미체결 주문 조회"""
     try:
-        orders = await account_manager.get_pending_orders()
+        orders = await get_broker_adapter().get_pending_orders()
         return SuccessResponse(data=[
             {
                 "order_id": o.order_id,

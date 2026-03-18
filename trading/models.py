@@ -2,7 +2,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from trading.enums import Market, OrderSide, OrderType
 
@@ -38,6 +38,26 @@ class CurrentPrice(BaseModel):
     timestamp: datetime
 
 
+class Candle(BaseModel):
+    """정규화된 캔들 데이터"""
+    time_key: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+
+
+class BrokerCapabilities(BaseModel):
+    """브로커 기능 매트릭스"""
+    supports_domestic_stocks: bool = False
+    supports_overseas_stocks: bool = False
+    supports_paper_trading: bool = False
+    supports_live_trading: bool = False
+    supports_realtime_quotes: bool = False
+    supports_order_cancellation: bool = False
+
+
 class OrderRequest(BaseModel):
     """주문 요청"""
     symbol: str
@@ -46,6 +66,20 @@ class OrderRequest(BaseModel):
     order_type: OrderType
     quantity: int
     price: Optional[float] = None  # 시장가 주문 시 None
+
+    @model_validator(mode="after")
+    def validate_order_request(self) -> "OrderRequest":
+        if self.quantity <= 0:
+            raise ValueError("주문 수량은 1 이상이어야 합니다")
+
+        if self.order_type == OrderType.LIMIT:
+            if self.price is None or self.price <= 0:
+                raise ValueError("지정가 주문은 유효한 가격이 필요합니다")
+
+        if self.order_type == OrderType.MARKET:
+            self.price = None
+
+        return self
 
 
 class OrderResult(BaseModel):
