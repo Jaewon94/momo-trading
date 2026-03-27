@@ -273,8 +273,14 @@ class DecisionMaker:
                     await on_settled(order_id, False)
                 return
 
-            filled_qty = order_status.filled_qty or quantity
-            filled_price = order_status.filled_price or order_status.order_price or expected_price
+            filled_qty = (
+                quantity if order_status.filled_qty is None else order_status.filled_qty
+            )
+            filled_price = (
+                order_status.filled_price
+                if order_status.filled_price > 0
+                else (order_status.order_price or expected_price)
+            )
 
             if filled_qty <= 0:
                 logger.debug("[{}] 주문 {} 체결수량 0 → 미체결 → 취소 시도", symbol, order_id)

@@ -154,3 +154,83 @@ async def test_decision_maker_confirms_fill_via_broker_adapter(monkeypatch) -> N
     assert recorded["filled_qty"] == 3
     assert recorded["filled_price"] == 70_500
     assert recorded["symbol"] == "005930"
+
+
+@pytest.mark.asyncio
+async def test_decision_maker_cancels_when_order_status_is_missing(monkeypatch) -> None:
+    adapter = FakeBrokerAdapter(
+        OrderResult(success=True, order_id="ORD-3", message="주문 접수")
+    )
+    decision_maker = DecisionMaker(broker_adapter=adapter)
+    cancelled: list[tuple[str, str]] = []
+    settled: list[tuple[str, bool]] = []
+
+    async def fake_sleep(_: float) -> None:
+        return None
+
+    async def fake_cancel(order_id: str, symbol: str) -> None:
+        cancelled.append((order_id, symbol))
+
+    async def fake_on_settled(order_id: str, success: bool) -> None:
+        settled.append((order_id, success))
+
+    monkeypatch.setattr("agent.decision_maker.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr(decision_maker, "_cancel_unfilled_order", fake_cancel)
+
+    await decision_maker.confirm_and_record(
+        symbol="005930",
+        side="BUY",
+        order_id="ORD-3",
+        quantity=1,
+        expected_price=71_000,
+        on_settled=fake_on_settled,
+    )
+
+    assert adapter.queried_order_ids == ["ORD-3"]
+    assert cancelled == [("ORD-3", "005930")]
+    assert settled == [("ORD-3", False)]
+    assert adapter.cache_invalidated is False
+
+
+@pytest.mark.asyncio
+async def test_decision_maker_cancels_when_filled_quantity_is_zero(monkeypatch) -> None:
+    adapter = FakeBrokerAdapter(
+        OrderResult(success=True, order_id="ORD-4", message="주문 접수")
+    )
+    adapter.order_status = OrderStatusInfo(
+        order_id="ORD-4",
+        symbol="005930",
+        filled_qty=0,
+        filled_price=0,
+        remaining_qty=2,
+        order_price=71_000,
+    )
+    decision_maker = DecisionMaker(broker_adapter=adapter)
+    cancelled: list[tuple[str, str]] = []
+    settled: list[tuple[str, bool]] = []
+
+    async def fake_sleep(_: float) -> None:
+        return None
+
+    async def fake_cancel(order_id: str, symbol: str) -> None:
+        cancelled.append((order_id, symbol))
+
+    async def fake_on_settled(order_id: str, success: bool) -> None:
+        settled.append((order_id, success))
+
+    monkeypatch.setattr("agent.decision_maker.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr(decision_maker, "_cancel_unfilled_order", fake_cancel)
+
+    await decision_maker.confirm_and_record(
+        symbol="005930",
+        side="BUY",
+        order_id="ORD-4",
+        quantity=2,
+        expected_price=71_000,
+        on_settled=fake_on_settled,
+    )
+
+    assert adapter.queried_order_ids == ["ORD-4"]
+    assert cancelled == [("ORD-4", "005930")]
+    assert settled == [("ORD-4", False)]
+    assert adapter.cache_invalidated is False
