@@ -135,6 +135,7 @@ Thumbs.db
 
 # ===== 임시 파일 =====
 tmp/
+tmp-home/
 temp/
 *.tmp
 *.bak
