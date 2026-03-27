@@ -39,11 +39,24 @@ class Settings(BaseSettings):
     KIS_WS_URL_DOMESTIC: str = "ws://ops.koreainvestment.com:21000"
     KIS_WS_URL_OVERSEAS: str = "ws://ops.koreainvestment.com:31000"
 
-    # === AI / LLM (Claude Code CLI — 구독 크레딧 사용) ===
+    # === AI / LLM ===
+    LLM_PROVIDER: str = "CLAUDE_CODE"  # 기본 provider (CLAUDE_CODE | CODEX)
+    LLM_PROVIDER_TIER1: str = ""  # 비어있으면 LLM_PROVIDER 사용
+    LLM_PROVIDER_TIER2: str = ""  # 비어있으면 LLM_PROVIDER 사용
+    LLM_FALLBACK_PROVIDER_TIER1: str = ""  # CLAUDE_CODE | CODEX | 빈값
+    LLM_FALLBACK_PROVIDER_TIER2: str = ""  # CLAUDE_CODE | CODEX | 빈값
+
+    # Claude Code CLI
     CLAUDE_CODE_MODEL: str = "sonnet"  # 기본 모델 (Tier별 미지정 시 사용)
     CLAUDE_CODE_MODEL_TIER1: str = "haiku"  # Tier1 (스캔/분석): 빠른 모델
     CLAUDE_CODE_MODEL_TIER2: str = "sonnet"  # Tier2 (최종 검토): 정확한 모델
     CLAUDE_CODE_PATH: str = ""  # 비어있으면 자동 탐색 (예: /opt/homebrew/bin/claude)
+
+    # Codex CLI
+    CODEX_MODEL: str = "gpt-5-codex"  # 기본 모델 (Tier별 미지정 시 사용)
+    CODEX_MODEL_TIER1: str = "gpt-5-codex"  # Tier1 (스캔/분석)
+    CODEX_MODEL_TIER2: str = "gpt-5-codex"  # Tier2 (최종 검토)
+    CODEX_PATH: str = ""  # 비어있으면 자동 탐색 (예: /opt/homebrew/bin/codex)
 
     # === AI Agent ===
     AUTONOMY_MODE: str = "AUTONOMOUS"  # AUTONOMOUS / SEMI_AUTO
@@ -93,13 +106,29 @@ class Settings(BaseSettings):
 
     def validate_on_startup(self) -> None:
         """시작 시 필수 설정 검증 — 누락된 키에 대해 경고 로그"""
+        llm_providers = {
+            self.LLM_PROVIDER_TIER1 or self.LLM_PROVIDER or "CLAUDE_CODE",
+            self.LLM_PROVIDER_TIER2 or self.LLM_PROVIDER or "CLAUDE_CODE",
+            self.LLM_FALLBACK_PROVIDER_TIER1 or "",
+            self.LLM_FALLBACK_PROVIDER_TIER2 or "",
+        }
+
         claude_path = self._find_claude_path()
-        if claude_path:
-            logger.debug("Claude Code CLI 감지: {} — CLAUDE_CODE 프로바이더 사용", claude_path)
-        else:
+        if "CLAUDE_CODE" in llm_providers and claude_path:
+            logger.debug("Claude Code CLI 감지: {}", claude_path)
+        elif "CLAUDE_CODE" in llm_providers:
             logger.warning(
                 "Claude Code CLI를 찾을 수 없음. "
                 "CLAUDE_CODE_PATH를 설정하거나 claude CLI를 설치하세요."
+            )
+
+        codex_path = self._find_codex_path()
+        if "CODEX" in llm_providers and codex_path:
+            logger.debug("Codex CLI 감지: {}", codex_path)
+        elif "CODEX" in llm_providers:
+            logger.warning(
+                "Codex CLI를 찾을 수 없음. "
+                "CODEX_PATH를 설정하거나 codex CLI를 설치하세요."
             )
 
         if not self.KIS_APP_KEY and not self.KIS_PAPER_APP_KEY:
@@ -133,6 +162,24 @@ class Settings(BaseSettings):
             "/usr/local/bin/claude",
             os.path.expanduser("~/.local/bin/claude"),
             os.path.expanduser("~/.npm-global/bin/claude"),
+        ]:
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                return candidate
+        return None
+
+    def _find_codex_path(self) -> str | None:
+        """codex CLI 경로 탐색 (설정값 → PATH → 일반적 설치 경로)"""
+        import os
+        import shutil
+        if self.CODEX_PATH:
+            return self.CODEX_PATH
+        path = shutil.which("codex")
+        if path:
+            return path
+        for candidate in [
+            "/opt/homebrew/bin/codex",
+            "/usr/local/bin/codex",
+            os.path.expanduser("~/.local/bin/codex"),
         ]:
             if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
                 return candidate
