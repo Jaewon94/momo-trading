@@ -210,8 +210,107 @@
 
               <div class="border-t border-gray-700 pt-2">
                 <div class="text-xs text-gray-500 font-medium mb-1">LLM</div>
-                <div class="text-xs text-gray-400">Claude Code (&#xb85c;&#xceec; CLI)</div>
+                <div id="llm-config-summary" class="text-xs text-gray-400">설정 불러오는 중...</div>
                 <div id="llm-tier1-model" class="text-xs text-gray-500 mt-0.5 truncate"></div>
+                <div id="llm-catalog-meta" class="text-[11px] text-gray-500 mt-1"></div>
+                <button onclick="refreshLLMCatalog()"
+                  class="mt-2 w-full bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1 transition">
+                  공식 모델 목록 새로고침
+                </button>
+              </div>
+
+              <div class="border-t border-gray-700 pt-2">
+                <label class="text-sm block mb-1">기본 분석 AI (T1)</label>
+                <select id="set-llm-tier1-provider" onchange="updateSetting('LLM_PROVIDER_TIER1', this.value)"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                  <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CODEX">Codex</option>
+                </select>
+                <label class="text-xs block mt-2 mb-1 text-gray-500">모델 / 버전</label>
+                <select id="set-llm-tier1-model" onchange="updateTierModelSetting('tier1', this.value)"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
+                <div id="llm-tier1-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+                <div class="flex gap-2 mt-2">
+                  <input id="set-llm-tier1-model-custom" type="text" placeholder="예: claude-sonnet-4-6 / gpt-5.4"
+                    class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
+                  <button onclick="applyCustomTierModel('tier1')"
+                    class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
+                    직접 입력
+                  </button>
+                </div>
+                <label class="text-xs block mt-3 mb-1 text-gray-500">T1 Fallback</label>
+                <select id="set-llm-tier1-fallback" onchange="updateSetting('LLM_FALLBACK_PROVIDER_TIER1', this.value)"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                  <option value="">없음</option>
+                  <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CODEX">Codex</option>
+                </select>
+                <label class="text-xs block mt-2 mb-1 text-gray-500">Fallback 모델 / 버전</label>
+                <select id="set-llm-tier1-fallback-model" onchange="updateTierModelSetting('tier1', this.value, 'fallback')"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
+                <div id="llm-tier1-fallback-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+                <div class="flex gap-2 mt-2">
+                  <input id="set-llm-tier1-fallback-model-custom" type="text" placeholder="예: claude-opus-4-6 / gpt-5.1-codex-max"
+                    class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
+                  <button onclick="applyCustomTierModel('tier1', 'fallback')"
+                    class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
+                    직접 입력
+                  </button>
+                </div>
+              </div>
+
+              <div class="border-t border-gray-700 pt-2">
+                <label class="text-sm block mb-1">최종 검토 AI (T2)</label>
+                <select id="set-llm-tier2-provider" onchange="updateSetting('LLM_PROVIDER_TIER2', this.value)"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                  <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CODEX">Codex</option>
+                </select>
+                <label class="text-xs block mt-2 mb-1 text-gray-500">모델 / 버전</label>
+                <select id="set-llm-tier2-model" onchange="updateTierModelSetting('tier2', this.value)"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
+                <div id="llm-tier2-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+                <div class="flex gap-2 mt-2">
+                  <input id="set-llm-tier2-model-custom" type="text" placeholder="예: claude-opus-4-6 / gpt-5-codex"
+                    class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
+                  <button onclick="applyCustomTierModel('tier2')"
+                    class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
+                    직접 입력
+                  </button>
+                </div>
+                <label class="text-xs block mt-3 mb-1 text-gray-500">T2 Fallback</label>
+                <select id="set-llm-tier2-fallback" onchange="updateSetting('LLM_FALLBACK_PROVIDER_TIER2', this.value)"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                  <option value="">없음</option>
+                  <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CODEX">Codex</option>
+                </select>
+                <label class="text-xs block mt-2 mb-1 text-gray-500">Fallback 모델 / 버전</label>
+                <select id="set-llm-tier2-fallback-model" onchange="updateTierModelSetting('tier2', this.value, 'fallback')"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
+                <div id="llm-tier2-fallback-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+                <div class="flex gap-2 mt-2">
+                  <input id="set-llm-tier2-fallback-model-custom" type="text" placeholder="예: gpt-5-codex / claude-sonnet-4-6"
+                    class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
+                  <button onclick="applyCustomTierModel('tier2', 'fallback')"
+                    class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
+                    직접 입력
+                  </button>
+                </div>
+              </div>
+
+              <div class="border-t border-gray-700 pt-2">
+                <label class="text-sm block mb-1">수동 작업 AI</label>
+                <select id="set-manual-llm-provider" onchange="updateSetting('MANUAL_LLM_PROVIDER', this.value)"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                  <option value="AUTOMATIC">자동</option>
+                  <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CODEX">Codex</option>
+                </select>
+                <div class="text-[11px] text-gray-500 mt-1">
+                  Q&amp;A / 수동 사이클 / 리포트 생성에만 적용, 모델은 각 tier 설정 사용
+                </div>
+                <div id="llm-manual-selection" class="text-xs text-gray-500 mt-1 truncate"></div>
               </div>
             </div>
           </div>

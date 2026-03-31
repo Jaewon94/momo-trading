@@ -10,7 +10,8 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin.sse_manager import sse_manager
-from core.config import settings
+from analysis.llm.model_catalog import model_catalog_service
+from core.config import normalize_llm_model_value, settings
 from core.database import get_async_db
 from repositories.agent_activity_repository import AgentActivityRepository
 from repositories.daily_report_repository import DailyReportRepository
@@ -19,8 +20,9 @@ from schemas.common import SuccessResponse
 from schemas.daily_report_schema import DailyReportResponse
 from schemas.qa_schema import QARequest, QAResponse
 from services.activity_logger import activity_logger
+from trading.account_manager import account_manager
 from trading.broker_factory import get_broker_adapter
-from trading.enums import ActivityPhase, ActivityType
+from trading.enums import ActivityPhase, ActivityType, LLMTier
 from trading.mcp_client import mcp_client
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -240,6 +242,19 @@ MUTABLE_SETTINGS = [
     "RECOMMENDATION_EXPIRE_MIN",
     "SCHEDULER_ENABLED",
     "RISK_APPETITE",
+    "LLM_PROVIDER_TIER1",
+    "LLM_PROVIDER_TIER2",
+    "LLM_FALLBACK_PROVIDER_TIER1",
+    "LLM_FALLBACK_PROVIDER_TIER2",
+    "LLM_FALLBACK_MODEL_TIER1",
+    "LLM_FALLBACK_MODEL_TIER2",
+    "CLAUDE_CODE_MODEL",
+    "CLAUDE_CODE_MODEL_TIER1",
+    "CLAUDE_CODE_MODEL_TIER2",
+    "CODEX_MODEL",
+    "CODEX_MODEL_TIER1",
+    "CODEX_MODEL_TIER2",
+    "MANUAL_LLM_PROVIDER",
 ]
 
 
@@ -267,6 +282,32 @@ async def update_settings(updates: dict):
             value = int(value)
         elif isinstance(old, float):
             value = float(value)
+        elif key in {
+            "LLM_PROVIDER_TIER1",
+            "LLM_PROVIDER_TIER2",
+            "LLM_FALLBACK_PROVIDER_TIER1",
+            "LLM_FALLBACK_PROVIDER_TIER2",
+        }:
+            value = str(value).upper()
+            if key.startswith("LLM_FALLBACK_PROVIDER_") and value in {"", "NONE"}:
+                value = ""
+            elif value not in {"CLAUDE_CODE", "CODEX"}:
+                continue
+        elif key == "MANUAL_LLM_PROVIDER":
+            value = str(value).upper()
+            if value not in {"AUTOMATIC", "CLAUDE_CODE", "CODEX"}:
+                continue
+        elif key in {
+            "LLM_FALLBACK_MODEL_TIER1",
+            "LLM_FALLBACK_MODEL_TIER2",
+            "CLAUDE_CODE_MODEL",
+            "CLAUDE_CODE_MODEL_TIER1",
+            "CLAUDE_CODE_MODEL_TIER2",
+            "CODEX_MODEL",
+            "CODEX_MODEL_TIER1",
+            "CODEX_MODEL_TIER2",
+        }:
+            value = normalize_llm_model_value(str(value))
         setattr(settings, key, value)
         changed[key] = {"old": old, "new": value}
         logger.info("설정 변경: {} = {} → {}", key, old, value)
@@ -322,6 +363,14 @@ async def get_llm_status():
     return SuccessResponse(data=llm_factory.get_llm_status())
 
 
+@router.get("/llm/catalog")
+async def get_llm_catalog(
+    force_refresh: bool = Query(False, description="공식 모델 카탈로그 강제 동기화"),
+):
+    """공식 문서 기반 LLM 모델 카탈로그"""
+    return SuccessResponse(data=await model_catalog_service.get_catalog(force_refresh=force_refresh))
+
+
 # ── 시스템 상태 ──
 @router.get("/system/status")
 async def get_system_status():
@@ -358,7 +407,10 @@ async def trigger_agent_cycle():
     )
 
     # 비동기로 실행 (즉시 응답)
-    asyncio.create_task(trading_agent.run_cycle())
+    manual_provider_override = settings.MANUAL_LLM_PROVIDER
+    asyncio.create_task(
+        trading_agent.run_cycle(manual_provider_override=manual_provider_override)
+    )
     return SuccessResponse(message="에이전트 사이클이 트리거되었습니다")
 
 
@@ -368,7 +420,10 @@ async def generate_report(target_date: str | None = Query(None)):
     """수동 일일 리포트 생성"""
     from services.daily_report_service import daily_report_service
     d = date.fromisoformat(target_date) if target_date else None
-    report = await daily_report_service.generate_daily_report(d)
+    report = await daily_report_service.generate_daily_report(
+        d,
+        manual_provider_override=settings.MANUAL_LLM_PROVIDER,
+    )
     if report:
         return SuccessResponse(
             data=DailyReportResponse.model_validate(report),
@@ -462,7 +517,12 @@ async def ask_question(
     )
 
     try:
-        answer, provider = await llm_factory.generate_tier1(prompt, system_prompt)
+        answer, provider = await llm_factory.generate_manual(
+            prompt,
+            system_prompt,
+            default_tier=LLMTier.TIER1,
+            manual_provider_override=settings.MANUAL_LLM_PROVIDER,
+        )
     except Exception as e:
         logger.error("Q&A LLM 호출 실패: {}", str(e))
         answer = f"LLM 호출에 실패했습니다: {str(e)[:100]}"

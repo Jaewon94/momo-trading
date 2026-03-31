@@ -6,6 +6,8 @@ let currentView = 'live';
 let activityCount = 0;
 let autoScroll = true;
 let accountPollTimer = null;
+let runtimeSettings = null;
+let llmCatalog = null;
 
 // Stock card tracking: key = "cycleId:symbol" → { element, headerEl, bodyEl, stepsEl, activities[], outcome }
 let stockCards = {};
@@ -15,13 +17,14 @@ const sidebarState = {
   account: true,
   holdings: true,
   pending: false,
-  settings: false,
+  settings: true,
   system: true,
 };
 
 // ── Init ──
 document.addEventListener('DOMContentLoaded', () => {
   loadSettings();
+  loadLLMCatalog();
   loadSystemStatus();
   loadReportList();
   loadAccountInfo();
@@ -1039,10 +1042,22 @@ async function loadSettings() {
     const json = await resp.json();
     const s = json.data;
     if (!s) return;
+    runtimeSettings = s;
     document.getElementById('set-trading').checked = s.TRADING_ENABLED;
     document.getElementById('set-mode').value = s.AUTONOMY_MODE;
     const riskEl = document.getElementById('set-risk-appetite');
     if (riskEl && s.RISK_APPETITE) riskEl.value = s.RISK_APPETITE;
+    const tier1ProviderEl = document.getElementById('set-llm-tier1-provider');
+    if (tier1ProviderEl) tier1ProviderEl.value = s.LLM_PROVIDER_TIER1 || s.LLM_PROVIDER || 'CLAUDE_CODE';
+    const tier2ProviderEl = document.getElementById('set-llm-tier2-provider');
+    if (tier2ProviderEl) tier2ProviderEl.value = s.LLM_PROVIDER_TIER2 || s.LLM_PROVIDER || 'CLAUDE_CODE';
+    const tier1FallbackEl = document.getElementById('set-llm-tier1-fallback');
+    if (tier1FallbackEl) tier1FallbackEl.value = s.LLM_FALLBACK_PROVIDER_TIER1 || '';
+    const tier2FallbackEl = document.getElementById('set-llm-tier2-fallback');
+    if (tier2FallbackEl) tier2FallbackEl.value = s.LLM_FALLBACK_PROVIDER_TIER2 || '';
+    const manualLlmEl = document.getElementById('set-manual-llm-provider');
+    if (manualLlmEl && s.MANUAL_LLM_PROVIDER) manualLlmEl.value = s.MANUAL_LLM_PROVIDER;
+    renderTierModelSelectors();
     updateBadge('badge-trading', s.TRADING_ENABLED ? '매매:ON' : '매매:OFF', s.TRADING_ENABLED ? 'green' : 'red');
     updateBadge('badge-mode', s.AUTONOMY_MODE, 'purple');
   } catch (err) {
@@ -1059,9 +1074,176 @@ async function updateSetting(key, value) {
     });
     loadSettings();
     loadSystemStatus();
+    loadLLMStatus();
   } catch (err) {
     console.error('Setting update error:', err);
   }
+}
+
+function getTierProvider(tier, mode = 'primary') {
+  const providerEl = document.getElementById(
+    mode === 'fallback'
+      ? (tier === 'tier1' ? 'set-llm-tier1-fallback' : 'set-llm-tier2-fallback')
+      : (tier === 'tier1' ? 'set-llm-tier1-provider' : 'set-llm-tier2-provider')
+  );
+  if (mode === 'fallback') {
+    return providerEl?.value || '';
+  }
+  return providerEl?.value || 'CLAUDE_CODE';
+}
+
+function getTierModelSettingKey(provider, tier, mode = 'primary') {
+  if (mode === 'fallback') {
+    return tier === 'tier1' ? 'LLM_FALLBACK_MODEL_TIER1' : 'LLM_FALLBACK_MODEL_TIER2';
+  }
+  if (provider === 'CODEX') {
+    return tier === 'tier1' ? 'CODEX_MODEL_TIER1' : 'CODEX_MODEL_TIER2';
+  }
+  return tier === 'tier1' ? 'CLAUDE_CODE_MODEL_TIER1' : 'CLAUDE_CODE_MODEL_TIER2';
+}
+
+function getCatalogProvider(provider) {
+  return llmCatalog?.providers?.find((item) => item.id === provider) || null;
+}
+
+function renderTierModelSelectors() {
+  renderTierModelSelector('tier1', 'primary');
+  renderTierModelSelector('tier1', 'fallback');
+  renderTierModelSelector('tier2', 'primary');
+  renderTierModelSelector('tier2', 'fallback');
+}
+
+function renderTierModelSelector(tier, mode = 'primary') {
+  if (!runtimeSettings) return;
+  const provider = getTierProvider(tier, mode);
+  const key = getTierModelSettingKey(provider, tier, mode);
+  const currentValue = runtimeSettings[key] || 'DEFAULT';
+  const isFallback = mode === 'fallback';
+  const hasFallbackProvider = !isFallback || !!provider;
+  const selectEl = document.getElementById(
+    isFallback
+      ? (tier === 'tier1' ? 'set-llm-tier1-fallback-model' : 'set-llm-tier2-fallback-model')
+      : (tier === 'tier1' ? 'set-llm-tier1-model' : 'set-llm-tier2-model')
+  );
+  const sourceEl = document.getElementById(
+    isFallback
+      ? (tier === 'tier1' ? 'llm-tier1-fallback-model-source' : 'llm-tier2-fallback-model-source')
+      : (tier === 'tier1' ? 'llm-tier1-model-source' : 'llm-tier2-model-source')
+  );
+  const customEl = document.getElementById(
+    isFallback
+      ? (tier === 'tier1' ? 'set-llm-tier1-fallback-model-custom' : 'set-llm-tier2-fallback-model-custom')
+      : (tier === 'tier1' ? 'set-llm-tier1-model-custom' : 'set-llm-tier2-model-custom')
+  );
+  if (!selectEl) return;
+
+  if (!hasFallbackProvider) {
+    selectEl.innerHTML = '<option value="DEFAULT">없음</option>';
+    selectEl.value = 'DEFAULT';
+    selectEl.disabled = true;
+    if (customEl) {
+      customEl.value = '';
+      customEl.disabled = true;
+    }
+    if (sourceEl) sourceEl.textContent = 'fallback provider를 먼저 선택하세요';
+    return;
+  }
+
+  const providerCatalog = getCatalogProvider(provider);
+  const entries = providerCatalog?.entries ? [...providerCatalog.entries] : [{ value: 'DEFAULT', label: '기본값 사용' }];
+  if (currentValue && !entries.some((item) => item.value === currentValue)) {
+    entries.push({
+      value: currentValue,
+      label: `${currentValue} (custom)`,
+      kind: 'custom',
+      stability: 'custom',
+      source_scope: 'manual',
+      source_url: '',
+    });
+  }
+
+  selectEl.innerHTML = entries.map((item) => {
+    const suffix = item.kind === 'snapshot'
+      ? ' [고정]'
+      : (item.value === 'DEFAULT' ? ' [CLI 기본값]' : '');
+    return `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label || item.value)}${suffix}</option>`;
+  }).join('');
+  selectEl.value = currentValue;
+  selectEl.disabled = false;
+
+  if (customEl) {
+    customEl.placeholder = provider === 'CODEX'
+      ? '예: gpt-5-codex / gpt-5.4'
+      : '예: sonnet / claude-sonnet-4-6';
+    customEl.value = '';
+    customEl.disabled = false;
+  }
+
+  if (sourceEl) {
+    const selected = entries.find((item) => item.value === currentValue);
+    const sourceBits = [];
+    if (selected?.source_scope) sourceBits.push(`출처: ${selected.source_scope}`);
+    if (selected?.stability) sourceBits.push(`성격: ${selected.stability}`);
+    if (providerCatalog?.cli_version) sourceBits.push(`CLI ${providerCatalog.cli_version}`);
+    sourceEl.textContent = sourceBits.join(' · ');
+  }
+}
+
+async function loadLLMCatalog(forceRefresh = false) {
+  try {
+    const suffix = forceRefresh ? '?force_refresh=true' : '';
+    const resp = await fetch(`${API}/llm/catalog${suffix}`);
+    const json = await resp.json();
+    llmCatalog = json.data;
+    renderLLMCatalogMeta();
+    renderTierModelSelectors();
+  } catch (err) {
+    console.error('LLM catalog error:', err);
+    const metaEl = document.getElementById('llm-catalog-meta');
+    if (metaEl) metaEl.textContent = '공식 모델 목록 조회 실패';
+  }
+}
+
+function renderLLMCatalogMeta() {
+  const metaEl = document.getElementById('llm-catalog-meta');
+  if (!metaEl) return;
+  if (!llmCatalog) {
+    metaEl.textContent = '공식 모델 목록 불러오는 중...';
+    return;
+  }
+  const parts = [];
+  if (llmCatalog.fetched_at) {
+    parts.push(`동기화 ${formatDateTime(llmCatalog.fetched_at)}`);
+  } else {
+    parts.push('내장 seed 목록 사용 중');
+  }
+  if (llmCatalog.stale) parts.push('stale');
+  if (llmCatalog.fetch_error) parts.push(`동기화 실패: ${llmCatalog.fetch_error}`);
+  metaEl.textContent = parts.join(' · ');
+}
+
+async function refreshLLMCatalog() {
+  await loadLLMCatalog(true);
+  await loadSettings();
+  await loadLLMStatus();
+}
+
+async function updateTierModelSetting(tier, value, mode = 'primary') {
+  const provider = getTierProvider(tier, mode);
+  const key = getTierModelSettingKey(provider, tier, mode);
+  await updateSetting(key, value || 'DEFAULT');
+}
+
+async function applyCustomTierModel(tier, mode = 'primary') {
+  const inputEl = document.getElementById(
+    mode === 'fallback'
+      ? (tier === 'tier1' ? 'set-llm-tier1-fallback-model-custom' : 'set-llm-tier2-fallback-model-custom')
+      : (tier === 'tier1' ? 'set-llm-tier1-model-custom' : 'set-llm-tier2-model-custom')
+  );
+  if (!inputEl) return;
+  const value = inputEl.value.trim();
+  if (!value) return;
+  await updateTierModelSetting(tier, value, mode);
 }
 
 // ── LLM Status ──
@@ -1072,7 +1254,29 @@ async function loadLLMStatus() {
     const s = json.data;
     if (!s) return;
     const t1Model = document.getElementById('llm-tier1-model');
-    if (t1Model) t1Model.textContent = `모델: ${s.tier1.model}`;
+    if (t1Model) {
+      const t1FallbackModel = s.tier1.fallback_provider
+        ? (s.tier1.fallback_model_mode === 'default' ? '기본값 사용' : s.tier1.fallback_model)
+        : '';
+      const t2FallbackModel = s.tier2.fallback_provider
+        ? (s.tier2.fallback_model_mode === 'default' ? '기본값 사용' : s.tier2.fallback_model)
+        : '';
+      const t1Fallback = s.tier1.fallback_provider ? ` → ${s.tier1.fallback_provider}${t1FallbackModel ? `(${t1FallbackModel})` : ''}` : '';
+      const t2Fallback = s.tier2.fallback_provider ? ` → ${s.tier2.fallback_provider}${t2FallbackModel ? `(${t2FallbackModel})` : ''}` : '';
+      const t1ModelLabel = s.tier1.model_mode === 'default' ? '기본값 사용' : s.tier1.model;
+      const t2ModelLabel = s.tier2.model_mode === 'default' ? '기본값 사용' : s.tier2.model;
+      t1Model.textContent = `T1 ${s.tier1.provider}${t1Fallback} (${t1ModelLabel}) / T2 ${s.tier2.provider}${t2Fallback} (${t2ModelLabel})`;
+    }
+    const llmSummary = document.getElementById('llm-config-summary');
+    if (llmSummary) {
+      llmSummary.textContent = `사이클 기본값: T1 ${s.tier1.provider}, T2 ${s.tier2.provider}`;
+    }
+    const manualSelection = document.getElementById('llm-manual-selection');
+    if (manualSelection && s.manual_selection) {
+      const provider = s.manual_selection.provider || 'AUTOMATIC';
+      const label = provider === 'AUTOMATIC' ? '자동 (기본 tier 설정 사용)' : provider;
+      manualSelection.textContent = `현재 수동 작업 선택: ${label}`;
+    }
   } catch (err) {
     console.error('LLM status error:', err);
   }
@@ -1172,6 +1376,23 @@ function formatTime(ts) {
   try {
     const d = new Date(ts);
     return d.toLocaleTimeString('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch { return ts; }
+}
+
+function formatDateTime(ts) {
+  if (!ts) return '';
+  try {
+    const d = new Date(ts);
+    return d.toLocaleString('ko-KR', {
+      timeZone: 'Asia/Seoul',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    });
   } catch { return ts; }
 }
 

@@ -4,9 +4,9 @@ import time
 
 from loguru import logger
 
-from analysis.llm.codex_provider import CodexProvider
 from analysis.llm.claude_code_provider import ClaudeCodeProvider
-from core.config import settings
+from analysis.llm.codex_provider import CodexProvider
+from core.config import DEFAULT_LLM_MODEL, normalize_llm_model_value, settings
 from trading.enums import ActivityPhase, ActivityType, LLMProvider, LLMTier
 
 
@@ -51,6 +51,38 @@ class LLMFactory:
                 chain.append(fallback)
         return chain
 
+    def _manual_provider_chain(
+        self,
+        default_tier: LLMTier,
+        manual_provider_override: str | None = None,
+    ) -> list[LLMProvider]:
+        selection = (manual_provider_override or settings.MANUAL_LLM_PROVIDER or "AUTOMATIC").upper()
+        if selection == "AUTOMATIC":
+            return self._provider_chain(default_tier)
+        return [self._provider_from_name(selection)]
+
+    @staticmethod
+    def _fallback_model_for_tier(tier: LLMTier) -> str:
+        value = (
+            settings.LLM_FALLBACK_MODEL_TIER1
+            if tier == LLMTier.TIER1
+            else settings.LLM_FALLBACK_MODEL_TIER2
+        )
+        return normalize_llm_model_value(value)
+
+    def _build_provider(
+        self,
+        tier: LLMTier,
+        provider_key: LLMProvider,
+        model_override: str | None = None,
+    ):
+        normalized_override = normalize_llm_model_value(model_override) if model_override is not None else None
+        if normalized_override in (None, DEFAULT_LLM_MODEL):
+            return self._providers[tier][provider_key]
+        if provider_key == LLMProvider.CLAUDE_CODE:
+            return ClaudeCodeProvider(tier, model_override=normalized_override)
+        return CodexProvider(tier, model_override=normalized_override)
+
     def _uses_claude_sessions(self) -> bool:
         for tier in (LLMTier.TIER1, LLMTier.TIER2):
             if LLMProvider.CLAUDE_CODE in self._provider_chain(tier):
@@ -79,17 +111,19 @@ class LLMFactory:
     async def generate(
         self, prompt: str, tier: LLMTier = LLMTier.TIER1, system_prompt: str = "",
         *, symbol: str | None = None, cycle_id: str | None = None,
+        provider_chain: list[LLMProvider] | None = None,
     ) -> tuple[str, str]:
         """텍스트 생성 (최대 2회 시도)
 
         Returns:
             (생성 텍스트, 사용된 provider 이름)
         """
-        provider_chain = self._provider_chain(tier)
+        provider_chain = provider_chain or self._provider_chain(tier)
         last_error = None
 
-        for provider_key in provider_chain:
-            provider = self._providers[tier][provider_key]
+        for index, provider_key in enumerate(provider_chain):
+            fallback_model = self._fallback_model_for_tier(tier) if index > 0 else None
+            provider = self._build_provider(tier, provider_key, fallback_model)
             if not await provider.is_available():
                 last_error = RuntimeError(f"{provider.provider.value} CLI를 찾을 수 없습니다 (PATH 확인)")
                 logger.warning("{} 사용 불가, 다음 provider 확인", provider.provider.value)
@@ -123,9 +157,12 @@ class LLMFactory:
                     return result, provider_name
                 except Exception as e:
                     last_error = e
-                    if attempt == 0:
+                    should_retry = attempt == 0 and await provider.is_available()
+                    if should_retry:
                         logger.warning("{} 호출 실패, 재시도: {}", provider.provider.value, str(e)[:100])
                         await asyncio.sleep(2)
+                        continue
+                    break
             logger.warning("{} 호출 실패, fallback provider 확인", provider.provider.value)
 
         raise last_error or RuntimeError("사용 가능한 LLM provider가 없습니다")
@@ -170,24 +207,68 @@ class LLMFactory:
         """Tier 2 (프리미엄 분석용)"""
         return await self.generate(prompt, LLMTier.TIER2, system_prompt, symbol=symbol, cycle_id=cycle_id)
 
+    async def generate_manual(
+        self,
+        prompt: str,
+        system_prompt: str = "",
+        *,
+        default_tier: LLMTier = LLMTier.TIER1,
+        symbol: str | None = None,
+        cycle_id: str | None = None,
+        manual_provider_override: str | None = None,
+    ) -> tuple[str, str]:
+        """수동 작업용 LLM 생성.
+
+        `AUTOMATIC`이면 기존 tier 설정을 사용하고,
+        명시적 provider가 주어지면 해당 provider만 사용한다.
+        """
+        return await self.generate(
+            prompt,
+            default_tier,
+            system_prompt,
+            symbol=symbol,
+            cycle_id=cycle_id,
+            provider_chain=self._manual_provider_chain(default_tier, manual_provider_override),
+        )
+
     def get_llm_status(self) -> dict:
         """현재 LLM 설정 상태 반환 (Admin API용)"""
-        tier1_model = settings.CLAUDE_CODE_MODEL_TIER1 or settings.CLAUDE_CODE_MODEL or "haiku"
-        tier2_model = settings.CLAUDE_CODE_MODEL_TIER2 or settings.CLAUDE_CODE_MODEL or "sonnet"
-        codex_tier1_model = settings.CODEX_MODEL_TIER1 or settings.CODEX_MODEL or "gpt-5-codex"
-        codex_tier2_model = settings.CODEX_MODEL_TIER2 or settings.CODEX_MODEL or "gpt-5-codex"
+        tier1_model = normalize_llm_model_value(settings.CLAUDE_CODE_MODEL_TIER1 or settings.CLAUDE_CODE_MODEL)
+        tier2_model = normalize_llm_model_value(settings.CLAUDE_CODE_MODEL_TIER2 or settings.CLAUDE_CODE_MODEL)
+        codex_tier1_model = normalize_llm_model_value(settings.CODEX_MODEL_TIER1 or settings.CODEX_MODEL)
+        codex_tier2_model = normalize_llm_model_value(settings.CODEX_MODEL_TIER2 or settings.CODEX_MODEL)
         tier1_provider = (settings.LLM_PROVIDER_TIER1 or settings.LLM_PROVIDER or "CLAUDE_CODE").upper()
         tier2_provider = (settings.LLM_PROVIDER_TIER2 or settings.LLM_PROVIDER or "CLAUDE_CODE").upper()
+        tier1_fallback_provider = (settings.LLM_FALLBACK_PROVIDER_TIER1 or "").upper()
+        tier2_fallback_provider = (settings.LLM_FALLBACK_PROVIDER_TIER2 or "").upper()
+        tier1_fallback_model = self._fallback_model_for_tier(LLMTier.TIER1)
+        tier2_fallback_model = self._fallback_model_for_tier(LLMTier.TIER2)
+        tier1_selected_model = codex_tier1_model if tier1_provider == "CODEX" else tier1_model
+        tier2_selected_model = codex_tier2_model if tier2_provider == "CODEX" else tier2_model
         return {
             "tier1": {
                 "provider": tier1_provider,
-                "fallback_provider": (settings.LLM_FALLBACK_PROVIDER_TIER1 or "").upper(),
-                "model": codex_tier1_model if tier1_provider == "CODEX" else tier1_model,
+                "fallback_provider": tier1_fallback_provider,
+                "fallback_model": tier1_fallback_model if tier1_fallback_provider else "",
+                "fallback_model_mode": (
+                    "default" if tier1_fallback_provider and tier1_fallback_model == DEFAULT_LLM_MODEL
+                    else "explicit" if tier1_fallback_provider
+                    else ""
+                ),
+                "model": tier1_selected_model,
+                "model_mode": "default" if tier1_selected_model == DEFAULT_LLM_MODEL else "explicit",
             },
             "tier2": {
                 "provider": tier2_provider,
-                "fallback_provider": (settings.LLM_FALLBACK_PROVIDER_TIER2 or "").upper(),
-                "model": codex_tier2_model if tier2_provider == "CODEX" else tier2_model,
+                "fallback_provider": tier2_fallback_provider,
+                "fallback_model": tier2_fallback_model if tier2_fallback_provider else "",
+                "fallback_model_mode": (
+                    "default" if tier2_fallback_provider and tier2_fallback_model == DEFAULT_LLM_MODEL
+                    else "explicit" if tier2_fallback_provider
+                    else ""
+                ),
+                "model": tier2_selected_model,
+                "model_mode": "default" if tier2_selected_model == DEFAULT_LLM_MODEL else "explicit",
             },
             "available_providers": [
                 {
@@ -203,6 +284,10 @@ class LLMFactory:
                     "has_key": True,
                 },
             ],
+            "manual_selection": {
+                "provider": (settings.MANUAL_LLM_PROVIDER or "AUTOMATIC").upper(),
+                "options": ["AUTOMATIC", "CLAUDE_CODE", "CODEX"],
+            },
         }
 
 

@@ -3,10 +3,11 @@ import asyncio
 import os
 import shutil
 import tempfile
+import time
 
 from loguru import logger
 
-from core.config import settings
+from core.config import DEFAULT_LLM_MODEL, normalize_llm_model_value, settings
 from trading.enums import LLMProvider, LLMTier
 
 
@@ -17,13 +18,21 @@ class CodexProvider:
     Claude Code처럼 세션을 이어붙이진 않으며, 세션 관련 메서드는 no-op로 둔다.
     """
 
-    def __init__(self, tier: LLMTier = LLMTier.TIER1):
+    _FAILURE_COOLDOWN_SEC = 300
+
+    def __init__(self, tier: LLMTier = LLMTier.TIER1, model_override: str | None = None):
         self._tier = tier
         self._codex_path: str | None = None
-        if tier == LLMTier.TIER1:
-            self._model = settings.CODEX_MODEL_TIER1 or settings.CODEX_MODEL or "gpt-5-codex"
+        self._disabled_until = 0.0
+        if model_override is not None:
+            configured_model = model_override
+        elif tier == LLMTier.TIER1:
+            configured_model = settings.CODEX_MODEL_TIER1 or settings.CODEX_MODEL
         else:
-            self._model = settings.CODEX_MODEL_TIER2 or settings.CODEX_MODEL or "gpt-5-codex"
+            configured_model = settings.CODEX_MODEL_TIER2 or settings.CODEX_MODEL
+        normalized_model = normalize_llm_model_value(configured_model)
+        self._configured_model = normalized_model
+        self._model = None if normalized_model == DEFAULT_LLM_MODEL else normalized_model
 
     @classmethod
     def start_session(cls) -> None:
@@ -51,7 +60,7 @@ class CodexProvider:
 
     @property
     def model_id(self) -> str:
-        return f"codex:{self._model}"
+        return f"codex:{self._model or DEFAULT_LLM_MODEL}"
 
     def _find_codex(self) -> str | None:
         if self._codex_path:
@@ -81,13 +90,15 @@ class CodexProvider:
         codex = self._find_codex()
         if not codex:
             raise RuntimeError("codex CLI를 찾을 수 없습니다 (PATH 확인)")
+        effort = "medium" if self._tier == LLMTier.TIER1 else "high"
 
         return [
             codex,
             "exec",
+            "-c",
+            f'model_reasoning_effort="{effort}"',
             "--ephemeral",
-            "--model",
-            self._model,
+            *([] if not self._model else ["--model", self._model]),
             "--sandbox",
             "read-only",
             "--output-last-message",
@@ -138,6 +149,7 @@ class CodexProvider:
             )
 
             if proc.returncode != 0:
+                self._disabled_until = time.monotonic() + self._FAILURE_COOLDOWN_SEC
                 err = stderr.decode("utf-8", errors="replace")[:500]
                 if not err.strip():
                     err = stdout.decode("utf-8", errors="replace")[:500]
@@ -150,6 +162,7 @@ class CodexProvider:
             if not result:
                 raise RuntimeError("Codex CLI 빈 응답")
 
+            self._disabled_until = 0.0
             return result
         finally:
             try:
@@ -161,4 +174,8 @@ class CodexProvider:
         path = self._find_codex()
         if not path:
             logger.debug("Codex CLI를 찾을 수 없음 (PATH, /opt/homebrew/bin 등 확인)")
-        return path is not None
+            return False
+        if self._disabled_until > time.monotonic():
+            logger.debug("Codex CLI 일시 비활성화 상태 (최근 호출 실패)")
+            return False
+        return True

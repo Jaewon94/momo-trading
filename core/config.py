@@ -2,6 +2,16 @@ from loguru import logger
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+DEFAULT_LLM_MODEL = "DEFAULT"
+
+
+def normalize_llm_model_value(value: str | None) -> str:
+    text = (value or "").strip()
+    if not text or text.upper() == DEFAULT_LLM_MODEL:
+        return DEFAULT_LLM_MODEL
+    return text
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_ignore_empty=True)
 
@@ -45,18 +55,21 @@ class Settings(BaseSettings):
     LLM_PROVIDER_TIER2: str = ""  # 비어있으면 LLM_PROVIDER 사용
     LLM_FALLBACK_PROVIDER_TIER1: str = ""  # CLAUDE_CODE | CODEX | 빈값
     LLM_FALLBACK_PROVIDER_TIER2: str = ""  # CLAUDE_CODE | CODEX | 빈값
+    LLM_FALLBACK_MODEL_TIER1: str = DEFAULT_LLM_MODEL
+    LLM_FALLBACK_MODEL_TIER2: str = DEFAULT_LLM_MODEL
 
     # Claude Code CLI
-    CLAUDE_CODE_MODEL: str = "sonnet"  # 기본 모델 (Tier별 미지정 시 사용)
-    CLAUDE_CODE_MODEL_TIER1: str = "haiku"  # Tier1 (스캔/분석): 빠른 모델
-    CLAUDE_CODE_MODEL_TIER2: str = "sonnet"  # Tier2 (최종 검토): 정확한 모델
+    CLAUDE_CODE_MODEL: str = DEFAULT_LLM_MODEL  # 기본값: CLI vendor default
+    CLAUDE_CODE_MODEL_TIER1: str = DEFAULT_LLM_MODEL  # Tier1 override
+    CLAUDE_CODE_MODEL_TIER2: str = DEFAULT_LLM_MODEL  # Tier2 override
     CLAUDE_CODE_PATH: str = ""  # 비어있으면 자동 탐색 (예: /opt/homebrew/bin/claude)
 
     # Codex CLI
-    CODEX_MODEL: str = "gpt-5-codex"  # 기본 모델 (Tier별 미지정 시 사용)
-    CODEX_MODEL_TIER1: str = "gpt-5-codex"  # Tier1 (스캔/분석)
-    CODEX_MODEL_TIER2: str = "gpt-5-codex"  # Tier2 (최종 검토)
+    CODEX_MODEL: str = DEFAULT_LLM_MODEL  # 기본값: CLI vendor default
+    CODEX_MODEL_TIER1: str = DEFAULT_LLM_MODEL  # Tier1 override
+    CODEX_MODEL_TIER2: str = DEFAULT_LLM_MODEL  # Tier2 override
     CODEX_PATH: str = ""  # 비어있으면 자동 탐색 (예: /opt/homebrew/bin/codex)
+    MANUAL_LLM_PROVIDER: str = "AUTOMATIC"  # AUTOMATIC | CLAUDE_CODE | CODEX
 
     # === AI Agent ===
     AUTONOMY_MODE: str = "AUTONOMOUS"  # AUTONOMOUS / SEMI_AUTO

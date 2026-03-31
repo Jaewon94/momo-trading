@@ -28,6 +28,16 @@ class FakeProvider:
         return self._result
 
 
+class FakeFailingProvider(FakeProvider):
+    def __init__(self, provider: LLMProvider) -> None:
+        super().__init__(provider, available=True, result="")
+
+    async def generate(self, prompt: str, system_prompt: str = "") -> str:
+        self.calls.append((prompt, system_prompt))
+        self._available = False
+        raise RuntimeError("provider failed")
+
+
 @pytest.mark.asyncio
 async def test_llm_factory_uses_configured_primary_provider(monkeypatch) -> None:
     monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_PROVIDER_TIER1", "CODEX")
@@ -53,6 +63,7 @@ async def test_llm_factory_uses_configured_primary_provider(monkeypatch) -> None
 async def test_llm_factory_falls_back_when_primary_unavailable(monkeypatch) -> None:
     monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_PROVIDER_TIER1", "CODEX")
     monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_FALLBACK_PROVIDER_TIER1", "CLAUDE_CODE")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_FALLBACK_MODEL_TIER1", "DEFAULT")
 
     factory = LLMFactory()
     codex = FakeProvider(LLMProvider.CODEX, available=False, result="codex-result")
@@ -75,15 +86,143 @@ def test_llm_factory_reports_status_for_both_providers(monkeypatch) -> None:
     monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_PROVIDER_TIER2", "CLAUDE_CODE")
     monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_FALLBACK_PROVIDER_TIER1", "CLAUDE_CODE")
     monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_FALLBACK_PROVIDER_TIER2", "CODEX")
-    monkeypatch.setattr("analysis.llm.llm_factory.settings.CLAUDE_CODE_MODEL_TIER1", "haiku")
-    monkeypatch.setattr("analysis.llm.llm_factory.settings.CLAUDE_CODE_MODEL_TIER2", "sonnet")
-    monkeypatch.setattr("analysis.llm.llm_factory.settings.CODEX_MODEL_TIER1", "gpt-5-codex")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_FALLBACK_MODEL_TIER1", "claude-opus-4-6")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_FALLBACK_MODEL_TIER2", "DEFAULT")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.CLAUDE_CODE_MODEL_TIER1", "DEFAULT")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.CLAUDE_CODE_MODEL_TIER2", "claude-sonnet-4-6")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.CODEX_MODEL_TIER1", "DEFAULT")
     monkeypatch.setattr("analysis.llm.llm_factory.settings.CODEX_MODEL_TIER2", "gpt-5-codex")
 
     status = LLMFactory().get_llm_status()
 
     assert status["tier1"]["provider"] == "CODEX"
     assert status["tier1"]["fallback_provider"] == "CLAUDE_CODE"
+    assert status["tier1"]["fallback_model"] == "claude-opus-4-6"
+    assert status["tier1"]["fallback_model_mode"] == "explicit"
+    assert status["tier1"]["model"] == "DEFAULT"
+    assert status["tier1"]["model_mode"] == "default"
     assert status["tier2"]["provider"] == "CLAUDE_CODE"
     assert status["tier2"]["fallback_provider"] == "CODEX"
+    assert status["tier2"]["fallback_model"] == "DEFAULT"
+    assert status["tier2"]["fallback_model_mode"] == "default"
+    assert status["tier2"]["model"] == "claude-sonnet-4-6"
+    assert status["tier2"]["model_mode"] == "explicit"
     assert {item["id"] for item in status["available_providers"]} == {"CLAUDE_CODE", "CODEX"}
+
+
+@pytest.mark.asyncio
+async def test_llm_factory_manual_generate_uses_tier_defaults_when_automatic(monkeypatch) -> None:
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_PROVIDER_TIER1", "CODEX")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_FALLBACK_PROVIDER_TIER1", "")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.MANUAL_LLM_PROVIDER", "AUTOMATIC")
+
+    factory = LLMFactory()
+    codex = FakeProvider(LLMProvider.CODEX, available=True, result="codex-result")
+    claude = FakeProvider(LLMProvider.CLAUDE_CODE, available=True, result="claude-result")
+    factory._providers[LLMTier.TIER1] = {
+        LLMProvider.CODEX: codex,
+        LLMProvider.CLAUDE_CODE: claude,
+    }
+
+    result, provider = await factory.generate_manual("hello", default_tier=LLMTier.TIER1)
+
+    assert result == "codex-result"
+    assert provider == "CODEX"
+
+
+@pytest.mark.asyncio
+async def test_llm_factory_manual_generate_forces_claude(monkeypatch) -> None:
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.MANUAL_LLM_PROVIDER", "CLAUDE_CODE")
+
+    factory = LLMFactory()
+    codex = FakeProvider(LLMProvider.CODEX, available=True, result="codex-result")
+    claude = FakeProvider(LLMProvider.CLAUDE_CODE, available=True, result="claude-result")
+    factory._providers[LLMTier.TIER1] = {
+        LLMProvider.CODEX: codex,
+        LLMProvider.CLAUDE_CODE: claude,
+    }
+
+    result, provider = await factory.generate_manual("hello", default_tier=LLMTier.TIER1)
+
+    assert result == "claude-result"
+    assert provider == "CLAUDE_CODE"
+    assert codex.calls == []
+    assert claude.calls == [("hello", "")]
+
+
+@pytest.mark.asyncio
+async def test_llm_factory_manual_generate_forces_codex(monkeypatch) -> None:
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.MANUAL_LLM_PROVIDER", "CODEX")
+
+    factory = LLMFactory()
+    codex = FakeProvider(LLMProvider.CODEX, available=True, result="codex-result")
+    claude = FakeProvider(LLMProvider.CLAUDE_CODE, available=True, result="claude-result")
+    factory._providers[LLMTier.TIER1] = {
+        LLMProvider.CODEX: codex,
+        LLMProvider.CLAUDE_CODE: claude,
+    }
+
+    result, provider = await factory.generate_manual("hello", default_tier=LLMTier.TIER1)
+
+    assert result == "codex-result"
+    assert provider == "CODEX"
+    assert codex.calls == [("hello", "")]
+    assert claude.calls == []
+
+
+@pytest.mark.asyncio
+async def test_llm_factory_skips_retry_when_provider_becomes_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_PROVIDER_TIER1", "CODEX")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_FALLBACK_PROVIDER_TIER1", "CLAUDE_CODE")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_FALLBACK_MODEL_TIER1", "DEFAULT")
+
+    factory = LLMFactory()
+    codex = FakeFailingProvider(LLMProvider.CODEX)
+    claude = FakeProvider(LLMProvider.CLAUDE_CODE, available=True, result="claude-result")
+    factory._providers[LLMTier.TIER1] = {
+        LLMProvider.CODEX: codex,
+        LLMProvider.CLAUDE_CODE: claude,
+    }
+
+    result, provider = await factory.generate("hello", LLMTier.TIER1)
+
+    assert result == "claude-result"
+    assert provider == "CLAUDE_CODE"
+    assert codex.calls == [("hello", "")]
+    assert claude.calls == [("hello", "")]
+
+
+@pytest.mark.asyncio
+async def test_llm_factory_builds_fallback_provider_with_override_model(monkeypatch) -> None:
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_PROVIDER_TIER1", "CODEX")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_FALLBACK_PROVIDER_TIER1", "CLAUDE_CODE")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_FALLBACK_MODEL_TIER1", "claude-opus-4-6")
+
+    factory = LLMFactory()
+    codex = FakeProvider(LLMProvider.CODEX, available=False, result="codex-result")
+    claude_default = FakeProvider(LLMProvider.CLAUDE_CODE, available=True, result="claude-default")
+    claude_override = FakeProvider(LLMProvider.CLAUDE_CODE, available=True, result="claude-override")
+    claude_override.model_id = "claude-code:claude-opus-4-6"
+    factory._providers[LLMTier.TIER1] = {
+        LLMProvider.CODEX: codex,
+        LLMProvider.CLAUDE_CODE: claude_default,
+    }
+
+    captured: list[tuple[LLMTier, LLMProvider, str | None]] = []
+
+    def fake_build_provider(tier, provider_key, model_override=None):
+        captured.append((tier, provider_key, model_override))
+        if provider_key == LLMProvider.CLAUDE_CODE and model_override == "claude-opus-4-6":
+            return claude_override
+        return factory._providers[tier][provider_key]
+
+    monkeypatch.setattr(factory, "_build_provider", fake_build_provider)
+
+    result, provider = await factory.generate("hello", LLMTier.TIER1)
+
+    assert result == "claude-override"
+    assert provider == "CLAUDE_CODE"
+    assert captured == [
+        (LLMTier.TIER1, LLMProvider.CODEX, None),
+        (LLMTier.TIER1, LLMProvider.CLAUDE_CODE, "claude-opus-4-6"),
+    ]

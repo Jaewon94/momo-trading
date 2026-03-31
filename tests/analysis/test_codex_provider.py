@@ -1,10 +1,15 @@
 import os
+import time
+
+import pytest
 
 from analysis.llm.codex_provider import CodexProvider
 from trading.enums import LLMTier
 
 
 def test_codex_provider_builds_ephemeral_exec_command(monkeypatch) -> None:
+    monkeypatch.setattr("analysis.llm.codex_provider.settings.CODEX_MODEL", "gpt-5-codex")
+    monkeypatch.setattr("analysis.llm.codex_provider.settings.CODEX_MODEL_TIER1", "gpt-5-codex")
     provider = CodexProvider(LLMTier.TIER1)
     monkeypatch.setattr(provider, "_find_codex", lambda: "/opt/homebrew/bin/codex")
 
@@ -13,6 +18,8 @@ def test_codex_provider_builds_ephemeral_exec_command(monkeypatch) -> None:
     assert command == [
         "/opt/homebrew/bin/codex",
         "exec",
+        "-c",
+        f'model_reasoning_effort="medium"',
         "--ephemeral",
         "--model",
         provider._model,
@@ -22,6 +29,17 @@ def test_codex_provider_builds_ephemeral_exec_command(monkeypatch) -> None:
         "/tmp/result.txt",
         "-",
     ]
+
+
+def test_codex_provider_omits_model_flag_when_using_cli_default(monkeypatch) -> None:
+    monkeypatch.setattr("analysis.llm.codex_provider.settings.CODEX_MODEL", "DEFAULT")
+    monkeypatch.setattr("analysis.llm.codex_provider.settings.CODEX_MODEL_TIER1", "DEFAULT")
+    provider = CodexProvider(LLMTier.TIER1)
+    monkeypatch.setattr(provider, "_find_codex", lambda: "/opt/homebrew/bin/codex")
+
+    command = provider._build_command("/tmp/result.txt")
+
+    assert "--model" not in command
 
 
 def test_codex_provider_clean_env_removes_nested_cli_state(monkeypatch) -> None:
@@ -43,3 +61,12 @@ def test_codex_provider_clean_env_removes_nested_cli_state(monkeypatch) -> None:
     assert "CODEX_SANDBOX_NETWORK_DISABLED" not in env
     assert env["OTEL_SDK_DISABLED"] == "true"
     assert env["PATH"] == os.environ["PATH"]
+
+
+@pytest.mark.asyncio
+async def test_codex_provider_is_temporarily_unavailable_during_failure_cooldown(monkeypatch) -> None:
+    provider = CodexProvider(LLMTier.TIER1)
+    monkeypatch.setattr(provider, "_find_codex", lambda: "/opt/homebrew/bin/codex")
+    provider._disabled_until = time.monotonic() + 60
+
+    assert await provider.is_available() is False

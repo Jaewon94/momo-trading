@@ -7,7 +7,7 @@ LLM 다단계 분석(스크리닝 → 기술적 분석 → 최종 검토)과 실
 ## 주요 기능
 
 - **AI 에이전트 파이프라인** — 시장 스캔 → LLM 스크리닝 → 5단계 CoT 분석 → 8항목 체크리스트 최종 검토 → 자동 주문
-- **2-Tier LLM 라우팅** — Tier1(빠른 모델: Gemini Flash/Haiku)로 스캔·분석, Tier2(정밀 모델: Claude/Bedrock)로 최종 승인
+- **2-Tier LLM 라우팅** — Tier1/Tier2별로 Claude Code 또는 Codex를 선택하고, 모델 alias/버전까지 분리 설정 가능
 - **듀얼 전략** — STABLE_SHORT(대형주 보수적) + AGGRESSIVE_SHORT(모멘텀 공격적), 시장 국면별 파라미터 자동 조정
 - **실시간 이벤트 트레이딩** — KIS WebSocket → 거래량 급증 / 급등 / 급락 감지 → 즉시 분석 및 매매
 - **스윙 모드** — 오버나이트 보유, 종목별 HOLD/SELL 판단, 갭 리스크 체크
@@ -27,7 +27,7 @@ LLM 다단계 분석(스크리닝 → 기술적 분석 → 최종 검토)과 실
 | **실시간 통신** | WebSocket (KIS), SSE (Admin) |
 | **스케줄러** | APScheduler (KRX 장 시간 기준 cron) |
 | **증권사 API** | KIS MCP Server (Docker) + KIS REST API 직접 호출 |
-| **LLM** | Claude Code CLI / Google Gemini / AWS Bedrock |
+| **LLM** | Claude Code CLI / Codex CLI |
 | **로깅** | loguru |
 | **테스트** | pytest + pytest-asyncio |
 
@@ -181,6 +181,34 @@ MAX_DAILY_TRADES=30                   # 일일 최대 거래 횟수
 ```
 
 > 전체 설정 항목은 `.env.example`을 참조하세요.
+
+### LLM 모델 / 버전 설정
+
+`.env`와 Admin 대시보드 모두에서 provider와 model/version을 분리해서 설정할 수 있습니다.
+
+```bash
+LLM_PROVIDER=CLAUDE_CODE
+LLM_PROVIDER_TIER1=CODEX
+LLM_PROVIDER_TIER2=CLAUDE_CODE
+LLM_FALLBACK_PROVIDER_TIER1=CLAUDE_CODE
+LLM_FALLBACK_PROVIDER_TIER2=CODEX
+LLM_FALLBACK_MODEL_TIER1=claude-opus-4-6
+LLM_FALLBACK_MODEL_TIER2=DEFAULT
+
+CLAUDE_CODE_MODEL=DEFAULT
+CLAUDE_CODE_MODEL_TIER1=DEFAULT
+CLAUDE_CODE_MODEL_TIER2=claude-sonnet-4-6
+
+CODEX_MODEL=DEFAULT
+CODEX_MODEL_TIER1=gpt-5-codex
+CODEX_MODEL_TIER2=DEFAULT
+```
+
+- `DEFAULT`는 해당 CLI에 `--model`을 넘기지 않고 벤더 기본값을 그대로 사용합니다.
+- Claude는 `sonnet`, `opus`, `haiku` 같은 alias 또는 pinned model name을 사용할 수 있습니다.
+- Codex는 `gpt-5-codex` 같은 codex 계열이나 필요한 경우 custom model string을 직접 넣을 수 있습니다.
+- fallback provider도 별도로 모델/버전을 가질 수 있습니다.
+- Admin 대시보드는 공식 문서 기반 모델 목록을 동기화해 보여주지만, 로컬 CLI 버전/계정 권한에 따라 실제 사용 가능 여부는 달라질 수 있습니다.
 
 ### 3. 실행
 
