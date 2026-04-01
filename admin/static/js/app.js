@@ -7,7 +7,10 @@ let activityCount = 0;
 let autoScroll = true;
 let accountPollTimer = null;
 let runtimeSettings = null;
+let runtimeSystemStatus = null;
+let llmUsageSnapshot = null;
 let llmCatalog = null;
+let runtimeControlPending = false;
 
 // Stock card tracking: key = "cycleId:symbol" → { element, headerEl, bodyEl, stepsEl, activities[], outcome }
 let stockCards = {};
@@ -26,6 +29,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadSettings();
   loadLLMCatalog();
   loadSystemStatus();
+  loadLLMUsage();
   loadReportList();
   loadAccountInfo();
   loadLLMStatus();
@@ -33,6 +37,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadTodayActivities();
   initSidebarSections();
   setInterval(loadSystemStatus, 15000);
+  setInterval(loadLLMUsage, 60000);
   accountPollTimer = setInterval(loadAccountInfo, 30000);
 });
 
@@ -1060,6 +1065,7 @@ async function loadSettings() {
     renderTierModelSelectors();
     updateBadge('badge-trading', s.TRADING_ENABLED ? '매매:ON' : '매매:OFF', s.TRADING_ENABLED ? 'green' : 'red');
     updateBadge('badge-mode', s.AUTONOMY_MODE, 'purple');
+    renderRuntimeControls();
   } catch (err) {
     console.error('Settings load error:', err);
   }
@@ -1067,16 +1073,156 @@ async function loadSettings() {
 
 async function updateSetting(key, value) {
   try {
-    await fetch(`${API}/settings`, {
+    const resp = await fetch(`${API}/settings`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ [key]: value }),
     });
-    loadSettings();
-    loadSystemStatus();
-    loadLLMStatus();
+    if (!resp.ok) {
+      throw new Error(`${key} 저장 실패`);
+    }
+    await Promise.all([
+      loadSettings(),
+      loadSystemStatus(),
+      loadLLMStatus(),
+    ]);
+    return true;
   } catch (err) {
     console.error('Setting update error:', err);
+    setStatus('error', `설정 변경 실패: ${err.message}`);
+    return false;
+  }
+}
+
+async function refreshRuntimePanels() {
+  await Promise.all([
+    loadSettings(),
+    loadSystemStatus(),
+    loadLLMStatus(),
+    loadLLMUsage(),
+  ]);
+}
+
+function setControlButtonState(id, { active = false, disabled = false, tone = 'blue' } = {}) {
+  const el = document.getElementById(id);
+  if (!el) return;
+
+  const activeClasses = {
+    green: 'border-green-500 bg-green-600/20 text-green-200',
+    red: 'border-red-500 bg-red-600/20 text-red-200',
+    yellow: 'border-yellow-500 bg-yellow-600/20 text-yellow-200',
+    blue: 'border-blue-500 bg-blue-600/20 text-blue-200',
+    purple: 'border-purple-500 bg-purple-600/20 text-purple-200',
+  };
+  const inactiveClasses = 'border-gray-700 bg-dark-800 text-gray-300 hover:border-gray-500 hover:text-gray-100';
+  const disabledClasses = 'opacity-50 cursor-not-allowed';
+  const enabledClasses = 'cursor-pointer';
+
+  el.disabled = disabled;
+  el.className = `rounded-md border px-2 py-1.5 text-xs transition ${active ? (activeClasses[tone] || activeClasses.blue) : inactiveClasses} ${disabled ? disabledClasses : enabledClasses}`;
+}
+
+function renderRuntimeControls() {
+  const summaryEl = document.getElementById('runtime-control-summary');
+  if (!summaryEl) return;
+
+  const tradingEnabled = runtimeSystemStatus?.trading_enabled ?? runtimeSettings?.TRADING_ENABLED ?? false;
+  const autonomyMode = runtimeSettings?.AUTONOMY_MODE || 'SEMI_AUTO';
+  const schedulerRunning = runtimeSystemStatus?.scheduler_running ?? false;
+  const schedulerEnabled = runtimeSettings?.SCHEDULER_ENABLED ?? schedulerRunning;
+  const agentRunning = runtimeSystemStatus?.agent_running ?? false;
+
+  const schedulerMismatch = schedulerEnabled !== schedulerRunning
+    ? `<div class="text-yellow-300">설정은 ${schedulerEnabled ? '활성' : '비활성'}이지만 현재 실행은 ${schedulerRunning ? '동작' : '중지'} 상태입니다.</div>`
+    : '';
+
+  summaryEl.innerHTML = `
+    <div>실행 상태: 에이전트 <span class="${agentRunning ? 'text-green-300' : 'text-yellow-300'}">${agentRunning ? '동작' : '중지'}</span> · 스케줄러 <span class="${schedulerRunning ? 'text-green-300' : 'text-yellow-300'}">${schedulerRunning ? '동작' : '중지'}</span></div>
+    <div>주문 설정: <span class="${tradingEnabled ? 'text-green-300' : 'text-red-300'}">${tradingEnabled ? 'ON' : 'OFF'}</span> · ${escapeHtml(autonomyMode)}</div>
+    <div>스케줄러 설정: ${schedulerEnabled ? '활성' : '비활성'}</div>
+    ${schedulerMismatch}
+    ${runtimeControlPending ? '<div class="text-blue-300">변경 적용 중...</div>' : ''}
+  `;
+
+  setControlButtonState('runtime-trading-on', {
+    active: tradingEnabled,
+    disabled: runtimeControlPending || tradingEnabled,
+    tone: 'green',
+  });
+  setControlButtonState('runtime-trading-off', {
+    active: !tradingEnabled,
+    disabled: runtimeControlPending || !tradingEnabled,
+    tone: 'red',
+  });
+  setControlButtonState('runtime-mode-semi', {
+    active: autonomyMode === 'SEMI_AUTO',
+    disabled: runtimeControlPending || autonomyMode === 'SEMI_AUTO',
+    tone: 'blue',
+  });
+  setControlButtonState('runtime-mode-auto', {
+    active: autonomyMode === 'AUTONOMOUS',
+    disabled: runtimeControlPending || autonomyMode === 'AUTONOMOUS',
+    tone: 'purple',
+  });
+  setControlButtonState('runtime-scheduler-start', {
+    active: schedulerRunning,
+    disabled: runtimeControlPending || schedulerRunning,
+    tone: 'green',
+  });
+  setControlButtonState('runtime-scheduler-stop', {
+    active: !schedulerRunning,
+    disabled: runtimeControlPending || !schedulerRunning,
+    tone: 'yellow',
+  });
+}
+
+async function setTradingEnabled(enabled) {
+  if (runtimeControlPending) return;
+  runtimeControlPending = true;
+  renderRuntimeControls();
+  try {
+    const ok = await updateSetting('TRADING_ENABLED', enabled);
+    if (ok) setStatus('runtime', `매매 ${enabled ? 'ON' : 'OFF'} 적용`);
+  } finally {
+    runtimeControlPending = false;
+    renderRuntimeControls();
+  }
+}
+
+async function setAutonomyMode(mode) {
+  if (runtimeControlPending) return;
+  runtimeControlPending = true;
+  renderRuntimeControls();
+  try {
+    const ok = await updateSetting('AUTONOMY_MODE', mode);
+    if (ok) setStatus('runtime', `운영 모드 ${mode} 적용`);
+  } finally {
+    runtimeControlPending = false;
+    renderRuntimeControls();
+  }
+}
+
+async function setSchedulerRunning(shouldRun) {
+  if (runtimeControlPending) return;
+  runtimeControlPending = true;
+  renderRuntimeControls();
+  try {
+    const endpoint = shouldRun ? 'start' : 'stop';
+    const resp = await fetch(`${API}/scheduler/${endpoint}`, { method: 'POST' });
+    if (!resp.ok) {
+      throw new Error(`스케줄러 ${shouldRun ? '시작' : '중지'} 실패`);
+    }
+    await Promise.all([
+      loadSettings(),
+      loadSystemStatus(),
+    ]);
+    setStatus('runtime', `스케줄러 ${shouldRun ? '시작' : '중지'} 완료`);
+  } catch (err) {
+    console.error('Scheduler control error:', err);
+    setStatus('error', err.message);
+  } finally {
+    runtimeControlPending = false;
+    renderRuntimeControls();
   }
 }
 
@@ -1282,6 +1428,28 @@ async function loadLLMStatus() {
   }
 }
 
+async function loadLLMUsage() {
+  const panelEl = document.getElementById('llm-usage-panel');
+  if (panelEl && !llmUsageSnapshot) {
+    panelEl.innerHTML = '<div class="text-gray-500">CLI 상태를 확인하는 중...</div>';
+  }
+
+  try {
+    const resp = await fetch(`${API}/llm/usage`);
+    if (!resp.ok) {
+      throw new Error('LLM 사용량 조회 실패');
+    }
+    const json = await resp.json();
+    llmUsageSnapshot = json.data;
+    renderLLMUsage();
+  } catch (err) {
+    console.error('LLM usage error:', err);
+    if (panelEl) {
+      panelEl.innerHTML = `<div class="text-red-400">조회 실패: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+}
+
 // ── System Status ──
 async function loadSystemStatus() {
   try {
@@ -1289,6 +1457,7 @@ async function loadSystemStatus() {
     const json = await resp.json();
     const s = json.data;
     if (!s) return;
+    runtimeSystemStatus = s;
     updateBadge('badge-trading', s.trading_enabled ? '매매:ON' : '매매:OFF', s.trading_enabled ? 'green' : 'red');
     updateBadge('badge-mcp', s.mcp_connected ? 'MCP:✓' : 'MCP:✗', s.mcp_connected ? 'green' : 'red');
     const statusEl = document.getElementById('sys-status');
@@ -1315,6 +1484,7 @@ async function loadSystemStatus() {
       </div>
       ${s.last_cycle_time ? `<div class="text-gray-600">마지막: ${formatTime(s.last_cycle_time)}</div>` : ''}
       <div class="text-gray-600">SSE: ${s.sse_clients}명</div>`;
+    renderRuntimeControls();
     const triggerBtn = document.querySelector('[onclick="triggerCycle()"]');
     if (triggerBtn) {
       triggerBtn.textContent = s.market_open ? '▶ 매매 사이클 실행' : '▶ 장마감 리뷰 실행';
@@ -1394,6 +1564,106 @@ function formatDateTime(ts) {
       hour12: false,
     });
   } catch { return ts; }
+}
+
+function formatInteger(value) {
+  const numeric = Number(value || 0);
+  return numeric.toLocaleString('ko-KR');
+}
+
+function formatUsd(value) {
+  const numeric = Number(value || 0);
+  return `$${numeric.toFixed(2)}`;
+}
+
+function renderProviderLinks(links) {
+  if (!links.length) return '';
+  return `<div class="mt-2 flex flex-wrap gap-2">${links.map((link) => (
+    `<a href="${escapeHtml(link.url)}" target="_blank" rel="noreferrer" class="text-[11px] text-blue-300 hover:text-blue-200 underline underline-offset-2">${escapeHtml(link.label)}</a>`
+  )).join('')}</div>`;
+}
+
+function renderClaudeUsageCard(claude) {
+  const authLabel = claude?.auth?.logged_in
+    ? `로그인됨${claude.auth.auth_method ? ` (${claude.auth.auth_method})` : ''}`
+    : '로그인 확인 필요';
+  const authTone = claude?.auth?.logged_in ? 'text-green-300' : 'text-yellow-300';
+  const historical = claude?.historical_usage;
+  const appUsage = claude?.app_usage;
+  const topModels = (historical?.top_models || []).slice(0, 2).map((item) => item.model).filter(Boolean);
+  const links = [
+    { label: 'Claude status line', url: claude?.official?.docs_url || '' },
+    { label: 'Claude 사용량 한도', url: claude?.official?.usage_limit_docs_url || '' },
+  ].filter((item) => item.url);
+
+  return `
+    <div class="rounded-md border border-purple-900/60 bg-purple-950/20 p-2">
+      <div class="flex items-center justify-between gap-2">
+        <div class="text-gray-100 font-medium">Claude Code</div>
+        <div class="text-[11px] ${claude?.available ? 'text-green-300' : 'text-red-300'}">${claude?.available ? 'CLI 감지' : 'CLI 없음'}</div>
+      </div>
+      <div class="mt-1 ${authTone}">${escapeHtml(authLabel)}</div>
+      <div class="mt-1 text-gray-400">공식 지원: 5시간/7일 사용률, 리셋 시각, 컨텍스트 잔량</div>
+      <div class="mt-1 text-yellow-200">${escapeHtml(claude?.official?.availability_reason || '실시간 잔여 quota는 현재 미수집')}</div>
+      <div class="mt-2 text-gray-400">
+        앱 누적 호출 ${formatInteger(appUsage?.total_calls)}회 · 입력 ${formatInteger(appUsage?.total_input_tokens)} · 출력 ${formatInteger(appUsage?.total_output_tokens)}
+      </div>
+      <div class="text-gray-500">앱 누적 비용 ${formatUsd(appUsage?.total_cost_usd)}</div>
+      ${historical?.available ? `
+        <div class="mt-2 text-gray-400">로컬 히스토리 세션 ${formatInteger(historical.total_sessions)}회 · 메시지 ${formatInteger(historical.total_messages)}건</div>
+        <div class="text-gray-500">최근 모델: ${topModels.length ? escapeHtml(topModels.join(', ')) : '기록 없음'}</div>
+      ` : '<div class="mt-2 text-gray-500">로컬 stats-cache가 없어 히스토리 사용량은 비어 있습니다.</div>'}
+      ${renderProviderLinks(links)}
+    </div>
+  `;
+}
+
+function renderCodexUsageCard(codex) {
+  const authBits = [];
+  if (codex?.auth?.logged_in) {
+    authBits.push('로그인됨');
+  } else {
+    authBits.push('로그인 확인 필요');
+  }
+  if (codex?.auth?.auth_mode) {
+    authBits.push(codex.auth.auth_mode);
+  }
+  const links = [
+    { label: 'Codex CLI 문서', url: codex?.official?.cli_docs_url || '' },
+    { label: 'Codex 사용량 정책', url: codex?.official?.docs_url || '' },
+  ].filter((item) => item.url);
+
+  return `
+    <div class="rounded-md border border-blue-900/60 bg-blue-950/20 p-2">
+      <div class="flex items-center justify-between gap-2">
+        <div class="text-gray-100 font-medium">Codex</div>
+        <div class="text-[11px] ${codex?.available ? 'text-green-300' : 'text-red-300'}">${codex?.available ? 'CLI 감지' : 'CLI 없음'}</div>
+      </div>
+      <div class="mt-1 ${codex?.auth?.logged_in ? 'text-green-300' : 'text-yellow-300'}">${escapeHtml(authBits.join(' · '))}</div>
+      <div class="mt-1 text-gray-400">공식 범위: 로컬 로그인 상태 확인 가능</div>
+      <div class="mt-1 text-yellow-200">${escapeHtml(codex?.official?.availability_reason || '남은 사용량은 공식 비노출')}</div>
+      <div class="mt-2 text-gray-500">남은 사용량 퍼센트/시간은 현재 Codex 로컬 CLI에서 공식적으로 제공되지 않습니다.</div>
+      ${codex?.auth?.raw_status ? `<div class="mt-1 text-gray-600 break-all">${escapeHtml(codex.auth.raw_status)}</div>` : ''}
+      ${renderProviderLinks(links)}
+    </div>
+  `;
+}
+
+function renderLLMUsage() {
+  const panelEl = document.getElementById('llm-usage-panel');
+  if (!panelEl) return;
+  if (!llmUsageSnapshot) {
+    panelEl.innerHTML = '<div class="text-gray-500">사용량 정보가 없습니다.</div>';
+    return;
+  }
+
+  panelEl.innerHTML = `
+    <div class="space-y-2">
+      ${renderClaudeUsageCard(llmUsageSnapshot.claude_code)}
+      ${renderCodexUsageCard(llmUsageSnapshot.codex)}
+      <div class="text-[11px] text-gray-600">마지막 갱신: ${formatDateTime(llmUsageSnapshot.updated_at)}</div>
+    </div>
+  `;
 }
 
 function formatDetail(detail) {

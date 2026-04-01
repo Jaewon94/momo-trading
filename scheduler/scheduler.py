@@ -28,14 +28,23 @@ class TradingScheduler:
     """KRX 장 시간 기반 자동 운영 스케줄러"""
 
     def __init__(self):
-        self.scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
+        self.scheduler = self._build_scheduler()
         self._running = False
 
+    @staticmethod
+    def _build_scheduler() -> AsyncIOScheduler:
+        return AsyncIOScheduler(timezone="Asia/Seoul")
+
     async def start(self) -> None:
+        if self._running:
+            logger.debug("스케줄러 이미 실행 중")
+            return
+
         if not settings.SCHEDULER_ENABLED:
             logger.debug("스케줄러 비활성화 (SCHEDULER_ENABLED=false)")
             return
 
+        self.scheduler = self._build_scheduler()
         self._setup_jobs()
         self.scheduler.start()
         self._running = True
@@ -48,6 +57,7 @@ class TradingScheduler:
         if self._running:
             self.scheduler.shutdown(wait=False)
             self._running = False
+            self.scheduler = self._build_scheduler()
             logger.info("스케줄러 중지")
 
     def _setup_jobs(self) -> None:

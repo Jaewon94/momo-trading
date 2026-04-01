@@ -20,10 +20,12 @@ from schemas.common import SuccessResponse
 from schemas.daily_report_schema import DailyReportResponse
 from schemas.qa_schema import QARequest, QAResponse
 from services.activity_logger import activity_logger
+from services.llm_usage_service import llm_usage_service
 from trading.account_manager import account_manager
 from trading.broker_factory import get_broker_adapter
 from trading.enums import ActivityPhase, ActivityType, LLMTier
 from trading.mcp_client import mcp_client
+from scheduler.scheduler import trading_scheduler
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -325,33 +327,11 @@ async def update_settings(updates: dict):
 # ── Claude Code 사용량 ──
 @router.get("/llm/usage")
 async def get_llm_usage():
-    """Claude Code 구독 사용량 (stats-cache.json)"""
-    import json
-    from pathlib import Path
-
-    stats_path = Path.home() / ".claude" / "stats-cache.json"
-    if not stats_path.exists():
-        return SuccessResponse(data=None, message="stats-cache.json 없음")
-
+    """Claude Code / Codex 사용량 및 로그인 상태"""
     try:
-        data = json.loads(stats_path.read_text())
-
-        # 앱의 실시간 사용량도 함께 반환
-        from analysis.llm.claude_code_provider import ClaudeCodeProvider
-        app_usage = ClaudeCodeProvider.get_usage_snapshot()
-
-        return SuccessResponse(data={
-            "total_sessions": data.get("totalSessions", 0),
-            "total_messages": data.get("totalMessages", 0),
-            "first_session_date": data.get("firstSessionDate"),
-            "last_computed_date": data.get("lastComputedDate"),
-            "model_usage": data.get("modelUsage", {}),
-            "daily_activity": data.get("dailyActivity", []),
-            "daily_model_tokens": data.get("dailyModelTokens", []),
-            "app_usage": app_usage,
-        })
+        return SuccessResponse(data=await llm_usage_service.get_snapshot())
     except Exception as e:
-        logger.error("Claude 사용량 조회 실패: {}", str(e))
+        logger.error("LLM 사용량 조회 실패: {}", str(e))
         return SuccessResponse(data=None, message=f"조회 실패: {str(e)[:100]}")
 
 
@@ -376,7 +356,6 @@ async def get_llm_catalog(
 async def get_system_status():
     """시스템 전체 상태"""
     from agent.trading_agent import trading_agent
-    from scheduler.scheduler import trading_scheduler
 
     from scheduler.market_calendar import market_calendar
 
@@ -393,6 +372,38 @@ async def get_system_status():
         "market_holiday": market_calendar.get_holiday_name(),
         "next_market_open": market_calendar.next_krx_open().strftime("%m/%d %H:%M"),
     })
+
+
+@router.post("/scheduler/start")
+async def start_scheduler():
+    """런타임 스케줄러 시작"""
+    settings.SCHEDULER_ENABLED = True
+    await trading_scheduler.start()
+    await activity_logger.log(
+        ActivityType.EVENT, ActivityPhase.PROGRESS,
+        "⏯️ 스케줄러 시작 요청",
+        detail={"enabled": settings.SCHEDULER_ENABLED, "running": trading_scheduler.is_running},
+    )
+    return SuccessResponse(
+        data={"enabled": settings.SCHEDULER_ENABLED, "running": trading_scheduler.is_running},
+        message="스케줄러 시작",
+    )
+
+
+@router.post("/scheduler/stop")
+async def stop_scheduler():
+    """런타임 스케줄러 중지"""
+    settings.SCHEDULER_ENABLED = False
+    await trading_scheduler.stop()
+    await activity_logger.log(
+        ActivityType.EVENT, ActivityPhase.PROGRESS,
+        "⏸️ 스케줄러 중지 요청",
+        detail={"enabled": settings.SCHEDULER_ENABLED, "running": trading_scheduler.is_running},
+    )
+    return SuccessResponse(
+        data={"enabled": settings.SCHEDULER_ENABLED, "running": trading_scheduler.is_running},
+        message="스케줄러 중지",
+    )
 
 
 # ── 수동 사이클 트리거 ──

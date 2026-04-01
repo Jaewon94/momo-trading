@@ -323,8 +323,77 @@
             <span class="sidebar-section-arrow" id="arrow-system">&#x25BC;</span>
           </div>
           <div class="sidebar-section-body open" id="body-system">
-            <div class="px-3 pb-2">
+            <div class="px-3 pb-2 space-y-3">
               <div id="sys-status" class="text-xs space-y-1"></div>
+
+              <div class="rounded-lg border border-gray-700 bg-dark-900/70 p-2">
+                <div class="flex items-center justify-between">
+                  <div class="text-xs font-medium text-gray-300">운영 제어</div>
+                  <button onclick="refreshRuntimePanels()"
+                    class="text-[11px] text-gray-400 hover:text-gray-200 transition">
+                    새로고침
+                  </button>
+                </div>
+                <div id="runtime-control-summary" class="mt-2 text-xs space-y-1 text-gray-400">
+                  상태 불러오는 중...
+                </div>
+                <div class="mt-3 space-y-2">
+                  <div>
+                    <div class="text-[11px] text-gray-500 mb-1">매매</div>
+                    <div class="grid grid-cols-2 gap-2">
+                      <button id="runtime-trading-on" onclick="setTradingEnabled(true)"
+                        class="rounded-md border border-gray-700 px-2 py-1.5 text-xs text-gray-300 transition">
+                        매매 ON
+                      </button>
+                      <button id="runtime-trading-off" onclick="setTradingEnabled(false)"
+                        class="rounded-md border border-gray-700 px-2 py-1.5 text-xs text-gray-300 transition">
+                        매매 OFF
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div class="text-[11px] text-gray-500 mb-1">모드</div>
+                    <div class="grid grid-cols-2 gap-2">
+                      <button id="runtime-mode-semi" onclick="setAutonomyMode('SEMI_AUTO')"
+                        class="rounded-md border border-gray-700 px-2 py-1.5 text-xs text-gray-300 transition">
+                        SEMI_AUTO
+                      </button>
+                      <button id="runtime-mode-auto" onclick="setAutonomyMode('AUTONOMOUS')"
+                        class="rounded-md border border-gray-700 px-2 py-1.5 text-xs text-gray-300 transition">
+                        AUTONOMOUS
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div class="text-[11px] text-gray-500 mb-1">스케줄러</div>
+                    <div class="grid grid-cols-2 gap-2">
+                      <button id="runtime-scheduler-start" onclick="setSchedulerRunning(true)"
+                        class="rounded-md border border-gray-700 px-2 py-1.5 text-xs text-gray-300 transition">
+                        시작
+                      </button>
+                      <button id="runtime-scheduler-stop" onclick="setSchedulerRunning(false)"
+                        class="rounded-md border border-gray-700 px-2 py-1.5 text-xs text-gray-300 transition">
+                        중지
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="rounded-lg border border-gray-700 bg-dark-900/70 p-2">
+                <div class="flex items-center justify-between">
+                  <div class="text-xs font-medium text-gray-300">LLM 사용량</div>
+                  <button onclick="loadLLMUsage()"
+                    class="text-[11px] text-gray-400 hover:text-gray-200 transition">
+                    새로고침
+                  </button>
+                </div>
+                <div id="llm-usage-panel" class="mt-2 text-xs text-gray-400">
+                  불러오는 중...
+                </div>
+              </div>
             </div>
           </div>
         </div>
