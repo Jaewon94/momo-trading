@@ -12,7 +12,7 @@
 set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
-VENV_DIR="$APP_DIR/venv"
+VENV_DIR="$APP_DIR/.venv313"
 PID_FILE="$APP_DIR/.momo.pid"
 LOG_FILE="$APP_DIR/logs/momo-trading.log"
 HOST="${MOMO_HOST:-0.0.0.0}"

@@ -20,6 +20,10 @@ def test_codex_provider_builds_ephemeral_exec_command(monkeypatch) -> None:
         "exec",
         "-c",
         f'model_reasoning_effort="medium"',
+        "-c",
+        "mcp_servers={}",
+        "-c",
+        "features.multi_agent=false",
         "--ephemeral",
         "--model",
         provider._model,
@@ -70,3 +74,48 @@ async def test_codex_provider_is_temporarily_unavailable_during_failure_cooldown
     provider._disabled_until = time.monotonic() + 60
 
     assert await provider.is_available() is False
+
+
+@pytest.mark.asyncio
+async def test_codex_provider_timeout_enters_failure_cooldown(monkeypatch) -> None:
+    provider = CodexProvider(LLMTier.TIER1)
+    monkeypatch.setattr(provider, "_find_codex", lambda: "/opt/homebrew/bin/codex")
+
+    class FakeProc:
+        def __init__(self) -> None:
+            self.returncode = None
+            self.terminated = False
+            self.killed = False
+            self.wait_calls = 0
+
+        async def communicate(self, input=None):
+            return b"", b""
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def kill(self) -> None:
+            self.killed = True
+
+        async def wait(self) -> None:
+            self.wait_calls += 1
+            self.returncode = -15
+
+    proc = FakeProc()
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        return proc
+
+    async def fake_wait_for(awaitable, timeout):
+        awaitable.close()
+        raise TimeoutError
+
+    monkeypatch.setattr("analysis.llm.codex_provider.asyncio.create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("analysis.llm.codex_provider.asyncio.wait_for", fake_wait_for)
+
+    with pytest.raises(RuntimeError, match="timeout"):
+        await provider.generate("hello")
+
+    assert proc.terminated is True
+    assert proc.wait_calls == 1
+    assert provider._disabled_until > time.monotonic()

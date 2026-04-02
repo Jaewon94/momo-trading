@@ -19,6 +19,8 @@ class CodexProvider:
     """
 
     _FAILURE_COOLDOWN_SEC = 300
+    _TIER1_TIMEOUT_SEC = 60.0
+    _TIER2_TIMEOUT_SEC = 120.0
 
     def __init__(self, tier: LLMTier = LLMTier.TIER1, model_override: str | None = None):
         self._tier = tier
@@ -92,11 +94,16 @@ class CodexProvider:
             raise RuntimeError("codex CLI를 찾을 수 없습니다 (PATH 확인)")
         effort = "medium" if self._tier == LLMTier.TIER1 else "high"
 
+        config_overrides = [
+            f'model_reasoning_effort="{effort}"',
+            "mcp_servers={}",
+            "features.multi_agent=false",
+        ]
+
         return [
             codex,
             "exec",
-            "-c",
-            f'model_reasoning_effort="{effort}"',
+            *[item for override in config_overrides for item in ("-c", override)],
             "--ephemeral",
             *([] if not self._model else ["--model", self._model]),
             "--sandbox",
@@ -105,6 +112,19 @@ class CodexProvider:
             output_path,
             "-",
         ]
+
+    def _timeout_sec(self) -> float:
+        return self._TIER1_TIMEOUT_SEC if self._tier == LLMTier.TIER1 else self._TIER2_TIMEOUT_SEC
+
+    async def _terminate_process(self, proc) -> None:
+        if proc.returncode is not None:
+            return
+        proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
 
     @staticmethod
     def _clean_env() -> dict[str, str]:
@@ -143,10 +163,16 @@ class CodexProvider:
                 stderr=asyncio.subprocess.PIPE,
                 env=self._clean_env(),
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(input=full_prompt.encode("utf-8")),
-                timeout=300.0,
-            )
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(input=full_prompt.encode("utf-8")),
+                    timeout=self._timeout_sec(),
+                )
+            except asyncio.TimeoutError as exc:
+                self._disabled_until = time.monotonic() + self._FAILURE_COOLDOWN_SEC
+                await self._terminate_process(proc)
+                logger.error("Codex CLI timeout ({}s)", self._timeout_sec())
+                raise RuntimeError(f"Codex CLI timeout ({self._timeout_sec():.0f}s)") from exc
 
             if proc.returncode != 0:
                 self._disabled_until = time.monotonic() + self._FAILURE_COOLDOWN_SEC

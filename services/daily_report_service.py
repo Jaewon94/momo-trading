@@ -13,7 +13,7 @@ from repositories.daily_report_repository import DailyReportRepository
 from repositories.trade_result_repository import TradeResultRepository
 from services.activity_logger import activity_logger
 from trading.account_manager import account_manager
-from trading.enums import ActivityPhase, ActivityType
+from trading.enums import ActivityPhase, ActivityType, LLMTier
 
 DAILY_REPORT_PROMPT = """당신은 AI 트레이딩 시스템의 일일 리포트 작성자입니다.
 오늘 하루의 활동 데이터를 기반으로 다음 항목을 한국어로 작성해주세요.
@@ -53,7 +53,11 @@ DAILY_REPORT_PROMPT = """당신은 AI 트레이딩 시스템의 일일 리포트
 class DailyReportService:
     """일일 리포트 생성 서비스 (자체 세션 사용)"""
 
-    async def generate_daily_report(self, report_date: date | None = None) -> DailyReport | None:
+    async def generate_daily_report(
+        self,
+        report_date: date | None = None,
+        manual_provider_override: str | None = None,
+    ) -> DailyReport | None:
         """일일 리포트 생성"""
         from util.time_util import now_kst
         if report_date is None:
@@ -166,7 +170,11 @@ class DailyReportService:
                             activity_counts=activity_count_text or "활동 없음",
                             recent_activities=recent_summaries or "활동 없음",
                         )
-                        result_text, provider = await llm_factory.generate_tier1(prompt)
+                        result_text, provider = await llm_factory.generate_manual(
+                            prompt,
+                            default_tier=LLMTier.TIER1,
+                            manual_provider_override=manual_provider_override,
+                        )
                         parsed = self._parse_json(result_text)
 
                         if parsed:

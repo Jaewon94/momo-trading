@@ -144,13 +144,15 @@ class Settings(BaseSettings):
                 "CODEX_PATH를 설정하거나 codex CLI를 설치하세요."
             )
 
-        if not self.KIS_APP_KEY and not self.KIS_PAPER_APP_KEY:
-            logger.warning(
-                "KIS API 키 미설정: KIS_APP_KEY, KIS_PAPER_APP_KEY 모두 비어있음. "
-                "실매매/모의투자 모두 불가합니다."
-            )
+        broker_provider = self.BROKER_PROVIDER.upper()
+        if broker_provider == "KIS":
+            if not self.KIS_APP_KEY and not self.KIS_PAPER_APP_KEY:
+                logger.warning(
+                    "KIS API 키 미설정: KIS_APP_KEY, KIS_PAPER_APP_KEY 모두 비어있음. "
+                    "실매매/모의투자 모두 불가합니다."
+                )
 
-        if self.BROKER_PROVIDER.upper() == "KIWOOM":
+        if broker_provider == "KIWOOM":
             if not self.KIWOOM_APP_KEY and not self.KIWOOM_PAPER_APP_KEY:
                 logger.warning(
                     "Kiwoom API 키 미설정: KIWOOM_APP_KEY, KIWOOM_PAPER_APP_KEY 모두 비어있음. "
