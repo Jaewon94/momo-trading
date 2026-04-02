@@ -17,6 +17,7 @@ class FakeBrokerAdapter:
         self.order_status: OrderStatusInfo | None = None
         self.queried_order_ids: list[str] = []
         self.cache_invalidated = False
+        self.cancelled_order_ids: list[str] = []
 
     async def place_order(self, request: OrderRequest) -> OrderResult:
         self.requests.append(request)
@@ -25,6 +26,10 @@ class FakeBrokerAdapter:
     async def get_order_status(self, order_id: str) -> OrderStatusInfo | None:
         self.queried_order_ids.append(order_id)
         return self.order_status
+
+    async def cancel_order(self, order_id: str, market=Market.KRX) -> OrderResult:
+        self.cancelled_order_ids.append(order_id)
+        return OrderResult(success=True, order_id=order_id, message="cancelled")
 
     def invalidate_cache(self) -> None:
         self.cache_invalidated = True
@@ -443,20 +448,12 @@ async def test_decision_maker_create_pending_record_creates_trade_result(monkeyp
 
 @pytest.mark.asyncio
 async def test_decision_maker_cancel_unfilled_order_invokes_executor(monkeypatch) -> None:
-    decision_maker = DecisionMaker(
-        broker_adapter=FakeBrokerAdapter(OrderResult(success=True, order_id="ORD-CANCEL", message="ok"))
-    )
-    cancelled: list[str] = []
-
-    async def fake_cancel(order_id: str):
-        cancelled.append(order_id)
-        return SimpleNamespace(success=True, message="ok")
-
-    monkeypatch.setattr("trading.order_executor.order_executor.cancel", fake_cancel)
+    adapter = FakeBrokerAdapter(OrderResult(success=True, order_id="ORD-CANCEL", message="ok"))
+    decision_maker = DecisionMaker(broker_adapter=adapter)
 
     await decision_maker._cancel_unfilled_order("ORD-CANCEL", "005930")
 
-    assert cancelled == ["ORD-CANCEL"]
+    assert adapter.cancelled_order_ids == ["ORD-CANCEL"]
 
 
 @pytest.mark.asyncio
@@ -833,38 +830,34 @@ async def test_decision_maker_cancel_unfilled_order_returns_early_without_order_
 
 @pytest.mark.asyncio
 async def test_decision_maker_cancel_unfilled_order_swallows_failed_cancel(monkeypatch) -> None:
-    decision_maker = DecisionMaker(
-        broker_adapter=FakeBrokerAdapter(OrderResult(success=True, order_id="ORD-X", message="ok"))
-    )
-    cancelled: list[str] = []
+    adapter = FakeBrokerAdapter(OrderResult(success=True, order_id="ORD-X", message="ok"))
+    decision_maker = DecisionMaker(broker_adapter=adapter)
 
-    async def fake_cancel(order_id: str):
-        cancelled.append(order_id)
+    async def fake_cancel(order_id: str, market=Market.KRX):
+        adapter.cancelled_order_ids.append(order_id)
         return SimpleNamespace(success=False, message="already closed")
 
-    monkeypatch.setattr("trading.order_executor.order_executor.cancel", fake_cancel)
+    monkeypatch.setattr(adapter, "cancel_order", fake_cancel)
 
     await decision_maker._cancel_unfilled_order("ORD-CLOSED", "005930")
 
-    assert cancelled == ["ORD-CLOSED"]
+    assert adapter.cancelled_order_ids == ["ORD-CLOSED"]
 
 
 @pytest.mark.asyncio
 async def test_decision_maker_cancel_unfilled_order_swallows_cancel_exception(monkeypatch) -> None:
-    decision_maker = DecisionMaker(
-        broker_adapter=FakeBrokerAdapter(OrderResult(success=True, order_id="ORD-X", message="ok"))
-    )
-    cancelled: list[str] = []
+    adapter = FakeBrokerAdapter(OrderResult(success=True, order_id="ORD-X", message="ok"))
+    decision_maker = DecisionMaker(broker_adapter=adapter)
 
-    async def fake_cancel(order_id: str):
-        cancelled.append(order_id)
+    async def fake_cancel(order_id: str, market=Market.KRX):
+        adapter.cancelled_order_ids.append(order_id)
         raise RuntimeError("cancel transport error")
 
-    monkeypatch.setattr("trading.order_executor.order_executor.cancel", fake_cancel)
+    monkeypatch.setattr(adapter, "cancel_order", fake_cancel)
 
     await decision_maker._cancel_unfilled_order("ORD-ERR", "005930")
 
-    assert cancelled == ["ORD-ERR"]
+    assert adapter.cancelled_order_ids == ["ORD-ERR"]
 
 
 @pytest.mark.asyncio

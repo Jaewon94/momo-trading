@@ -1,4 +1,5 @@
 """Kiwoom 브로커 어댑터"""
+from dataclasses import dataclass
 from datetime import datetime
 
 from trading.adapters.base import (
@@ -43,6 +44,7 @@ class KiwoomBrokerAdapter(BrokerAdapter):
         self._account_client = account_client
         self._market_data_client = market_data_client
         self._order_executor = order_executor
+        self._submitted_orders: dict[str, _SubmittedOrderMeta] = {}
 
     async def get_balance(self) -> AccountBalance:
         return await self._require_account_client().get_balance()
@@ -119,7 +121,17 @@ class KiwoomBrokerAdapter(BrokerAdapter):
         return []
 
     async def place_order(self, request: OrderRequest) -> OrderResult:
-        return await self._require_order_executor().execute(request)
+        baseline_qty = await self._get_holding_quantity(request.symbol)
+        result = await self._require_order_executor().execute(request)
+        if result.success and result.order_id:
+            self._submitted_orders[str(result.order_id)] = _SubmittedOrderMeta(
+                symbol=request.symbol,
+                side=request.side.value,
+                quantity=request.quantity,
+                order_price=float(request.price or 0.0),
+                baseline_qty=baseline_qty,
+            )
+        return result
 
     async def cancel_order(
         self,
@@ -141,7 +153,34 @@ class KiwoomBrokerAdapter(BrokerAdapter):
                 remaining_qty=order.remaining_qty,
                 order_price=order.order_price,
             )
-        return None
+
+        submitted = self._submitted_orders.get(str(order_id))
+        if submitted is None:
+            return None
+
+        holding = await self._get_holding(submitted.symbol)
+        current_qty = holding.quantity if holding is not None else 0
+
+        if submitted.side == "BUY":
+            filled_qty = max(min(current_qty - submitted.baseline_qty, submitted.quantity), 0)
+        else:
+            filled_qty = max(min(submitted.baseline_qty - current_qty, submitted.quantity), 0)
+
+        if filled_qty <= 0:
+            return None
+
+        filled_price = submitted.order_price
+        if filled_price <= 0 and holding is not None:
+            filled_price = holding.avg_buy_price
+
+        return OrderStatusInfo(
+            order_id=str(order_id),
+            symbol=submitted.symbol,
+            filled_qty=filled_qty,
+            filled_price=filled_price,
+            remaining_qty=max(submitted.quantity - filled_qty, 0),
+            order_price=filled_price,
+        )
 
     def invalidate_cache(self) -> None:
         if hasattr(self._account_client, "invalidate_cache"):
@@ -161,6 +200,17 @@ class KiwoomBrokerAdapter(BrokerAdapter):
         if self._order_executor is None:
             raise RuntimeError("Kiwoom order executor가 구성되지 않았습니다")
         return self._order_executor
+
+    async def _get_holding(self, symbol: str) -> HoldingInfo | None:
+        holdings = await self.get_holdings()
+        for holding in holdings:
+            if holding.symbol == symbol:
+                return holding
+        return None
+
+    async def _get_holding_quantity(self, symbol: str) -> int:
+        holding = await self._get_holding(symbol)
+        return holding.quantity if holding is not None else 0
 
     @staticmethod
     def _normalize_candles(data: dict, time_key_field: str) -> list[Candle]:
@@ -183,3 +233,12 @@ class KiwoomBrokerAdapter(BrokerAdapter):
     def _ensure_success(success: bool, error: str | None) -> None:
         if not success:
             raise RuntimeError(error or "브로커 요청 실패")
+
+
+@dataclass(slots=True)
+class _SubmittedOrderMeta:
+    symbol: str
+    side: str
+    quantity: int
+    order_price: float
+    baseline_qty: int

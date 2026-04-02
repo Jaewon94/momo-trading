@@ -15,70 +15,49 @@ async def portfolio_sync_job() -> None:
     logger.debug("포트폴리오 정산 완료")
 
 
-async def _recover_pending_confirms() -> None:
+async def _recover_pending_confirms() -> dict[str, int | str]:
     """PENDING_CONFIRM 상태 레코드 복구 — 체결 여부 재확인"""
+    summary: dict[str, int | str] = {
+        "provider": "UNKNOWN",
+        "pending_total": 0,
+        "recovered": 0,
+        "failed": 0,
+        "skipped": 0,
+    }
     try:
         from core.database import AsyncSessionLocal
         from repositories.trade_result_repository import TradeResultRepository
-        from trading.enums import OrderConfirmStatus
-        from trading.mcp_client import mcp_client
+        from trading.enums import BrokerProvider, OrderConfirmStatus
+        from trading.broker_factory import get_broker_adapter
 
         async with AsyncSessionLocal() as session:
             async with session.begin():
                 repo = TradeResultRepository(session)
                 pending = await repo.get_pending_confirms()
+                summary["pending_total"] = len(pending)
+                adapter = get_broker_adapter()
+                summary["provider"] = adapter.provider.value
 
                 if not pending:
-                    return
+                    return summary
 
                 logger.debug("PENDING_CONFIRM 복구 대상: {}건", len(pending))
 
-                # 오늘 주문내역 한 번 조회
-                resp = await mcp_client.get_order_list()
-                orders = []
-                if resp.success and isinstance(resp.data, dict):
-                    orders = (
-                        resp.data.get("output", [])
-                        or resp.data.get("output1", [])
-                        or resp.data.get("orders", [])
-                    )
-                    if isinstance(orders, dict):
-                        orders = [orders]
-                elif resp.success and isinstance(resp.data, list):
-                    orders = resp.data
-
-                # order_id → 체결 정보 매핑
-                order_map = {}
-                for order in orders:
-                    if not isinstance(order, dict):
-                        continue
-                    odno = (
-                        order.get("odno") or order.get("ODNO")
-                        or order.get("order_id") or ""
-                    )
-                    if odno:
-                        order_map[str(odno)] = order
+                pending_orders = await adapter.get_pending_orders()
+                holdings = await adapter.get_holdings()
+                order_map = {str(order.order_id): order for order in pending_orders if order.order_id}
+                holding_map = {holding.symbol: holding for holding in holdings if holding.quantity > 0}
 
                 recovered = 0
                 failed = 0
                 for tr in pending:
                     matched = order_map.get(str(tr.order_id))
                     if matched:
-                        filled_qty = int(
-                            matched.get("tot_ccld_qty")
-                            or matched.get("filled_quantity")
-                            or matched.get("ccld_qty")
-                            or 0
-                        )
+                        filled_qty = int(getattr(matched, "filled_qty", 0) or 0)
                         if filled_qty > 0:
                             tr.status = OrderConfirmStatus.CONFIRMED.value
                             tr.quantity = filled_qty
-                            filled_price = float(
-                                matched.get("avg_prvs")
-                                or matched.get("ccld_pric")
-                                or matched.get("filled_price")
-                                or 0
-                            )
+                            filled_price = float(getattr(matched, "order_price", 0.0) or 0.0)
                             if filled_price > 0:
                                 if tr.side == "BUY":
                                     tr.entry_price = filled_price
@@ -90,16 +69,59 @@ async def _recover_pending_confirms() -> None:
                                 "PENDING 복구: {} {} {}주 → CONFIRMED",
                                 tr.stock_symbol, tr.side, filled_qty,
                             )
-                        else:
-                            tr.status = OrderConfirmStatus.CONFIRM_FAILED.value
-                            tr.notes = "CONFIRM_FAILED: 체결수량 0 (정산 시 복구)"
-                            failed += 1
-                            # 미체결 주문 취소 시도
-                            await _cancel_unfilled_order(str(tr.order_id), tr.stock_symbol)
+                            summary["recovered"] = int(summary["recovered"]) + 1
+                            continue
+                        if adapter.provider == BrokerProvider.KIWOOM:
+                            logger.warning(
+                                "PENDING 복구 보류: {} {} 주문번호={} — 키움 미체결 주문 유지",
+                                tr.stock_symbol, tr.side, tr.order_id,
+                            )
+                            summary["skipped"] = int(summary["skipped"]) + 1
+                            continue
+                    elif tr.side == "BUY":
+                        holding = holding_map.get(tr.stock_symbol)
+                        if holding is not None:
+                            inferred_qty = min(int(holding.quantity), int(tr.quantity or holding.quantity))
+                            if inferred_qty > 0:
+                                tr.status = OrderConfirmStatus.CONFIRMED.value
+                                tr.quantity = inferred_qty
+                                if tr.entry_price <= 0 and holding.avg_buy_price > 0:
+                                    tr.entry_price = float(holding.avg_buy_price)
+                                tr.notes = None
+                                recovered += 1
+                                logger.debug(
+                                    "PENDING 복구(보유수량 추론): {} {} {}주 → CONFIRMED",
+                                    tr.stock_symbol, tr.side, inferred_qty,
+                                )
+                                summary["recovered"] = int(summary["recovered"]) + 1
+                                continue
+                        if adapter.provider == BrokerProvider.KIWOOM:
+                            logger.warning(
+                                "PENDING 복구 보류: {} {} 주문번호={} — 키움 보유/미체결 매칭 없음",
+                                tr.stock_symbol, tr.side, tr.order_id,
+                            )
+                            summary["skipped"] = int(summary["skipped"]) + 1
+                            continue
+                    elif adapter.provider == BrokerProvider.KIWOOM:
+                        logger.warning(
+                            "PENDING 복구 보류: {} {} 주문번호={} — 키움 매칭 정보 부족",
+                            tr.stock_symbol, tr.side, tr.order_id,
+                        )
+                        summary["skipped"] = int(summary["skipped"]) + 1
+                        continue
+
+                    if matched:
+                        tr.status = OrderConfirmStatus.CONFIRM_FAILED.value
+                        tr.notes = "CONFIRM_FAILED: 체결수량 0 (정산 시 복구)"
+                        failed += 1
+                        summary["failed"] = int(summary["failed"]) + 1
+                        # 미체결 주문 취소 시도
+                        await _cancel_unfilled_order(str(tr.order_id), tr.stock_symbol)
                     else:
                         tr.status = OrderConfirmStatus.CONFIRM_FAILED.value
-                        tr.notes = "CONFIRM_FAILED: 주문내역에서 미발견 (정산 시 복구)"
+                        tr.notes = "CONFIRM_FAILED: 주문내역/보유종목에서 미발견 (정산 시 복구)"
                         failed += 1
+                        summary["failed"] = int(summary["failed"]) + 1
                         # 미체결 주문 취소 시도
                         await _cancel_unfilled_order(str(tr.order_id), tr.stock_symbol)
 
@@ -110,6 +132,8 @@ async def _recover_pending_confirms() -> None:
                     )
     except Exception as e:
         logger.error("PENDING_CONFIRM 복구 오류: {}", str(e))
+        summary["error"] = str(e)[:200]
+    return summary
 
 
 async def _cancel_unfilled_order(order_id: str, symbol: str) -> None:
@@ -117,8 +141,9 @@ async def _cancel_unfilled_order(order_id: str, symbol: str) -> None:
     if not order_id:
         return
     try:
-        from trading.order_executor import order_executor
-        result = await order_executor.cancel(order_id)
+        from trading.broker_factory import get_broker_adapter
+
+        result = await get_broker_adapter().cancel_order(order_id)
         if result.success:
             logger.debug("[정산] {} 미체결 주문 취소 완료: {}", symbol, order_id)
         else:

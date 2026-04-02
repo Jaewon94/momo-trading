@@ -599,6 +599,12 @@
             </div>
             <div class="sidebar-section-body open" id="body-trades">
               <div class="px-3 pb-2">
+                <div class="mb-2 flex justify-end">
+                  <button id="reconcile-pending-trades" onclick="reconcilePendingTrades()"
+                    class="rounded-md border border-yellow-700/60 bg-yellow-900/20 px-2 py-1 text-[11px] text-yellow-200 transition hover:border-yellow-600 hover:bg-yellow-900/30">
+                    확인 대기 복구
+                  </button>
+                </div>
                 <div id="today-trades-info" class="text-xs space-y-2"></div>
               </div>
             </div>

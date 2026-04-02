@@ -336,8 +336,7 @@ class DecisionMaker:
         if not order_id:
             return
         try:
-            from trading.order_executor import order_executor
-            result = await order_executor.cancel(str(order_id))
+            result = await self._broker_adapter.cancel_order(str(order_id))
             if result.success:
                 logger.debug("[{}] 미체결 주문 취소 완료: {}", symbol, order_id)
             else:

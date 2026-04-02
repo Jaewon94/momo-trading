@@ -12,6 +12,12 @@ import {
   normalizeSavedPaneLayout,
 } from './pane_layout.js';
 import { buildRuntimeControlState, getMcpBadgeState } from './runtime_state.js';
+import {
+  buildClaudeUsageCopy,
+  buildCodexAuthLabel,
+  buildCodexUsageCopy,
+} from './llm_usage_state.js';
+import { buildTradePanelState, buildTradeSummaryCounts } from './trade_state.js';
 
 const API = '/api/v1/admin';
 let currentView = 'live';
@@ -457,7 +463,7 @@ function renderPortfolioQuickStats(balance, holdings, pendingOrders, trades) {
   const cashRatio = totalAsset > 0 ? `${((cash / totalAsset) * 100).toFixed(1)}%` : '-';
   const holdingCount = holdings?.length || 0;
   const pendingCount = pendingOrders?.length || 0;
-  const tradeCount = (trades?.opened?.length || 0) + (trades?.completed?.length || 0);
+  const tradeCount = buildTradeSummaryCounts(trades).todayTradeCount;
 
   el.innerHTML = `
     <div class="portfolio-stat">
@@ -484,14 +490,19 @@ function renderTodayTrades(data) {
   const countEl = document.getElementById('trades-count');
   if (!el) return;
 
-  const opened = data?.opened || [];
-  const completed = data?.completed || [];
-  const openPositions = data?.open_positions || [];
-  const todayCount = opened.length + completed.length;
+  const state = buildTradePanelState(data);
+  const {
+    opened,
+    completed,
+    pendingConfirms,
+    openPositions,
+    todayCount,
+    hasContent,
+  } = state;
 
   if (countEl) countEl.textContent = String(todayCount);
 
-  if (!opened.length && !completed.length && !openPositions.length) {
+  if (!hasContent) {
     el.innerHTML = '<div class="text-gray-600 text-xs">오늘 매매 내역 없음</div>';
     return;
   }
@@ -503,6 +514,18 @@ function renderTodayTrades(data) {
       <div>
         <div class="trade-mini-group-title">오늘 청산</div>
         ${completed.map((trade) => renderCompactTradeCard(trade, 'completed')).join('')}
+      </div>
+    `);
+  }
+
+  if (pendingConfirms.length) {
+    sections.push(`
+      <div>
+        <div class="trade-mini-group-title flex items-center justify-between gap-2">
+          <span>확인 대기</span>
+          <span class="text-[11px] text-yellow-400">PENDING_CONFIRM</span>
+        </div>
+        ${pendingConfirms.map((trade) => renderCompactTradeCard(trade, 'pending')).join('')}
       </div>
     `);
   }
@@ -530,6 +553,7 @@ function renderTodayTrades(data) {
 
 function renderCompactTradeCard(trade, type) {
   const isCompleted = type === 'completed';
+  const isPending = type === 'pending';
   const time = isCompleted
     ? (trade.exit_at ? new Date(trade.exit_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }) : '')
     : (trade.entry_at ? new Date(trade.entry_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }) : '');
@@ -546,6 +570,21 @@ function renderCompactTradeCard(trade, type) {
         <div class="text-right ${pnlColor}">
           <div class="font-semibold">${trade.pnl >= 0 ? '+' : ''}${formatKRW(trade.pnl)}</div>
           <div class="text-[11px]">${trade.return_pct >= 0 ? '+' : ''}${trade.return_pct}%</div>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  if (isPending) {
+    return `<div class="trade-mini-card border border-yellow-700/40 bg-yellow-900/10">
+      <div class="flex items-center justify-between gap-2">
+        <div class="min-w-0">
+          <div class="text-gray-100 font-medium truncate">${trade.stock_name}</div>
+          <div class="text-[11px] text-gray-500">${trade.stock_symbol} · ${time}</div>
+        </div>
+        <div class="text-right text-yellow-300">
+          <div class="font-semibold">${trade.quantity}주</div>
+          <div class="text-[11px]">체결 확인 대기</div>
         </div>
       </div>
     </div>`;
@@ -1325,8 +1364,9 @@ async function loadTradeHistory(dateStr, container) {
 
     const opened = data.opened || [];
     const completed = data.completed || [];
+    const pendingConfirms = data.pending_confirms || [];
     const openPositions = data.open_positions || [];
-    if (!opened.length && !completed.length && !openPositions.length) return;
+    if (!opened.length && !completed.length && !pendingConfirms.length && !openPositions.length) return;
 
     const section = document.createElement('div');
     section.className = 'bg-dark-700 rounded-xl p-5 border border-gray-600 mx-2 mt-3 chat-bubble';
@@ -1339,9 +1379,14 @@ async function loadTradeHistory(dateStr, container) {
       html += completed.map(t => renderTradeCard(t, 'completed')).join('');
     }
 
+    if (pendingConfirms.length) {
+      html += `<div class="text-xs font-medium text-gray-400 mb-2 ${completed.length ? 'mt-3' : ''}">확인 대기</div>`;
+      html += pendingConfirms.map(t => renderTradeCard(t, 'pending')).join('');
+    }
+
     // 오늘 매수
     if (opened.length) {
-      html += `<div class="text-xs font-medium text-gray-400 mb-2 ${completed.length ? 'mt-3' : ''}">오늘 매수</div>`;
+      html += `<div class="text-xs font-medium text-gray-400 mb-2 ${(completed.length || pendingConfirms.length) ? 'mt-3' : ''}">오늘 매수</div>`;
       html += opened.map(t => renderTradeCard(t, 'opened')).join('');
     }
 
@@ -1403,6 +1448,20 @@ function renderTradeCard(t, type) {
     </div>`;
   }
 
+  if (type === 'pending') {
+    const conf = t.ai_confidence ? `신뢰도 ${(t.ai_confidence*100).toFixed(0)}%` : '';
+    return `<div class="bg-dark-900 rounded-lg p-3 mb-2 border-l-2 border-yellow-500">
+      <div class="flex justify-between items-center">
+        <span class="text-sm text-white font-medium">${t.stock_name}<span class="text-gray-500 text-xs ml-1">${t.stock_symbol}</span></span>
+        <span class="text-xs text-yellow-400">대기 ${t.quantity}주 @${t.entry_price.toLocaleString()}원</span>
+      </div>
+      <div class="flex justify-between text-xs text-gray-500 mt-1">
+        <span>${time} · 체결 확인 대기</span>
+        <span>${conf}</span>
+      </div>
+    </div>`;
+  }
+
   // opened (매수)
   const conf = t.ai_confidence ? `신뢰도 ${(t.ai_confidence*100).toFixed(0)}%` : '';
   return `<div class="bg-dark-900 rounded-lg p-3 mb-2 border-l-2 border-red-500">
@@ -1415,6 +1474,27 @@ function renderTradeCard(t, type) {
       <span>${conf}</span>
     </div>
   </div>`;
+}
+
+async function reconcilePendingTrades() {
+  const button = document.getElementById('reconcile-pending-trades');
+  const originalText = button?.textContent || '확인 대기 복구';
+
+  try {
+    if (button) {
+      button.disabled = true;
+      button.textContent = '복구 중...';
+    }
+    await fetch(`${API}/trades/reconcile-pending`, { method: 'POST' });
+    await loadAccountInfo();
+  } catch (err) {
+    console.error('Pending trade reconcile error:', err);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+  }
 }
 
 // ── Settings ──
@@ -2167,6 +2247,7 @@ Object.assign(window, {
   loadTodayActivities,
   refreshLLMCatalog,
   refreshRuntimePanels,
+  reconcilePendingTrades,
   setAutonomyMode,
   setSchedulerRunning,
   setTradingEnabled,

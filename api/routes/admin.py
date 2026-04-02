@@ -15,10 +15,13 @@ from core.config import normalize_llm_model_value, settings
 from core.database import get_async_db
 from repositories.agent_activity_repository import AgentActivityRepository
 from repositories.daily_report_repository import DailyReportRepository
+from repositories.trade_result_repository import TradeResultRepository
 from schemas.activity_schema import ActivityResponse, CycleResponse
 from schemas.common import SuccessResponse
 from schemas.daily_report_schema import DailyReportResponse
+from schemas.feedback_schema import TradeResultResponse
 from schemas.qa_schema import QARequest, QAResponse
+from scheduler.jobs import portfolio_sync_job
 from services.activity_logger import activity_logger
 from services.llm_usage_service import llm_usage_service
 from trading.account_manager import account_manager
@@ -152,8 +155,6 @@ async def get_trades(
     db: AsyncSession = Depends(get_async_db),
 ):
     """특정 날짜의 매매 내역 (매수 진입 + 청산 완료)"""
-    from repositories.trade_result_repository import TradeResultRepository
-    from schemas.feedback_schema import TradeResultResponse
     from util.time_util import now_kst
 
     d = date.fromisoformat(target_date) if target_date else now_kst().date()
@@ -163,6 +164,8 @@ async def get_trades(
     opened = await repo.get_opened_by_date(d)
     # 오늘 청산된 포지션 (BUY 레코드, pnl 계산됨)
     completed = await repo.get_completed_by_date(d)
+    # 오늘 체결 확인 대기
+    pending_confirms = await repo.get_pending_confirms_by_date(d)
     # 미청산 포지션
     open_positions = await repo.get_all_open()
 
@@ -170,8 +173,26 @@ async def get_trades(
         "date": str(d),
         "opened": [TradeResultResponse.model_validate(t) for t in opened],
         "completed": [TradeResultResponse.model_validate(t) for t in completed],
+        "pending_confirms": [TradeResultResponse.model_validate(t) for t in pending_confirms],
         "open_positions": [TradeResultResponse.model_validate(t) for t in open_positions],
     })
+
+
+@router.post("/trades/reconcile-pending")
+async def reconcile_pending_trades():
+    """PENDING_CONFIRM 거래를 수동으로 복구 시도"""
+    summary = await portfolio_sync_job._recover_pending_confirms()
+    await activity_logger.log(
+        ActivityType.EVENT,
+        ActivityPhase.PROGRESS,
+        "🔄 PENDING_CONFIRM 수동 복구 실행",
+        detail=summary,
+    )
+    message = (
+        f"복구 완료 · 성공 {summary.get('recovered', 0)}건 / "
+        f"보류 {summary.get('skipped', 0)}건 / 실패 {summary.get('failed', 0)}건"
+    )
+    return SuccessResponse(data=summary, message=message)
 
 
 # ── 계좌 정보 ──
