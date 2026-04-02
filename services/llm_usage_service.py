@@ -15,7 +15,7 @@ class LLMUsageService:
 
     CLAUDE_STATUSLINE_DOC_URL = "https://code.claude.com/docs/en/statusline"
     CLAUDE_USAGE_LIMIT_DOC_URL = "https://support.anthropic.com/en/articles/8241175-how-do-i-increase-my-message-limit"
-    CODEX_USAGE_DOC_URL = "https://help.openai.com/en/articles/11369540-codex-in-chatgpt-faq"
+    CODEX_USAGE_DOC_URL = "https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan.pdf"
     CODEX_CLI_DOC_URL = "https://developers.openai.com/codex/cli/reference"
 
     async def get_snapshot(self) -> dict:
@@ -70,8 +70,8 @@ class LLMUsageService:
                 "login_status_supported": True,
                 "local_remaining_usage_supported": False,
                 "availability_reason": (
-                    "OpenAI 공식 도움말 기준으로 Codex 사용량은 플랜에 따라 달라지며 "
-                    "local environment usage는 별도 제공되지 않습니다."
+                    "OpenAI 공식 문서상 플랜별 사용량 정책은 안내되지만, "
+                    "local environment usage는 제공되지 않습니다."
                 ),
             },
         }

@@ -2049,6 +2049,7 @@ function renderClaudeUsageCard(claude) {
   const authTone = claude?.auth?.logged_in ? 'text-green-300' : 'text-yellow-300';
   const historical = claude?.historical_usage;
   const appUsage = claude?.app_usage;
+  const usageCopy = buildClaudeUsageCopy();
   const topModels = (historical?.top_models || []).slice(0, 2).map((item) => item.model).filter(Boolean);
   const links = [
     { label: 'Claude status line', url: claude?.official?.docs_url || '' },
@@ -2062,14 +2063,14 @@ function renderClaudeUsageCard(claude) {
         <div class="text-[11px] ${claude?.available ? 'text-green-300' : 'text-red-300'}">${claude?.available ? 'CLI 감지' : 'CLI 없음'}</div>
       </div>
       <div class="mt-1 ${authTone}">${escapeHtml(authLabel)}</div>
-      <div class="mt-1 text-gray-400">공식 지원: 5시간/7일 사용률, 리셋 시각, 컨텍스트 잔량</div>
+      <div class="mt-1 text-gray-400">${escapeHtml(usageCopy.supportedLabel)}</div>
       <div class="mt-1 text-yellow-200">${escapeHtml(claude?.official?.availability_reason || '실시간 잔여 quota는 현재 미수집')}</div>
       <div class="mt-2 text-gray-400">
-        앱 누적 호출 ${formatInteger(appUsage?.total_calls)}회 · 입력 ${formatInteger(appUsage?.total_input_tokens)} · 출력 ${formatInteger(appUsage?.total_output_tokens)}
+        ${escapeHtml(usageCopy.appUsageLabel)} ${formatInteger(appUsage?.total_calls)}회 · 입력 ${formatInteger(appUsage?.total_input_tokens)} · 출력 ${formatInteger(appUsage?.total_output_tokens)}
       </div>
-      <div class="text-gray-500">앱 누적 비용 ${formatUsd(appUsage?.total_cost_usd)}</div>
+      <div class="text-gray-500">${escapeHtml(usageCopy.appCostLabel)} ${formatUsd(appUsage?.total_cost_usd)}</div>
       ${historical?.available ? `
-        <div class="mt-2 text-gray-400">로컬 히스토리 세션 ${formatInteger(historical.total_sessions)}회 · 메시지 ${formatInteger(historical.total_messages)}건</div>
+        <div class="mt-2 text-gray-400">${escapeHtml(usageCopy.historyLabel)} ${formatInteger(historical.total_sessions)}회 · 메시지 ${formatInteger(historical.total_messages)}건</div>
         <div class="text-gray-500">최근 모델: ${topModels.length ? escapeHtml(topModels.join(', ')) : '기록 없음'}</div>
       ` : '<div class="mt-2 text-gray-500">로컬 stats-cache가 없어 히스토리 사용량은 비어 있습니다.</div>'}
       ${renderProviderLinks(links)}
@@ -2078,15 +2079,8 @@ function renderClaudeUsageCard(claude) {
 }
 
 function renderCodexUsageCard(codex) {
-  const authBits = [];
-  if (codex?.auth?.logged_in) {
-    authBits.push('로그인됨');
-  } else {
-    authBits.push('로그인 확인 필요');
-  }
-  if (codex?.auth?.auth_mode) {
-    authBits.push(codex.auth.auth_mode);
-  }
+  const authLabel = buildCodexAuthLabel(codex);
+  const usageCopy = buildCodexUsageCopy(codex);
   const links = [
     { label: 'Codex CLI 문서', url: codex?.official?.cli_docs_url || '' },
     { label: 'Codex 사용량 정책', url: codex?.official?.docs_url || '' },
@@ -2098,10 +2092,10 @@ function renderCodexUsageCard(codex) {
         <div class="text-gray-100 font-medium">Codex</div>
         <div class="text-[11px] ${codex?.available ? 'text-green-300' : 'text-red-300'}">${codex?.available ? 'CLI 감지' : 'CLI 없음'}</div>
       </div>
-      <div class="mt-1 ${codex?.auth?.logged_in ? 'text-green-300' : 'text-yellow-300'}">${escapeHtml(authBits.join(' · '))}</div>
-      <div class="mt-1 text-gray-400">공식 범위: 로컬 로그인 상태 확인 가능</div>
-      <div class="mt-1 text-yellow-200">${escapeHtml(codex?.official?.availability_reason || '남은 사용량은 공식 비노출')}</div>
-      <div class="mt-2 text-gray-500">남은 사용량 퍼센트/시간은 현재 Codex 로컬 CLI에서 공식적으로 제공되지 않습니다.</div>
+      <div class="mt-1 ${codex?.auth?.logged_in ? 'text-green-300' : 'text-yellow-300'}">${escapeHtml(authLabel)}</div>
+      <div class="mt-1 text-gray-400">${escapeHtml(usageCopy.supportedLabel)}</div>
+      <div class="mt-1 text-yellow-200">${escapeHtml(usageCopy.detail)}</div>
+      <div class="mt-2 text-gray-500">${escapeHtml(usageCopy.unsupportedLabel)}</div>
       ${codex?.auth?.raw_status ? `<div class="mt-1 text-gray-600 break-all">${escapeHtml(codex.auth.raw_status)}</div>` : ''}
       ${renderProviderLinks(links)}
     </div>
