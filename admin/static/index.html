@@ -41,6 +41,34 @@
       min-height: 0;
       overflow: hidden;
     }
+    .settings-modal-overlay {
+      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: rgba(2, 6, 23, 0.76); backdrop-filter: blur(10px);
+      z-index: 60; opacity: 0; pointer-events: none; transition: opacity 0.16s ease;
+      padding: 20px;
+    }
+    .settings-modal-overlay.open { opacity: 1; pointer-events: auto; }
+    .settings-modal {
+      width: min(1080px, 100%);
+      height: min(820px, calc(100vh - 40px));
+      background: linear-gradient(180deg, rgba(17,24,39,0.98), rgba(15,16,33,0.98));
+      border: 1px solid #334155; border-radius: 18px; overflow: hidden;
+      box-shadow: 0 28px 90px rgba(15, 23, 42, 0.45);
+      transform: translateY(10px) scale(0.985); transition: transform 0.18s ease;
+      display: flex; flex-direction: column;
+    }
+    .settings-modal-overlay.open .settings-modal { transform: translateY(0) scale(1); }
+    .settings-tab-btn.active { border-color: #60a5fa; background: rgba(37, 99, 235, 0.18); color: #dbeafe; }
+    .settings-tab-panel { display: none; min-height: 0; }
+    .settings-tab-panel.active { display: block; min-height: 100%; }
+    .settings-summary-card {
+      border: 1px solid #374151; border-radius: 12px; background: rgba(15,16,33,0.74); padding: 12px;
+    }
+    .settings-jump-btn {
+      width: 100%; text-align: left; border: 1px solid #374151; border-radius: 12px;
+      background: rgba(15,16,33,0.74); padding: 10px 12px; transition: 0.15s ease;
+    }
+    .settings-jump-btn:hover { border-color: #60a5fa; background: rgba(30, 41, 59, 0.92); }
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: #1a1b2e; }
     ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
@@ -202,29 +230,9 @@
           class="rounded-md border border-blue-500 bg-blue-600/20 px-2.5 py-1.5 text-xs font-medium text-blue-200 transition hover:border-blue-400 hover:bg-blue-600/30">
           ▶ 수동 사이클 실행
         </button>
-        <button id="header-trading-on" onclick="setTradingEnabled(true)"
-          class="rounded-md border px-2 py-1.5 text-xs transition">
-          매매 ON
-        </button>
-        <button id="header-trading-off" onclick="setTradingEnabled(false)"
-          class="rounded-md border px-2 py-1.5 text-xs transition">
-          매매 OFF
-        </button>
-        <button id="header-mode-semi" onclick="setAutonomyMode('SEMI_AUTO')"
-          class="rounded-md border px-2 py-1.5 text-xs transition">
-          SEMI
-        </button>
-        <button id="header-mode-auto" onclick="setAutonomyMode('AUTONOMOUS')"
-          class="rounded-md border px-2 py-1.5 text-xs transition">
-          AUTO
-        </button>
-        <button id="header-scheduler-start" onclick="setSchedulerRunning(true)"
-          class="rounded-md border px-2 py-1.5 text-xs transition">
-          스케줄러 시작
-        </button>
-        <button id="header-scheduler-stop" onclick="setSchedulerRunning(false)"
-          class="rounded-md border px-2 py-1.5 text-xs transition">
-          스케줄러 중지
+        <button onclick="openSettingsModal('operating')"
+          class="rounded-md border border-gray-600 bg-dark-800 px-2.5 py-1.5 text-xs font-medium text-gray-200 transition hover:border-blue-400 hover:text-white">
+          설정 열기
         </button>
       </div>
     </div>
@@ -237,7 +245,7 @@
       <div class="pane-header">
         <div>
           <div class="pane-header-kicker">Workspace</div>
-          <div class="pane-header-title">설정 · 운영</div>
+          <div class="pane-header-title">운영 콘솔</div>
         </div>
       </div>
 
@@ -259,165 +267,14 @@
           <!-- Settings -->
           <div class="sidebar-section" id="section-settings">
             <div class="sidebar-section-header" onclick="toggleSidebarSection('settings')">
-              <span>&#x2699;&#xfe0f; &#xc124;&#xc815;</span>
+              <span>&#x2699;&#xfe0f; &#xc6b4;&#xc601; &#xd575;&#xc2ec;</span>
               <span class="sidebar-section-arrow" id="arrow-settings">&#x25BC;</span>
             </div>
             <div class="sidebar-section-body open" id="body-settings">
               <div class="px-3 pb-2 space-y-3">
-                <label class="flex items-center justify-between gap-3">
-                  <div class="min-w-0">
-                    <div class="flex items-center gap-1">
-                      <span id="set-trading-label" class="text-sm">실주문 실행</span>
-                      <span id="set-trading-tip" class="text-xs text-gray-500 cursor-help" title="끄면 분석과 추천은 계속되지만 실제 매수·매도 주문은 보내지 않습니다.">?</span>
-                    </div>
-                    <div id="set-trading-help" class="text-xs text-gray-500 mt-0.5">OFF: 분석과 추천은 계속되지만 실제 주문은 보내지 않습니다.</div>
-                  </div>
-                  <input type="checkbox" id="set-trading" onchange="updateSetting('TRADING_ENABLED', this.checked)"
-                    class="w-9 h-5 rounded-full appearance-none bg-gray-600 checked:bg-green-500 relative cursor-pointer
-                    after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:transition-transform checked:after:translate-x-4">
-                </label>
-
-                <div>
-                  <label id="set-mode-label" class="text-sm block mb-1">주문 처리 방식 <span id="set-mode-tip" class="text-xs text-gray-500 cursor-help" title="AI가 낸 BUY/SELL 시그널을 추천으로 둘지, 즉시 주문할지 정합니다.">?</span></label>
-                  <select id="set-mode" onchange="updateSetting('AUTONOMY_MODE', this.value)"
-                    class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
-                    <option value="SEMI_AUTO">추천 후 승인 (SEMI_AUTO)</option>
-                    <option value="AUTONOMOUS">즉시 자동 주문 (AUTONOMOUS)</option>
-                  </select>
-                  <div id="set-mode-help" class="text-xs text-gray-500 mt-1">SEMI_AUTO: AI 시그널을 추천으로만 남기고 사용자 승인을 기다립니다.</div>
-                </div>
-
-                <div>
-                  <label class="text-sm block mb-1">&#xb9ac;&#xc2a4;&#xd06c; &#xc131;&#xd5a5;</label>
-                  <select id="set-risk-appetite" onchange="updateSetting('RISK_APPETITE', this.value)"
-                    class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
-                    <option value="CONSERVATIVE">&#xbcf4;&#xc218;&#xc801; (CONSERVATIVE)</option>
-                    <option value="MODERATE">&#xc911;&#xb9bd; (MODERATE)</option>
-                    <option value="AGGRESSIVE">&#xacf5;&#xaca9;&#xc801; (AGGRESSIVE)</option>
-                  </select>
-                </div>
-
-                <div class="border-t border-gray-700 pt-2">
-                  <div class="text-xs text-gray-500 font-medium mb-1">LLM</div>
-                  <div id="llm-config-summary" class="text-xs text-gray-400">설정 불러오는 중...</div>
-                  <div id="llm-tier1-model" class="text-xs text-gray-500 mt-0.5 truncate"></div>
-                  <div id="llm-catalog-meta" class="text-[11px] text-gray-500 mt-1"></div>
-                  <button onclick="refreshLLMCatalog()"
-                    class="mt-2 w-full bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1 transition">
-                    공식 모델 목록 새로고침
-                  </button>
-                </div>
-
-                <div class="border-t border-gray-700 pt-2">
-                  <label class="text-sm block mb-1">기본 분석 AI (T1)</label>
-                  <select id="set-llm-tier1-provider" onchange="updateSetting('LLM_PROVIDER_TIER1', this.value)"
-                    class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
-                    <option value="CLAUDE_CODE">Claude Code</option>
-                    <option value="CODEX">Codex</option>
-                  </select>
-                  <label class="text-xs block mt-2 mb-1 text-gray-500">모델 / 버전</label>
-                  <select id="set-llm-tier1-model" onchange="updateTierModelSetting('tier1', this.value)"
-                    class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
-                  <div id="llm-tier1-model-source" class="text-[11px] text-gray-500 mt-1"></div>
-                  <div class="flex gap-2 mt-2">
-                    <input id="set-llm-tier1-model-custom" type="text" placeholder="예: claude-sonnet-4-6 / gpt-5.4"
-                      class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
-                    <button onclick="applyCustomTierModel('tier1')"
-                      class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
-                      직접 입력
-                    </button>
-                  </div>
-                  <label class="text-xs block mt-3 mb-1 text-gray-500">T1 Fallback</label>
-                  <select id="set-llm-tier1-fallback" onchange="updateSetting('LLM_FALLBACK_PROVIDER_TIER1', this.value)"
-                    class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
-                    <option value="">없음</option>
-                    <option value="CLAUDE_CODE">Claude Code</option>
-                    <option value="CODEX">Codex</option>
-                  </select>
-                  <label class="text-xs block mt-2 mb-1 text-gray-500">Fallback 모델 / 버전</label>
-                  <select id="set-llm-tier1-fallback-model" onchange="updateTierModelSetting('tier1', this.value, 'fallback')"
-                    class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
-                  <div id="llm-tier1-fallback-model-source" class="text-[11px] text-gray-500 mt-1"></div>
-                  <div class="flex gap-2 mt-2">
-                    <input id="set-llm-tier1-fallback-model-custom" type="text" placeholder="예: claude-opus-4-6 / gpt-5.1-codex-max"
-                      class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
-                    <button onclick="applyCustomTierModel('tier1', 'fallback')"
-                      class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
-                      직접 입력
-                    </button>
-                  </div>
-                </div>
-
-                <div class="border-t border-gray-700 pt-2">
-                  <label class="text-sm block mb-1">최종 검토 AI (T2)</label>
-                  <select id="set-llm-tier2-provider" onchange="updateSetting('LLM_PROVIDER_TIER2', this.value)"
-                    class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
-                    <option value="CLAUDE_CODE">Claude Code</option>
-                    <option value="CODEX">Codex</option>
-                  </select>
-                  <label class="text-xs block mt-2 mb-1 text-gray-500">모델 / 버전</label>
-                  <select id="set-llm-tier2-model" onchange="updateTierModelSetting('tier2', this.value)"
-                    class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
-                  <div id="llm-tier2-model-source" class="text-[11px] text-gray-500 mt-1"></div>
-                  <div class="flex gap-2 mt-2">
-                    <input id="set-llm-tier2-model-custom" type="text" placeholder="예: claude-opus-4-6 / gpt-5-codex"
-                      class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
-                    <button onclick="applyCustomTierModel('tier2')"
-                      class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
-                      직접 입력
-                    </button>
-                  </div>
-                  <label class="text-xs block mt-3 mb-1 text-gray-500">T2 Fallback</label>
-                  <select id="set-llm-tier2-fallback" onchange="updateSetting('LLM_FALLBACK_PROVIDER_TIER2', this.value)"
-                    class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
-                    <option value="">없음</option>
-                    <option value="CLAUDE_CODE">Claude Code</option>
-                    <option value="CODEX">Codex</option>
-                  </select>
-                  <label class="text-xs block mt-2 mb-1 text-gray-500">Fallback 모델 / 버전</label>
-                  <select id="set-llm-tier2-fallback-model" onchange="updateTierModelSetting('tier2', this.value, 'fallback')"
-                    class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
-                  <div id="llm-tier2-fallback-model-source" class="text-[11px] text-gray-500 mt-1"></div>
-                  <div class="flex gap-2 mt-2">
-                    <input id="set-llm-tier2-fallback-model-custom" type="text" placeholder="예: gpt-5-codex / claude-sonnet-4-6"
-                      class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
-                    <button onclick="applyCustomTierModel('tier2', 'fallback')"
-                      class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
-                      직접 입력
-                    </button>
-                  </div>
-                </div>
-
-                <div class="border-t border-gray-700 pt-2">
-                  <label class="text-sm block mb-1">수동 작업 AI</label>
-                  <select id="set-manual-llm-provider" onchange="updateSetting('MANUAL_LLM_PROVIDER', this.value)"
-                    class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
-                    <option value="AUTOMATIC">자동</option>
-                    <option value="CLAUDE_CODE">Claude Code</option>
-                    <option value="CODEX">Codex</option>
-                  </select>
-                  <div class="text-[11px] text-gray-500 mt-1">
-                    Q&amp;A / 수동 사이클 / 리포트 생성에만 적용, 모델은 각 tier 설정 사용
-                  </div>
-                  <div id="llm-manual-selection" class="text-xs text-gray-500 mt-1 truncate"></div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- System -->
-          <div class="sidebar-section" id="section-system">
-            <div class="sidebar-section-header" onclick="toggleSidebarSection('system')">
-              <span>&#x1f5a5; &#xc2dc;&#xc2a4;&#xd15c;</span>
-              <span class="sidebar-section-arrow" id="arrow-system">&#x25BC;</span>
-            </div>
-            <div class="sidebar-section-body open" id="body-system">
-              <div class="px-3 pb-2 space-y-3">
-                <div id="sys-status" class="text-xs space-y-1"></div>
-
-                <div class="rounded-lg border border-gray-700 bg-dark-900/70 p-2">
+                <div class="settings-summary-card">
                   <div class="flex items-center justify-between">
-                    <div class="text-xs font-medium text-gray-300">운영 제어</div>
+                    <div class="text-xs font-medium text-gray-300">즉시 제어</div>
                     <button onclick="refreshRuntimePanels()"
                       class="text-[11px] text-gray-400 hover:text-gray-200 transition">
                       새로고침
@@ -428,7 +285,7 @@
                   </div>
                   <div class="mt-3 space-y-2">
                     <div>
-                      <div class="text-[11px] text-gray-500 mb-1">매매</div>
+                      <div class="text-[11px] text-gray-500 mb-1">실주문 실행</div>
                       <div class="grid grid-cols-2 gap-2">
                         <button id="runtime-trading-on" onclick="setTradingEnabled(true)"
                           class="rounded-md border border-gray-700 px-2 py-1.5 text-xs text-gray-300 transition">
@@ -440,21 +297,19 @@
                         </button>
                       </div>
                     </div>
-
                     <div>
-                      <div class="text-[11px] text-gray-500 mb-1">모드</div>
+                      <div class="text-[11px] text-gray-500 mb-1">주문 처리 방식</div>
                       <div class="grid grid-cols-2 gap-2">
                         <button id="runtime-mode-semi" onclick="setAutonomyMode('SEMI_AUTO')"
                           class="rounded-md border border-gray-700 px-2 py-1.5 text-xs text-gray-300 transition">
-                          SEMI_AUTO
+                          추천 후 승인
                         </button>
                         <button id="runtime-mode-auto" onclick="setAutonomyMode('AUTONOMOUS')"
                           class="rounded-md border border-gray-700 px-2 py-1.5 text-xs text-gray-300 transition">
-                          AUTONOMOUS
+                          자동 주문
                         </button>
                       </div>
                     </div>
-
                     <div>
                       <div class="text-[11px] text-gray-500 mb-1">스케줄러</div>
                       <div class="grid grid-cols-2 gap-2">
@@ -471,18 +326,61 @@
                   </div>
                 </div>
 
-                <div class="rounded-lg border border-gray-700 bg-dark-900/70 p-2">
-                  <div class="flex items-center justify-between">
-                    <div class="text-xs font-medium text-gray-300">LLM 사용량</div>
-                    <button onclick="loadLLMUsage()"
-                      class="text-[11px] text-gray-400 hover:text-gray-200 transition">
-                      새로고침
-                    </button>
+                <button onclick="openSettingsModal('strategy')" class="settings-jump-btn">
+                  <div class="flex items-center justify-between gap-3">
+                    <div>
+                      <div class="text-sm text-gray-200">리스크 성향</div>
+                      <div id="left-risk-summary" class="text-xs text-gray-500 mt-1">현재값 불러오는 중...</div>
+                    </div>
+                    <span class="text-xs text-blue-300">전략 설정</span>
                   </div>
-                  <div id="llm-usage-panel" class="mt-2 text-xs text-gray-400">
-                    불러오는 중...
+                </button>
+
+                <button onclick="openSettingsModal('llm')" class="settings-jump-btn">
+                  <div class="flex items-center justify-between gap-3">
+                    <div>
+                      <div class="text-sm text-gray-200">AI 설정</div>
+                      <div id="left-llm-summary" class="text-xs text-gray-500 mt-1">현재값 불러오는 중...</div>
+                    </div>
+                    <span class="text-xs text-blue-300">LLM 설정</span>
                   </div>
+                </button>
+
+                <button onclick="openSettingsModal('system')" class="settings-jump-btn">
+                  <div class="flex items-center justify-between gap-3">
+                    <div>
+                      <div class="text-sm text-gray-200">고급 설정</div>
+                      <div class="text-xs text-gray-500 mt-1">사용량, 시스템 상태, 세부 설정</div>
+                    </div>
+                    <span class="text-xs text-blue-300">열기</span>
+                  </div>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- System -->
+          <div class="sidebar-section" id="section-system">
+            <div class="sidebar-section-header" onclick="toggleSidebarSection('system')">
+              <span>&#x1f5a5; &#xc2dc;&#xc2a4;&#xd15c; &#xc694;&#xc57d;</span>
+              <span class="sidebar-section-arrow" id="arrow-system">&#x25BC;</span>
+            </div>
+            <div class="sidebar-section-body open" id="body-system">
+              <div class="px-3 pb-2 space-y-3">
+                <div class="settings-summary-card">
+                  <div class="text-xs font-medium text-gray-300">런타임 상태</div>
+                  <div id="sys-status" class="mt-2 text-xs space-y-1"></div>
                 </div>
+
+                <button onclick="openSettingsModal('system')" class="settings-jump-btn">
+                  <div class="flex items-center justify-between gap-3">
+                    <div>
+                      <div class="text-sm text-gray-200">시스템/사용량 열기</div>
+                      <div class="text-xs text-gray-500 mt-1">LLM 사용량과 상세 상태는 설정 센터에서 확인</div>
+                    </div>
+                    <span class="text-xs text-blue-300">열기</span>
+                  </div>
+                </button>
               </div>
             </div>
           </div>
@@ -493,6 +391,10 @@
         <button data-cycle-trigger="true" onclick="triggerCycle()"
           class="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg py-2 transition">
           &#x25b6;&#xfe0f; &#xc218;&#xb3d9; &#xc0ac;&#xc774;&#xd074; &#xc2e4;&#xd589;
+        </button>
+        <button onclick="openSettingsModal('operating')"
+          class="w-full bg-dark-700 hover:bg-dark-700/80 text-gray-100 text-sm rounded-lg py-1.5 transition border border-gray-600">
+          &#x2699;&#xfe0f; &#xc124;&#xc815; &#xc13c;&#xd130; &#xc5f4;&#xae30;
         </button>
         <button onclick="generateReport()"
           class="w-full bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm rounded-lg py-1.5 transition">
@@ -636,6 +538,220 @@
         </div>
       </div>
     </aside>
+  </div>
+
+  <div id="settings-modal-overlay" class="settings-modal-overlay" onclick="closeSettingsModalOnBackdrop(event)">
+    <div class="settings-modal">
+      <div class="flex items-center justify-between border-b border-gray-700 px-5 py-4">
+        <div>
+          <div class="text-xs uppercase tracking-[0.12em] text-gray-500">Settings Center</div>
+          <div class="text-lg font-semibold text-white">설정 센터</div>
+        </div>
+        <button onclick="closeSettingsModal()"
+          class="rounded-md border border-gray-600 px-3 py-1.5 text-sm text-gray-200 transition hover:border-blue-400 hover:text-white">
+          닫기
+        </button>
+      </div>
+      <div class="flex min-h-0 flex-1 flex-col lg:flex-row">
+        <div class="shrink-0 border-b border-gray-700 px-4 py-3 lg:w-56 lg:border-b-0 lg:border-r">
+          <div class="grid grid-cols-2 gap-2 lg:grid-cols-1">
+            <button id="settings-tab-operating" onclick="switchSettingsTab('operating')"
+              class="settings-tab-btn rounded-lg border border-gray-700 px-3 py-2 text-left text-sm text-gray-300 transition hover:border-blue-400 hover:text-white">
+              운영
+            </button>
+            <button id="settings-tab-strategy" onclick="switchSettingsTab('strategy')"
+              class="settings-tab-btn rounded-lg border border-gray-700 px-3 py-2 text-left text-sm text-gray-300 transition hover:border-blue-400 hover:text-white">
+              전략
+            </button>
+            <button id="settings-tab-llm" onclick="switchSettingsTab('llm')"
+              class="settings-tab-btn rounded-lg border border-gray-700 px-3 py-2 text-left text-sm text-gray-300 transition hover:border-blue-400 hover:text-white">
+              LLM
+            </button>
+            <button id="settings-tab-system" onclick="switchSettingsTab('system')"
+              class="settings-tab-btn rounded-lg border border-gray-700 px-3 py-2 text-left text-sm text-gray-300 transition hover:border-blue-400 hover:text-white">
+              시스템
+            </button>
+          </div>
+        </div>
+        <div class="min-h-0 h-full flex-1 overflow-y-auto p-5">
+          <section id="settings-panel-operating" class="settings-tab-panel space-y-4">
+            <div>
+              <div class="text-sm font-medium text-white">운영 제어</div>
+              <div class="mt-1 text-xs text-gray-500">실시간 운영 중 바로 바꾸는 값만 여기에 둡니다.</div>
+            </div>
+
+            <label class="flex items-center justify-between gap-3 rounded-xl border border-gray-700 bg-dark-900/60 p-4">
+              <div class="min-w-0">
+                <div class="flex items-center gap-1">
+                  <span id="set-trading-label" class="text-sm">실주문 실행</span>
+                  <span id="set-trading-tip" class="text-xs text-gray-500 cursor-help" title="끄면 분석과 추천은 계속되지만 실제 매수·매도 주문은 보내지 않습니다.">?</span>
+                </div>
+                <div id="set-trading-help" class="text-xs text-gray-500 mt-0.5">OFF: 분석과 추천은 계속되지만 실제 주문은 보내지 않습니다.</div>
+              </div>
+              <input type="checkbox" id="set-trading" onchange="updateSetting('TRADING_ENABLED', this.checked)"
+                class="w-9 h-5 rounded-full appearance-none bg-gray-600 checked:bg-green-500 relative cursor-pointer
+                after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:transition-transform checked:after:translate-x-4">
+            </label>
+
+            <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4">
+              <label id="set-mode-label" class="text-sm block mb-1">주문 처리 방식 <span id="set-mode-tip" class="text-xs text-gray-500 cursor-help" title="AI가 낸 BUY/SELL 시그널을 추천으로 둘지, 즉시 주문할지 정합니다.">?</span></label>
+              <select id="set-mode" onchange="updateSetting('AUTONOMY_MODE', this.value)"
+                class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                <option value="SEMI_AUTO">추천 후 승인 (SEMI_AUTO)</option>
+                <option value="AUTONOMOUS">즉시 자동 주문 (AUTONOMOUS)</option>
+              </select>
+              <div id="set-mode-help" class="text-xs text-gray-500 mt-1">SEMI_AUTO: AI 시그널을 추천으로만 남기고 사용자 승인을 기다립니다.</div>
+            </div>
+          </section>
+
+          <section id="settings-panel-strategy" class="settings-tab-panel space-y-4">
+            <div>
+              <div class="text-sm font-medium text-white">전략 설정</div>
+              <div class="mt-1 text-xs text-gray-500">리스크와 보유 성향처럼 자주 토글하지 않는 전략 값을 둡니다.</div>
+            </div>
+            <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4">
+              <label class="text-sm block mb-1">리스크 성향</label>
+              <select id="set-risk-appetite" onchange="updateSetting('RISK_APPETITE', this.value)"
+                class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                <option value="CONSERVATIVE">보수적 (CONSERVATIVE)</option>
+                <option value="MODERATE">중립 (MODERATE)</option>
+                <option value="AGGRESSIVE">공격적 (AGGRESSIVE)</option>
+              </select>
+            </div>
+          </section>
+
+          <section id="settings-panel-llm" class="settings-tab-panel space-y-4">
+            <div>
+              <div class="text-sm font-medium text-white">LLM 설정</div>
+              <div class="mt-1 text-xs text-gray-500">분석 단계별 provider, 모델, fallback을 여기서 관리합니다.</div>
+            </div>
+            <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4">
+              <div class="text-xs text-gray-500 font-medium mb-1">LLM 요약</div>
+              <div id="llm-config-summary" class="text-xs text-gray-400">설정 불러오는 중...</div>
+              <div id="llm-tier1-model" class="text-xs text-gray-500 mt-0.5 truncate"></div>
+              <div id="llm-catalog-meta" class="text-[11px] text-gray-500 mt-1"></div>
+              <button onclick="refreshLLMCatalog()"
+                class="mt-2 w-full bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1 transition">
+                공식 모델 목록 새로고침
+              </button>
+            </div>
+
+            <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4">
+              <label class="text-sm block mb-1">기본 분석 AI (T1)</label>
+              <select id="set-llm-tier1-provider" onchange="updateSetting('LLM_PROVIDER_TIER1', this.value)"
+                class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                <option value="CLAUDE_CODE">Claude Code</option>
+                <option value="CODEX">Codex</option>
+              </select>
+              <label class="text-xs block mt-2 mb-1 text-gray-500">모델 / 버전</label>
+              <select id="set-llm-tier1-model" onchange="updateTierModelSetting('tier1', this.value)"
+                class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
+              <div id="llm-tier1-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+              <div class="flex gap-2 mt-2">
+                <input id="set-llm-tier1-model-custom" type="text" placeholder="예: claude-sonnet-4-6 / gpt-5.4"
+                  class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
+                <button onclick="applyCustomTierModel('tier1')"
+                  class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
+                  직접 입력
+                </button>
+              </div>
+              <label class="text-xs block mt-3 mb-1 text-gray-500">T1 Fallback</label>
+              <select id="set-llm-tier1-fallback" onchange="updateSetting('LLM_FALLBACK_PROVIDER_TIER1', this.value)"
+                class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                <option value="">없음</option>
+                <option value="CLAUDE_CODE">Claude Code</option>
+                <option value="CODEX">Codex</option>
+              </select>
+              <label class="text-xs block mt-2 mb-1 text-gray-500">Fallback 모델 / 버전</label>
+              <select id="set-llm-tier1-fallback-model" onchange="updateTierModelSetting('tier1', this.value, 'fallback')"
+                class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
+              <div id="llm-tier1-fallback-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+              <div class="flex gap-2 mt-2">
+                <input id="set-llm-tier1-fallback-model-custom" type="text" placeholder="예: claude-opus-4-6 / gpt-5.1-codex-max"
+                  class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
+                <button onclick="applyCustomTierModel('tier1', 'fallback')"
+                  class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
+                  직접 입력
+                </button>
+              </div>
+            </div>
+
+            <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4">
+              <label class="text-sm block mb-1">최종 검토 AI (T2)</label>
+              <select id="set-llm-tier2-provider" onchange="updateSetting('LLM_PROVIDER_TIER2', this.value)"
+                class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                <option value="CLAUDE_CODE">Claude Code</option>
+                <option value="CODEX">Codex</option>
+              </select>
+              <label class="text-xs block mt-2 mb-1 text-gray-500">모델 / 버전</label>
+              <select id="set-llm-tier2-model" onchange="updateTierModelSetting('tier2', this.value)"
+                class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
+              <div id="llm-tier2-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+              <div class="flex gap-2 mt-2">
+                <input id="set-llm-tier2-model-custom" type="text" placeholder="예: claude-opus-4-6 / gpt-5-codex"
+                  class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
+                <button onclick="applyCustomTierModel('tier2')"
+                  class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
+                  직접 입력
+                </button>
+              </div>
+              <label class="text-xs block mt-3 mb-1 text-gray-500">T2 Fallback</label>
+              <select id="set-llm-tier2-fallback" onchange="updateSetting('LLM_FALLBACK_PROVIDER_TIER2', this.value)"
+                class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                <option value="">없음</option>
+                <option value="CLAUDE_CODE">Claude Code</option>
+                <option value="CODEX">Codex</option>
+              </select>
+              <label class="text-xs block mt-2 mb-1 text-gray-500">Fallback 모델 / 버전</label>
+              <select id="set-llm-tier2-fallback-model" onchange="updateTierModelSetting('tier2', this.value, 'fallback')"
+                class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
+              <div id="llm-tier2-fallback-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+              <div class="flex gap-2 mt-2">
+                <input id="set-llm-tier2-fallback-model-custom" type="text" placeholder="예: gpt-5-codex / claude-sonnet-4-6"
+                  class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
+                <button onclick="applyCustomTierModel('tier2', 'fallback')"
+                  class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
+                  직접 입력
+                </button>
+              </div>
+            </div>
+
+            <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4">
+              <label class="text-sm block mb-1">수동 작업 AI</label>
+              <select id="set-manual-llm-provider" onchange="updateSetting('MANUAL_LLM_PROVIDER', this.value)"
+                class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                <option value="AUTOMATIC">자동</option>
+                <option value="CLAUDE_CODE">Claude Code</option>
+                <option value="CODEX">Codex</option>
+              </select>
+              <div class="text-[11px] text-gray-500 mt-1">
+                Q&amp;A / 수동 사이클 / 리포트 생성에만 적용, 모델은 각 tier 설정 사용
+              </div>
+              <div id="llm-manual-selection" class="text-xs text-gray-500 mt-1 truncate"></div>
+            </div>
+          </section>
+
+          <section id="settings-panel-system" class="settings-tab-panel space-y-4">
+            <div>
+              <div class="text-sm font-medium text-white">시스템 정보</div>
+              <div class="mt-1 text-xs text-gray-500">운영 중 자주 누르지 않는 상태/사용량 정보는 여기로 모읍니다.</div>
+            </div>
+            <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4">
+              <div class="flex items-center justify-between">
+                <div class="text-xs font-medium text-gray-300">LLM 사용량</div>
+                <button onclick="loadLLMUsage()"
+                  class="text-[11px] text-gray-400 hover:text-gray-200 transition">
+                  새로고침
+                </button>
+              </div>
+              <div id="llm-usage-panel" class="mt-2 text-xs text-gray-400">
+                불러오는 중...
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script type="module" src="/admin/static/js/app.js"></script>

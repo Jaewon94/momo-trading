@@ -15,8 +15,10 @@ import {
   buildRuntimeControlState,
   buildRuntimeSettingCopy,
   formatAutonomyModeLabel,
+  formatRiskAppetiteLabel,
   getMcpBadgeState,
 } from './runtime_state.js';
+import { SETTINGS_TABS, normalizeSettingsTab } from './settings_modal_state.js';
 import {
   buildClaudeUsageCopy,
   buildCodexAuthLabel,
@@ -40,6 +42,7 @@ let runtimeSystemStatus = null;
 let llmUsageSnapshot = null;
 let llmCatalog = null;
 let runtimeControlPending = false;
+let activeSettingsTab = 'operating';
 const knownStockNames = {};
 const knownStockMeta = {};
 let paneLayout = {
@@ -66,6 +69,7 @@ const sidebarState = {
 // ── Init ──
 document.addEventListener('DOMContentLoaded', () => {
   bindDetailToggleHandlers(document);
+  renderSettingsModal();
   loadPaneLayout();
   loadSettings();
   loadLLMCatalog();
@@ -81,6 +85,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(loadSystemStatus, 15000);
   setInterval(loadLLMUsage, 60000);
   accountPollTimer = setInterval(loadAccountInfo, 30000);
+  document.addEventListener('keydown', handleSettingsModalKeydown);
 });
 
 // ── Sidebar Accordion ──
@@ -103,6 +108,46 @@ function toggleSidebarSection(id) {
   const arrow = document.getElementById(`arrow-${id}`);
   if (body) body.classList.toggle('open', sidebarState[id]);
   if (arrow) arrow.classList.toggle('collapsed', !sidebarState[id]);
+}
+
+function openSettingsModal(tab = 'operating') {
+  const overlay = document.getElementById('settings-modal-overlay');
+  if (!overlay) return;
+  activeSettingsTab = normalizeSettingsTab(tab);
+  renderSettingsModal();
+  overlay.classList.add('open');
+  document.body.classList.add('overflow-hidden');
+}
+
+function closeSettingsModal() {
+  const overlay = document.getElementById('settings-modal-overlay');
+  if (!overlay) return;
+  overlay.classList.remove('open');
+  document.body.classList.remove('overflow-hidden');
+}
+
+function closeSettingsModalOnBackdrop(event) {
+  if (event.target?.id === 'settings-modal-overlay') {
+    closeSettingsModal();
+  }
+}
+
+function switchSettingsTab(tab) {
+  activeSettingsTab = normalizeSettingsTab(tab);
+  renderSettingsModal();
+}
+
+function renderSettingsModal() {
+  SETTINGS_TABS.forEach((tab) => {
+    document.getElementById(`settings-tab-${tab}`)?.classList.toggle('active', tab === activeSettingsTab);
+    document.getElementById(`settings-panel-${tab}`)?.classList.toggle('active', tab === activeSettingsTab);
+  });
+}
+
+function handleSettingsModalKeydown(event) {
+  if (event.key === 'Escape') {
+    closeSettingsModal();
+  }
 }
 
 // ── Workspace Layout ──
@@ -1682,6 +1727,7 @@ async function loadSettings() {
     updateBadge('badge-trading', s.TRADING_ENABLED ? '매매:ON' : '매매:OFF', s.TRADING_ENABLED ? 'green' : 'red');
     updateBadge('badge-mode', formatAutonomyModeLabel(s.AUTONOMY_MODE), 'purple');
     renderSettingGuidance();
+    renderSidebarSettingSummaries();
     renderRuntimeControls();
   } catch (err) {
     console.error('Settings load error:', err);
@@ -1793,6 +1839,14 @@ function renderSettingGuidance() {
   if (modeLabelEl) modeLabelEl.textContent = copy.modeLabel;
   if (modeHelpEl) modeHelpEl.textContent = copy.modeHelp;
   if (modeTipEl) modeTipEl.title = copy.modeTitle;
+}
+
+function renderSidebarSettingSummaries() {
+  const riskSummaryEl = document.getElementById('left-risk-summary');
+  if (riskSummaryEl) {
+    const riskLabel = formatRiskAppetiteLabel(runtimeSettings?.RISK_APPETITE || 'MODERATE');
+    riskSummaryEl.textContent = `현재 ${riskLabel} · 눌러서 전략 설정 열기`;
+  }
 }
 
 function applyControlButtonState(ids, options) {
@@ -2048,6 +2102,10 @@ async function loadLLMStatus() {
     const llmSummary = document.getElementById('llm-config-summary');
     if (llmSummary) {
       llmSummary.textContent = `사이클 기본값: T1 ${s.tier1.provider}, T2 ${s.tier2.provider}`;
+    }
+    const leftLlmSummary = document.getElementById('left-llm-summary');
+    if (leftLlmSummary) {
+      leftLlmSummary.textContent = `T1 ${s.tier1.provider} · T2 ${s.tier2.provider}`;
     }
     const manualSelection = document.getElementById('llm-manual-selection');
     if (manualSelection && s.manual_selection) {
@@ -2425,9 +2483,13 @@ Object.assign(window, {
   setSchedulerRunning,
   setTradingEnabled,
   switchView,
+  switchSettingsTab,
   togglePaneCollapse,
   toggleSidebarSection,
   triggerCycle,
   updateSetting,
   updateTierModelSetting,
+  openSettingsModal,
+  closeSettingsModal,
+  closeSettingsModalOnBackdrop,
 });

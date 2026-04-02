@@ -12,6 +12,14 @@ export function formatAutonomyModeLabel(mode = "SEMI_AUTO") {
   return mode === "AUTONOMOUS" ? "자동 주문" : "추천 후 승인";
 }
 
+export function formatRiskAppetiteLabel(mode = "MODERATE") {
+  return {
+    CONSERVATIVE: "보수적",
+    MODERATE: "중립",
+    AGGRESSIVE: "공격적",
+  }[mode] || "중립";
+}
+
 export function getMcpBadgeState(systemStatus = {}) {
   const brokerProvider = systemStatus.broker_provider || "KIWOOM";
   const mcpRequired = systemStatus.mcp_required !== false;

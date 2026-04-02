@@ -4,6 +4,7 @@ import {
   buildRuntimeControlState,
   buildRuntimeSettingCopy,
   formatAutonomyModeLabel,
+  formatRiskAppetiteLabel,
   getMcpBadgeState,
 } from "../../admin/static/js/runtime_state.js";
 
@@ -72,5 +73,11 @@ describe("runtime_state", () => {
   test("formats autonomy mode labels for human-readable display", () => {
     expect(formatAutonomyModeLabel("SEMI_AUTO")).toBe("추천 후 승인");
     expect(formatAutonomyModeLabel("AUTONOMOUS")).toBe("자동 주문");
+  });
+
+  test("formats risk appetite labels for compact sidebar summaries", () => {
+    expect(formatRiskAppetiteLabel("CONSERVATIVE")).toBe("보수적");
+    expect(formatRiskAppetiteLabel("MODERATE")).toBe("중립");
+    expect(formatRiskAppetiteLabel("AGGRESSIVE")).toBe("공격적");
   });
 });
