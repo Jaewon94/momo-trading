@@ -12,7 +12,7 @@ LLM 다단계 분석(스크리닝 → 기술적 분석 → 최종 검토)과 실
 - **실시간 이벤트 트레이딩** — KIS WebSocket → 거래량 급증 / 급등 / 급락 감지 → 즉시 분석 및 매매
 - **스윙 모드** — 오버나이트 보유, 종목별 HOLD/SELL 판단, 갭 리스크 체크
 - **피드백 학습** — 일일 성과 분석 → 성공/실패 패턴 추출 → 트레이딩 규칙 자동 생성·적용
-- **Admin 대시보드** — SSE 실시간 활동 피드, 보유종목·미체결 현황, 설정 변경, 수동 사이클 트리거
+- **Admin 대시보드** — SSE 실시간 활동 피드, 보유종목·미체결 현황, `오늘 매매/체결`, `확인 대기(PENDING_CONFIRM)` 복구
 - **백테스팅** — 과거 데이터 기반 전략 시뮬레이션
 
 ## 기술 스택
@@ -26,7 +26,7 @@ LLM 다단계 분석(스크리닝 → 기술적 분석 → 최종 검토)과 실
 | **기술적 분석** | pandas + pandas-ta |
 | **실시간 통신** | WebSocket (KIS), SSE (Admin) |
 | **스케줄러** | APScheduler (KRX 장 시간 기준 cron) |
-| **증권사 API** | KIS MCP Server (Docker) + KIS REST API 직접 호출 |
+| **증권사 API** | KIS MCP Server (Docker, KIS 전용) + Kiwoom REST API |
 | **LLM** | Claude Code CLI / Codex CLI |
 | **로깅** | loguru |
 | **테스트** | pytest + pytest-asyncio |
@@ -85,6 +85,7 @@ KIS WebSocket → RealtimeMonitor → EventDetector
 ```
 momo-trading/
 ├── main.py                     # FastAPI 앱 진입점
+├── start.sh                    # 루트 실행 진입점 (scripts/dev/start.sh 래퍼)
 ├── core/                       # 설정, DB, 이벤트버스, 로깅
 ├── models/                     # SQLAlchemy ORM 모델
 ├── repositories/               # AsyncBaseRepository[T] CRUD
@@ -123,6 +124,8 @@ momo-trading/
 ├── admin/static/               # Admin 대시보드 (HTML/JS)
 ├── backtesting/                # 백테스팅 엔진
 ├── docker/kis-mcp/             # KIS MCP Docker 설정
+├── scripts/                    # dev / qa 스크립트
+├── runtime/                    # logs / pids / data 런타임 산출물
 ├── alembic/                    # DB 마이그레이션
 └── tests/                      # pytest 테스트
 ```
@@ -134,7 +137,7 @@ momo-trading/
 - Python 3.12+
 - [KIS Developers](https://apiportal.koreainvestment.com/) 계정 및 API 키
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (LLM 분석용)
-- Docker & Docker Compose (KIS MCP 서버 실행용)
+- Docker & Docker Compose (KIS 사용 시 필요, Kiwoom만 쓰면 선택)
 
 ### 1. 저장소 클론 및 환경 설정
 
@@ -219,7 +222,7 @@ CODEX_MODEL_TIER2=DEFAULT
 
 ### 3. 실행
 
-#### Docker (권장)
+#### Docker 전체 실행
 
 ```bash
 docker compose up
@@ -228,15 +231,16 @@ docker compose up
 # Admin 대시보드: http://localhost:9000/admin
 ```
 
-#### 로컬 개발
+#### 로컬 실행 권장: `./start.sh`
 
 ```bash
-# KIS MCP 서버를 별도로 실행해야 합니다
-docker compose up kis-mcp
+./start.sh
 
-# 다른 터미널에서
-alembic upgrade head          # DB 마이그레이션
-uvicorn main:app --reload     # http://localhost:8000
+# 백그라운드
+./start.sh -d
+./start.sh status
+./start.sh logs
+./start.sh stop
 ```
 
 `./start.sh`는 루트 진입점이고, 실제 구현은 `scripts/dev/start.sh`에 있습니다.
@@ -245,6 +249,22 @@ uvicorn main:app --reload     # http://localhost:8000
 `./start.sh`를 쓰면 `.env`의 `BROKER_PROVIDER`를 읽어 자동으로 분기합니다.
 - `BROKER_PROVIDER=KIS` → `kis-mcp`를 `docker compose up -d kis-mcp`로 먼저 기동
 - `BROKER_PROVIDER!=KIS` 예: `KIWOOM` → 실행 중인 `kis-mcp`를 `docker compose stop kis-mcp`로 정리 후 앱 시작
+
+기본 포트는 `9000`이고, 이미 사용 중이면 이렇게 바꿔서 실행할 수 있습니다.
+
+```bash
+MOMO_PORT=9010 ./start.sh
+```
+
+#### 직접 실행
+
+```bash
+alembic upgrade head
+python -m uvicorn main:app --host 0.0.0.0 --port 9000 --reload
+```
+
+기존 로컬 환경에서 이미 `.env`에 `DATABASE_URL=sqlite:///./data/app.db`를 쓰고 있으면 그대로 동작합니다.
+새 기본 경로만 `runtime/data/app.db`로 바뀐 것이고, `.env`가 있으면 그 값이 우선합니다.
 
 ### 4. 첫 실행 체크리스트
 
@@ -284,6 +304,8 @@ uvicorn main:app --reload     # http://localhost:8000
 - **실시간 피드** — SSE 기반 에이전트 활동 스트림 (매수/매도/분석/에러)
 - **보유종목 카드** — 현재 포지션, 수익률, 미실현 손익
 - **미체결 주문** — 대기 중인 주문 현황
+- **오늘 매매/체결** — `오늘 진입`, `오늘 청산`, `보유 포지션`, `확인 대기(PENDING_CONFIRM)` 표시
+- **확인 대기 복구** — 관리자 버튼으로 `PENDING_CONFIRM` 수동 재확인
 - **일일 리포트** — 승률, 손익, Sharpe ratio, AI 학습 내용
 - **설정 패널** — 런타임 설정 변경 (재시작 불필요)
 - **수동 트리거** — 장 외 시간에도 사이클 실행 가능
@@ -293,6 +315,7 @@ uvicorn main:app --reload     # http://localhost:8000
 ```bash
 pytest tests/ -v
 pytest tests/api/test_health.py -v    # 단일 파일
+pnpm test:ui                          # Admin 순수 상태 JS 테스트
 ```
 
 인메모리 SQLite(`sqlite+aiosqlite://`)로 실행되며, KIS API 호출 없이 독립 테스트 가능합니다.
