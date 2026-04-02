@@ -1,4 +1,5 @@
 """Kiwoom REST API 저수준 클라이언트"""
+import asyncio
 import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -81,29 +82,50 @@ class KiwoomRESTClient:
         cont_yn: str = "N",
         next_key: str = "",
     ) -> KiwoomAPIResponse:
-        token = await self.get_access_token()
-        response = await self._client.post(
-            f"{self.base_url}{endpoint}",
-            headers={
-                "Content-Type": "application/json;charset=UTF-8",
-                "authorization": f"Bearer {token}",
-                "cont-yn": cont_yn,
-                "next-key": next_key,
-                "api-id": api_id,
-            },
-            json=body,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        return KiwoomAPIResponse(
-            body=payload if isinstance(payload, dict) else {"data": payload},
-            headers={
-                "cont-yn": response.headers.get("cont-yn", ""),
-                "next-key": response.headers.get("next-key", ""),
-                "api-id": response.headers.get("api-id", api_id),
-            },
-            status_code=response.status_code,
-        )
+        retried_with_new_token = False
+        rate_limit_retries = 0
+
+        while True:
+            token = await self.get_access_token()
+            try:
+                response = await self._client.post(
+                    f"{self.base_url}{endpoint}",
+                    headers={
+                        "Content-Type": "application/json;charset=UTF-8",
+                        "authorization": f"Bearer {token}",
+                        "cont-yn": cont_yn,
+                        "next-key": next_key,
+                        "api-id": api_id,
+                    },
+                    json=body,
+                )
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 429 and rate_limit_retries < 2:
+                    rate_limit_retries += 1
+                    await asyncio.sleep(0.35 * rate_limit_retries)
+                    continue
+                raise
+            payload = response.json()
+
+            if (
+                not retried_with_new_token
+                and isinstance(payload, dict)
+                and self._is_invalid_token_response(payload)
+            ):
+                self._invalidate_cached_token()
+                retried_with_new_token = True
+                continue
+
+            return KiwoomAPIResponse(
+                body=payload if isinstance(payload, dict) else {"data": payload},
+                headers={
+                    "cont-yn": response.headers.get("cont-yn", ""),
+                    "next-key": response.headers.get("next-key", ""),
+                    "api-id": response.headers.get("api-id", api_id),
+                },
+                status_code=response.status_code,
+            )
 
     async def get_access_token(self) -> str:
         if self._token and self._token.expires_at > datetime.now() + timedelta(minutes=1):
@@ -178,5 +200,20 @@ class KiwoomRESTClient:
                 "token": token.access_token,
                 "expires_dt": token.expires_at.strftime("%Y%m%d%H%M%S"),
             }))
+        except OSError:
+            return
+
+    @staticmethod
+    def _is_invalid_token_response(payload: dict[str, Any]) -> bool:
+        return payload.get("return_code") == 3 and "Token이 유효하지 않습니다" in str(
+            payload.get("return_msg", "")
+        )
+
+    def _invalidate_cached_token(self) -> None:
+        self._token = None
+        if self._token_cache_path is None:
+            return
+        try:
+            self._token_cache_path.unlink(missing_ok=True)
         except OSError:
             return

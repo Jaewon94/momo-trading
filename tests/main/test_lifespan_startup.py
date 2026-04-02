@@ -42,6 +42,7 @@ async def test_app_lifespan_starts_even_when_mcp_connect_fails(monkeypatch) -> N
     monkeypatch.setattr("main.event_bus.stop", fake_event_bus_stop)
     monkeypatch.setattr("main.mcp_client.connect", fake_mcp_connect)
     monkeypatch.setattr("main.mcp_client.disconnect", fake_mcp_disconnect)
+    monkeypatch.setattr("main.settings.BROKER_PROVIDER", "KIS")
     monkeypatch.setattr("realtime.monitor.realtime_monitor", recorder)
     monkeypatch.setattr("agent.trading_agent.trading_agent", recorder)
     monkeypatch.setattr("scheduler.scheduler.trading_scheduler", recorder)
@@ -92,6 +93,6 @@ async def test_app_lifespan_completes_in_kiwoom_mode_without_kis_mcp(monkeypatch
     async with app.router.lifespan_context(app):
         pass
 
-    assert recorder.calls.count("mcp.connect") == 1
+    assert recorder.calls.count("mcp.connect") == 0
     assert recorder.calls.count("start") == 3
     assert recorder.calls[-2:] == ["mcp.disconnect", "event_bus.stop"]

@@ -4,7 +4,7 @@ import json as _json
 import time as _time
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -281,9 +281,15 @@ async def update_settings(updates: dict):
         if isinstance(old, bool):
             value = str(value).lower() in ("true", "1", "yes")
         elif isinstance(old, int):
-            value = int(value)
+            try:
+                value = int(value)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail=f"{key} must be an integer") from exc
         elif isinstance(old, float):
-            value = float(value)
+            try:
+                value = float(value)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail=f"{key} must be a number") from exc
         elif key in {
             "LLM_PROVIDER_TIER1",
             "LLM_PROVIDER_TIER2",
@@ -360,6 +366,8 @@ async def get_system_status():
     from scheduler.market_calendar import market_calendar
 
     return SuccessResponse(data={
+        "broker_provider": settings.BROKER_PROVIDER.upper(),
+        "mcp_required": settings.BROKER_PROVIDER.upper() == "KIS",
         "trading_enabled": settings.TRADING_ENABLED,
         "autonomy_mode": settings.AUTONOMY_MODE,
         "mcp_connected": mcp_client.is_connected,
@@ -372,6 +380,25 @@ async def get_system_status():
         "market_holiday": market_calendar.get_holiday_name(),
         "next_market_open": market_calendar.next_krx_open().strftime("%m/%d %H:%M"),
     })
+
+
+@router.post("/mcp/reconnect")
+async def reconnect_mcp():
+    """런타임 MCP 연결 재시도"""
+    connected = await mcp_client.ensure_connected(force_reconnect=True)
+    detail = {
+        "connected": connected,
+        "mcp_connected": mcp_client.is_connected,
+    }
+    await activity_logger.log(
+        ActivityType.EVENT, ActivityPhase.PROGRESS,
+        "🔌 MCP 재연결 요청",
+        detail=detail,
+    )
+    return SuccessResponse(
+        data=detail,
+        message="MCP 재연결 성공" if connected else "MCP 재연결 실패",
+    )
 
 
 @router.post("/scheduler/start")

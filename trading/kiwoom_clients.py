@@ -1,5 +1,6 @@
 """Kiwoom REST 기반 도메인 클라이언트"""
-from datetime import datetime
+import asyncio
+from datetime import datetime, timedelta
 from typing import Any
 
 from trading.enums import Market, OrderType
@@ -19,14 +20,14 @@ class KiwoomAccountClient:
 
     def __init__(self, rest_client: KiwoomRESTClient) -> None:
         self._rest_client = rest_client
+        self._account_snapshot: dict[str, Any] | None = None
+        self._account_snapshot_cached_at: datetime | None = None
+        self._account_snapshot_ttl = timedelta(seconds=1)
+        self._account_snapshot_lock = asyncio.Lock()
 
     async def get_balance(self) -> AccountBalance:
-        response = await self._rest_client.request(
-            api_id="kt00018",
-            endpoint="/api/dostk/acnt",
-            body={"qry_tp": "1", "dmst_stex_tp": "KRX"},
-        )
-        data = response.body
+        data = await self._get_account_snapshot()
+        self._ensure_success(data)
         total_asset = _abs_float(data.get("prsm_dpst_aset_amt"))
         stock_value = _abs_float(data.get("tot_evlt_amt"))
         if total_asset <= 0 and stock_value > 0:
@@ -42,13 +43,10 @@ class KiwoomAccountClient:
         )
 
     async def get_holdings(self) -> list[HoldingInfo]:
-        response = await self._rest_client.request(
-            api_id="kt00018",
-            endpoint="/api/dostk/acnt",
-            body={"qry_tp": "1", "dmst_stex_tp": "KRX"},
-        )
+        data = await self._get_account_snapshot()
+        self._ensure_success(data)
         holdings = []
-        for item in response.body.get("acnt_evlt_remn_indv_tot", []):
+        for item in data.get("acnt_evlt_remn_indv_tot", []):
             holdings.append(
                 HoldingInfo(
                     symbol=item.get("stk_cd", ""),
@@ -73,6 +71,7 @@ class KiwoomAccountClient:
                 "stex_tp": "0",
             },
         )
+        self._ensure_success(response.body)
         orders = []
         for item in response.body.get("oso", []):
             orders.append(
@@ -89,6 +88,58 @@ class KiwoomAccountClient:
                 )
             )
         return orders
+
+    def invalidate_cache(self) -> None:
+        self._account_snapshot = None
+        self._account_snapshot_cached_at = None
+
+    async def _get_account_snapshot(self) -> dict[str, Any]:
+        cached = self._get_cached_account_snapshot()
+        if cached is not None:
+            return cached
+
+        async with self._account_snapshot_lock:
+            cached = self._get_cached_account_snapshot()
+            if cached is not None:
+                return cached
+
+            response = await self._rest_client.request(
+                api_id="kt00017",
+                endpoint="/api/dostk/acnt",
+                body={"qry_tp": "1", "dmst_stex_tp": "KRX"},
+            )
+            if self._should_use_mock_cash_fallback(response.body):
+                # Kiwoom 모의투자에서는 계좌평가 잔고 TR이 막히는 경우가 있어
+                # mock cash seed 값을 주는 응답으로 한 번만 폴백한다.
+                response = await self._rest_client.request(
+                    api_id="kt00018",
+                    endpoint="/api/dostk/acnt",
+                    body={"qry_tp": "1", "dmst_stex_tp": "KRX"},
+                )
+            if _return_code(response.body) == 0:
+                self._account_snapshot = response.body
+                self._account_snapshot_cached_at = datetime.now()
+            return response.body
+
+    def _get_cached_account_snapshot(self) -> dict[str, Any] | None:
+        if self._account_snapshot is None or self._account_snapshot_cached_at is None:
+            return None
+        if datetime.now() - self._account_snapshot_cached_at > self._account_snapshot_ttl:
+            return None
+        return self._account_snapshot
+
+    @staticmethod
+    def _ensure_success(data: dict[str, Any]) -> None:
+        if _return_code(data) == 0:
+            return
+        raise RuntimeError(data.get("return_msg", "키움 계좌 조회 실패"))
+
+    def _should_use_mock_cash_fallback(self, data: dict[str, Any]) -> bool:
+        if not self._rest_client.is_paper_trading:
+            return False
+        if _return_code(data) == 0:
+            return False
+        return "RC9000" in str(data.get("return_msg", ""))
 
 
 class KiwoomMarketDataClient:
@@ -174,6 +225,64 @@ class KiwoomMarketDataClient:
             "prices": _normalize_chart_rows(data, count=None, time_key="time"),
         })
 
+    async def get_volume_rank(self, market: str = "KRX") -> MCPResponse:
+        if not _is_domestic_market(market):
+            return MCPResponse(success=False, error="Kiwoom은 국내주식만 지원합니다")
+
+        response = await self._rest_client.request(
+            api_id="ka10023",
+            endpoint="/api/dostk/rkinfo",
+            body={
+                "mrkt_tp": _to_rank_market_code(market),
+                "sort_tp": "1",
+                "tm_tp": "1",
+                "trde_qty_tp": "10",
+                "tm": "5",
+                "stk_cnd": "20",
+                "pric_tp": "0",
+                "stex_tp": _to_rank_exchange_code(market),
+            },
+        )
+        data = response.body
+        if _return_code(data) != 0:
+            return MCPResponse(success=False, error=data.get("return_msg", "거래량 순위 조회 실패"))
+
+        rows = data.get("trde_qty_sdnin", [])
+        return MCPResponse(success=True, data={
+            **data,
+            "stocks": _normalize_rank_rows(rows),
+        })
+
+    async def get_fluctuation_rank(self, sort: str, market: str = "KRX") -> MCPResponse:
+        if not _is_domestic_market(market):
+            return MCPResponse(success=False, error="Kiwoom은 국내주식만 지원합니다")
+
+        sort_tp = "1" if sort == "top" else "3"
+        response = await self._rest_client.request(
+            api_id="ka10027",
+            endpoint="/api/dostk/rkinfo",
+            body={
+                "mrkt_tp": _to_rank_market_code(market),
+                "sort_tp": sort_tp,
+                "trde_qty_cnd": "0010",
+                "stk_cnd": "0",
+                "crd_cnd": "0",
+                "updown_incls": "1",
+                "pric_cnd": "0",
+                "trde_prica_cnd": "0",
+                "stex_tp": _to_rank_exchange_code(market),
+            },
+        )
+        data = response.body
+        if _return_code(data) != 0:
+            return MCPResponse(success=False, error=data.get("return_msg", "등락률 순위 조회 실패"))
+
+        rows = data.get("pred_pre_flu_rt_upper", [])
+        return MCPResponse(success=True, data={
+            **data,
+            "stocks": _normalize_rank_rows(rows),
+        })
+
 
 class KiwoomOrderExecutor:
     """주문 응답 정규화"""
@@ -192,8 +301,8 @@ class KiwoomOrderExecutor:
             body={
                 "dmst_stex_tp": _to_exchange(request.market),
                 "stk_cd": request.symbol,
-                "ord_qty": request.quantity,
-                "ord_uv": int(request.price or 0),
+                "ord_qty": str(int(request.quantity)),
+                "ord_uv": str(int(request.price)) if request.price else "",
                 "trde_tp": "0" if request.order_type == OrderType.LIMIT else "3",
             },
         )
@@ -238,6 +347,22 @@ def _normalize_chart_rows(
     return normalized
 
 
+def _normalize_rank_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized = []
+    for row in rows:
+        normalized.append({
+            "symbol": row.get("stk_cd", ""),
+            "name": row.get("stk_nm", ""),
+            "price": _abs_float(row.get("cur_prc")),
+            "current_price": _abs_float(row.get("cur_prc")),
+            "change": _signed_float(row.get("pred_pre")),
+            "change_rate": _signed_float(row.get("flu_rt")),
+            "volume": _signed_int(row.get("now_trde_qty") or row.get("trde_qty")),
+            "trade_amount": _signed_int(row.get("acml_trde_prica") or row.get("trde_prica")),
+        })
+    return normalized
+
+
 def _find_chart_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
     for value in data.values():
         if not isinstance(value, list) or not value:
@@ -258,6 +383,22 @@ def _to_exchange(market: Market) -> str:
     if market in {Market.KRX, Market.KOSPI, Market.KOSDAQ}:
         return "KRX"
     return market.value
+
+
+def _to_rank_market_code(market: str) -> str:
+    market_upper = market.upper()
+    if market_upper == Market.KOSPI.value:
+        return "001"
+    if market_upper == Market.KOSDAQ.value:
+        return "101"
+    return "000"
+
+
+def _to_rank_exchange_code(market: str) -> str:
+    market_upper = market.upper()
+    if market_upper in {Market.KRX.value, Market.KOSPI.value, Market.KOSDAQ.value}:
+        return "1"
+    return "3"
 
 
 def _return_code(data: dict[str, Any]) -> int:

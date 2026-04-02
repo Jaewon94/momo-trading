@@ -25,6 +25,11 @@ class RiskManager:
 
     RR_FLOOR = {"THEME": 1.0, "BULL": 1.0}
 
+    @staticmethod
+    def _normalize_cash_ratio(value: float) -> float:
+        ratio = max(float(value), 0.0)
+        return ratio / 100 if ratio > 1 else ratio
+
     async def check(
         self,
         signal: TradeSignal,
@@ -52,14 +57,16 @@ class RiskManager:
         eff_max_daily = self.max_daily_trades
         eff_max_order = self.max_single_order_krw
         eff_min_qty = settings.MIN_BUY_QUANTITY
-        eff_min_cash_ratio = self.min_cash_ratio
+        eff_min_cash_ratio = self._normalize_cash_ratio(self.min_cash_ratio)
         eff_max_pos_pct = max_position_pct
 
         if dynamic_limits:
             eff_max_daily = dynamic_limits.get("max_daily_trades", eff_max_daily)
             eff_max_order = dynamic_limits.get("max_single_order_krw", eff_max_order)
             eff_min_qty = dynamic_limits.get("min_buy_quantity", eff_min_qty)
-            eff_min_cash_ratio = dynamic_limits.get("min_cash_ratio", eff_min_cash_ratio)
+            eff_min_cash_ratio = self._normalize_cash_ratio(
+                dynamic_limits.get("min_cash_ratio", eff_min_cash_ratio)
+            )
             eff_max_pos_pct = dynamic_limits.get("max_position_pct", eff_max_pos_pct)
 
         # 매도는 기본적으로 허용

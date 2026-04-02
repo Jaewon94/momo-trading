@@ -97,6 +97,28 @@ class FakeMarketDataClient:
             },
         )
 
+    async def get_volume_rank(self, market: str = "KRX") -> MCPResponse:
+        return MCPResponse(
+            success=True,
+            data={
+                "stocks": [
+                    {"symbol": "005930", "name": "삼성전자", "price": 73000, "change_rate": 1.39, "volume": 654321}
+                ]
+            },
+        )
+
+    async def get_fluctuation_rank(self, sort: str, market: str = "KRX") -> MCPResponse:
+        symbol = "035720" if sort == "top" else "000660"
+        change_rate = 5.12 if sort == "top" else -4.21
+        return MCPResponse(
+            success=True,
+            data={
+                "stocks": [
+                    {"symbol": symbol, "name": "테스트", "price": 52000, "change_rate": change_rate, "volume": 123456}
+                ]
+            },
+        )
+
 
 class FakeOrderExecutor:
     def __init__(self) -> None:
@@ -191,3 +213,16 @@ async def test_kiwoom_adapter_returns_normalized_candles() -> None:
 
     assert [c.close for c in daily] == [72000.0, 73000.0]
     assert intraday[0].time_key == "1000"
+
+
+@pytest.mark.asyncio
+async def test_kiwoom_adapter_delegates_market_rank_requests() -> None:
+    adapter, _ = build_adapter()
+
+    volume = await adapter.get_volume_rank()
+    top = await adapter.get_fluctuation_rank("top")
+    bottom = await adapter.get_fluctuation_rank("bottom")
+
+    assert volume[0]["symbol"] == "005930"
+    assert top[0]["symbol"] == "035720"
+    assert bottom[0]["symbol"] == "000660"

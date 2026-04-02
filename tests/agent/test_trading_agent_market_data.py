@@ -169,6 +169,23 @@ class FakePortfolioBrokerAdapter:
         )
 
 
+class InvalidBalanceBrokerAdapter(FakePortfolioBrokerAdapter):
+    async def get_balance(self) -> AccountBalance:
+        return AccountBalance(
+            total_asset=0,
+            cash=0,
+            stock_value=0,
+            total_pnl=0,
+            total_pnl_rate=0,
+            is_valid=False,
+        )
+
+
+class EmptyHoldingsBrokerAdapter(FakePortfolioBrokerAdapter):
+    async def get_holdings(self) -> list[HoldingInfo]:
+        return []
+
+
 @pytest.mark.asyncio
 async def test_trading_agent_builds_portfolio_snapshot_from_broker_adapter(monkeypatch) -> None:
     adapter = FakePortfolioBrokerAdapter()
@@ -189,6 +206,17 @@ async def test_trading_agent_builds_portfolio_snapshot_from_broker_adapter(monke
         "holding_symbols": ["005930"],
     }
     assert agent._available_cash == 1_200_000
+
+
+@pytest.mark.asyncio
+async def test_trading_agent_looks_up_current_price_via_broker_adapter() -> None:
+    adapter = FakeBrokerAdapter()
+    agent = TradingAgent(broker_adapter=adapter)
+
+    price = await agent._lookup_current_price("005930", "KRX")
+
+    assert price == 71_500
+    assert adapter.calls == [("quote", "005930", "KRX")]
 
 
 @pytest.mark.asyncio
@@ -216,3 +244,77 @@ async def test_trading_agent_executes_exit_order_via_broker_adapter(monkeypatch)
     assert adapter.requests[0].quantity == 4
     assert recorded["order_id"] == "SELL-1"
     assert recorded["exit_reason"] == "STOP_LOSS"
+
+
+@pytest.mark.asyncio
+async def test_trading_agent_rejects_invalid_balance_snapshot(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=InvalidBalanceBrokerAdapter())
+
+    async def fake_today_trade_count() -> int:
+        return 0
+
+    monkeypatch.setattr(agent, "_get_today_trade_count", fake_today_trade_count)
+
+    with pytest.raises(RuntimeError, match="계좌 조회 실패"):
+        await agent._build_portfolio_snapshot()
+
+
+@pytest.mark.asyncio
+async def test_trading_agent_skips_exit_order_without_holding(monkeypatch) -> None:
+    adapter = EmptyHoldingsBrokerAdapter()
+    agent = TradingAgent(broker_adapter=adapter)
+    recorded = False
+
+    async def fake_confirm_and_record(**kwargs) -> None:
+        nonlocal recorded
+        recorded = True
+
+    monkeypatch.setattr("agent.trading_agent.decision_maker.confirm_and_record", fake_confirm_and_record)
+
+    result = await agent._execute_exit_order(
+        symbol="005930",
+        expected_price=71_000,
+        exit_reason="STOP_LOSS",
+    )
+
+    assert result is None
+    assert adapter.requests == []
+    assert recorded is False
+
+
+@pytest.mark.asyncio
+async def test_trading_agent_updates_last_cycle_time_when_cycle_ends_without_candidates(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=FakePortfolioBrokerAdapter())
+
+    monkeypatch.setattr("agent.trading_agent.settings.AI_RISK_TUNING_ENABLED", False)
+
+    async def fake_publish(*args, **kwargs) -> None:
+        return None
+
+    async def fake_log(*args, **kwargs) -> None:
+        return None
+
+    async def fake_snapshot() -> dict:
+        return {
+            "cash": 1_200_000,
+            "total_asset": 2_000_000,
+            "holding_count": 0,
+            "today_trade_count": 0,
+            "holding_symbols": [],
+        }
+
+    async def fake_scan(*args, **kwargs) -> dict:
+        return {"selected": []}
+
+    monkeypatch.setattr("agent.trading_agent.event_bus.publish", fake_publish)
+    monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.trading_agent.activity_logger.start_cycle", lambda: "cycle-1")
+    monkeypatch.setattr("agent.trading_agent.activity_logger.timer", lambda: object())
+    monkeypatch.setattr("agent.trading_agent.activity_logger.elapsed_ms", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(agent, "_build_portfolio_snapshot", fake_snapshot)
+    monkeypatch.setattr("agent.trading_agent.market_scanner.scan", fake_scan)
+
+    result = await agent._run_trading_cycle()
+
+    assert result["scanned"] == 0
+    assert agent.last_cycle_time is not None

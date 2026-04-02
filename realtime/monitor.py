@@ -6,6 +6,8 @@ from loguru import logger
 
 from realtime.event_detector import event_detector
 from realtime.stream_manager import stream_manager
+from trading.broker_factory import get_broker_adapter
+from trading.enums import Market
 from trading.kis_websocket import kis_websocket
 
 
@@ -113,24 +115,22 @@ class RealtimeMonitor:
         logger.debug("폴링 폴백 루프 종료")
 
     async def _poll_holdings_prices(self) -> None:
-        """보유종목 현재가 MCP 조회 → event_detector.on_price_update() 전달"""
+        """보유종목 현재가를 현재 브로커 어댑터로 조회 → event_detector.on_price_update() 전달"""
         from trading.account_manager import account_manager
-        from trading.mcp_client import mcp_client
 
         try:
             holdings = await account_manager.get_holdings()
             if not holdings:
                 return
 
+            broker_adapter = get_broker_adapter()
             polled_count = 0
             for h in holdings:
                 if not h.symbol or h.quantity <= 0:
                     continue
                 try:
-                    resp = await mcp_client.get_current_price(h.symbol)
-                    if not resp.success or not resp.data:
-                        continue
-                    price = float(resp.data.get("price", 0))
+                    quote = await broker_adapter.get_current_price(h.symbol, market=Market.KRX)
+                    price = float(quote.price or 0)
                     if price <= 0:
                         continue
 
@@ -138,8 +138,8 @@ class RealtimeMonitor:
                     await event_detector.on_price_update({
                         "symbol": h.symbol,
                         "price": price,
-                        "volume": 0,
-                        "change_rate": 0,
+                        "volume": int(quote.volume or 0),
+                        "change_rate": float(quote.change_rate or 0.0),
                         "source": "polling_fallback",
                     })
                     polled_count += 1

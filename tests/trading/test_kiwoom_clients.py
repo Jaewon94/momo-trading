@@ -104,7 +104,46 @@ def build_transport() -> tuple[httpx.MockTransport, list[tuple[str, str, dict]]]
                 },
             )
 
-        if request.headers.get("api-id") == "kt00018":
+        if request.headers.get("api-id") == "ka10023":
+            return httpx.Response(
+                200,
+                json={
+                    "trde_qty_sdnin": [
+                        {
+                            "stk_cd": "005930",
+                            "stk_nm": "삼성전자",
+                            "cur_prc": "+71500",
+                            "pred_pre": "+1200",
+                            "flu_rt": "+1.71",
+                            "now_trde_qty": "1234567",
+                            "sdnin_rt": "+45.20",
+                        }
+                    ],
+                    "return_code": 0,
+                    "return_msg": "정상적으로 처리되었습니다",
+                },
+            )
+
+        if request.headers.get("api-id") == "ka10027":
+            return httpx.Response(
+                200,
+                json={
+                    "pred_pre_flu_rt_upper": [
+                        {
+                            "stk_cd": "035720",
+                            "stk_nm": "카카오",
+                            "cur_prc": "-52000",
+                            "pred_pre": "-1500",
+                            "flu_rt": "-2.80",
+                            "now_trde_qty": "765432",
+                        }
+                    ],
+                    "return_code": 0,
+                    "return_msg": "정상적으로 처리되었습니다",
+                },
+            )
+
+        if request.headers.get("api-id") == "kt00017":
             return httpx.Response(
                 200,
                 json={
@@ -198,8 +237,44 @@ async def test_kiwoom_market_data_client_normalizes_quote_and_charts() -> None:
 
 
 @pytest.mark.asyncio
+async def test_kiwoom_market_data_client_normalizes_rankings() -> None:
+    transport, requests = build_transport()
+    client = KiwoomRESTClient(
+        app_key="real-key",
+        secret_key="real-secret",
+        paper_app_key="paper-key",
+        paper_secret_key="paper-secret",
+        account_type="VIRTUAL",
+        transport=transport,
+        token_cache_path=None,
+    )
+    market_client = KiwoomMarketDataClient(client)
+
+    volume = await market_client.get_volume_rank(market="KRX")
+    top = await market_client.get_fluctuation_rank(sort="top", market="KRX")
+    bottom = await market_client.get_fluctuation_rank(sort="bottom", market="KRX")
+
+    assert volume.success is True
+    assert volume.data["stocks"][0]["symbol"] == "005930"
+    assert volume.data["stocks"][0]["price"] == 71500.0
+    assert volume.data["stocks"][0]["volume"] == 1234567
+
+    assert top.success is True
+    assert top.data["stocks"][0]["symbol"] == "035720"
+    assert top.data["stocks"][0]["change_rate"] == -2.8
+
+    assert bottom.success is True
+    assert bottom.data["stocks"][0]["symbol"] == "035720"
+    ranking_requests = [request for request in requests if request[0] == "/api/dostk/rkinfo"]
+    assert ranking_requests[0][1] == "ka10023"
+    assert ranking_requests[1][1] == "ka10027"
+    assert ranking_requests[1][2]["sort_tp"] == "1"
+    assert ranking_requests[2][2]["sort_tp"] == "3"
+
+
+@pytest.mark.asyncio
 async def test_kiwoom_account_client_normalizes_balance_holdings_and_pending_orders() -> None:
-    transport, _ = build_transport()
+    transport, requests = build_transport()
     client = KiwoomRESTClient(
         app_key="real-key",
         secret_key="real-secret",
@@ -221,6 +296,16 @@ async def test_kiwoom_account_client_normalizes_balance_holdings_and_pending_ord
     assert holdings[0].quantity == 3
     assert pending_orders[0].remaining_qty == 2
     assert pending_orders[0].filled_qty == 1
+
+    account_eval_requests = [
+        request for request in requests if request[1] == "kt00017"
+    ]
+    pending_order_requests = [
+        request for request in requests if request[1] == "ka10075"
+    ]
+
+    assert len(account_eval_requests) == 1
+    assert len(pending_order_requests) == 1
 
 
 @pytest.mark.asyncio
@@ -252,6 +337,271 @@ async def test_kiwoom_order_executor_submits_order() -> None:
     assert requests[-1][0] == "/api/dostk/ordr"
     assert requests[-1][1] == "kt10000"
     assert requests[-1][2]["stk_cd"] == "005930"
-    assert requests[-1][2]["ord_qty"] == 3
-    assert requests[-1][2]["ord_uv"] == 71000
+    assert requests[-1][2]["ord_qty"] == "3"
+    assert requests[-1][2]["ord_uv"] == "71000"
     assert requests[-1][2]["trde_tp"] == "0"
+
+
+@pytest.mark.asyncio
+async def test_kiwoom_order_executor_submits_market_order_with_string_fields() -> None:
+    transport, requests = build_transport()
+    client = KiwoomRESTClient(
+        app_key="real-key",
+        secret_key="real-secret",
+        paper_app_key="paper-key",
+        paper_secret_key="paper-secret",
+        account_type="VIRTUAL",
+        transport=transport,
+        token_cache_path=None,
+    )
+    executor = KiwoomOrderExecutor(client)
+    request = OrderRequest(
+        symbol="065440",
+        market=Market.KRX,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=900,
+        price=None,
+    )
+
+    result = await executor.execute(request)
+
+    assert result.success is True
+    assert result.order_id == "0539055"
+    assert requests[-1][2]["stk_cd"] == "065440"
+    assert requests[-1][2]["ord_qty"] == "900"
+    assert requests[-1][2]["ord_uv"] == ""
+    assert requests[-1][2]["trde_tp"] == "3"
+
+
+@pytest.mark.asyncio
+async def test_kiwoom_rest_client_reissues_token_when_account_api_reports_invalid_token(
+    tmp_path,
+) -> None:
+    issued_tokens: list[str] = []
+    account_authorizations: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth2/token":
+            token = f"token-{len(issued_tokens) + 1}"
+            issued_tokens.append(token)
+            return httpx.Response(
+                200,
+                json={
+                    "token": token,
+                    "expires_dt": "20991231235959",
+                    "token_type": "Bearer",
+                    "return_code": 0,
+                    "return_msg": "정상적으로 처리되었습니다",
+                },
+            )
+
+        if request.headers.get("api-id") == "kt00017":
+            account_authorizations.append(request.headers.get("authorization", ""))
+            if len(account_authorizations) == 1:
+                return httpx.Response(
+                    200,
+                    json={
+                        "return_code": 3,
+                        "return_msg": "인증에 실패했습니다[8005:Token이 유효하지 않습니다]",
+                    },
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "tot_evlt_amt": "215000",
+                    "tot_evlt_pl": "5000",
+                    "tot_prft_rt": "2.38",
+                    "prsm_dpst_aset_amt": "715000",
+                    "acnt_evlt_remn_indv_tot": [],
+                    "return_code": 0,
+                    "return_msg": "정상적으로 처리되었습니다",
+                },
+            )
+
+        return httpx.Response(404, json={"return_code": -1, "return_msg": "not found"})
+
+    client = KiwoomRESTClient(
+        app_key="real-key",
+        secret_key="real-secret",
+        paper_app_key="paper-key",
+        paper_secret_key="paper-secret",
+        account_type="VIRTUAL",
+        transport=httpx.MockTransport(handler),
+        token_cache_path=tmp_path / "kiwoom_token.json",
+    )
+
+    response = await client.request(
+        api_id="kt00017",
+        endpoint="/api/dostk/acnt",
+        body={"qry_tp": "1", "dmst_stex_tp": "KRX"},
+    )
+
+    assert response.body["return_code"] == 0
+    assert issued_tokens == ["token-1", "token-2"]
+    assert account_authorizations == ["Bearer token-1", "Bearer token-2"]
+
+
+@pytest.mark.asyncio
+async def test_kiwoom_rest_client_retries_on_rate_limit() -> None:
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        if request.url.path == "/oauth2/token":
+            return httpx.Response(
+                200,
+                json={
+                    "token": "kiwoom-token",
+                    "expires_dt": "20991231235959",
+                    "token_type": "Bearer",
+                    "return_code": 0,
+                    "return_msg": "정상적으로 처리되었습니다",
+                },
+            )
+
+        if request.headers.get("api-id") == "ka10075":
+            call_count += 1
+            if call_count < 3:
+                return httpx.Response(429, json={"return_code": -1, "return_msg": "too many"})
+            return httpx.Response(
+                200,
+                json={
+                    "oso": [],
+                    "return_code": 0,
+                    "return_msg": "조회가 완료되었습니다.",
+                },
+            )
+
+        return httpx.Response(404, json={"return_code": -1, "return_msg": "not found"})
+
+    client = KiwoomRESTClient(
+        app_key="real-key",
+        secret_key="real-secret",
+        paper_app_key="paper-key",
+        paper_secret_key="paper-secret",
+        account_type="VIRTUAL",
+        transport=httpx.MockTransport(handler),
+        token_cache_path=None,
+    )
+
+    response = await client.request(
+        api_id="ka10075",
+        endpoint="/api/dostk/acnt",
+        body={"all_stk_tp": "0", "trde_tp": "0", "stk_cd": "", "stex_tp": "0"},
+    )
+
+    assert response.body["return_code"] == 0
+    assert call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_kiwoom_account_client_raises_when_account_api_returns_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth2/token":
+            return httpx.Response(
+                200,
+                json={
+                    "token": "kiwoom-token",
+                    "expires_dt": "20991231235959",
+                    "token_type": "Bearer",
+                    "return_code": 0,
+                    "return_msg": "정상적으로 처리되었습니다",
+                },
+            )
+
+        if request.headers.get("api-id") == "kt00017":
+            return httpx.Response(
+                200,
+                json={
+                    "return_code": 3,
+                    "return_msg": "인증에 실패했습니다[8005:Token이 유효하지 않습니다]",
+                },
+            )
+
+        return httpx.Response(404, json={"return_code": -1, "return_msg": "not found"})
+
+    client = KiwoomRESTClient(
+        app_key="real-key",
+        secret_key="real-secret",
+        paper_app_key="paper-key",
+        paper_secret_key="paper-secret",
+        account_type="VIRTUAL",
+        transport=httpx.MockTransport(handler),
+        token_cache_path=None,
+    )
+    account_client = KiwoomAccountClient(client)
+
+    with pytest.raises(RuntimeError, match="인증에 실패"):
+        await account_client.get_balance()
+
+
+@pytest.mark.asyncio
+async def test_kiwoom_account_client_uses_mock_cash_fallback_when_stock_balance_tr_is_unsupported() -> None:
+    requests: list[tuple[str, str, dict]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = {}
+        if request.content:
+            payload = __import__("json").loads(request.content.decode())
+        requests.append((request.url.path, request.headers.get("api-id", ""), payload))
+
+        if request.url.path == "/oauth2/token":
+            return httpx.Response(
+                200,
+                json={
+                    "token": "kiwoom-token",
+                    "expires_dt": "20991231235959",
+                    "token_type": "Bearer",
+                    "return_code": 0,
+                    "return_msg": "정상적으로 처리되었습니다",
+                },
+            )
+
+        if request.headers.get("api-id") == "kt00017":
+            return httpx.Response(
+                200,
+                json={
+                    "return_code": 20,
+                    "return_msg": "[2000](RC9000:모의투자에서는 해당업무가 제공되지 않습니다.)",
+                },
+            )
+
+        if request.headers.get("api-id") == "kt00018":
+            return httpx.Response(
+                200,
+                json={
+                    "tot_pur_amt": "000000000000000",
+                    "tot_evlt_amt": "000000000000000",
+                    "tot_evlt_pl": "000000000000000",
+                    "tot_prft_rt": "000000000.00",
+                    "prsm_dpst_aset_amt": "000000500000000",
+                    "acnt_evlt_remn_indv_tot": [],
+                    "return_code": 0,
+                    "return_msg": "모의투자 해당조회내역이 없습니다.",
+                },
+            )
+
+        return httpx.Response(404, json={"return_code": -1, "return_msg": "not found"})
+
+    client = KiwoomRESTClient(
+        app_key="real-key",
+        secret_key="real-secret",
+        paper_app_key="paper-key",
+        paper_secret_key="paper-secret",
+        account_type="VIRTUAL",
+        transport=httpx.MockTransport(handler),
+        token_cache_path=None,
+    )
+    account_client = KiwoomAccountClient(client)
+
+    balance = await account_client.get_balance()
+    holdings = await account_client.get_holdings()
+
+    assert balance.total_asset == 500000000.0
+    assert balance.cash == 500000000.0
+    assert holdings == []
+    assert [req[1] for req in requests if req[0] == "/api/dostk/acnt"] == [
+        "kt00017",
+        "kt00018",
+    ]

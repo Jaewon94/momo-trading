@@ -27,7 +27,6 @@ from strategy.stable_short import StableShortStrategy
 from trading.adapters.base import BrokerAdapter
 from trading.broker_factory import get_broker_adapter
 from trading.enums import ActivityPhase, ActivityType, LLMTier, Market, OrderSide, OrderType, SignalAction, SignalUrgency
-from trading.mcp_client import mcp_client
 from trading.models import MCPResponse, OrderRequest
 
 
@@ -65,6 +64,9 @@ class TradingAgent:
         self._last_session_id: str | None = None
         # 종목코드 → 종목명 캐시 (WebSocket 이벤트에서 종목명 표시용)
         self._symbol_names: dict[str, str] = {}
+        # 주문 가능 현금 캐시와 동시성 보호
+        self._available_cash: float = 0.0
+        self._cash_lock = asyncio.Lock()
         # 이중 매도 방지: 매도 진행 중인 종목 잠금
         self._selling: set[str] = set()
         self._sell_lock = asyncio.Lock()
@@ -103,7 +105,7 @@ class TradingAgent:
         """종목코드 → 종목명 반환 (캐시에 없으면 코드 그대로)"""
         return self._symbol_names.get(symbol, symbol)
 
-    async def run_cycle(self) -> dict:
+    async def run_cycle(self, manual_provider_override: str | None = None) -> dict:
         """에이전트 1회 실행 사이클 — 장중이면 매매, 장외면 리뷰"""
         if self._cycle_lock.locked():
             logger.warning("사이클 이미 실행 중 — 중복 트리거 무시")
@@ -124,16 +126,16 @@ class TradingAgent:
                             f"\u23f0 매수 마감({cutoff.strftime('%H:%M')}) — "
                             "신규 매수 차단, 보유종목 모니터링만 유지",
                         )
+                        self._last_cycle_time = now_kst()
                         return {"skipped": True, "reason": "buy_cutoff"}
-                return await self._run_trading_cycle()
+                return await self._run_trading_cycle(manual_provider_override=manual_provider_override)
             else:
-                return await self._run_after_hours_cycle()
+                return await self._run_after_hours_cycle(manual_provider_override=manual_provider_override)
 
-    async def _run_trading_cycle(self) -> dict:
+    async def _run_trading_cycle(self, manual_provider_override: str | None = None) -> dict:
         """장중 사이클: 스캔 → 분석 → 매매"""
-        # Claude Code 세션 시작 (사이클 내 맥락 유지)
-        from analysis.llm.claude_code_provider import ClaudeCodeProvider
-        ClaudeCodeProvider.start_session()
+        # 사용 중인 provider가 Claude인 경우 세션 시작, 아니면 no-op
+        llm_factory.start_session()
 
         cycle_id = activity_logger.start_cycle()
         cycle_timer = activity_logger.timer()
@@ -171,12 +173,15 @@ class TradingAgent:
             try:
                 snapshot = await self._build_portfolio_snapshot()
             except RuntimeError:
+                from util.time_util import now_kst
+
                 logger.error("계좌 조회 실패 → 매매 사이클 중단")
                 await activity_logger.log(
                     ActivityType.CYCLE, ActivityPhase.ERROR,
                     "🛑 계좌 조회 실패 → 매매 사이클 중단 (데이터 신뢰성 보호)",
                     cycle_id=cycle_id,
                 )
+                self._last_cycle_time = now_kst()
                 return results
             except Exception as e:
                 logger.warning("포트폴리오 스냅샷 조회 실패, 기본값 사용: {}", str(e))
@@ -210,6 +215,8 @@ class TradingAgent:
             results["scanned"] = len(candidates)
 
             if not candidates:
+                from util.time_util import now_kst
+
                 logger.debug("스캔 결과 선정 종목 없음, 사이클 종료")
                 await activity_logger.log(
                     ActivityType.CYCLE, ActivityPhase.COMPLETE,
@@ -217,6 +224,7 @@ class TradingAgent:
                     cycle_id=cycle_id,
                     execution_time_ms=activity_logger.elapsed_ms(cycle_timer),
                 )
+                self._last_cycle_time = now_kst()
                 return results
 
             # 종목명 캐시 갱신 (스캔 결과)
@@ -245,7 +253,7 @@ class TradingAgent:
             # 2. 후보 종목별 심층 분석 + 전략 평가 + 매매 (병렬)
             # 세션 일시 중지 → 각 종목 분석은 독립 호출 (병렬 가능)
             # 스크리닝 맥락은 self._market_context로 프롬프트에 전달됨
-            paused_sid = ClaudeCodeProvider.pause_session()
+            paused_sid = llm_factory.pause_session()
 
             semaphore = asyncio.Semaphore(3)
             executed_count = 0
@@ -281,6 +289,7 @@ class TradingAgent:
                         dynamic_limits=dynamic_limits,
                         portfolio_snapshot=snapshot,
                         executed_count_ref=lambda: executed_count,
+                        manual_provider_override=manual_provider_override,
                     )
                     if r.get("executed"):
                         executed_count += 1
@@ -293,7 +302,7 @@ class TradingAgent:
 
             # 병렬 분석 완료 → 세션 재개 (리포트/후속 처리용)
             if paused_sid:
-                ClaudeCodeProvider.resume_session(paused_sid)
+                llm_factory.resume_session(paused_sid)
 
             for i, r in enumerate(all_results):
                 if isinstance(r, Exception):
@@ -339,7 +348,7 @@ class TradingAgent:
             execution_time_ms=elapsed,
         )
         # 세션 종료 (세션 ID 보존 — 장외 사이클에서 재개 가능)
-        self._last_session_id = ClaudeCodeProvider.end_session()
+        self._last_session_id = llm_factory.end_session()
 
         logger.info("=== Agent 장중 사이클 종료: {} ===", results)
         return results
@@ -404,6 +413,16 @@ class TradingAgent:
             self._available_cash = balance.cash
         return snapshot
 
+    async def _lookup_current_price(self, symbol: str, market: str | Market = Market.KRX) -> float:
+        """현재 브로커 어댑터 기준 실시간 현재가 조회"""
+        try:
+            market_enum = market if isinstance(market, Market) else Market(str(market).upper())
+        except ValueError:
+            market_enum = Market.KRX
+
+        quote = await self._broker_adapter.get_current_price(symbol, market_enum)
+        return float(quote.price or 0.0)
+
     async def _execute_exit_order(
         self,
         *,
@@ -442,6 +461,7 @@ class TradingAgent:
         dynamic_limits: dict | None = None,
         portfolio_snapshot: dict | None = None,
         executed_count_ref: Callable | None = None,
+        manual_provider_override: str | None = None,
     ) -> dict:
         """개별 종목 분석 → 전략 평가 → 매매 결정"""
         symbol = stock_info.get("symbol", "")
@@ -575,6 +595,7 @@ class TradingAgent:
             market_context=self._market_context,
             trading_context=self._trading_context,
             cycle_id=cycle_id,
+            manual_provider_override=manual_provider_override,
         )
         t1_elapsed = activity_logger.elapsed_ms(t1_timer)
 
@@ -761,6 +782,7 @@ class TradingAgent:
             trading_context=self._trading_context,
             portfolio_snapshot=portfolio_snapshot,
             cycle_id=cycle_id,
+            manual_provider_override=manual_provider_override,
         )
         t2_elapsed = activity_logger.elapsed_ms(t2_timer)
 
@@ -963,12 +985,11 @@ class TradingAgent:
 
         return result
 
-    async def _run_after_hours_cycle(self) -> dict:
+    async def _run_after_hours_cycle(self, manual_provider_override: str | None = None) -> dict:
         """장외 사이클: 오늘 데이트레이딩 성과 리뷰 (피드백 학습용)"""
-        from analysis.llm.claude_code_provider import ClaudeCodeProvider
         from util.time_util import now_kst
 
-        ClaudeCodeProvider.start_session()
+        llm_factory.start_session()
 
         cycle_id = activity_logger.start_cycle()
         cycle_timer = activity_logger.timer()
@@ -1074,9 +1095,10 @@ class TradingAgent:
                                     # exit_price 추정: 현재가 조회
                                     exit_price = 0.0
                                     try:
-                                        resp = await mcp_client.get_current_price(tr.stock_symbol)
-                                        if resp.success and resp.data:
-                                            exit_price = float(resp.data.get("price", 0))
+                                        exit_price = await self._lookup_current_price(
+                                            tr.stock_symbol,
+                                            tr.market or Market.KRX,
+                                        )
                                     except Exception:
                                         pass
 
@@ -1153,8 +1175,12 @@ class TradingAgent:
                 overnight_holdings_text=overnight_holdings_text,
             )
 
-            result_text, provider = await llm_factory.generate_tier1(
-                prompt, system_prompt=DAILY_PLAN_SYSTEM
+            result_text, provider = await llm_factory.generate_manual(
+                prompt,
+                system_prompt=DAILY_PLAN_SYSTEM,
+                default_tier=LLMTier.TIER1,
+                cycle_id=cycle_id,
+                manual_provider_override=manual_provider_override,
             )
             t1_elapsed = activity_logger.elapsed_ms(t1_timer)
 
@@ -1261,7 +1287,7 @@ class TradingAgent:
             detail=results,
             execution_time_ms=elapsed,
         )
-        ClaudeCodeProvider.end_session()
+        llm_factory.end_session()
         self._last_session_id = None
 
         logger.info("=== Agent 장 마감 리뷰 종료 ===")
@@ -1619,6 +1645,7 @@ class TradingAgent:
         market_context: str = "",
         trading_context: str = "",
         cycle_id: str | None = None,
+        manual_provider_override: str | None = None,
     ) -> dict | None:
         """Tier 1 AI 심층 분석"""
         prompt = STOCK_ANALYSIS_PROMPT.format(
@@ -1640,9 +1667,13 @@ class TradingAgent:
         )
 
         try:
-            result_text, provider = await llm_factory.generate_tier1(
-                prompt, system_prompt=STOCK_ANALYSIS_SYSTEM,
-                symbol=symbol, cycle_id=cycle_id,
+            result_text, provider = await llm_factory.generate_manual(
+                prompt,
+                system_prompt=STOCK_ANALYSIS_SYSTEM,
+                default_tier=LLMTier.TIER1,
+                symbol=symbol,
+                cycle_id=cycle_id,
+                manual_provider_override=manual_provider_override,
             )
             parsed = self._parse_json(result_text)
             if parsed:
@@ -1663,6 +1694,7 @@ class TradingAgent:
         trading_context: str = "",
         portfolio_snapshot: dict | None = None,
         cycle_id: str | None = None,
+        manual_provider_override: str | None = None,
     ) -> dict | None:
         """Tier 2 최종 검토"""
         strategy = self.strategies.get(strategy_type)
@@ -1712,9 +1744,13 @@ class TradingAgent:
         )
 
         try:
-            result_text, provider = await llm_factory.generate_tier2(
-                prompt, system_prompt=FINAL_REVIEW_SYSTEM,
-                symbol=symbol, cycle_id=cycle_id,
+            result_text, provider = await llm_factory.generate_manual(
+                prompt,
+                system_prompt=FINAL_REVIEW_SYSTEM,
+                default_tier=LLMTier.TIER2,
+                symbol=symbol,
+                cycle_id=cycle_id,
+                manual_provider_override=manual_provider_override,
             )
             parsed = self._parse_json(result_text)
             if parsed:

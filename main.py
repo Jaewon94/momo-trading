@@ -29,13 +29,16 @@ async def lifespan(app: FastAPI):
     # 이벤트 버스 시작
     await event_bus.start()
 
-    # MCP 클라이언트 연결 (실패해도 서버는 기동)
-    try:
-        await mcp_client.connect()
-        tools = await mcp_client.list_tools()
-        logger.info("MCP 도구 목록 ({}개): {}", len(tools), [t.get("name") for t in tools])
-    except Exception as e:
-        logger.warning("MCP 서버 연결 실패 (나중에 재시도): {}", str(e))
+    # MCP 클라이언트 연결: KIS 브로커에서만 필요
+    if settings.BROKER_PROVIDER.upper() == "KIS":
+        try:
+            await mcp_client.connect()
+            tools = await mcp_client.list_tools()
+            logger.info("MCP 도구 목록 ({}개): {}", len(tools), [t.get("name") for t in tools])
+        except Exception as e:
+            logger.warning("MCP 서버 연결 실패 (나중에 재시도): {}", str(e))
+    else:
+        logger.debug("BROKER_PROVIDER={} → MCP 초기화 건너뜀", settings.BROKER_PROVIDER)
 
     # 실시간 모니터 시작 (WebSocket, 실패해도 서버 기동)
     from realtime.monitor import realtime_monitor

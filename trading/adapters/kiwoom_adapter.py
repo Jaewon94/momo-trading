@@ -100,6 +100,9 @@ class KiwoomBrokerAdapter(BrokerAdapter):
         return self._normalize_candles(response.data or {}, time_key_field="time")
 
     async def get_volume_rank(self, market: Market = Market.KRX) -> list[dict]:
+        response = await self._require_market_data_client().get_volume_rank(market=market.value)
+        if response.success and response.data:
+            return response.data.get("stocks", response.data.get("items", []))
         return []
 
     async def get_fluctuation_rank(
@@ -107,6 +110,12 @@ class KiwoomBrokerAdapter(BrokerAdapter):
         sort: str,
         market: Market = Market.KRX,
     ) -> list[dict]:
+        response = await self._require_market_data_client().get_fluctuation_rank(
+            sort=sort,
+            market=market.value,
+        )
+        if response.success and response.data:
+            return response.data.get("stocks", response.data.get("items", []))
         return []
 
     async def place_order(self, request: OrderRequest) -> OrderResult:

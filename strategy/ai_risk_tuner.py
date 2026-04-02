@@ -20,6 +20,11 @@ from trading.enums import ActivityPhase, ActivityType
 class AIRiskTuner:
     """AI가 계좌 상태 + 성과 + 리스크 성향을 분석하여 한도를 자율 결정"""
 
+    @staticmethod
+    def _normalize_cash_ratio(value: float) -> float:
+        ratio = max(float(value), 0.0)
+        return ratio / 100 if ratio > 1 else ratio
+
     async def compute_limits(
         self,
         risk_appetite: str = "MODERATE",
@@ -119,8 +124,8 @@ class AIRiskTuner:
             "max_position_pct": max(
                 float(parsed.get("max_position_pct", 25.0)), 5.0
             ),  # 상한선 없음
-            "min_cash_ratio": max(
-                float(parsed.get("min_cash_ratio", 0.0)), 0.0
+            "min_cash_ratio": self._normalize_cash_ratio(
+                float(parsed.get("min_cash_ratio", 0.0))
             ),  # 0 = 제한 없음
             "reasoning": parsed.get("reasoning", ""),
         }
