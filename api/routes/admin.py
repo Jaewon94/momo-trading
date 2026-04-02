@@ -24,6 +24,7 @@ from schemas.qa_schema import QARequest, QAResponse
 from scheduler.jobs import portfolio_sync_job
 from services.activity_logger import activity_logger
 from services.llm_usage_service import llm_usage_service
+from strategy.risk_appetite_insights import build_strategy_insights
 from trading.account_manager import account_manager
 from trading.broker_factory import get_broker_adapter
 from trading.enums import ActivityPhase, ActivityType, LLMTier
@@ -287,6 +288,7 @@ async def get_settings():
     data = {}
     for key in MUTABLE_SETTINGS:
         data[key] = getattr(settings, key, None)
+    data["strategy_insights"] = build_strategy_insights(settings.RISK_APPETITE)
     return SuccessResponse(data=data)
 
 

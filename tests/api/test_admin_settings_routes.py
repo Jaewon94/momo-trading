@@ -16,6 +16,7 @@ async def test_admin_settings_exposes_manual_llm_provider(client):
     assert "CODEX_MODEL" in payload["data"]
     assert "CODEX_MODEL_TIER1" in payload["data"]
     assert "CODEX_MODEL_TIER2" in payload["data"]
+    assert "strategy_insights" in payload["data"]
 
 
 async def test_admin_settings_updates_manual_llm_provider(client):
@@ -88,3 +89,13 @@ async def test_llm_status_includes_manual_selection(client):
     assert response.status_code == 200
     payload = response.json()
     assert "manual_selection" in payload["data"]
+
+
+async def test_admin_settings_includes_risk_appetite_insights(client):
+    response = await client.get("/api/v1/admin/settings")
+
+    assert response.status_code == 200
+    payload = response.json()["data"]["strategy_insights"]
+    assert payload["selected_risk_appetite"] in {"CONSERVATIVE", "MODERATE", "AGGRESSIVE"}
+    assert payload["risk_appetites"]["MODERATE"]["label"] == "중립"
+    assert "AI 자율 한도 결정" in payload["risk_appetites"]["MODERATE"]["system_effects"][0]

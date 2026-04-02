@@ -31,6 +31,7 @@ import {
   resolveActivityStockMeta,
 } from './activity_state.js';
 import { bindDetailToggleHandlers, buildDetailToggleMarkup } from './detail_toggle.js';
+import { buildStrategyInsightsViewModel } from './strategy_insights_state.js';
 
 const API = '/api/v1/admin';
 let currentView = 'live';
@@ -1728,6 +1729,7 @@ async function loadSettings() {
     updateBadge('badge-mode', formatAutonomyModeLabel(s.AUTONOMY_MODE), 'purple');
     renderSettingGuidance();
     renderSidebarSettingSummaries();
+    renderStrategyInsightsPanel();
     renderRuntimeControls();
   } catch (err) {
     console.error('Settings load error:', err);
@@ -1847,6 +1849,90 @@ function renderSidebarSettingSummaries() {
     const riskLabel = formatRiskAppetiteLabel(runtimeSettings?.RISK_APPETITE || 'MODERATE');
     riskSummaryEl.textContent = `현재 ${riskLabel} · 눌러서 전략 설정 열기`;
   }
+}
+
+function renderStrategyInsightsPanel() {
+  const panelEl = document.getElementById('strategy-insights-panel');
+  if (!panelEl) return;
+
+  const viewModel = buildStrategyInsightsViewModel(runtimeSettings || {});
+  const selected = viewModel.selected;
+
+  if (!selected) {
+    panelEl.innerHTML = '<div class="text-xs text-gray-500">전략 인사이트를 불러오지 못했습니다.</div>';
+    return;
+  }
+
+  const optionMarkup = (viewModel.options || []).map((option) => `
+    <div class="rounded-lg border ${option.isSelected ? 'border-blue-500/50 bg-blue-500/10' : 'border-gray-800 bg-dark-800/60'} p-3">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <div class="text-sm font-medium text-white">${escapeHtml(option.label)} <span class="text-[11px] font-medium text-gray-500">${escapeHtml(option.key)}</span></div>
+          <div class="mt-1 text-xs text-gray-400">${escapeHtml(option.headline || '')}</div>
+        </div>
+        ${option.isSelected ? '<div class="rounded-full border border-blue-500/40 bg-blue-500/10 px-2 py-0.5 text-[11px] text-blue-200">현재</div>' : ''}
+      </div>
+      <div class="mt-2 text-xs text-gray-300">${escapeHtml(option.description || '')}</div>
+      <div class="mt-2 text-[11px] text-gray-500">${escapeHtml(option.effectSummary || '')}</div>
+    </div>
+  `).join('');
+
+  const contextMarkup = (viewModel.context || []).map((item) => `
+    <div class="rounded-lg border border-gray-800 bg-dark-800/60 p-3">
+      <div class="text-xs font-medium text-gray-400">${escapeHtml(item.label)}</div>
+      <div class="mt-1 text-sm font-medium text-white">${escapeHtml(item.value || '')}</div>
+      <div class="mt-1 text-xs leading-5 text-gray-500">${escapeHtml(item.description || '')}</div>
+    </div>
+  `).join('');
+
+  panelEl.innerHTML = `
+    <div class="flex items-start justify-between gap-3">
+      <div>
+        <div class="text-xs uppercase tracking-[0.12em] text-gray-500">Strategy Insight</div>
+        <div class="mt-1 text-base font-semibold text-white">${escapeHtml(selected.label)} <span class="text-xs font-medium text-gray-500">${escapeHtml(selected.key)}</span></div>
+        <div class="mt-1 text-sm text-blue-200">${escapeHtml(selected.headline || '')}</div>
+      </div>
+      <div class="rounded-full border border-blue-500/40 bg-blue-500/10 px-3 py-1 text-xs text-blue-200">현재 적용</div>
+    </div>
+    <div class="mt-4 rounded-lg border border-gray-800 bg-dark-800/70 p-3">
+      <div class="text-xs font-medium text-gray-400">의미</div>
+      <div class="mt-1 text-sm text-gray-200">${escapeHtml(selected.description || '')}</div>
+    </div>
+    <div class="mt-3 rounded-lg border border-gray-800 bg-dark-800/70 p-3">
+      <div class="text-xs font-medium text-gray-400">실제 영향</div>
+      <ul class="mt-2 space-y-1 text-sm text-gray-200">
+        ${(selected.system_effects || []).map((item) => `<li>• ${escapeHtml(item)}</li>`).join('')}
+      </ul>
+    </div>
+    ${optionMarkup ? `
+      <div class="mt-3">
+        <div class="text-xs font-medium text-gray-400">성향별 비교</div>
+        <div class="mt-2 grid gap-3 xl:grid-cols-3">
+          ${optionMarkup}
+        </div>
+      </div>
+    ` : ''}
+    <div class="mt-3 rounded-lg border border-gray-800 bg-dark-800/70 p-3">
+      <div class="text-xs font-medium text-gray-400">코드 기준 가이드</div>
+      <div class="mt-1 whitespace-pre-wrap text-xs leading-5 text-gray-400">${escapeHtml(selected.guideline || '')}</div>
+    </div>
+    ${contextMarkup ? `
+      <div class="mt-3">
+        <div class="text-xs font-medium text-gray-400">현재 함께 작동하는 전략 입력</div>
+        <div class="mt-2 grid gap-3 md:grid-cols-3">
+          ${contextMarkup}
+        </div>
+      </div>
+    ` : ''}
+    ${viewModel.notes?.length ? `
+      <div class="mt-3 rounded-lg border border-gray-800 bg-dark-800/70 p-3">
+        <div class="text-xs font-medium text-gray-400">운용 메모</div>
+        <ul class="mt-2 space-y-1 text-xs text-gray-400">
+          ${viewModel.notes.map((item) => `<li>• ${escapeHtml(item)}</li>`).join('')}
+        </ul>
+      </div>
+    ` : ''}
+  `;
 }
 
 function applyControlButtonState(ids, options) {
