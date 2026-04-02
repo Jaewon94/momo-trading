@@ -446,6 +446,148 @@ async def test_holdings_check_returns_early_when_no_holdings_exist(monkeypatch) 
 
 
 @pytest.mark.asyncio
+async def test_holdings_check_executes_sell_and_triggers_rescan(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    logs: list[str] = []
+    removed_levels: list[str] = []
+    confirmed_orders: list[dict] = []
+    released: list[str] = []
+    created_tasks: list[object] = []
+    holding = SimpleNamespace(symbol="005930", name="삼성전자", quantity=2, avg_buy_price=70_000)
+
+    async def fake_update_realtime_subscriptions() -> None:
+        return None
+
+    async def fake_get_holdings() -> list:
+        return [holding]
+
+    async def fake_get_current_price(_symbol: str):
+        return SimpleNamespace(success=True, data={"price": 73_000})
+
+    async def fake_place_order(**kwargs):
+        return SimpleNamespace(success=True, data={"order_id": "SELL-HOLDING"}, error=None)
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append(args[2])
+
+    async def fake_acquire_sell(_symbol: str) -> bool:
+        return True
+
+    async def fake_confirm_and_record(**kwargs) -> None:
+        confirmed_orders.append(kwargs)
+
+    class DummyTask:
+        pass
+
+    def fake_create_task(coro):
+        created_tasks.append(coro)
+        coro.close()
+        return DummyTask()
+
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
+    monkeypatch.setattr(scheduler, "_update_realtime_subscriptions", fake_update_realtime_subscriptions)
+    monkeypatch.setattr("util.time_util.now_kst", lambda: __import__("datetime").datetime(2026, 4, 2, 14, 0))
+    monkeypatch.setattr("trading.mcp_client.mcp_client.get_current_price", fake_get_current_price)
+    monkeypatch.setattr(
+        "realtime.event_detector.event_detector.get_thresholds",
+        lambda _symbol: SimpleNamespace(stop_loss=68_000, take_profit=72_000),
+    )
+    monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr("trading.mcp_client.mcp_client.place_order", fake_place_order)
+    monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.trading_agent.trading_agent._acquire_sell", fake_acquire_sell)
+    monkeypatch.setattr("agent.trading_agent.trading_agent._release_sell", released.append)
+    monkeypatch.setattr("realtime.event_detector.event_detector.remove_levels", removed_levels.append)
+    monkeypatch.setattr("agent.decision_maker.decision_maker.confirm_and_record", fake_confirm_and_record)
+    monkeypatch.setattr("asyncio.create_task", fake_create_task)
+
+    await scheduler._holdings_check()
+
+    assert confirmed_orders[0]["order_id"] == "SELL-HOLDING"
+    assert confirmed_orders[0]["exit_reason"] == "HOLDINGS_CHECK"
+    assert removed_levels == ["005930"]
+    assert released == ["005930"]
+    assert len(created_tasks) == 1
+    assert any("보유점검 매도" in message for message in logs)
+    assert any("매도 성공" in message for message in logs)
+
+
+@pytest.mark.asyncio
+async def test_holdings_check_logs_disabled_sell_when_trading_is_off(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    logs: list[str] = []
+    holding = SimpleNamespace(symbol="005930", name="삼성전자", quantity=2, avg_buy_price=70_000)
+
+    async def fake_update_realtime_subscriptions() -> None:
+        return None
+
+    async def fake_get_holdings() -> list:
+        return [holding]
+
+    async def fake_get_current_price(_symbol: str):
+        return SimpleNamespace(success=True, data={"price": 73_000})
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append(args[2])
+
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
+    monkeypatch.setattr(scheduler, "_update_realtime_subscriptions", fake_update_realtime_subscriptions)
+    monkeypatch.setattr("util.time_util.now_kst", lambda: __import__("datetime").datetime(2026, 4, 2, 14, 0))
+    monkeypatch.setattr("trading.mcp_client.mcp_client.get_current_price", fake_get_current_price)
+    monkeypatch.setattr(
+        "realtime.event_detector.event_detector.get_thresholds",
+        lambda _symbol: SimpleNamespace(stop_loss=68_000, take_profit=72_000),
+    )
+    monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", False)
+    monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
+
+    await scheduler._holdings_check()
+
+    assert "TRADING_ENABLED=false" in logs[0]
+
+
+@pytest.mark.asyncio
+async def test_holdings_check_logs_when_sell_is_already_in_progress(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    logs: list[str] = []
+    holding = SimpleNamespace(symbol="005930", name="삼성전자", quantity=2, avg_buy_price=70_000)
+
+    async def fake_update_realtime_subscriptions() -> None:
+        return None
+
+    async def fake_get_holdings() -> list:
+        return [holding]
+
+    async def fake_get_current_price(_symbol: str):
+        return SimpleNamespace(success=True, data={"price": 73_000})
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append(args[2])
+
+    async def fake_acquire_sell(_symbol: str) -> bool:
+        return False
+
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
+    monkeypatch.setattr(scheduler, "_update_realtime_subscriptions", fake_update_realtime_subscriptions)
+    monkeypatch.setattr("util.time_util.now_kst", lambda: __import__("datetime").datetime(2026, 4, 2, 14, 0))
+    monkeypatch.setattr("trading.mcp_client.mcp_client.get_current_price", fake_get_current_price)
+    monkeypatch.setattr(
+        "realtime.event_detector.event_detector.get_thresholds",
+        lambda _symbol: SimpleNamespace(stop_loss=68_000, take_profit=72_000),
+    )
+    monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.trading_agent.trading_agent._acquire_sell", fake_acquire_sell)
+
+    await scheduler._holdings_check()
+
+    assert "이미 매도 진행 중" in logs[0]
+
+
+@pytest.mark.asyncio
 async def test_trigger_rescan_after_sell_skips_when_trading_disabled(monkeypatch) -> None:
     scheduler = TradingScheduler()
     run_cycle_called = False

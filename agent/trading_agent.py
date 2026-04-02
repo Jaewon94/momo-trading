@@ -204,7 +204,7 @@ class TradingAgent:
                     snapshot["cash"], min_price_ref,
                 )
                 await activity_logger.log(
-                    ActivityType.CYCLE, ActivityPhase.IN_PROGRESS,
+                    ActivityType.CYCLE, ActivityPhase.PROGRESS,
                     f"💰 현금 부족 → 매수 차단, 매도 분석 계속 ({snapshot['cash']:,.0f}원 < 최소 보유주가 {min_price_ref:,.0f}원)",
                     cycle_id=cycle_id,
                 )

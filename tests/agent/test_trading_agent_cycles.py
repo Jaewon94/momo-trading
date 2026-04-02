@@ -1,4 +1,5 @@
 from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 
@@ -252,3 +253,228 @@ async def test_run_trading_cycle_caches_scan_metadata_before_analysis(monkeypatc
     assert agent._last_session_id == "ended-session"
     assert [event.type for event in events] == [EventType.AGENT_CYCLE_START, EventType.AGENT_CYCLE_END]
     assert any("사이클 완료" in args[2] for args, _kwargs in logs)
+
+
+@pytest.mark.asyncio
+async def test_run_trading_cycle_skips_buy_candidate_when_cash_is_blocked(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    logs = []
+    analyze_called = False
+
+    async def fake_publish(_event) -> None:
+        return None
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append((args, kwargs))
+
+    async def fake_build_portfolio_snapshot() -> dict:
+        return {
+            "cash": 50_000,
+            "total_asset": 1_000_000,
+            "holding_count": 0,
+            "today_trade_count": 0,
+            "holding_symbols": [],
+            "min_holding_price": 100_000,
+        }
+
+    async def fake_scan(*args, **kwargs) -> dict:
+        return {
+            "selected": [{"symbol": "005930", "name": "삼성전자", "market": "KRX", "direction": "BUY"}],
+            "market_regime": "RANGE",
+        }
+
+    async def fake_build_trading_context() -> str:
+        return "trade-context"
+
+    async def fake_analyze_and_trade(*args, **kwargs) -> dict:
+        nonlocal analyze_called
+        analyze_called = True
+        return {"executed": False}
+
+    async def fail_buying_power(_symbol: str) -> dict:
+        raise AssertionError("buying power should not be checked when buy_blocked is true")
+
+    monkeypatch.setattr("agent.trading_agent.llm_factory.start_session", lambda: None)
+    monkeypatch.setattr("agent.trading_agent.llm_factory.pause_session", lambda: None)
+    monkeypatch.setattr("agent.trading_agent.llm_factory.end_session", lambda: "session-end")
+    monkeypatch.setattr("agent.trading_agent.activity_logger.start_cycle", lambda: "cycle-cash-block")
+    monkeypatch.setattr("agent.trading_agent.activity_logger.timer", lambda: object())
+    monkeypatch.setattr("agent.trading_agent.activity_logger.elapsed_ms", lambda _timer: 20)
+    monkeypatch.setattr("agent.trading_agent.settings.AI_RISK_TUNING_ENABLED", False)
+    monkeypatch.setattr("agent.trading_agent.event_bus.publish", fake_publish)
+    monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.trading_agent.market_scanner.scan", fake_scan)
+    monkeypatch.setattr(agent, "_build_portfolio_snapshot", fake_build_portfolio_snapshot)
+    monkeypatch.setattr(agent, "_build_market_context", lambda _scan_result: "market-context")
+    monkeypatch.setattr(agent, "_build_trading_context", fake_build_trading_context)
+    monkeypatch.setattr(agent, "_apply_scan_thresholds", lambda _candidates: None)
+    monkeypatch.setattr("trading.kis_api.get_buying_power", fail_buying_power)
+    monkeypatch.setattr(agent, "_analyze_and_trade", fake_analyze_and_trade)
+    monkeypatch.setattr("util.time_util.now_kst", lambda: _kst_time(9, 8))
+
+    result = await agent._run_trading_cycle()
+
+    assert result["scanned"] == 1
+    assert result["analyzed"] == 1
+    assert result["signals"] == 0
+    assert result["executed"] == 0
+    assert result["selected_symbols"] == [("005930", "KRX")]
+    assert analyze_called is False
+    assert any("현금 부족" in args[2] for args, _kwargs in logs)
+
+
+@pytest.mark.asyncio
+async def test_run_trading_cycle_skips_buy_candidate_when_buying_power_is_too_low(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    analyze_called = False
+
+    async def fake_publish(_event) -> None:
+        return None
+
+    async def fake_log(*args, **kwargs) -> None:
+        return None
+
+    async def fake_build_portfolio_snapshot() -> dict:
+        return {
+            "cash": 1_000_000,
+            "total_asset": 1_000_000,
+            "holding_count": 0,
+            "today_trade_count": 0,
+            "holding_symbols": [],
+            "min_holding_price": 0,
+        }
+
+    async def fake_scan(*args, **kwargs) -> dict:
+        return {
+            "selected": [{"symbol": "005930", "name": "삼성전자", "market": "KRX", "direction": "BUY"}],
+            "market_regime": "RANGE",
+        }
+
+    async def fake_build_trading_context() -> str:
+        return "trade-context"
+
+    async def fake_buying_power(_symbol: str) -> dict:
+        return {"success": True, "max_qty": 0}
+
+    async def fake_analyze_and_trade(*args, **kwargs) -> dict:
+        nonlocal analyze_called
+        analyze_called = True
+        return {"executed": False}
+
+    monkeypatch.setattr("agent.trading_agent.llm_factory.start_session", lambda: None)
+    monkeypatch.setattr("agent.trading_agent.llm_factory.pause_session", lambda: None)
+    monkeypatch.setattr("agent.trading_agent.llm_factory.end_session", lambda: "session-end")
+    monkeypatch.setattr("agent.trading_agent.activity_logger.start_cycle", lambda: "cycle-buying-power")
+    monkeypatch.setattr("agent.trading_agent.activity_logger.timer", lambda: object())
+    monkeypatch.setattr("agent.trading_agent.activity_logger.elapsed_ms", lambda _timer: 20)
+    monkeypatch.setattr("agent.trading_agent.settings.AI_RISK_TUNING_ENABLED", False)
+    monkeypatch.setattr("agent.trading_agent.event_bus.publish", fake_publish)
+    monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.trading_agent.market_scanner.scan", fake_scan)
+    monkeypatch.setattr(agent, "_build_portfolio_snapshot", fake_build_portfolio_snapshot)
+    monkeypatch.setattr(agent, "_build_market_context", lambda _scan_result: "market-context")
+    monkeypatch.setattr(agent, "_build_trading_context", fake_build_trading_context)
+    monkeypatch.setattr(agent, "_apply_scan_thresholds", lambda _candidates: None)
+    monkeypatch.setattr("trading.kis_api.get_buying_power", fake_buying_power)
+    monkeypatch.setattr(agent, "_analyze_and_trade", fake_analyze_and_trade)
+    monkeypatch.setattr("util.time_util.now_kst", lambda: _kst_time(9, 9))
+
+    result = await agent._run_trading_cycle()
+
+    assert result["scanned"] == 1
+    assert result["analyzed"] == 1
+    assert result["signals"] == 0
+    assert result["executed"] == 0
+    assert analyze_called is False
+
+
+@pytest.mark.asyncio
+async def test_run_after_hours_cycle_generates_review_and_saves_report(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    events = []
+    logs = []
+    saved_reports = []
+    generate_manual_calls = []
+    end_session_calls = []
+
+    class FakeSession:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeActivityRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def count_by_date(self, _date):
+            return {"CYCLE": 4, "TIER1_ANALYSIS": 3, "DECISION": 2, "ORDER": 1}
+
+        async def get_by_date(self, _date, limit=50):
+            return [SimpleNamespace(activity_type="CYCLE", phase="COMPLETE", summary="사이클 종료")]
+
+    class FakePerformanceTracker:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_overall_stats(self):
+            return {"overall": SimpleNamespace(total_trades=5, win_rate=0.6, total_pnl=12_345)}
+
+    async def fake_publish(event) -> None:
+        events.append(event)
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append((args, kwargs))
+
+    async def fake_collect_market_close_data():
+        return ("close-data", "volume-data", "surge-data", "drop-data")
+
+    async def fake_get_balance():
+        return SimpleNamespace(
+            total_asset=2_000_000,
+            cash=1_000_000,
+            stock_value=1_000_000,
+            total_pnl=50_000,
+            total_pnl_rate=2.5,
+        )
+
+    async def fake_generate_manual(prompt, **kwargs):
+        generate_manual_calls.append({"prompt": prompt, **kwargs})
+        return ('{"today_review":"좋음"}', "CODEX")
+
+    async def fake_save_daily_report(report_date, parsed, **kwargs):
+        saved_reports.append((report_date, parsed, kwargs))
+
+    async def fake_generate_rules_from_review(parsed, today_date):
+        return []
+
+    monkeypatch.setattr("agent.trading_agent.llm_factory.start_session", lambda: None)
+    monkeypatch.setattr("agent.trading_agent.llm_factory.end_session", lambda: end_session_calls.append("end") or "after-hours-session")
+    monkeypatch.setattr("agent.trading_agent.llm_factory.generate_manual", fake_generate_manual)
+    monkeypatch.setattr("agent.trading_agent.activity_logger.start_cycle", lambda: "cycle-after-hours")
+    monkeypatch.setattr("agent.trading_agent.activity_logger.timer", lambda: object())
+    monkeypatch.setattr("agent.trading_agent.activity_logger.elapsed_ms", lambda _timer: 80)
+    monkeypatch.setattr("agent.trading_agent.event_bus.publish", fake_publish)
+    monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.trading_agent.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("repositories.agent_activity_repository.AgentActivityRepository", FakeActivityRepo)
+    monkeypatch.setattr("analysis.feedback.performance_tracker.PerformanceTracker", FakePerformanceTracker)
+    monkeypatch.setattr("analysis.feedback.trading_rules.trading_rule_engine.generate_rules_from_review", fake_generate_rules_from_review)
+    monkeypatch.setattr(agent, "_collect_market_close_data", fake_collect_market_close_data)
+    monkeypatch.setattr(agent, "_save_daily_report", fake_save_daily_report)
+    monkeypatch.setattr(agent, "_parse_json", lambda _text: {"today_review": "좋음", "trade_evaluation": {"total_trades": 1}})
+    monkeypatch.setattr(agent, "_broker_adapter", SimpleNamespace(get_balance=fake_get_balance))
+    monkeypatch.setattr("agent.trading_agent.settings.DAY_TRADING_ONLY", True)
+    monkeypatch.setattr("agent.trading_agent.market_calendar.next_krx_open", lambda: _kst_time(9, 0))
+    monkeypatch.setattr("util.time_util.now_kst", lambda: _kst_time(16, 0))
+
+    result = await agent._run_after_hours_cycle(manual_provider_override="CODEX")
+
+    assert result == {"mode": "AFTER_HOURS", "review_generated": True}
+    assert generate_manual_calls[0]["manual_provider_override"] == "CODEX"
+    assert saved_reports and saved_reports[0][1]["today_review"] == "좋음"
+    assert end_session_calls == ["end"]
+    assert agent._last_session_id is None
+    assert [event.type for event in events] == [EventType.AGENT_CYCLE_START, EventType.AGENT_CYCLE_END]
+    assert any("장 마감 리뷰 완료" in args[2] for args, _kwargs in logs)
