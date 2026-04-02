@@ -155,7 +155,14 @@ cp .env.example .env
 
 ### 2. `.env` 설정
 
-`.env` 파일을 열고 KIS API 키를 입력합니다.
+`.env` 파일에서 먼저 `BROKER_PROVIDER`를 정합니다. 실행 스크립트의 자동 분기 기준도 이 값입니다.
+
+```bash
+BROKER_PROVIDER=KIS      # KIS 사용: kis-mcp 자동 기동
+# BROKER_PROVIDER=KIWOOM # Kiwoom 사용: kis-mcp 자동 중지
+```
+
+그 다음 선택한 브로커의 인증값을 채웁니다.
 
 ```bash
 # === 필수: KIS API 인증 ===
@@ -231,6 +238,10 @@ docker compose up kis-mcp
 alembic upgrade head          # DB 마이그레이션
 uvicorn main:app --reload     # http://localhost:8000
 ```
+
+`./start.sh`를 쓰면 `.env`의 `BROKER_PROVIDER`를 읽어 자동으로 분기합니다.
+- `BROKER_PROVIDER=KIS` → `kis-mcp`를 `docker compose up -d kis-mcp`로 먼저 기동
+- `BROKER_PROVIDER!=KIS` 예: `KIWOOM` → 실행 중인 `kis-mcp`를 `docker compose stop kis-mcp`로 정리 후 앱 시작
 
 ### 4. 첫 실행 체크리스트
 
