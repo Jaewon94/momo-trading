@@ -23,7 +23,12 @@ import {
   buildCodexUsageCopy,
 } from './llm_usage_state.js';
 import { buildTradePanelState, buildTradeSummaryCounts } from './trade_state.js';
-import { resolveActivityStockMeta } from './activity_state.js';
+import {
+  buildActivityIdentityLabel,
+  normalizeActivitySymbol,
+  resolveActivityStockMeta,
+} from './activity_state.js';
+import { bindDetailToggleHandlers, buildDetailToggleMarkup } from './detail_toggle.js';
 
 const API = '/api/v1/admin';
 let currentView = 'live';
@@ -36,6 +41,7 @@ let llmUsageSnapshot = null;
 let llmCatalog = null;
 let runtimeControlPending = false;
 const knownStockNames = {};
+const knownStockMeta = {};
 let paneLayout = {
   leftWidth: PANE_DEFAULT_WIDTH.left,
   rightWidth: PANE_DEFAULT_WIDTH.right,
@@ -59,6 +65,7 @@ const sidebarState = {
 
 // ── Init ──
 document.addEventListener('DOMContentLoaded', () => {
+  bindDetailToggleHandlers(document);
   loadPaneLayout();
   loadSettings();
   loadLLMCatalog();
@@ -350,6 +357,7 @@ async function loadAccountInfo() {
     const holdJson = await holdResp.json();
     const pendJson = await pendResp.json();
     const tradeJson = await tradeResp.json();
+    primeKnownStockMeta(holdJson.data, tradeJson.data, pendJson.data);
     renderAccountBalance(balJson.data);
     renderAccountHoldings(holdJson.data);
     renderPendingOrders(pendJson.data);
@@ -360,6 +368,73 @@ async function loadAccountInfo() {
     const el = document.getElementById('account-info');
     if (el) el.innerHTML = '<div class="text-gray-600">조회 실패</div>';
   }
+}
+
+function primeKnownStockMeta(holdings = [], trades = {}, pendingOrders = []) {
+  (holdings || []).forEach((holding) => {
+    rememberStockMeta(holding.symbol, {
+      stockName: holding.name,
+      currentPrice: holding.current_price,
+      pnlRate: holding.pnl_rate,
+      quantity: holding.quantity,
+    });
+  });
+
+  (pendingOrders || []).forEach((order) => {
+    rememberStockMeta(order.symbol, {
+      stockName: order.name,
+      quantity: order.remaining_qty || order.order_qty,
+    });
+  });
+
+  [
+    ...(trades?.opened || []),
+    ...(trades?.completed || []),
+    ...(trades?.pending_confirms || []),
+    ...(trades?.open_positions || []),
+  ].forEach((trade) => {
+    rememberStockMeta(trade.stock_symbol, {
+      stockName: trade.stock_name,
+      quantity: trade.quantity,
+    });
+  });
+
+  refreshVisibleStockCards();
+  refreshVisibleActivityMeta();
+}
+
+function refreshVisibleStockCards() {
+  Object.values(stockCards).forEach((card) => {
+    const meta = resolveActivityStockMeta({
+      symbol: card.symbol,
+      summary: '',
+      detail: null,
+      knownNames: knownStockNames,
+      knownMeta: knownStockMeta,
+    });
+    if (meta.stockName) card.stockName = meta.stockName;
+    if (meta.summaryText) card.summaryText = meta.summaryText;
+    renderCardIdentity(card);
+  });
+}
+
+function refreshVisibleActivityMeta() {
+  document.querySelectorAll('.activity-stock-meta[data-activity-symbol]').forEach((el) => {
+    const symbol = el.dataset.activitySymbol;
+    if (!symbol) return;
+    const meta = resolveActivityStockMeta({
+      symbol,
+      summary: '',
+      detail: null,
+      knownNames: knownStockNames,
+      knownMeta: knownStockMeta,
+    });
+    const identityLabel = buildActivityIdentityLabel(meta);
+    if (identityLabel) {
+      el.textContent = identityLabel;
+      el.classList.remove('hidden');
+    }
+  });
 }
 
 function renderAccountBalance(data) {
@@ -664,35 +739,39 @@ function appendActivity(data) {
     container.innerHTML = '';
   }
 
-  const symbol = data.symbol;
-  const isCycleActivity = data.activity_type === 'CYCLE';
-  const isDailyPlan = data.activity_type === 'DAILY_PLAN';
-  const isLLMCall = data.activity_type === 'LLM_CALL';
+  const normalizedSymbol = normalizeActivitySymbol(data.symbol);
+  const activity = normalizedSymbol && normalizedSymbol !== data.symbol
+    ? { ...data, symbol: normalizedSymbol }
+    : data;
+  const symbol = activity.symbol;
+  const isCycleActivity = activity.activity_type === 'CYCLE';
+  const isDailyPlan = activity.activity_type === 'DAILY_PLAN';
+  const isLLMCall = activity.activity_type === 'LLM_CALL';
 
   // Non-symbol activities → inline (cycle dividers, daily plan, events without symbol)
   if (!symbol || isCycleActivity || isDailyPlan) {
-    if (isCycleActivity && data.phase === 'START') {
-      const divider = createCycleDivider(data, true);
+    if (isCycleActivity && activity.phase === 'START') {
+      const divider = createCycleDivider(activity, true);
       container.appendChild(divider);
-    } else if (isCycleActivity && (data.phase === 'COMPLETE' || data.phase === 'ERROR')) {
+    } else if (isCycleActivity && (activity.phase === 'COMPLETE' || activity.phase === 'ERROR')) {
       // Remove matching START divider spinner
-      const startKey = `cycle-start-${data.cycle_id}`;
+      const startKey = `cycle-start-${activity.cycle_id}`;
       const existing = container.querySelector(`[data-cycle-start="${startKey}"]`);
       if (existing) {
         const spinner = existing.querySelector('.progress-spinner');
         if (spinner) spinner.remove();
         existing.querySelector('.cycle-text').textContent += ' → 완료';
       }
-      container.appendChild(createCycleDivider(data, false));
+      container.appendChild(createCycleDivider(activity, false));
     } else if (isLLMCall && !symbol) {
       // LLM calls without symbol → inline
-      container.appendChild(createBubble(data));
+      container.appendChild(createBubble(activity));
     } else {
-      container.appendChild(createBubble(data));
+      container.appendChild(createBubble(activity));
     }
   } else {
     // Symbol-specific → route to stock card
-    const cardKey = `${data.cycle_id || 'ev'}:${symbol}`;
+    const cardKey = `${activity.cycle_id || 'ev'}:${symbol}`;
     let card = stockCards[cardKey];
 
     // 정확한 키 매칭 실패 시 → 같은 종목의 진행 중인 카드에 합류
@@ -707,11 +786,11 @@ function appendActivity(data) {
     }
 
     if (!card) {
-      card = createStockCard(symbol, data);
+      card = createStockCard(symbol, activity);
       stockCards[cardKey] = card;
       container.appendChild(card.element);
     }
-    addStepToCard(card, data);
+    addStepToCard(card, activity);
     updateCardHeader(card);
   }
 
@@ -721,6 +800,13 @@ function appendActivity(data) {
   if (autoScroll) {
     container.scrollTop = container.scrollHeight;
   }
+}
+
+function buildActivityMetaLine(meta = {}) {
+  const identityLabel = buildActivityIdentityLabel(meta);
+  if (!identityLabel) return '';
+  const symbolAttr = meta.symbol ? ` data-activity-symbol="${escapeHtml(normalizeActivitySymbol(meta.symbol))}"` : '';
+  return `<div class="activity-stock-meta text-[11px] text-gray-500 mb-0.5"${symbolAttr}>${escapeHtml(identityLabel)}</div>`;
 }
 
 /**
@@ -746,6 +832,18 @@ function rememberStockName(symbol, stockName) {
   }
 }
 
+function rememberStockMeta(symbol, meta = {}) {
+  const normalizedSymbol = normalizeActivitySymbol(symbol);
+  if (!normalizedSymbol) return;
+  knownStockMeta[normalizedSymbol] = {
+    ...(knownStockMeta[normalizedSymbol] || {}),
+    ...meta,
+  };
+  if (knownStockMeta[normalizedSymbol].stockName) {
+    rememberStockName(normalizedSymbol, knownStockMeta[normalizedSymbol].stockName);
+  }
+}
+
 function renderCardIdentity(card) {
   const identityEl = card.headerEl.querySelector('.stock-identity');
   if (!identityEl) return;
@@ -753,6 +851,11 @@ function renderCardIdentity(card) {
     ${escapeHtml(card.stockName)} <span class="text-gray-500 text-xs">${escapeHtml(card.symbol)}</span>
   `;
   identityEl.title = `${card.stockName} (${card.symbol})`;
+
+  const metaEl = card.headerEl.querySelector('.stock-meta');
+  if (!metaEl) return;
+  metaEl.textContent = card.summaryText || '';
+  metaEl.classList.toggle('hidden', !card.summaryText);
 }
 
 /**
@@ -767,17 +870,22 @@ function createStockCard(symbol, firstActivity) {
     summary: firstActivity.summary,
     detail: firstActivity.detail,
     knownNames: knownStockNames,
+    knownMeta: knownStockMeta,
   });
   const stockName = meta.stockName;
-  rememberStockName(symbol, stockName);
+  const normalizedSymbol = meta.symbol;
+  rememberStockMeta(normalizedSymbol, { stockName });
 
   // Header
   const header = document.createElement('div');
   header.className = 'stock-card-header';
   header.innerHTML = `
     <span class="text-sm">📊</span>
-    <span class="stock-identity text-sm font-medium text-white flex-1 truncate">
-      ${escapeHtml(stockName)} <span class="text-gray-500 text-xs">${escapeHtml(symbol)}</span>
+    <span class="flex-1 min-w-0">
+      <span class="stock-identity text-sm font-medium text-white block truncate">
+        ${escapeHtml(stockName)} <span class="text-gray-500 text-xs">${escapeHtml(normalizedSymbol)}</span>
+      </span>
+      <span class="stock-meta text-[11px] text-gray-500 block truncate ${meta.summaryText ? '' : 'hidden'}">${escapeHtml(meta.summaryText || '')}</span>
     </span>
     <span class="stock-confidence"></span>
     <span class="stock-outcome text-xs px-2 py-0.5 rounded bg-purple-900/40 text-purple-300">
@@ -805,8 +913,9 @@ function createStockCard(symbol, firstActivity) {
     bodyEl: body,
     stepsEl: steps,
     activities: [],
-    symbol: symbol,
+    symbol: normalizedSymbol,
     stockName: stockName,
+    summaryText: meta.summaryText || '',
     outcome: null,       // BUY, SELL, HOLD, ERROR
     confidence: null,
     totalElapsed: 0,
@@ -834,17 +943,21 @@ function createStockCard(symbol, firstActivity) {
  * 카드에 활동 스텝 추가
  */
 function addStepToCard(card, data) {
-  const meta = resolveActivityStockMeta({
+  const stockMeta = resolveActivityStockMeta({
     symbol: card.symbol,
     summary: data.summary,
     detail: data.detail,
     knownNames: knownStockNames,
+    knownMeta: knownStockMeta,
   });
-  if (meta.stockName && meta.stockName !== card.stockName) {
-    card.stockName = meta.stockName;
-    rememberStockName(card.symbol, meta.stockName);
-    renderCardIdentity(card);
+  if (stockMeta.stockName && stockMeta.stockName !== card.stockName) {
+    card.stockName = stockMeta.stockName;
   }
+  if (stockMeta.summaryText) {
+    card.summaryText = stockMeta.summaryText;
+  }
+  rememberStockMeta(card.symbol, { stockName: stockMeta.stockName });
+  renderCardIdentity(card);
 
   card.activities.push(data);
 
@@ -886,18 +999,19 @@ function addStepToCard(card, data) {
     <span class="text-xs text-gray-600 shrink-0 w-14">${time}</span>
     <span class="shrink-0 w-2 h-2 rounded-full bg-${dotColor}-400 mt-1.5"></span>
     <div class="flex-1 min-w-0">
+      ${buildActivityMetaLine(stockMeta)}
       <div class="text-xs">${escapeHtml(data.summary)}</div>`;
 
   // Meta line
-  const meta = [];
-  if (data.llm_provider) meta.push(`<span class="text-${typeColor}-400">${data.llm_provider}</span>`);
-  if (elapsed) meta.push(elapsed);
+  const metaParts = [];
+  if (data.llm_provider) metaParts.push(`<span class="text-${typeColor}-400">${data.llm_provider}</span>`);
+  if (elapsed) metaParts.push(elapsed);
   if (data.confidence != null) {
     const pct = Math.round(data.confidence * 100);
-    meta.push(`신뢰도 ${pct}%`);
+    metaParts.push(`신뢰도 ${pct}%`);
   }
-  if (meta.length) {
-    html += `<div class="text-xs text-gray-600 mt-0.5">${meta.join(' · ')}</div>`;
+  if (metaParts.length) {
+    html += `<div class="text-xs text-gray-600 mt-0.5">${metaParts.join(' · ')}</div>`;
   }
 
   // Detail (expandable)
@@ -905,11 +1019,11 @@ function addStepToCard(card, data) {
     const detailId = 'sd-' + Math.random().toString(36).substr(2, 6);
     const isLLMCall = data.activity_type === 'LLM_CALL';
     html += `
-      <button onclick="event.stopPropagation(); toggleDetail('${detailId}')" class="text-xs text-gray-600 hover:text-gray-400 mt-0.5">
-        ${isLLMCall ? '💬 LLM 대화' : '▸ 상세'}
-      </button>
+      ${buildDetailToggleMarkup({ detailId, isLLMCall })}
       <div id="${detailId}" class="detail-content mt-1 text-xs bg-dark-900/50 rounded p-2 text-gray-400">
-        ${isLLMCall ? formatLLMConversation(data.detail) : `<pre class="whitespace-pre-wrap break-all max-h-96 overflow-y-auto">${formatDetail(data.detail)}</pre>`}
+        <div class="detail-content-inner">
+          ${isLLMCall ? formatLLMConversation(data.detail) : `<pre class="whitespace-pre-wrap break-all max-h-96 overflow-y-auto">${formatDetail(data.detail)}</pre>`}
+        </div>
       </div>`;
   }
 
@@ -1072,33 +1186,44 @@ function createBubble(data) {
 
   const time = formatTime(data.created_at);
   const typeColor = getTypeColor(data.activity_type);
+  const stockMeta = resolveActivityStockMeta({
+    symbol: data.symbol,
+    summary: data.summary,
+    detail: data.detail,
+    knownNames: knownStockNames,
+    knownMeta: knownStockMeta,
+  });
+  if (stockMeta.symbol) {
+    rememberStockMeta(stockMeta.symbol, { stockName: stockMeta.stockName });
+  }
 
   let html = `
     <div class="flex items-start gap-2 px-3 py-1.5 rounded-lg hover:bg-dark-700/50 transition group">
       <span class="text-xs text-gray-500 mt-0.5 shrink-0 w-14">${time}</span>
       <div class="flex-1 min-w-0">
+        ${buildActivityMetaLine(stockMeta)}
         <div class="text-sm whitespace-pre-wrap">${escapeHtml(data.summary)}</div>`;
 
-  const meta = [];
-  if (data.llm_provider) meta.push(`<span class="text-${typeColor}-400">${data.llm_provider}</span>`);
-  if (data.execution_time_ms) meta.push(`${(data.execution_time_ms / 1000).toFixed(1)}초`);
+  const metaParts = [];
+  if (data.llm_provider) metaParts.push(`<span class="text-${typeColor}-400">${data.llm_provider}</span>`);
+  if (data.execution_time_ms) metaParts.push(`${(data.execution_time_ms / 1000).toFixed(1)}초`);
   if (data.confidence != null) {
     const pct = Math.round(data.confidence * 100);
-    meta.push(`신뢰도 ${pct}%`);
+    metaParts.push(`신뢰도 ${pct}%`);
   }
-  if (meta.length) {
-    html += `<div class="flex items-center gap-3 mt-0.5 text-xs text-gray-500">${meta.join(' | ')}</div>`;
+  if (metaParts.length) {
+    html += `<div class="flex items-center gap-3 mt-0.5 text-xs text-gray-500">${metaParts.join(' | ')}</div>`;
   }
 
   if (data.detail) {
     const detailId = 'detail-' + (data.id || Math.random().toString(36).substr(2, 6));
     const isLLMCall = data.activity_type === 'LLM_CALL';
     html += `
-      <button onclick="toggleDetail('${detailId}')" class="text-xs text-gray-500 hover:text-gray-300 mt-1">
-        ${isLLMCall ? '💬 LLM 대화 보기' : '▼ 상세 보기'}
-      </button>
+      ${buildDetailToggleMarkup({ detailId, isLLMCall, muted: true })}
       <div id="${detailId}" class="detail-content mt-1 text-xs bg-dark-900 rounded p-2 text-gray-400">
-        ${isLLMCall ? formatLLMConversation(data.detail) : `<pre class="whitespace-pre-wrap break-all max-h-96 overflow-y-auto">${formatDetail(data.detail)}</pre>`}
+        <div class="detail-content-inner">
+          ${isLLMCall ? formatLLMConversation(data.detail) : `<pre class="whitespace-pre-wrap break-all max-h-96 overflow-y-auto">${formatDetail(data.detail)}</pre>`}
+        </div>
       </div>`;
   }
 
@@ -1109,11 +1234,6 @@ function createBubble(data) {
   html += `</div></div>`;
   div.innerHTML = html;
   return div;
-}
-
-function toggleDetail(id) {
-  const el = document.getElementById(id);
-  if (el) el.classList.toggle('open');
 }
 
 // ── View Switching ──

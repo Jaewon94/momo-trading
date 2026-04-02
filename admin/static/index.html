@@ -22,8 +22,25 @@
     body { font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
     .chat-bubble { animation: fadeIn 0.3s ease-out; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-    .detail-content { max-height: 0; overflow: hidden; transition: max-height 0.4s ease-out; }
-    .detail-content.open { max-height: 2000px; overflow-y: auto; }
+    .detail-content {
+      display: grid;
+      grid-template-rows: 0fr;
+      opacity: 0;
+      overflow: hidden;
+      pointer-events: none;
+      margin-top: 0 !important;
+      transition: grid-template-rows 0.18s ease, opacity 0.14s ease, margin-top 0.18s ease;
+    }
+    .detail-content.open {
+      grid-template-rows: 1fr;
+      opacity: 1;
+      pointer-events: auto;
+      margin-top: 6px !important;
+    }
+    .detail-content-inner {
+      min-height: 0;
+      overflow: hidden;
+    }
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: #1a1b2e; }
     ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
