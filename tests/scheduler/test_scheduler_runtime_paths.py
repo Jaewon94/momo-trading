@@ -55,6 +55,220 @@ async def test_scheduler_start_is_idempotent_when_already_running(monkeypatch) -
 
 
 @pytest.mark.asyncio
+async def test_scheduler_on_startup_schedules_market_open_scan_during_trading_hours(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    sleep_calls: list[float] = []
+    created_tasks: list[object] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    async def fake_market_open_scan() -> None:
+        return None
+
+    class DummyTask:
+        pass
+
+    def fake_create_task(coro):
+        created_tasks.append(coro)
+        coro.close()
+        return DummyTask()
+
+    monkeypatch.setattr("asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("asyncio.create_task", fake_create_task)
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr(scheduler, "_market_open_scan", fake_market_open_scan)
+
+    await scheduler._on_startup()
+
+    assert sleep_calls == [3]
+    assert len(created_tasks) == 1
+
+
+@pytest.mark.asyncio
+async def test_scheduler_on_startup_schedules_post_market_check_outside_trading_hours(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    sleep_calls: list[float] = []
+    created_tasks: list[object] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    async def fake_post_market_if_needed() -> None:
+        return None
+
+    class DummyTask:
+        pass
+
+    def fake_create_task(coro):
+        created_tasks.append(coro)
+        coro.close()
+        return DummyTask()
+
+    monkeypatch.setattr("asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("asyncio.create_task", fake_create_task)
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_trading_hours", lambda: False)
+    monkeypatch.setattr(
+        "scheduler.market_calendar.market_calendar.next_krx_open",
+        lambda: __import__("datetime").datetime(2026, 4, 3, 9, 0),
+    )
+    monkeypatch.setattr(scheduler, "_post_market_if_needed", fake_post_market_if_needed)
+
+    await scheduler._on_startup()
+
+    assert sleep_calls == [3]
+    assert len(created_tasks) == 1
+
+
+def test_scheduler_setup_jobs_registers_expected_job_ids() -> None:
+    scheduler = TradingScheduler()
+    job_ids: list[str] = []
+
+    class FakeScheduler:
+        def add_job(self, _func, _trigger, **kwargs) -> None:
+            job_ids.append(kwargs["id"])
+
+    scheduler.scheduler = FakeScheduler()
+
+    scheduler._setup_jobs()
+
+    assert set(job_ids) == {
+        "pre_market",
+        "market_open_scan",
+        "intraday_rescan",
+        "holdings_check",
+        "intraday_holdings_review",
+        "force_liquidation",
+        "post_market",
+        "portfolio_sync",
+        "market_data",
+        "expire_recommendations",
+    }
+
+
+@pytest.mark.asyncio
+async def test_pre_market_skips_on_holiday_and_logs_reason(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    logs: list[str] = []
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append(args[2])
+
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_holiday", lambda: True)
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.get_holiday_name", lambda: "신정")
+    monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
+
+    await scheduler._pre_market()
+
+    assert logs == ["🏖️ 오늘은 휴장일 (신정) — 매매 스킵"]
+
+
+@pytest.mark.asyncio
+async def test_pre_market_restores_swing_context_and_applies_trading_rules(monkeypatch) -> None:
+    from agent.trading_agent import trading_agent as global_trading_agent
+
+    scheduler = TradingScheduler()
+    logs: list[str] = []
+    overnight_checks: list[str] = []
+    strategy_rule_calls: list[tuple] = []
+    risk_rule_calls: list[tuple] = []
+    recorded_rule_ids: list[list[str]] = []
+    expired_calls: list[str] = []
+
+    class FakeRule:
+        def __init__(self, rule_id: str, param_name: str, param_value: str) -> None:
+            self.id = rule_id
+            self.param_name = param_name
+            self.param_value = param_value
+
+    class FakeSession:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_by_date(self, _date):
+            return SimpleNamespace(lessons_learned="손절은 더 빠르게, 익절은 분할")
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append(args[2])
+
+    async def fake_get_balance():
+        return SimpleNamespace(total_asset=12_345_678)
+
+    async def fake_check_overnight_positions() -> None:
+        overnight_checks.append("called")
+
+    active_rules = {
+        "rules": [
+            FakeRule("rule-1", "max_position_size", "0.2"),
+            FakeRule("rule-2", "stop_loss", "-0.03"),
+        ]
+    }
+
+    async def fake_load_active_rules():
+        return active_rules
+
+    def fake_apply_to_strategies(strategies, loaded_rules) -> None:
+        strategy_rule_calls.append((strategies, loaded_rules))
+
+    def fake_apply_to_risk_manager(risk_manager_obj, loaded_rules) -> None:
+        risk_rule_calls.append((risk_manager_obj, loaded_rules))
+
+    async def fake_record_application(rule_ids: list[str]) -> None:
+        recorded_rule_ids.append(rule_ids)
+
+    async def fake_expire_old_rules() -> int:
+        expired_calls.append("called")
+        return 2
+
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_holiday", lambda: False)
+    monkeypatch.setattr("scheduler.scheduler.settings.DAY_TRADING_ONLY", False)
+    monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
+    monkeypatch.setattr("trading.account_manager.account_manager.get_balance", fake_get_balance)
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("repositories.daily_report_repository.DailyReportRepository", FakeRepo)
+    monkeypatch.setattr(scheduler, "_check_overnight_positions", fake_check_overnight_positions)
+    monkeypatch.setattr("analysis.feedback.trading_rules.trading_rule_engine.load_active_rules", fake_load_active_rules)
+    monkeypatch.setattr(
+        "analysis.feedback.trading_rules.trading_rule_engine.apply_to_strategies",
+        fake_apply_to_strategies,
+    )
+    monkeypatch.setattr(
+        "analysis.feedback.trading_rules.trading_rule_engine.apply_to_risk_manager",
+        fake_apply_to_risk_manager,
+    )
+    monkeypatch.setattr(
+        "analysis.feedback.trading_rules.trading_rule_engine.record_application",
+        fake_record_application,
+    )
+    monkeypatch.setattr(
+        "analysis.feedback.trading_rules.trading_rule_engine.expire_old_rules",
+        fake_expire_old_rules,
+    )
+    monkeypatch.setattr("agent.trading_agent.trading_agent._daily_start_balance", 0.0)
+    monkeypatch.setattr("agent.trading_agent.trading_agent._active_trading_rules", {})
+    monkeypatch.setattr("agent.trading_agent.trading_agent.strategies", {"STABLE_SHORT": object()})
+
+    await scheduler._pre_market()
+
+    assert overnight_checks == ["called"]
+    assert strategy_rule_calls and strategy_rule_calls[0][1] == active_rules
+    assert risk_rule_calls and risk_rule_calls[0][1] == active_rules
+    assert recorded_rule_ids == [["rule-1", "rule-2"]]
+    assert expired_calls == ["called"]
+    assert any("어제 리뷰 피드백" in message for message in logs)
+    assert any("트레이딩 규칙 2건 적용" in message for message in logs)
+    assert global_trading_agent._daily_start_balance == 12_345_678
+    assert global_trading_agent._active_trading_rules == active_rules
+
+
+@pytest.mark.asyncio
 async def test_market_open_scan_delegates_to_trading_agent_run_cycle(monkeypatch) -> None:
     scheduler = TradingScheduler()
     observed: list[str] = []
