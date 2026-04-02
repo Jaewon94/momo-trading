@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 
 from core.config import settings
+from core.paths import RUNTIME_DATA_DIR
 
 
 @dataclass
@@ -41,7 +42,7 @@ class KiwoomRESTClient:
         paper_secret_key: str | None = None,
         account_type: str | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
-        token_cache_path: str | Path | None = "data/kiwoom_token.json",
+        token_cache_path: str | Path | None = RUNTIME_DATA_DIR / "kiwoom_token.json",
     ) -> None:
         self._app_key = app_key if app_key is not None else settings.KIWOOM_APP_KEY
         self._secret_key = secret_key if secret_key is not None else settings.KIWOOM_SECRET_KEY

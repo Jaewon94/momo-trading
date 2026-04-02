@@ -1,0 +1,11 @@
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+RUNTIME_DIR = PROJECT_ROOT / "runtime"
+RUNTIME_DATA_DIR = RUNTIME_DIR / "data"
+RUNTIME_LOG_DIR = RUNTIME_DIR / "logs"
+RUNTIME_PID_DIR = RUNTIME_DIR / "pids"
+
+DEFAULT_DATABASE_PATH = RUNTIME_DATA_DIR / "app.db"
+DEFAULT_DATABASE_URL = f"sqlite:///{DEFAULT_DATABASE_PATH}"

@@ -120,6 +120,7 @@ cd "$APP_DIR"
 
 mkdir -p "$(dirname "$LOG_FILE")"
 mkdir -p "$(dirname "$PID_FILE")"
+mkdir -p "$APP_DIR/runtime/data"
 
 case "${1:-}" in
     stop)

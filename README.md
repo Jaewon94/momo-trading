@@ -241,6 +241,7 @@ uvicorn main:app --reload     # http://localhost:8000
 
 `./start.sh`는 루트 진입점이고, 실제 구현은 `scripts/dev/start.sh`에 있습니다.
 로그와 PID 기본 위치는 `runtime/logs/`, `runtime/pids/` 입니다.
+로컬 SQLite DB와 브로커 토큰 캐시는 `runtime/data/`를 기본 경로로 사용합니다.
 `./start.sh`를 쓰면 `.env`의 `BROKER_PROVIDER`를 읽어 자동으로 분기합니다.
 - `BROKER_PROVIDER=KIS` → `kis-mcp`를 `docker compose up -d kis-mcp`로 먼저 기동
 - `BROKER_PROVIDER!=KIS` 예: `KIWOOM` → 실행 중인 `kis-mcp`를 `docker compose stop kis-mcp`로 정리 후 앱 시작

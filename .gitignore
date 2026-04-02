@@ -72,9 +72,18 @@ compact_custom_prompt.md
 # 로그 파일
 *.log
 logs/
-runtime/logs/
-runtime/pids/
 *.pid
+!runtime/
+!runtime/logs/
+!runtime/pids/
+!runtime/data/
+runtime/logs/*
+runtime/pids/*
+runtime/data/*.db
+runtime/data/*.json
+!runtime/logs/.gitkeep
+!runtime/pids/.gitkeep
+!runtime/data/.gitkeep
 
 # 데이터베이스 파일
 *.db

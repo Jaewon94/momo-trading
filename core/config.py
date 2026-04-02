@@ -1,6 +1,7 @@
 from loguru import logger
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from core.paths import DEFAULT_DATABASE_URL
 
 DEFAULT_LLM_MODEL = "DEFAULT"
 
@@ -19,7 +20,7 @@ class Settings(BaseSettings):
     APP_VERSION: str = "0.1.0"
     ENVIRONMENT: str = "local"  # local | staging | production
 
-    DATABASE_URL: str = "sqlite:///./app.db"
+    DATABASE_URL: str = DEFAULT_DATABASE_URL
     LOG_LEVEL: str = "DEBUG"
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:8000"]
 
