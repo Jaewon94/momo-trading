@@ -148,3 +148,4 @@ docker-compose.override.yml
 
 # ===== Frontend tooling =====
 node_modules/
+.playwright-mcp/
