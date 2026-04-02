@@ -29,6 +29,85 @@ class FakeBrokerAdapter:
         self.cache_invalidated = True
 
 
+def build_signal(
+    *,
+    action: SignalAction = SignalAction.BUY,
+    quantity: int | None = 2,
+    price: float | None = 71_000,
+    metadata: dict | None = None,
+) -> TradeSignal:
+    return TradeSignal(
+        symbol="005930",
+        stock_id="005930",
+        action=action,
+        strength=0.9,
+        suggested_price=price,
+        suggested_quantity=quantity,
+        metadata=metadata or {},
+    )
+
+
+@pytest.mark.asyncio
+async def test_decision_maker_execute_routes_to_autonomous_mode(monkeypatch) -> None:
+    adapter = FakeBrokerAdapter(OrderResult(success=True, order_id="ORD-X", message="ok"))
+    decision_maker = DecisionMaker(broker_adapter=adapter)
+    observed: dict = {}
+
+    async def fake_execute_autonomous(signal, cycle_id=None, analysis_context=None, on_settled=None):
+        observed["symbol"] = signal.symbol
+        observed["cycle_id"] = cycle_id
+        observed["analysis_context"] = analysis_context
+        observed["has_on_settled"] = on_settled is not None
+        return {"mode": "AUTONOMOUS"}
+
+    monkeypatch.setattr("agent.decision_maker.settings.AUTONOMY_MODE", "AUTONOMOUS")
+    monkeypatch.setattr(decision_maker, "_execute_autonomous", fake_execute_autonomous)
+
+    result = await decision_maker.execute(
+        build_signal(),
+        cycle_id="cycle-auto",
+        analysis_context={"source": "test"},
+        on_settled=lambda *_args: None,
+    )
+
+    assert result == {"mode": "AUTONOMOUS"}
+    assert observed == {
+        "symbol": "005930",
+        "cycle_id": "cycle-auto",
+        "analysis_context": {"source": "test"},
+        "has_on_settled": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_decision_maker_execute_routes_to_recommendation_in_semi_auto(monkeypatch) -> None:
+    adapter = FakeBrokerAdapter(OrderResult(success=True, order_id="ORD-X", message="ok"))
+    decision_maker = DecisionMaker(broker_adapter=adapter)
+    observed: dict = {}
+
+    async def fake_create_recommendation(signal, analysis_id, cycle_id=None):
+        observed["symbol"] = signal.symbol
+        observed["analysis_id"] = analysis_id
+        observed["cycle_id"] = cycle_id
+        return {"mode": "SEMI_AUTO"}
+
+    monkeypatch.setattr("agent.decision_maker.settings.AUTONOMY_MODE", "SEMI_AUTO")
+    monkeypatch.setattr(decision_maker, "_create_recommendation", fake_create_recommendation)
+
+    result = await decision_maker.execute(
+        build_signal(),
+        analysis_id="analysis-1",
+        cycle_id="cycle-semi",
+    )
+
+    assert result == {"mode": "SEMI_AUTO"}
+    assert observed == {
+        "symbol": "005930",
+        "analysis_id": "analysis-1",
+        "cycle_id": "cycle-semi",
+    }
+
+
 @pytest.mark.asyncio
 async def test_decision_maker_uses_broker_adapter_for_autonomous_order(monkeypatch) -> None:
     events = []
@@ -80,6 +159,41 @@ async def test_decision_maker_uses_broker_adapter_for_autonomous_order(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_decision_maker_rejects_non_positive_quantity_without_broker_call(monkeypatch) -> None:
+    events = []
+    logs = []
+    adapter = FakeBrokerAdapter(
+        OrderResult(
+            success=True,
+            order_id="ORD-ZERO",
+            message="주문 접수",
+        )
+    )
+    decision_maker = DecisionMaker(broker_adapter=adapter)
+
+    async def fake_log(*args, **kwargs):
+        logs.append((args, kwargs))
+
+    async def fake_publish(event):
+        events.append(event)
+
+    monkeypatch.setattr("agent.decision_maker.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.decision_maker.event_bus.publish", fake_publish)
+
+    result = await decision_maker._execute_autonomous(
+        build_signal(quantity=0),
+        cycle_id="cycle-zero",
+    )
+
+    assert result["success"] is False
+    assert result["message"] == "주문 수량이 유효하지 않습니다"
+    assert result["order_id"] == ""
+    assert adapter.requests == []
+    assert events[0].data["success"] is False
+    assert len(logs) == 2
+
+
+@pytest.mark.asyncio
 async def test_decision_maker_reports_failed_autonomous_order(monkeypatch) -> None:
     events = []
     logs = []
@@ -111,6 +225,51 @@ async def test_decision_maker_reports_failed_autonomous_order(monkeypatch) -> No
     assert result["success"] is False
     assert "주문 실패" in result["message"]
     assert events[0].type == EventType.ORDER_EXECUTED
+    assert len(logs) == 2
+
+
+@pytest.mark.asyncio
+async def test_decision_maker_treats_empty_order_id_as_non_submitted(monkeypatch) -> None:
+    events = []
+    logs = []
+    adapter = FakeBrokerAdapter(
+        OrderResult(success=True, order_id="", message="주문 접수 응답")
+    )
+    decision_maker = DecisionMaker(broker_adapter=adapter)
+    pending_created = False
+    confirm_called = False
+
+    async def fake_log(*args, **kwargs):
+        logs.append((args, kwargs))
+
+    async def fake_publish(event):
+        events.append(event)
+
+    async def fake_create_pending_record(**kwargs):
+        nonlocal pending_created
+        pending_created = True
+        return 1
+
+    async def fake_confirm_and_record(**kwargs):
+        nonlocal confirm_called
+        confirm_called = True
+
+    monkeypatch.setattr("agent.decision_maker.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.decision_maker.event_bus.publish", fake_publish)
+    monkeypatch.setattr(decision_maker, "_create_pending_record", fake_create_pending_record)
+    monkeypatch.setattr(decision_maker, "confirm_and_record", fake_confirm_and_record)
+
+    result = await decision_maker._execute_autonomous(
+        build_signal(),
+        cycle_id="cycle-empty-order-id",
+    )
+
+    assert result["success"] is False
+    assert result["order_id"] == ""
+    assert result["message"] == "주문 접수 응답"
+    assert pending_created is False
+    assert confirm_called is False
+    assert events[0].data["success"] is False
     assert len(logs) == 2
 
 
