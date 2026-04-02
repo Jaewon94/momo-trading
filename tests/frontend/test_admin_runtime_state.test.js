@@ -2,6 +2,8 @@ import { describe, expect, test } from "vitest";
 
 import {
   buildRuntimeControlState,
+  buildRuntimeSettingCopy,
+  formatAutonomyModeLabel,
   getMcpBadgeState,
 } from "../../admin/static/js/runtime_state.js";
 
@@ -48,5 +50,27 @@ describe("runtime_state", () => {
       disabled: true,
       tone: "green",
     });
+  });
+
+  test("describes trading toggle as real order execution control", () => {
+    const copy = buildRuntimeSettingCopy({
+      runtimeSettings: {
+        TRADING_ENABLED: false,
+        AUTONOMY_MODE: "SEMI_AUTO",
+      },
+      runtimeSystemStatus: {
+        trading_enabled: false,
+      },
+    });
+
+    expect(copy.tradingLabel).toBe("실주문 실행");
+    expect(copy.tradingHelp).toContain("실제 주문은 보내지 않습니다");
+    expect(copy.modeHelp).toContain("추천으로만 남기고");
+    expect(copy.modeHelp).toContain("손절/익절");
+  });
+
+  test("formats autonomy mode labels for human-readable display", () => {
+    expect(formatAutonomyModeLabel("SEMI_AUTO")).toBe("추천 후 승인");
+    expect(formatAutonomyModeLabel("AUTONOMOUS")).toBe("자동 주문");
   });
 });

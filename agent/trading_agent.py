@@ -28,6 +28,7 @@ from trading.adapters.base import BrokerAdapter
 from trading.broker_factory import get_broker_adapter
 from trading.enums import ActivityPhase, ActivityType, LLMTier, Market, OrderSide, OrderType, SignalAction, SignalUrgency
 from trading.models import MCPResponse, OrderRequest
+from trading.symbols import normalize_krx_symbol
 
 
 class TradingAgent:
@@ -90,6 +91,7 @@ class TradingAgent:
 
     async def _acquire_sell(self, symbol: str) -> bool:
         """매도 잠금 획득 — 이미 매도 중이면 False"""
+        symbol = normalize_krx_symbol(symbol)
         async with self._sell_lock:
             if symbol in self._selling:
                 logger.debug("[{}] 이미 매도 진행 중 → 중복 매도 차단", symbol)
@@ -99,11 +101,12 @@ class TradingAgent:
 
     def _release_sell(self, symbol: str) -> None:
         """매도 잠금 해제"""
-        self._selling.discard(symbol)
+        self._selling.discard(normalize_krx_symbol(symbol))
 
     def _resolve_name(self, symbol: str) -> str:
         """종목코드 → 종목명 반환 (캐시에 없으면 코드 그대로)"""
-        return self._symbol_names.get(symbol, symbol)
+        normalized = normalize_krx_symbol(symbol)
+        return self._symbol_names.get(symbol) or self._symbol_names.get(normalized) or normalized
 
     async def run_cycle(self, manual_provider_override: str | None = None) -> dict:
         """에이전트 1회 실행 사이클 — 장중이면 매매, 장외면 리뷰"""
@@ -431,8 +434,12 @@ class TradingAgent:
         exit_reason: str,
     ):
         """보유 수량 기준 시장가 매도 실행"""
+        symbol = normalize_krx_symbol(symbol)
         holdings = await self._broker_adapter.get_holdings()
-        holding = next((item for item in holdings if item.symbol == symbol), None)
+        holding = next(
+            (item for item in holdings if normalize_krx_symbol(item.symbol) == symbol),
+            None,
+        )
         if not holding or holding.quantity <= 0:
             return None
 
@@ -1779,7 +1786,7 @@ class TradingAgent:
             if now_kst().time() >= cutoff:
                 return
 
-        symbol = event.data.get("symbol", "")
+        symbol = normalize_krx_symbol(event.data.get("symbol", ""))
         if not symbol:
             return
 
@@ -1802,14 +1809,16 @@ class TradingAgent:
         price = event.data.get("price", 0)
         change_rate = event.data.get("change_rate", 0)
         event_type = event.type.value
-        name = self._resolve_name(symbol)
+        if event.data.get("name") and event.data.get("name") != symbol:
+            self._symbol_names[symbol] = event.data.get("name")
+        name = event.data.get("name") or self._resolve_name(symbol)
 
         await activity_logger.log(
             ActivityType.EVENT, ActivityPhase.PROGRESS,
             f"\u26a1 실시간 감지: {event_type} - {name}({symbol}) "
             f"({price:,.0f}원, {change_rate:+.2f}%)",
-            symbol=symbol,
-            detail=event.data,
+                symbol=symbol,
+                detail={**event.data, "symbol": symbol},
         )
 
         # 즉시 분석 + 매매 (비동기)
@@ -1836,7 +1845,7 @@ class TradingAgent:
                 logger.warning("실시간 이벤트 포트폴리오 스냅샷 조회 실패: {}", str(e))
 
             # 비보유종목 + 현금 부족 → 분석 스킵
-            holding_syms = snapshot.get("holding_symbols", [])
+            holding_syms = [normalize_krx_symbol(item) for item in snapshot.get("holding_symbols", [])]
             if symbol not in holding_syms and price > 0:
                 if snapshot["cash"] < price:
                     logger.info(
@@ -1877,7 +1886,7 @@ class TradingAgent:
         from scheduler.market_calendar import market_calendar
         if not market_calendar.is_krx_trading_hours():
             return
-        symbol = event.data.get("symbol", "")
+        symbol = normalize_krx_symbol(event.data.get("symbol", ""))
         price = event.data.get("price", 0)
         stop_loss = event.data.get("stop_loss_price", 0)
 
@@ -1886,14 +1895,14 @@ class TradingAgent:
             return
 
         try:
-            name = self._resolve_name(symbol)
+            name = event.data.get("name") or self._resolve_name(symbol)
             logger.warning("손절선 도달: {} {} (현재가: {:,.0f}, 손절: {:,.0f})", name, symbol, price, stop_loss)
             await activity_logger.log(
                 ActivityType.EVENT, ActivityPhase.PROGRESS,
                 f"\U0001f6a8 손절선 도달: {name}({symbol}) — 즉시 매도 실행 "
                 f"(현재가: {price:,.0f}원, 손절: {stop_loss:,.0f}원)",
                 symbol=symbol,
-                detail=event.data,
+                detail={**event.data, "symbol": symbol},
             )
 
             # 즉시 시장가 매도
@@ -1925,7 +1934,7 @@ class TradingAgent:
         from scheduler.market_calendar import market_calendar
         if not market_calendar.is_krx_trading_hours():
             return
-        symbol = event.data.get("symbol", "")
+        symbol = normalize_krx_symbol(event.data.get("symbol", ""))
         price = event.data.get("price", 0)
         take_profit = event.data.get("take_profit_price", 0)
 
@@ -1934,14 +1943,14 @@ class TradingAgent:
             return
 
         try:
-            name = self._resolve_name(symbol)
+            name = event.data.get("name") or self._resolve_name(symbol)
             logger.info("익절선 도달: {} {} (현재가: {:,.0f}, 익절: {:,.0f})", name, symbol, price, take_profit)
             await activity_logger.log(
                 ActivityType.EVENT, ActivityPhase.PROGRESS,
                 f"\U0001f3af 익절선 도달: {name}({symbol}) — 매도 실행 "
                 f"(현재가: {price:,.0f}원, 익절: {take_profit:,.0f}원)",
                 symbol=symbol,
-                detail=event.data,
+                detail={**event.data, "symbol": symbol},
             )
 
             # 즉시 시장가 매도

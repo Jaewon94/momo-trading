@@ -8,6 +8,10 @@ function withMirroredButtons(baseStates) {
   }, {});
 }
 
+export function formatAutonomyModeLabel(mode = "SEMI_AUTO") {
+  return mode === "AUTONOMOUS" ? "자동 주문" : "추천 후 승인";
+}
+
 export function getMcpBadgeState(systemStatus = {}) {
   const brokerProvider = systemStatus.broker_provider || "KIWOOM";
   const mcpRequired = systemStatus.mcp_required !== false;
@@ -95,5 +99,28 @@ export function buildRuntimeControlState({
     schedulerMismatchMessage,
     buttonStates,
     headerTriggerDisabled: runtimeControlPending,
+  };
+}
+
+export function buildRuntimeSettingCopy({
+  runtimeSettings = null,
+  runtimeSystemStatus = null,
+} = {}) {
+  const { tradingEnabled, autonomyMode } = buildRuntimeControlState({
+    runtimeSettings,
+    runtimeSystemStatus,
+  });
+
+  return {
+    tradingLabel: "실주문 실행",
+    tradingTitle: "끄면 분석과 추천은 계속되지만 실제 매수·매도 주문은 보내지 않습니다.",
+    tradingHelp: tradingEnabled
+      ? "ON: 조건이 맞으면 실제 매수·매도 주문을 전송합니다."
+      : "OFF: 분석과 추천은 계속되지만 실제 주문은 보내지 않습니다.",
+    modeLabel: "주문 처리 방식",
+    modeTitle: "AI가 낸 BUY/SELL 시그널을 추천으로 둘지, 즉시 주문할지 정합니다.",
+    modeHelp: autonomyMode === "AUTONOMOUS"
+      ? "AUTONOMOUS: AI가 만든 BUY/SELL 시그널을 즉시 주문합니다."
+      : "SEMI_AUTO: AI 시그널을 추천으로만 남기고 사용자 승인을 기다립니다. 단, 손절/익절 같은 안전매도는 실주문 실행이 ON이면 자동 실행될 수 있습니다.",
   };
 }

@@ -11,13 +11,19 @@ import {
   clampPaneWidth as clampPaneWidthValue,
   normalizeSavedPaneLayout,
 } from './pane_layout.js';
-import { buildRuntimeControlState, getMcpBadgeState } from './runtime_state.js';
+import {
+  buildRuntimeControlState,
+  buildRuntimeSettingCopy,
+  formatAutonomyModeLabel,
+  getMcpBadgeState,
+} from './runtime_state.js';
 import {
   buildClaudeUsageCopy,
   buildCodexAuthLabel,
   buildCodexUsageCopy,
 } from './llm_usage_state.js';
 import { buildTradePanelState, buildTradeSummaryCounts } from './trade_state.js';
+import { resolveActivityStockMeta } from './activity_state.js';
 
 const API = '/api/v1/admin';
 let currentView = 'live';
@@ -29,6 +35,7 @@ let runtimeSystemStatus = null;
 let llmUsageSnapshot = null;
 let llmCatalog = null;
 let runtimeControlPending = false;
+const knownStockNames = {};
 let paneLayout = {
   leftWidth: PANE_DEFAULT_WIDTH.left,
   rightWidth: PANE_DEFAULT_WIDTH.right,
@@ -733,6 +740,21 @@ function createCycleDivider(data, isStart) {
   return div;
 }
 
+function rememberStockName(symbol, stockName) {
+  if (symbol && stockName && stockName !== symbol) {
+    knownStockNames[symbol] = stockName;
+  }
+}
+
+function renderCardIdentity(card) {
+  const identityEl = card.headerEl.querySelector('.stock-identity');
+  if (!identityEl) return;
+  identityEl.innerHTML = `
+    ${escapeHtml(card.stockName)} <span class="text-gray-500 text-xs">${escapeHtml(card.symbol)}</span>
+  `;
+  identityEl.title = `${card.stockName} (${card.symbol})`;
+}
+
 /**
  * 종목 카드 생성
  */
@@ -740,16 +762,21 @@ function createStockCard(symbol, firstActivity) {
   const el = document.createElement('div');
   el.className = 'stock-card outcome-progress';
 
-  // Extract stock name from summary: [종목명] or [심볼]
-  const nameMatch = (firstActivity.summary || '').match(/\[([^\]]+)\]/);
-  const stockName = nameMatch ? nameMatch[1] : symbol;
+  const meta = resolveActivityStockMeta({
+    symbol,
+    summary: firstActivity.summary,
+    detail: firstActivity.detail,
+    knownNames: knownStockNames,
+  });
+  const stockName = meta.stockName;
+  rememberStockName(symbol, stockName);
 
   // Header
   const header = document.createElement('div');
   header.className = 'stock-card-header';
   header.innerHTML = `
     <span class="text-sm">📊</span>
-    <span class="text-sm font-medium text-white flex-1 truncate">
+    <span class="stock-identity text-sm font-medium text-white flex-1 truncate">
       ${escapeHtml(stockName)} <span class="text-gray-500 text-xs">${escapeHtml(symbol)}</span>
     </span>
     <span class="stock-confidence"></span>
@@ -807,6 +834,18 @@ function createStockCard(symbol, firstActivity) {
  * 카드에 활동 스텝 추가
  */
 function addStepToCard(card, data) {
+  const meta = resolveActivityStockMeta({
+    symbol: card.symbol,
+    summary: data.summary,
+    detail: data.detail,
+    knownNames: knownStockNames,
+  });
+  if (meta.stockName && meta.stockName !== card.stockName) {
+    card.stockName = meta.stockName;
+    rememberStockName(card.symbol, meta.stockName);
+    renderCardIdentity(card);
+  }
+
   card.activities.push(data);
 
   const progressKey = getProgressKey(data);
@@ -1521,7 +1560,8 @@ async function loadSettings() {
     if (manualLlmEl && s.MANUAL_LLM_PROVIDER) manualLlmEl.value = s.MANUAL_LLM_PROVIDER;
     renderTierModelSelectors();
     updateBadge('badge-trading', s.TRADING_ENABLED ? '매매:ON' : '매매:OFF', s.TRADING_ENABLED ? 'green' : 'red');
-    updateBadge('badge-mode', s.AUTONOMY_MODE, 'purple');
+    updateBadge('badge-mode', formatAutonomyModeLabel(s.AUTONOMY_MODE), 'purple');
+    renderSettingGuidance();
     renderRuntimeControls();
   } catch (err) {
     console.error('Settings load error:', err);
@@ -1594,6 +1634,7 @@ function renderRuntimeControls() {
     agentRunning,
   } = state;
   const headerSummaryEl = document.getElementById('header-runtime-summary');
+  const autonomyLabel = formatAutonomyModeLabel(autonomyMode);
 
   const schedulerMismatch = state.schedulerMismatchMessage
     ? `<div class="text-yellow-300">${state.schedulerMismatchMessage}</div>`
@@ -1602,7 +1643,7 @@ function renderRuntimeControls() {
   if (summaryEl) {
     summaryEl.innerHTML = `
       <div>실행 상태: 에이전트 <span class="${agentRunning ? 'text-green-300' : 'text-yellow-300'}">${agentRunning ? '동작' : '중지'}</span> · 스케줄러 <span class="${schedulerRunning ? 'text-green-300' : 'text-yellow-300'}">${schedulerRunning ? '동작' : '중지'}</span></div>
-      <div>주문 설정: <span class="${tradingEnabled ? 'text-green-300' : 'text-red-300'}">${tradingEnabled ? 'ON' : 'OFF'}</span> · ${escapeHtml(autonomyMode)}</div>
+      <div>주문 설정: <span class="${tradingEnabled ? 'text-green-300' : 'text-red-300'}">${tradingEnabled ? 'ON' : 'OFF'}</span> · ${escapeHtml(autonomyLabel)}</div>
       <div>스케줄러 설정: ${schedulerEnabled ? '활성' : '비활성'}</div>
       ${schedulerMismatch}
       ${runtimeControlPending ? '<div class="text-blue-300">변경 적용 중...</div>' : ''}
@@ -1614,6 +1655,24 @@ function renderRuntimeControls() {
 
   Object.entries(state.buttonStates).forEach(([id, options]) => setControlButtonState(id, options));
   updateHeaderActionButtonState('header-trigger-cycle', { disabled: state.headerTriggerDisabled });
+  renderSettingGuidance();
+}
+
+function renderSettingGuidance() {
+  const copy = buildRuntimeSettingCopy({ runtimeSettings, runtimeSystemStatus });
+  const tradingLabelEl = document.getElementById('set-trading-label');
+  const tradingHelpEl = document.getElementById('set-trading-help');
+  const tradingTipEl = document.getElementById('set-trading-tip');
+  const modeLabelEl = document.getElementById('set-mode-label');
+  const modeHelpEl = document.getElementById('set-mode-help');
+  const modeTipEl = document.getElementById('set-mode-tip');
+
+  if (tradingLabelEl) tradingLabelEl.textContent = copy.tradingLabel;
+  if (tradingHelpEl) tradingHelpEl.textContent = copy.tradingHelp;
+  if (tradingTipEl) tradingTipEl.title = copy.tradingTitle;
+  if (modeLabelEl) modeLabelEl.textContent = copy.modeLabel;
+  if (modeHelpEl) modeHelpEl.textContent = copy.modeHelp;
+  if (modeTipEl) modeTipEl.title = copy.modeTitle;
 }
 
 function applyControlButtonState(ids, options) {

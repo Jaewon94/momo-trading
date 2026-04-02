@@ -247,20 +247,27 @@
             </div>
             <div class="sidebar-section-body open" id="body-settings">
               <div class="px-3 pb-2 space-y-3">
-                <label class="flex items-center justify-between">
-                  <span class="text-sm">&#xb9e4;&#xb9e4; &#xd65c;&#xc131;&#xd654;</span>
+                <label class="flex items-center justify-between gap-3">
+                  <div class="min-w-0">
+                    <div class="flex items-center gap-1">
+                      <span id="set-trading-label" class="text-sm">실주문 실행</span>
+                      <span id="set-trading-tip" class="text-xs text-gray-500 cursor-help" title="끄면 분석과 추천은 계속되지만 실제 매수·매도 주문은 보내지 않습니다.">?</span>
+                    </div>
+                    <div id="set-trading-help" class="text-xs text-gray-500 mt-0.5">OFF: 분석과 추천은 계속되지만 실제 주문은 보내지 않습니다.</div>
+                  </div>
                   <input type="checkbox" id="set-trading" onchange="updateSetting('TRADING_ENABLED', this.checked)"
                     class="w-9 h-5 rounded-full appearance-none bg-gray-600 checked:bg-green-500 relative cursor-pointer
                     after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:transition-transform checked:after:translate-x-4">
                 </label>
 
                 <div>
-                  <label class="text-sm block mb-1">&#xbaa8;&#xb4dc;</label>
+                  <label id="set-mode-label" class="text-sm block mb-1">주문 처리 방식 <span id="set-mode-tip" class="text-xs text-gray-500 cursor-help" title="AI가 낸 BUY/SELL 시그널을 추천으로 둘지, 즉시 주문할지 정합니다.">?</span></label>
                   <select id="set-mode" onchange="updateSetting('AUTONOMY_MODE', this.value)"
                     class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
-                    <option value="SEMI_AUTO">SEMI_AUTO</option>
-                    <option value="AUTONOMOUS">AUTONOMOUS</option>
+                    <option value="SEMI_AUTO">추천 후 승인 (SEMI_AUTO)</option>
+                    <option value="AUTONOMOUS">즉시 자동 주문 (AUTONOMOUS)</option>
                   </select>
+                  <div id="set-mode-help" class="text-xs text-gray-500 mt-1">SEMI_AUTO: AI 시그널을 추천으로만 남기고 사용자 승인을 기다립니다.</div>
                 </div>
 
                 <div>

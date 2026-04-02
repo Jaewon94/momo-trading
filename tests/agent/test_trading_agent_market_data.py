@@ -186,6 +186,21 @@ class EmptyHoldingsBrokerAdapter(FakePortfolioBrokerAdapter):
         return []
 
 
+class PrefixedSymbolHoldingsBrokerAdapter(FakePortfolioBrokerAdapter):
+    async def get_holdings(self) -> list[HoldingInfo]:
+        return [
+            HoldingInfo(
+                symbol="010170",
+                name="대한광통신",
+                quantity=7,
+                avg_buy_price=9_200,
+                current_price=10_030,
+                pnl=5_810,
+                pnl_rate=9.02,
+            )
+        ]
+
+
 @pytest.mark.asyncio
 async def test_trading_agent_builds_portfolio_snapshot_from_broker_adapter(monkeypatch) -> None:
     adapter = FakePortfolioBrokerAdapter()
@@ -280,6 +295,31 @@ async def test_trading_agent_skips_exit_order_without_holding(monkeypatch) -> No
     assert result is None
     assert adapter.requests == []
     assert recorded is False
+
+
+@pytest.mark.asyncio
+async def test_trading_agent_normalizes_a_prefixed_symbol_for_exit_orders(monkeypatch) -> None:
+    adapter = PrefixedSymbolHoldingsBrokerAdapter()
+    agent = TradingAgent(broker_adapter=adapter)
+    recorded: dict = {}
+
+    async def fake_confirm_and_record(**kwargs) -> None:
+        recorded.update(kwargs)
+
+    monkeypatch.setattr("agent.trading_agent.decision_maker.confirm_and_record", fake_confirm_and_record)
+
+    result = await agent._execute_exit_order(
+        symbol="A010170",
+        expected_price=10_030,
+        exit_reason="TAKE_PROFIT",
+    )
+
+    assert result is not None
+    assert result.success is True
+    assert adapter.requests[0].symbol == "010170"
+    assert adapter.requests[0].quantity == 7
+    assert recorded["symbol"] == "010170"
+    assert recorded["exit_reason"] == "TAKE_PROFIT"
 
 
 @pytest.mark.asyncio

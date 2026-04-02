@@ -20,6 +20,7 @@ from trading.models import (
     OrderStatusInfo,
     PendingOrderInfo,
 )
+from trading.symbols import normalize_krx_symbol
 
 
 class KiwoomBrokerAdapter(BrokerAdapter):
@@ -56,6 +57,7 @@ class KiwoomBrokerAdapter(BrokerAdapter):
         return await self._require_account_client().get_pending_orders()
 
     async def get_current_price(self, symbol: str, market: Market) -> CurrentPrice:
+        symbol = normalize_krx_symbol(symbol)
         response = await self._require_market_data_client().get_current_price(
             symbol,
             market=market.value,
@@ -79,6 +81,7 @@ class KiwoomBrokerAdapter(BrokerAdapter):
         count: int = 30,
         market: Market = Market.KRX,
     ) -> list[Candle]:
+        symbol = normalize_krx_symbol(symbol)
         response = await self._require_market_data_client().get_daily_price(
             symbol,
             count=count,
@@ -93,6 +96,7 @@ class KiwoomBrokerAdapter(BrokerAdapter):
         interval: str = "5",
         market: Market = Market.KRX,
     ) -> list[Candle]:
+        symbol = normalize_krx_symbol(symbol)
         response = await self._require_market_data_client().get_minute_price(
             symbol,
             period=interval,
@@ -121,11 +125,13 @@ class KiwoomBrokerAdapter(BrokerAdapter):
         return []
 
     async def place_order(self, request: OrderRequest) -> OrderResult:
-        baseline_qty = await self._get_holding_quantity(request.symbol)
-        result = await self._require_order_executor().execute(request)
+        normalized_symbol = normalize_krx_symbol(request.symbol)
+        baseline_qty = await self._get_holding_quantity(normalized_symbol)
+        normalized_request = request.model_copy(update={"symbol": normalized_symbol})
+        result = await self._require_order_executor().execute(normalized_request)
         if result.success and result.order_id:
             self._submitted_orders[str(result.order_id)] = _SubmittedOrderMeta(
-                symbol=request.symbol,
+                symbol=normalized_symbol,
                 side=request.side.value,
                 quantity=request.quantity,
                 order_price=float(request.price or 0.0),
@@ -202,9 +208,10 @@ class KiwoomBrokerAdapter(BrokerAdapter):
         return self._order_executor
 
     async def _get_holding(self, symbol: str) -> HoldingInfo | None:
+        symbol = normalize_krx_symbol(symbol)
         holdings = await self.get_holdings()
         for holding in holdings:
-            if holding.symbol == symbol:
+            if normalize_krx_symbol(holding.symbol) == symbol:
                 return holding
         return None
 

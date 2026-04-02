@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from agent.trading_agent import TradingAgent
-from core.events import EventType
+from core.events import Event, EventType
 
 
 class StubBrokerAdapter:
@@ -386,6 +386,59 @@ async def test_run_trading_cycle_skips_buy_candidate_when_buying_power_is_too_lo
     assert result["signals"] == 0
     assert result["executed"] == 0
     assert analyze_called is False
+
+
+@pytest.mark.asyncio
+async def test_on_market_event_normalizes_a_prefixed_symbol_before_analysis(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    agent._running = True
+    observed: dict = {}
+    logged: list[tuple] = []
+
+    async def fake_log(*args, **kwargs) -> None:
+        logged.append((args, kwargs))
+
+    async def fake_trading_context() -> str:
+        return "live-context"
+
+    async def fake_snapshot() -> dict:
+        return {
+            "cash": 1_000_000,
+            "total_asset": 2_000_000,
+            "holding_count": 1,
+            "today_trade_count": 0,
+            "holding_symbols": ["010170"],
+        }
+
+    async def fake_analyze_and_trade(stock_info, cycle_id, **kwargs) -> dict:
+        observed["stock_info"] = dict(stock_info)
+        observed["cycle_id"] = cycle_id
+        observed["portfolio_snapshot"] = kwargs.get("portfolio_snapshot")
+        return {"executed": False}
+
+    monkeypatch.setattr("agent.trading_agent.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr("agent.trading_agent.settings.DAY_TRADING_ONLY", False)
+    monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.trading_agent.activity_logger.start_cycle", lambda: "cycle-live")
+    monkeypatch.setattr(agent, "_build_trading_context", fake_trading_context)
+    monkeypatch.setattr(agent, "_build_portfolio_snapshot", fake_snapshot)
+    monkeypatch.setattr(agent, "_analyze_and_trade", fake_analyze_and_trade)
+
+    await agent._on_market_event(Event(
+        type=EventType.PRICE_SURGE,
+        data={
+            "symbol": "A010170",
+            "name": "대한광통신",
+            "price": 10_030,
+            "change_rate": 6.59,
+        },
+        source="test",
+    ))
+
+    assert observed["stock_info"]["symbol"] == "010170"
+    assert observed["stock_info"]["name"] == "대한광통신"
+    assert observed["portfolio_snapshot"]["holding_symbols"] == ["010170"]
+    assert logged[0][1]["symbol"] == "010170"
 
 
 @pytest.mark.asyncio
