@@ -145,3 +145,6 @@ alembic/versions/__pycache__/
 
 # ===== Docker =====
 docker-compose.override.yml
+
+# ===== Frontend tooling =====
+node_modules/

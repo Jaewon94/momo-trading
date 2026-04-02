@@ -1,6 +1,18 @@
 /**
  * MOMO Trading Admin Dashboard — SSE + Stock-Grouped Chat UI
  */
+import {
+  CENTER_MIN_WIDTH_COMPACT,
+  CENTER_MIN_WIDTH_DESKTOP,
+  PANE_DEFAULT_WIDTH,
+  PANE_MAX_WIDTH,
+  PANE_MIN_WIDTH,
+  PANE_STORAGE_KEY,
+  clampPaneWidth as clampPaneWidthValue,
+  normalizeSavedPaneLayout,
+} from './pane_layout.js';
+import { buildRuntimeControlState, getMcpBadgeState } from './runtime_state.js';
+
 const API = '/api/v1/admin';
 let currentView = 'live';
 let activityCount = 0;
@@ -11,6 +23,13 @@ let runtimeSystemStatus = null;
 let llmUsageSnapshot = null;
 let llmCatalog = null;
 let runtimeControlPending = false;
+let paneLayout = {
+  leftWidth: PANE_DEFAULT_WIDTH.left,
+  rightWidth: PANE_DEFAULT_WIDTH.right,
+  leftCollapsed: false,
+  rightCollapsed: false,
+};
+let activePaneResize = null;
 
 // Stock card tracking: key = "cycleId:symbol" → { element, headerEl, bodyEl, stepsEl, activities[], outcome }
 let stockCards = {};
@@ -20,12 +39,14 @@ const sidebarState = {
   account: true,
   holdings: true,
   pending: false,
+  trades: true,
   settings: true,
   system: true,
 };
 
 // ── Init ──
 document.addEventListener('DOMContentLoaded', () => {
+  loadPaneLayout();
   loadSettings();
   loadLLMCatalog();
   loadSystemStatus();
@@ -36,6 +57,7 @@ document.addEventListener('DOMContentLoaded', () => {
   connectSSE();
   loadTodayActivities();
   initSidebarSections();
+  initWorkspaceLayout();
   setInterval(loadSystemStatus, 15000);
   setInterval(loadLLMUsage, 60000);
   accountPollTimer = setInterval(loadAccountInfo, 30000);
@@ -61,6 +83,208 @@ function toggleSidebarSection(id) {
   const arrow = document.getElementById(`arrow-${id}`);
   if (body) body.classList.toggle('open', sidebarState[id]);
   if (arrow) arrow.classList.toggle('collapsed', !sidebarState[id]);
+}
+
+// ── Workspace Layout ──
+function loadPaneLayout() {
+  try {
+    const raw = localStorage.getItem(PANE_STORAGE_KEY);
+    if (!raw) return;
+    paneLayout = normalizeSavedPaneLayout(JSON.parse(raw));
+  } catch (err) {
+    console.warn('Pane layout load error:', err);
+  }
+}
+
+function savePaneLayout() {
+  try {
+    localStorage.setItem(PANE_STORAGE_KEY, JSON.stringify(paneLayout));
+  } catch (err) {
+    console.warn('Pane layout save error:', err);
+  }
+}
+
+function isCompactViewport() {
+  return window.matchMedia('(max-width: 1023px)').matches;
+}
+
+function getWorkspaceCenterMinWidth() {
+  return window.innerWidth < 1280 ? CENTER_MIN_WIDTH_COMPACT : CENTER_MIN_WIDTH_DESKTOP;
+}
+
+function clampPaneWidth(side, width) {
+  const workspace = document.getElementById('workspace-shell');
+  return clampPaneWidthValue(side, width, {
+    layout: paneLayout,
+    workspaceWidth: workspace?.clientWidth || window.innerWidth,
+    isCompactViewport: isCompactViewport(),
+    centerMinWidth: getWorkspaceCenterMinWidth(),
+  });
+}
+
+function updatePaneDividerUI(side, collapsed) {
+  const button = document.getElementById(side === 'left' ? 'toggle-left-pane' : 'toggle-right-pane');
+  const resizer = document.getElementById(side === 'left' ? 'pane-resizer-left' : 'pane-resizer-right');
+  if (button) {
+    button.innerHTML = side === 'left'
+      ? (collapsed ? '&#x203A;' : '&#x2039;')
+      : (collapsed ? '&#x2039;' : '&#x203A;');
+  }
+  if (resizer) {
+    const width = collapsed ? 0 : paneLayout[`${side}Width`];
+    resizer.setAttribute('aria-valuemin', '0');
+    resizer.setAttribute('aria-valuemax', String(PANE_MAX_WIDTH[side]));
+    resizer.setAttribute('aria-valuenow', String(width));
+    resizer.setAttribute('aria-expanded', String(!collapsed));
+  }
+}
+
+function applyPaneLayout() {
+  const leftPane = document.getElementById('admin-left-pane');
+  const rightPane = document.getElementById('admin-right-pane');
+  if (!leftPane || !rightPane) return;
+  paneLayout = normalizeSavedPaneLayout(paneLayout);
+
+  if (isCompactViewport()) {
+    leftPane.classList.remove('pane-collapsed');
+    rightPane.classList.remove('pane-collapsed');
+    leftPane.style.width = 'auto';
+    rightPane.style.width = 'auto';
+    updatePaneDividerUI('left', false);
+    updatePaneDividerUI('right', false);
+    return;
+  }
+
+  paneLayout.leftWidth = clampPaneWidth('left', paneLayout.leftWidth || PANE_DEFAULT_WIDTH.left);
+  paneLayout.rightWidth = clampPaneWidth('right', paneLayout.rightWidth || PANE_DEFAULT_WIDTH.right);
+
+  leftPane.classList.toggle('pane-collapsed', paneLayout.leftCollapsed);
+  rightPane.classList.toggle('pane-collapsed', paneLayout.rightCollapsed);
+  leftPane.style.width = paneLayout.leftCollapsed ? '0px' : `${paneLayout.leftWidth}px`;
+  rightPane.style.width = paneLayout.rightCollapsed ? '0px' : `${paneLayout.rightWidth}px`;
+  updatePaneDividerUI('left', paneLayout.leftCollapsed);
+  updatePaneDividerUI('right', paneLayout.rightCollapsed);
+}
+
+function togglePaneCollapse(side) {
+  if (isCompactViewport()) return;
+  paneLayout[`${side}Collapsed`] = !paneLayout[`${side}Collapsed`];
+  if (!paneLayout[`${side}Width`]) {
+    paneLayout[`${side}Width`] = PANE_DEFAULT_WIDTH[side];
+  }
+  applyPaneLayout();
+  savePaneLayout();
+}
+
+function resetPaneWidth(side) {
+  paneLayout[`${side}Collapsed`] = false;
+  paneLayout[`${side}Width`] = PANE_DEFAULT_WIDTH[side];
+  applyPaneLayout();
+  savePaneLayout();
+}
+
+function startPaneResize(side, event) {
+  if (isCompactViewport()) return;
+  event.preventDefault();
+  paneLayout[`${side}Collapsed`] = false;
+  activePaneResize = {
+    side,
+    startX: event.clientX,
+    startWidth: paneLayout[`${side}Width`] || PANE_DEFAULT_WIDTH[side],
+  };
+  const resizer = document.getElementById(side === 'left' ? 'pane-resizer-left' : 'pane-resizer-right');
+  resizer?.classList.add('dragging');
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+}
+
+function handlePaneResizeMove(event) {
+  if (!activePaneResize) return;
+  const { side, startX, startWidth } = activePaneResize;
+  const delta = event.clientX - startX;
+  const nextWidth = side === 'left' ? startWidth + delta : startWidth - delta;
+  paneLayout[`${side}Width`] = clampPaneWidth(side, nextWidth);
+  applyPaneLayout();
+}
+
+function stopPaneResize() {
+  if (!activePaneResize) return;
+  const resizer = document.getElementById(
+    activePaneResize.side === 'left' ? 'pane-resizer-left' : 'pane-resizer-right'
+  );
+  resizer?.classList.remove('dragging');
+  document.body.style.cursor = '';
+  document.body.style.userSelect = '';
+  activePaneResize = null;
+  savePaneLayout();
+}
+
+function handlePaneResizerKeydown(side, event) {
+  if (isCompactViewport()) return;
+  const step = event.shiftKey ? 48 : 24;
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    togglePaneCollapse(side);
+    return;
+  }
+  if (event.key === 'Home') {
+    event.preventDefault();
+    paneLayout[`${side}Collapsed`] = false;
+    paneLayout[`${side}Width`] = PANE_MIN_WIDTH[side];
+    applyPaneLayout();
+    savePaneLayout();
+    return;
+  }
+  if (event.key === 'End') {
+    event.preventDefault();
+    paneLayout[`${side}Collapsed`] = false;
+    paneLayout[`${side}Width`] = clampPaneWidth(side, PANE_MAX_WIDTH[side]);
+    applyPaneLayout();
+    savePaneLayout();
+    return;
+  }
+
+  const keyDirection = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0;
+  if (!keyDirection) return;
+  event.preventDefault();
+
+  let nextWidth = paneLayout[`${side}Width`] || PANE_DEFAULT_WIDTH[side];
+  if (side === 'left') {
+    nextWidth += keyDirection * step;
+  } else {
+    nextWidth -= keyDirection * step;
+  }
+  paneLayout[`${side}Collapsed`] = false;
+  paneLayout[`${side}Width`] = clampPaneWidth(side, nextWidth);
+  applyPaneLayout();
+  savePaneLayout();
+}
+
+function initWorkspaceLayout() {
+  applyPaneLayout();
+
+  const leftResizer = document.getElementById('pane-resizer-left');
+  const rightResizer = document.getElementById('pane-resizer-right');
+  if (leftResizer && !leftResizer.dataset.bound) {
+    leftResizer.addEventListener('pointerdown', (event) => startPaneResize('left', event));
+    leftResizer.addEventListener('keydown', (event) => handlePaneResizerKeydown('left', event));
+    leftResizer.addEventListener('dblclick', () => resetPaneWidth('left'));
+    leftResizer.dataset.bound = 'true';
+  }
+  if (rightResizer && !rightResizer.dataset.bound) {
+    rightResizer.addEventListener('pointerdown', (event) => startPaneResize('right', event));
+    rightResizer.addEventListener('keydown', (event) => handlePaneResizerKeydown('right', event));
+    rightResizer.addEventListener('dblclick', () => resetPaneWidth('right'));
+    rightResizer.dataset.bound = 'true';
+  }
+
+  if (!document.body.dataset.paneResizeBound) {
+    window.addEventListener('pointermove', handlePaneResizeMove);
+    window.addEventListener('pointerup', stopPaneResize);
+    window.addEventListener('pointercancel', stopPaneResize);
+    window.addEventListener('resize', applyPaneLayout);
+    document.body.dataset.paneResizeBound = 'true';
+  }
 }
 
 // ── SSE Connection ──
@@ -103,17 +327,21 @@ function connectSSE() {
 // ── Account Info ──
 async function loadAccountInfo() {
   try {
-    const [balResp, holdResp, pendResp] = await Promise.all([
+    const [balResp, holdResp, pendResp, tradeResp] = await Promise.all([
       fetch(`${API}/account/balance`),
       fetch(`${API}/account/holdings`),
       fetch(`${API}/account/pending-orders`),
+      fetch(`${API}/trades`),
     ]);
     const balJson = await balResp.json();
     const holdJson = await holdResp.json();
     const pendJson = await pendResp.json();
+    const tradeJson = await tradeResp.json();
     renderAccountBalance(balJson.data);
     renderAccountHoldings(holdJson.data);
     renderPendingOrders(pendJson.data);
+    renderTodayTrades(tradeJson.data);
+    renderPortfolioQuickStats(balJson.data, holdJson.data, pendJson.data, tradeJson.data);
   } catch (err) {
     console.error('Account info error:', err);
     const el = document.getElementById('account-info');
@@ -215,6 +443,155 @@ function renderPendingOrders(data) {
       <div class="flex justify-between text-gray-500">
         <span>${formatKRW(orderAmt)}</span>
         <span>${timeStr}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderPortfolioQuickStats(balance, holdings, pendingOrders, trades) {
+  const el = document.getElementById('portfolio-quick-stats');
+  if (!el) return;
+
+  const totalAsset = balance?.total_asset || 0;
+  const cash = balance?.cash || 0;
+  const cashRatio = totalAsset > 0 ? `${((cash / totalAsset) * 100).toFixed(1)}%` : '-';
+  const holdingCount = holdings?.length || 0;
+  const pendingCount = pendingOrders?.length || 0;
+  const tradeCount = (trades?.opened?.length || 0) + (trades?.completed?.length || 0);
+
+  el.innerHTML = `
+    <div class="portfolio-stat">
+      <div class="portfolio-stat-label">총자산</div>
+      <div class="portfolio-stat-value">${formatKRW(totalAsset)}</div>
+    </div>
+    <div class="portfolio-stat">
+      <div class="portfolio-stat-label">현금 비중</div>
+      <div class="portfolio-stat-value">${cashRatio}</div>
+    </div>
+    <div class="portfolio-stat">
+      <div class="portfolio-stat-label">보유 종목</div>
+      <div class="portfolio-stat-value">${holdingCount}개</div>
+    </div>
+    <div class="portfolio-stat">
+      <div class="portfolio-stat-label">미체결 / 오늘 거래</div>
+      <div class="portfolio-stat-value">${pendingCount} / ${tradeCount}</div>
+    </div>
+  `;
+}
+
+function renderTodayTrades(data) {
+  const el = document.getElementById('today-trades-info');
+  const countEl = document.getElementById('trades-count');
+  if (!el) return;
+
+  const opened = data?.opened || [];
+  const completed = data?.completed || [];
+  const openPositions = data?.open_positions || [];
+  const todayCount = opened.length + completed.length;
+
+  if (countEl) countEl.textContent = String(todayCount);
+
+  if (!opened.length && !completed.length && !openPositions.length) {
+    el.innerHTML = '<div class="text-gray-600 text-xs">오늘 매매 내역 없음</div>';
+    return;
+  }
+
+  const sections = [];
+
+  if (completed.length) {
+    sections.push(`
+      <div>
+        <div class="trade-mini-group-title">오늘 청산</div>
+        ${completed.map((trade) => renderCompactTradeCard(trade, 'completed')).join('')}
+      </div>
+    `);
+  }
+
+  if (opened.length) {
+    sections.push(`
+      <div>
+        <div class="trade-mini-group-title">오늘 진입</div>
+        ${opened.map((trade) => renderCompactTradeCard(trade, 'opened')).join('')}
+      </div>
+    `);
+  }
+
+  if (openPositions.length) {
+    sections.push(`
+      <div>
+        <div class="trade-mini-group-title">보유 포지션</div>
+        ${renderOpenPositionCards(openPositions)}
+      </div>
+    `);
+  }
+
+  el.innerHTML = sections.join('');
+}
+
+function renderCompactTradeCard(trade, type) {
+  const isCompleted = type === 'completed';
+  const time = isCompleted
+    ? (trade.exit_at ? new Date(trade.exit_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }) : '')
+    : (trade.entry_at ? new Date(trade.entry_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }) : '');
+
+  if (isCompleted) {
+    const pnlColor = trade.pnl >= 0 ? 'text-green-400' : 'text-red-400';
+    const klass = trade.pnl >= 0 ? 'completed-win' : 'completed-loss';
+    return `<div class="trade-mini-card ${klass}">
+      <div class="flex items-center justify-between gap-2">
+        <div class="min-w-0">
+          <div class="text-gray-100 font-medium truncate">${trade.stock_name}</div>
+          <div class="text-[11px] text-gray-500">${trade.stock_symbol} · ${time}</div>
+        </div>
+        <div class="text-right ${pnlColor}">
+          <div class="font-semibold">${trade.pnl >= 0 ? '+' : ''}${formatKRW(trade.pnl)}</div>
+          <div class="text-[11px]">${trade.return_pct >= 0 ? '+' : ''}${trade.return_pct}%</div>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  return `<div class="trade-mini-card opened">
+    <div class="flex items-center justify-between gap-2">
+      <div class="min-w-0">
+        <div class="text-gray-100 font-medium truncate">${trade.stock_name}</div>
+        <div class="text-[11px] text-gray-500">${trade.stock_symbol} · ${time}</div>
+      </div>
+      <div class="text-right text-blue-300">
+        <div class="font-semibold">${trade.quantity}주</div>
+        <div class="text-[11px]">@ ${Number(trade.entry_price).toLocaleString()}원</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderOpenPositionCards(openPositions) {
+  const grouped = {};
+  openPositions.forEach((trade) => {
+    if (!grouped[trade.stock_symbol]) {
+      grouped[trade.stock_symbol] = {
+        stock_name: trade.stock_name,
+        stock_symbol: trade.stock_symbol,
+        total_qty: 0,
+        total_cost: 0,
+      };
+    }
+    grouped[trade.stock_symbol].total_qty += trade.quantity;
+    grouped[trade.stock_symbol].total_cost += trade.entry_price * trade.quantity;
+  });
+
+  return Object.values(grouped).map((position) => {
+    const avgPrice = position.total_qty > 0 ? Math.round(position.total_cost / position.total_qty) : 0;
+    return `<div class="trade-mini-card position">
+      <div class="flex items-center justify-between gap-2">
+        <div class="min-w-0">
+          <div class="text-gray-100 font-medium truncate">${position.stock_name}</div>
+          <div class="text-[11px] text-gray-500">${position.stock_symbol}</div>
+        </div>
+        <div class="text-right text-purple-300">
+          <div class="font-semibold">${position.total_qty}주</div>
+          <div class="text-[11px]">평단 ${avgPrice.toLocaleString()}원</div>
+        </div>
       </div>
     </div>`;
   }).join('');
@@ -1124,56 +1501,52 @@ function setControlButtonState(id, { active = false, disabled = false, tone = 'b
 
 function renderRuntimeControls() {
   const summaryEl = document.getElementById('runtime-control-summary');
-  if (!summaryEl) return;
+  const state = buildRuntimeControlState({
+    runtimeSettings,
+    runtimeSystemStatus,
+    runtimeControlPending,
+  });
+  const {
+    tradingEnabled,
+    autonomyMode,
+    schedulerRunning,
+    schedulerEnabled,
+    agentRunning,
+  } = state;
+  const headerSummaryEl = document.getElementById('header-runtime-summary');
 
-  const tradingEnabled = runtimeSystemStatus?.trading_enabled ?? runtimeSettings?.TRADING_ENABLED ?? false;
-  const autonomyMode = runtimeSettings?.AUTONOMY_MODE || 'SEMI_AUTO';
-  const schedulerRunning = runtimeSystemStatus?.scheduler_running ?? false;
-  const schedulerEnabled = runtimeSettings?.SCHEDULER_ENABLED ?? schedulerRunning;
-  const agentRunning = runtimeSystemStatus?.agent_running ?? false;
-
-  const schedulerMismatch = schedulerEnabled !== schedulerRunning
-    ? `<div class="text-yellow-300">설정은 ${schedulerEnabled ? '활성' : '비활성'}이지만 현재 실행은 ${schedulerRunning ? '동작' : '중지'} 상태입니다.</div>`
+  const schedulerMismatch = state.schedulerMismatchMessage
+    ? `<div class="text-yellow-300">${state.schedulerMismatchMessage}</div>`
     : '';
 
-  summaryEl.innerHTML = `
-    <div>실행 상태: 에이전트 <span class="${agentRunning ? 'text-green-300' : 'text-yellow-300'}">${agentRunning ? '동작' : '중지'}</span> · 스케줄러 <span class="${schedulerRunning ? 'text-green-300' : 'text-yellow-300'}">${schedulerRunning ? '동작' : '중지'}</span></div>
-    <div>주문 설정: <span class="${tradingEnabled ? 'text-green-300' : 'text-red-300'}">${tradingEnabled ? 'ON' : 'OFF'}</span> · ${escapeHtml(autonomyMode)}</div>
-    <div>스케줄러 설정: ${schedulerEnabled ? '활성' : '비활성'}</div>
-    ${schedulerMismatch}
-    ${runtimeControlPending ? '<div class="text-blue-300">변경 적용 중...</div>' : ''}
-  `;
+  if (summaryEl) {
+    summaryEl.innerHTML = `
+      <div>실행 상태: 에이전트 <span class="${agentRunning ? 'text-green-300' : 'text-yellow-300'}">${agentRunning ? '동작' : '중지'}</span> · 스케줄러 <span class="${schedulerRunning ? 'text-green-300' : 'text-yellow-300'}">${schedulerRunning ? '동작' : '중지'}</span></div>
+      <div>주문 설정: <span class="${tradingEnabled ? 'text-green-300' : 'text-red-300'}">${tradingEnabled ? 'ON' : 'OFF'}</span> · ${escapeHtml(autonomyMode)}</div>
+      <div>스케줄러 설정: ${schedulerEnabled ? '활성' : '비활성'}</div>
+      ${schedulerMismatch}
+      ${runtimeControlPending ? '<div class="text-blue-300">변경 적용 중...</div>' : ''}
+    `;
+  }
+  if (headerSummaryEl) {
+    headerSummaryEl.innerHTML = `실행: <span class="${agentRunning ? 'text-green-300' : 'text-yellow-300'}">${agentRunning ? '에이전트 동작' : '에이전트 중지'}</span> · <span class="${schedulerRunning ? 'text-green-300' : 'text-yellow-300'}">${schedulerRunning ? '스케줄러 동작' : '스케줄러 중지'}</span>${runtimeControlPending ? ' · <span class="text-blue-300">적용 중...</span>' : ''}`;
+  }
 
-  setControlButtonState('runtime-trading-on', {
-    active: tradingEnabled,
-    disabled: runtimeControlPending || tradingEnabled,
-    tone: 'green',
-  });
-  setControlButtonState('runtime-trading-off', {
-    active: !tradingEnabled,
-    disabled: runtimeControlPending || !tradingEnabled,
-    tone: 'red',
-  });
-  setControlButtonState('runtime-mode-semi', {
-    active: autonomyMode === 'SEMI_AUTO',
-    disabled: runtimeControlPending || autonomyMode === 'SEMI_AUTO',
-    tone: 'blue',
-  });
-  setControlButtonState('runtime-mode-auto', {
-    active: autonomyMode === 'AUTONOMOUS',
-    disabled: runtimeControlPending || autonomyMode === 'AUTONOMOUS',
-    tone: 'purple',
-  });
-  setControlButtonState('runtime-scheduler-start', {
-    active: schedulerRunning,
-    disabled: runtimeControlPending || schedulerRunning,
-    tone: 'green',
-  });
-  setControlButtonState('runtime-scheduler-stop', {
-    active: !schedulerRunning,
-    disabled: runtimeControlPending || !schedulerRunning,
-    tone: 'yellow',
-  });
+  Object.entries(state.buttonStates).forEach(([id, options]) => setControlButtonState(id, options));
+  updateHeaderActionButtonState('header-trigger-cycle', { disabled: state.headerTriggerDisabled });
+}
+
+function applyControlButtonState(ids, options) {
+  ids.forEach((id) => setControlButtonState(id, options));
+}
+
+function updateHeaderActionButtonState(id, { disabled = false } = {}) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const disabledClasses = 'opacity-50 cursor-not-allowed';
+  const enabledClasses = 'cursor-pointer hover:border-blue-400 hover:bg-blue-600/30';
+  el.disabled = disabled;
+  el.className = `rounded-md border border-blue-500 bg-blue-600/20 px-2.5 py-1.5 text-xs font-medium text-blue-200 transition ${disabled ? disabledClasses : enabledClasses}`;
 }
 
 async function setTradingEnabled(enabled) {
@@ -1458,21 +1831,28 @@ async function loadSystemStatus() {
     const s = json.data;
     if (!s) return;
     runtimeSystemStatus = s;
-    updateBadge('badge-trading', s.trading_enabled ? '매매:ON' : '매매:OFF', s.trading_enabled ? 'green' : 'red');
-    updateBadge('badge-mcp', s.mcp_connected ? 'MCP:✓' : 'MCP:✗', s.mcp_connected ? 'green' : 'red');
-    const statusEl = document.getElementById('sys-status');
+    const brokerProvider = s.broker_provider || 'KIWOOM';
+    const mcpBadge = getMcpBadgeState(s);
+    const brokerBadgeTone = brokerProvider === 'KIS' ? 'blue' : 'yellow';
     const isHoliday = !!s.market_holiday;
-    const marketLabel = s.market_open ? '장중' : (isHoliday ? `휴장 (${s.market_holiday})` : '장외');
+    const marketLabel = s.market_open ? '장:장중' : (isHoliday ? `장:휴장` : '장:장외');
+    const marketBadgeTone = s.market_open ? 'green' : (isHoliday ? 'yellow' : 'gray');
+    updateBadge('badge-broker', `브로커:${brokerProvider}`, brokerBadgeTone);
+    updateBadge('badge-market', marketLabel, marketBadgeTone);
+    updateBadge('badge-trading', s.trading_enabled ? '매매:ON' : '매매:OFF', s.trading_enabled ? 'green' : 'red');
+    updateBadge('badge-mcp', mcpBadge.label, mcpBadge.tone);
+    const statusEl = document.getElementById('sys-status');
+    const marketStatusLabel = s.market_open ? '장중' : (isHoliday ? `휴장 (${s.market_holiday})` : '장외');
     const marketColor = s.market_open ? 'bg-green-400' : (isHoliday ? 'bg-yellow-400' : 'bg-gray-500');
     const marketExtra = s.market_open ? '' : ` (다음: ${s.next_market_open || ''})`;
     statusEl.innerHTML = `
       <div class="flex items-center gap-1.5">
         <span class="status-dot w-1.5 h-1.5 rounded-full ${marketColor}"></span>
-        <strong>${marketLabel}</strong>${marketExtra}
+        <strong>${marketStatusLabel}</strong>${marketExtra}
       </div>
       <div class="flex items-center gap-1.5">
-        <span class="status-dot w-1.5 h-1.5 rounded-full ${s.mcp_connected ? 'bg-green-400' : 'bg-red-400'}"></span>
-        MCP: ${s.mcp_connected ? '연결' : '끊김'}
+        <span class="status-dot w-1.5 h-1.5 rounded-full ${mcpBadge.dotClass}"></span>
+        MCP: ${escapeHtml(mcpBadge.detailLabel)}
       </div>
       <div class="flex items-center gap-1.5">
         <span class="status-dot w-1.5 h-1.5 rounded-full ${s.scheduler_running ? 'bg-green-400' : 'bg-yellow-400'}"></span>
@@ -1485,10 +1865,9 @@ async function loadSystemStatus() {
       ${s.last_cycle_time ? `<div class="text-gray-600">마지막: ${formatTime(s.last_cycle_time)}</div>` : ''}
       <div class="text-gray-600">SSE: ${s.sse_clients}명</div>`;
     renderRuntimeControls();
-    const triggerBtn = document.querySelector('[onclick="triggerCycle()"]');
-    if (triggerBtn) {
-      triggerBtn.textContent = s.market_open ? '▶ 매매 사이클 실행' : '▶ 장마감 리뷰 실행';
-    }
+    document.querySelectorAll('[data-cycle-trigger="true"]').forEach((btn) => {
+      btn.textContent = s.market_open ? '▶ 매매 사이클 실행' : '▶ 장마감 리뷰 실행';
+    });
   } catch (err) {
     console.error('Status load error:', err);
   }
@@ -1676,11 +2055,6 @@ function formatDetail(detail) {
   }
 }
 
-function escapeHtml(str) {
-  if (!str) return '';
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
 function getTypeColor(type) {
   const map = {
     CYCLE: 'blue', SCAN: 'cyan', SCREENING: 'purple',
@@ -1763,6 +2137,7 @@ function updateBadge(id, text, color) {
   if (!el) return;
   el.textContent = text;
   const colors = {
+    gray: 'bg-gray-800 text-gray-300',
     green: 'bg-green-900/50 text-green-300',
     red: 'bg-red-900/50 text-red-300',
     yellow: 'bg-yellow-900/50 text-yellow-300',
@@ -1781,4 +2156,24 @@ function setStatus(state, text) {
 document.getElementById('chat-container').addEventListener('scroll', function() {
   const el = this;
   autoScroll = (el.scrollHeight - el.scrollTop - el.clientHeight) < 50;
+});
+
+Object.assign(window, {
+  applyCustomTierModel,
+  askQuestion,
+  clearChat,
+  generateReport,
+  loadLLMUsage,
+  loadTodayActivities,
+  refreshLLMCatalog,
+  refreshRuntimePanels,
+  setAutonomyMode,
+  setSchedulerRunning,
+  setTradingEnabled,
+  switchView,
+  togglePaneCollapse,
+  toggleSidebarSection,
+  triggerCycle,
+  updateSetting,
+  updateTierModelSetting,
 });
