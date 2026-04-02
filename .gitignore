@@ -72,6 +72,9 @@ compact_custom_prompt.md
 # 로그 파일
 *.log
 logs/
+runtime/logs/
+runtime/pids/
+*.pid
 
 # 데이터베이스 파일
 *.db
