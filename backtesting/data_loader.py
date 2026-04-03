@@ -4,6 +4,8 @@ from datetime import date
 import pandas as pd
 from loguru import logger
 
+from trading.broker_factory import get_broker_adapter
+from trading.enums import Market
 from trading.mcp_client import mcp_client
 
 
@@ -11,10 +13,54 @@ class BacktestDataLoader:
     """백테스팅용 과거 데이터 로더"""
 
     @staticmethod
+    async def load_from_broker(
+        symbol: str, start_date: date, end_date: date,
+        market: str = "KRX",
+    ) -> pd.DataFrame:
+        """현재 브로커 어댑터를 통해 과거 일봉 데이터를 로드한다."""
+        try:
+            total_days = max((end_date - start_date).days, 1)
+            candles = await get_broker_adapter().get_daily_candles(
+                symbol,
+                count=total_days,
+                market=Market(market),
+            )
+        except Exception as e:
+            logger.warning("브로커 데이터 로드 실패: {}", str(e))
+            return pd.DataFrame()
+
+        if not candles:
+            return pd.DataFrame()
+
+        df = pd.DataFrame([
+            {
+                "date": candle.time_key,
+                "open": candle.open,
+                "high": candle.high,
+                "low": candle.low,
+                "close": candle.close,
+                "volume": candle.volume,
+            }
+            for candle in candles
+        ])
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.sort_values("date").reset_index(drop=True)
+        return df
+
+    @staticmethod
     async def load_from_mcp(
         symbol: str, start_date: date, end_date: date,
         market: str = "KRX", period: str = "D",
     ) -> pd.DataFrame:
+        """하위 호환용 MCP/KIS 로더"""
+        if period == "D":
+            return await BacktestDataLoader.load_from_broker(
+                symbol=symbol,
+                start_date=start_date,
+                end_date=end_date,
+                market=market,
+            )
+
         """MCP를 통해 KIS에서 과거 일봉 데이터 로드"""
         total_days = (end_date - start_date).days
         all_data = []
