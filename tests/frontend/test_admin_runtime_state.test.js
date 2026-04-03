@@ -51,6 +51,8 @@ describe("runtime_state", () => {
       disabled: true,
       tone: "green",
     });
+    expect(state.sellAutomationReady).toBe(true);
+    expect(state.sellAutomationLabel).toContain("자동 매도");
   });
 
   test("describes trading toggle as real order execution control", () => {
@@ -68,6 +70,25 @@ describe("runtime_state", () => {
     expect(copy.tradingHelp).toContain("실제 주문은 보내지 않습니다");
     expect(copy.modeHelp).toContain("추천으로만 남기고");
     expect(copy.modeHelp).toContain("손절/익절");
+  });
+
+  test("marks automatic sell as disabled when trading or scheduler is off", () => {
+    const state = buildRuntimeControlState({
+      runtimeSettings: {
+        TRADING_ENABLED: false,
+        AUTONOMY_MODE: "SEMI_AUTO",
+        SCHEDULER_ENABLED: false,
+      },
+      runtimeSystemStatus: {
+        trading_enabled: false,
+        scheduler_running: false,
+        agent_running: true,
+      },
+    });
+
+    expect(state.sellAutomationReady).toBe(false);
+    expect(state.sellAutomationLabel).toBe("자동 매도 비활성");
+    expect(state.sellAutomationHelp).toContain("실주문 OFF");
   });
 
   test("formats autonomy mode labels for human-readable display", () => {

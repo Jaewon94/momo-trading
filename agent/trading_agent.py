@@ -261,7 +261,9 @@ class TradingAgent:
             semaphore = asyncio.Semaphore(3)
             executed_count = 0
 
-            holding_syms = set(snapshot.get("holding_symbols", []))
+            holding_syms = {
+                normalize_krx_symbol(item) for item in snapshot.get("holding_symbols", [])
+            }
 
             async def _analyze_with_limit(stock_info: dict) -> dict:
                 nonlocal executed_count
@@ -405,12 +407,13 @@ class TradingAgent:
         )
         if not balance.is_valid:
             raise RuntimeError("계좌 조회 실패")
+        holding_symbols = [normalize_krx_symbol(holding.symbol) for holding in holdings]
         snapshot = {
             "cash": balance.cash,
             "total_asset": balance.total_asset,
             "holding_count": len(holdings),
             "today_trade_count": await self._get_today_trade_count(),
-            "holding_symbols": [holding.symbol for holding in holdings],
+            "holding_symbols": holding_symbols,
         }
         async with self._cash_lock:
             self._available_cash = balance.cash
@@ -489,7 +492,10 @@ class TradingAgent:
                 consecutive = await tracker.get_consecutive_losses()
                 if consecutive >= 5:
                     direction = stock_info.get("direction", "BUY")
-                    snap_holdings = (portfolio_snapshot or {}).get("holding_symbols", [])
+                    snap_holdings = [
+                        normalize_krx_symbol(item)
+                        for item in (portfolio_snapshot or {}).get("holding_symbols", [])
+                    ]
                     if direction != "SELL" and symbol not in snap_holdings:
                         logger.warning("[하드 룰] 연속 {}회 손실 → 매수 차단: {}", consecutive, symbol)
                         await activity_logger.log(
@@ -543,7 +549,10 @@ class TradingAgent:
             chart_result = chart_analyzer.analyze(daily_df, minute_df)
 
         # 비보유종목 + 현금으로 1주 매수 불가 → Tier1 스킵 (LLM 비용 절감)
-        holding_syms = (portfolio_snapshot or {}).get("holding_symbols", [])
+        holding_syms = [
+            normalize_krx_symbol(item)
+            for item in (portfolio_snapshot or {}).get("holding_symbols", [])
+        ]
         if symbol not in holding_syms and current_price > 0:
             available_cash = (portfolio_snapshot or {}).get("cash", 0)
             min_buy_cost = current_price * (
@@ -620,7 +629,10 @@ class TradingAgent:
 
         # 스캔 파이프라인 SELL: 미보유 종목만 스킵, 보유 종목은 Tier2 리뷰 진행
         if recommendation == "SELL":
-            is_holding = symbol in (portfolio_snapshot or {}).get("holding_symbols", [])
+            is_holding = symbol in [
+                normalize_krx_symbol(item)
+                for item in (portfolio_snapshot or {}).get("holding_symbols", [])
+            ]
             if not is_holding:
                 reason = analysis.get("reason") or "AI SELL 추천"
                 await activity_logger.log(
@@ -692,7 +704,10 @@ class TradingAgent:
 
         is_sell_or_holding = (
             analysis.get("recommendation") == "SELL"
-            or symbol in (portfolio_snapshot or {}).get("holding_symbols", [])
+            or symbol in [
+                normalize_krx_symbol(item)
+                for item in (portfolio_snapshot or {}).get("holding_symbols", [])
+            ]
         )
         # 시장 국면별 신뢰도 임계값 동적 조정
         if rule_min_conf and not is_sell_or_holding:
@@ -910,7 +925,7 @@ class TradingAgent:
         # 4.5 매도 시 보유 여부 확인 — 미보유 종목 매도 차단
         if signal.action == SignalAction.SELL:
             snap = portfolio_snapshot or {}
-            holding_symbols = snap.get("holding_symbols", [])
+            holding_symbols = [normalize_krx_symbol(item) for item in snap.get("holding_symbols", [])]
             if symbol not in holding_symbols:
                 logger.debug("미보유 종목 매도 스킵: {} (보유: {})", symbol, holding_symbols)
                 await activity_logger.log(

@@ -60,6 +60,13 @@ export function buildRuntimeControlState({
   const schedulerRunning = runtimeSystemStatus?.scheduler_running ?? false;
   const schedulerEnabled = runtimeSettings?.SCHEDULER_ENABLED ?? schedulerRunning;
   const agentRunning = runtimeSystemStatus?.agent_running ?? false;
+  const sellAutomationReady = Boolean(tradingEnabled && schedulerRunning);
+  const sellAutomationLabel = sellAutomationReady
+    ? "보유 종목 자동 매도 준비됨"
+    : "자동 매도 비활성";
+  const sellAutomationHelp = sellAutomationReady
+    ? "손절/익절, 장중 보유 재평가, 장마감 청산 경로가 실제 주문으로 이어질 수 있습니다."
+    : "실주문 OFF 또는 스케줄러 중지 상태라 자동 매도 경로가 실제 주문으로 이어지지 않습니다.";
   const schedulerMismatchMessage = schedulerEnabled !== schedulerRunning
     ? `설정은 ${schedulerEnabled ? "활성" : "비활성"}이지만 현재 실행은 ${schedulerRunning ? "동작" : "중지"} 상태입니다.`
     : "";
@@ -103,6 +110,9 @@ export function buildRuntimeControlState({
     schedulerRunning,
     schedulerEnabled,
     agentRunning,
+    sellAutomationReady,
+    sellAutomationLabel,
+    sellAutomationHelp,
     runtimeControlPending,
     schedulerMismatchMessage,
     buttonStates,

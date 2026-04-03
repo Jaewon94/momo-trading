@@ -85,4 +85,18 @@ describe("activity_state", () => {
       stockName: "후성",
     })).toBe("후성 최종 검토: ✅ 승인 | 수량 3000주");
   });
+
+  test("formats symbol-led tier summary with stock name first", () => {
+    expect(formatActivityHeadline("065440 Tier1 분석 시작", {
+      symbol: "065440",
+      stockName: "현대그린푸드",
+    })).toBe("현대그린푸드 분석 시작");
+  });
+
+  test("formats A-prefixed symbol-led tier summary with stock name first", () => {
+    expect(formatActivityHeadline("A065440 Tier2: ✅ 승인 | 수량 1200주", {
+      symbol: "A065440",
+      stockName: "현대그린푸드",
+    })).toBe("현대그린푸드 최종 검토: ✅ 승인 | 수량 1200주");
+  });
 });

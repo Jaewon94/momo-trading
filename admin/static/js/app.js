@@ -775,6 +775,21 @@ function refreshVisibleActivityMeta() {
       el.classList.remove('hidden');
     }
   });
+
+  document.querySelectorAll('.activity-headline[data-activity-symbol]').forEach((el) => {
+    const symbol = el.dataset.activitySymbol;
+    if (!symbol) return;
+    const summary = el.dataset.activitySummary || '';
+    const detail = el.dataset.activityDetail || null;
+    const meta = resolveActivityStockMeta({
+      symbol,
+      summary,
+      detail,
+      knownNames: knownStockNames,
+      knownMeta: knownStockMeta,
+    });
+    el.textContent = formatActivityHeadline(summary, meta);
+  });
 }
 
 function renderAccountBalance(data) {
@@ -1149,6 +1164,13 @@ function buildActivityMetaLine(meta = {}) {
   return `<div class="activity-stock-meta text-[11px] text-gray-500 mb-0.5"${symbolAttr}>${escapeHtml(identityLabel)}</div>`;
 }
 
+function buildActivityHeadlineMarkup(data, meta = {}, className = 'text-sm') {
+  const symbolAttr = meta.symbol ? ` data-activity-symbol="${escapeHtml(normalizeActivitySymbol(meta.symbol))}"` : '';
+  const summaryAttr = ` data-activity-summary="${escapeHtml(data.summary || '')}"`;
+  const detailAttr = data.detail ? ` data-activity-detail="${escapeHtml(data.detail)}"` : '';
+  return `<div class="${className} activity-headline"${symbolAttr}${summaryAttr}${detailAttr}>${escapeHtml(formatActivityHeadline(data.summary, meta))}</div>`;
+}
+
 /**
  * 사이클 구분선 생성
  */
@@ -1313,7 +1335,10 @@ function addStepToCard(card, data) {
     step.innerHTML = `
       <span class="text-xs text-gray-600 shrink-0 w-14">${time}</span>
       <span class="progress-spinner" style="width:10px;height:10px;border-width:1.5px"></span>
-      <span class="text-xs text-gray-400">${escapeHtml(label)}...</span>
+      <span class="text-xs text-gray-400 activity-headline"
+        data-activity-symbol="${escapeHtml(stockMeta.symbol || card.symbol)}"
+        data-activity-summary="${escapeHtml(data.summary || '')}"
+        ${data.detail ? `data-activity-detail="${escapeHtml(data.detail)}"` : ''}>${escapeHtml(label)}...</span>
     `;
     card.stepsEl.appendChild(step);
     return;
@@ -1340,7 +1365,7 @@ function addStepToCard(card, data) {
     <span class="shrink-0 w-2 h-2 rounded-full bg-${dotColor}-400 mt-1.5"></span>
     <div class="flex-1 min-w-0">
       ${buildActivityMetaLine(stockMeta)}
-      <div class="text-xs">${escapeHtml(formatActivityHeadline(data.summary, stockMeta))}</div>`;
+      ${buildActivityHeadlineMarkup(data, stockMeta, 'text-xs')}`;
 
   // Meta line
   const metaParts = [];
@@ -1542,7 +1567,7 @@ function createBubble(data) {
       <span class="text-xs text-gray-500 mt-0.5 shrink-0 w-14">${time}</span>
       <div class="flex-1 min-w-0">
         ${buildActivityMetaLine(stockMeta)}
-        <div class="text-sm whitespace-pre-wrap">${escapeHtml(formatActivityHeadline(data.summary, stockMeta))}</div>`;
+        ${buildActivityHeadlineMarkup(data, stockMeta, 'text-sm whitespace-pre-wrap')}`;
 
   const metaParts = [];
   if (data.llm_provider) metaParts.push(`<span class="text-${typeColor}-400">${data.llm_provider}</span>`);
@@ -2083,6 +2108,7 @@ function setControlButtonState(id, { active = false, disabled = false, tone = 'b
 
 function renderRuntimeControls() {
   const summaryEl = document.getElementById('runtime-control-summary');
+  const readinessEl = document.getElementById('runtime-readiness-panel');
   const state = buildRuntimeControlState({
     runtimeSettings,
     runtimeSystemStatus,
@@ -2094,8 +2120,10 @@ function renderRuntimeControls() {
     schedulerRunning,
     schedulerEnabled,
     agentRunning,
+    sellAutomationReady,
+    sellAutomationLabel,
+    sellAutomationHelp,
   } = state;
-  const headerSummaryEl = document.getElementById('header-runtime-summary');
   const autonomyLabel = formatAutonomyModeLabel(autonomyMode);
 
   const schedulerMismatch = state.schedulerMismatchMessage
@@ -2106,17 +2134,41 @@ function renderRuntimeControls() {
     summaryEl.innerHTML = `
       <div>실행 상태: 에이전트 <span class="${agentRunning ? 'text-green-300' : 'text-yellow-300'}">${agentRunning ? '동작' : '중지'}</span> · 스케줄러 <span class="${schedulerRunning ? 'text-green-300' : 'text-yellow-300'}">${schedulerRunning ? '동작' : '중지'}</span></div>
       <div>주문 설정: <span class="${tradingEnabled ? 'text-green-300' : 'text-red-300'}">${tradingEnabled ? 'ON' : 'OFF'}</span> · ${escapeHtml(autonomyLabel)}</div>
-      <div>스케줄러 설정: ${schedulerEnabled ? '활성' : '비활성'}</div>
-      ${schedulerMismatch}
       ${runtimeControlPending ? '<div class="text-blue-300">변경 적용 중...</div>' : ''}
     `;
   }
-  if (headerSummaryEl) {
-    headerSummaryEl.innerHTML = `실행: <span class="${agentRunning ? 'text-green-300' : 'text-yellow-300'}">${agentRunning ? '에이전트 동작' : '에이전트 중지'}</span> · <span class="${schedulerRunning ? 'text-green-300' : 'text-yellow-300'}">${schedulerRunning ? '스케줄러 동작' : '스케줄러 중지'}</span>${runtimeControlPending ? ' · <span class="text-blue-300">적용 중...</span>' : ''}`;
+  if (readinessEl) {
+    readinessEl.innerHTML = `
+      <div class="flex items-center justify-between gap-3">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.12em] text-gray-500">Operation Readiness</div>
+          <div class="mt-1 text-sm font-medium ${sellAutomationReady ? 'text-green-200' : 'text-yellow-200'}">${escapeHtml(sellAutomationLabel)}</div>
+        </div>
+        <div class="rounded-full border ${sellAutomationReady ? 'border-green-500/30 bg-green-500/10 text-green-200' : 'border-yellow-500/30 bg-yellow-500/10 text-yellow-200'} px-2.5 py-1 text-[11px]">
+          ${sellAutomationReady ? 'LIVE READY' : 'CHECK NEEDED'}
+        </div>
+      </div>
+      <div class="mt-2 text-[11px] leading-5 text-gray-400">${escapeHtml(sellAutomationHelp)}</div>
+      <div class="mt-3 grid gap-2 md:grid-cols-3">
+        <div class="rounded-lg border border-gray-800 bg-dark-800/70 px-3 py-2">
+          <div class="text-[10px] uppercase tracking-[0.12em] text-gray-500">실주문</div>
+          <div class="mt-1 text-sm font-medium ${tradingEnabled ? 'text-green-200' : 'text-red-200'}">${tradingEnabled ? 'ON' : 'OFF'}</div>
+        </div>
+        <div class="rounded-lg border border-gray-800 bg-dark-800/70 px-3 py-2">
+          <div class="text-[10px] uppercase tracking-[0.12em] text-gray-500">주문 방식</div>
+          <div class="mt-1 text-sm font-medium text-gray-100">${escapeHtml(autonomyLabel)}</div>
+        </div>
+        <div class="rounded-lg border border-gray-800 bg-dark-800/70 px-3 py-2">
+          <div class="text-[10px] uppercase tracking-[0.12em] text-gray-500">스케줄러</div>
+          <div class="mt-1 text-sm font-medium ${schedulerRunning ? 'text-green-200' : 'text-yellow-200'}">${schedulerRunning ? '동작' : '중지'}</div>
+        </div>
+      </div>
+      ${schedulerMismatch ? `<div class="mt-3">${schedulerMismatch}</div>` : ''}
+      <div class="mt-3 text-[11px] text-gray-500">헤더는 현재 상태만, 왼쪽은 운영 제어와 해석만 보여줍니다.</div>
+    `;
   }
 
   Object.entries(state.buttonStates).forEach(([id, options]) => setControlButtonState(id, options));
-  updateHeaderActionButtonState('header-trigger-cycle', { disabled: state.headerTriggerDisabled });
   renderSettingGuidance();
 }
 
@@ -2233,15 +2285,6 @@ function applyControlButtonState(ids, options) {
   ids.forEach((id) => setControlButtonState(id, options));
 }
 
-function updateHeaderActionButtonState(id, { disabled = false } = {}) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  const disabledClasses = 'opacity-50 cursor-not-allowed';
-  const enabledClasses = 'cursor-pointer hover:border-blue-400 hover:bg-blue-600/30';
-  el.disabled = disabled;
-  el.className = `rounded-md border border-blue-500 bg-blue-600/20 px-2.5 py-1.5 text-xs font-medium text-blue-200 transition ${disabled ? disabledClasses : enabledClasses}`;
-}
-
 async function setTradingEnabled(enabled) {
   if (runtimeControlPending) return;
   runtimeControlPending = true;
@@ -2286,6 +2329,51 @@ async function setSchedulerRunning(shouldRun) {
   } catch (err) {
     console.error('Scheduler control error:', err);
     setStatus('error', err.message);
+  } finally {
+    runtimeControlPending = false;
+    renderRuntimeControls();
+  }
+}
+
+async function applyRuntimePreset(preset) {
+  if (runtimeControlPending) return;
+  runtimeControlPending = true;
+  renderRuntimeControls();
+
+  const applySetting = async (key, value) => {
+    const ok = await updateSetting(key, value);
+    if (!ok) throw new Error(`${key} 적용 실패`);
+  };
+
+  const applyScheduler = async (shouldRun) => {
+    const endpoint = shouldRun ? 'start' : 'stop';
+    const resp = await fetch(`${API}/scheduler/${endpoint}`, { method: 'POST' });
+    if (!resp.ok) {
+      throw new Error(`스케줄러 ${shouldRun ? '시작' : '중지'} 실패`);
+    }
+  };
+
+  try {
+    if (preset === 'live-auto') {
+      await applySetting('TRADING_ENABLED', true);
+      await applySetting('AUTONOMY_MODE', 'AUTONOMOUS');
+      await applySetting('SCHEDULER_ENABLED', true);
+      await applyScheduler(true);
+      setStatus('runtime', '자동 운영 시작 프리셋 적용 완료');
+    } else if (preset === 'safe-review') {
+      await applySetting('TRADING_ENABLED', false);
+      await applySetting('AUTONOMY_MODE', 'SEMI_AUTO');
+      await applySetting('SCHEDULER_ENABLED', false);
+      await applyScheduler(false);
+      setStatus('runtime', '안전 모드 프리셋 적용 완료');
+    }
+    await Promise.all([
+      loadSettings(),
+      loadSystemStatus(),
+    ]);
+  } catch (err) {
+    console.error('Runtime preset error:', err);
+    setStatus('error', err.message || '운영 프리셋 적용 실패');
   } finally {
     runtimeControlPending = false;
     renderRuntimeControls();
@@ -2857,6 +2945,7 @@ Object.assign(window, {
   refreshLLMCatalog,
   refreshRuntimePanels,
   reconcilePendingTrades,
+  applyRuntimePreset,
   setAutonomyMode,
   setSchedulerRunning,
   setTradingEnabled,

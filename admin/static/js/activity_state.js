@@ -93,6 +93,12 @@ export function formatActivityHeadline(summary = "", meta = {}) {
 
   if (!text) return identity;
 
+  if (normalizedSymbol) {
+    const escapedSymbol = normalizedSymbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const symbolPrefixPattern = new RegExp(`^(?:[Aa]?${escapedSymbol})\\s*[:|-]?\\s*`, "u");
+    text = text.replace(symbolPrefixPattern, "").trim();
+  }
+
   text = text
     .replace(/^Tier1\s+분석\s*/u, "분석 ")
     .replace(/^Tier2\s+최종 검토\s*/u, "최종 검토 ")

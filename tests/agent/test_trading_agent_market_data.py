@@ -190,7 +190,7 @@ class PrefixedSymbolHoldingsBrokerAdapter(FakePortfolioBrokerAdapter):
     async def get_holdings(self) -> list[HoldingInfo]:
         return [
             HoldingInfo(
-                symbol="010170",
+                symbol="A010170",
                 name="대한광통신",
                 quantity=7,
                 avg_buy_price=9_200,
@@ -221,6 +221,21 @@ async def test_trading_agent_builds_portfolio_snapshot_from_broker_adapter(monke
         "holding_symbols": ["005930"],
     }
     assert agent._available_cash == 1_200_000
+
+
+@pytest.mark.asyncio
+async def test_trading_agent_normalizes_prefixed_holding_symbols_in_snapshot(monkeypatch) -> None:
+    adapter = PrefixedSymbolHoldingsBrokerAdapter()
+    agent = TradingAgent(broker_adapter=adapter)
+
+    async def fake_today_trade_count() -> int:
+        return 1
+
+    monkeypatch.setattr(agent, "_get_today_trade_count", fake_today_trade_count)
+
+    snapshot = await agent._build_portfolio_snapshot()
+
+    assert snapshot["holding_symbols"] == ["010170"]
 
 
 @pytest.mark.asyncio
