@@ -21,6 +21,7 @@ HOST="${MOMO_HOST:-0.0.0.0}"
 PORT="${MOMO_PORT:-9000}"
 DOCKER_BIN="${MOMO_DOCKER_BIN:-docker}"
 PYTHON_BIN="${MOMO_PYTHON_BIN:-python}"
+LSOF_BIN="${MOMO_LSOF_BIN:-lsof}"
 
 has_command() {
     local command_name="$1"
@@ -74,6 +75,30 @@ read_env_value() {
                 ;;
         esac
     done < "$ENV_FILE"
+}
+
+get_listening_pids() {
+    local port="$1"
+
+    if ! has_command "$LSOF_BIN"; then
+        return
+    fi
+
+    "$LSOF_BIN" -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true
+}
+
+port_is_listening() {
+    local port="$1"
+    [ -n "$(get_listening_pids "$port")" ]
+}
+
+ensure_port_available() {
+    if port_is_listening "$PORT"; then
+        local pids
+        pids="$(get_listening_pids "$PORT" | tr '\n' ' ' | xargs)"
+        echo "❌ 포트 $PORT 이미 사용 중${pids:+ (PID: $pids)}"
+        return 1
+    fi
 }
 
 sync_broker_sidecar() {
@@ -145,10 +170,20 @@ case "${1:-}" in
             if kill -0 "$PID" 2>/dev/null; then
                 echo "✅ momo-trading 실행 중 (PID: $PID)"
                 echo "   http://localhost:$PORT/admin"
+                echo "   http://127.0.0.1:$PORT/admin"
             else
                 echo "❌ 프로세스 종료됨 (stale PID: $PID)"
                 rm -f "$PID_FILE"
+                if port_is_listening "$PORT"; then
+                    echo "✅ momo-trading 실행 중 (PID 추적 없음)"
+                    echo "   http://localhost:$PORT/admin"
+                    echo "   http://127.0.0.1:$PORT/admin"
+                fi
             fi
+        elif port_is_listening "$PORT"; then
+            echo "✅ momo-trading 실행 중 (PID 추적 없음)"
+            echo "   http://localhost:$PORT/admin"
+            echo "   http://127.0.0.1:$PORT/admin"
         else
             echo "❌ 실행 중인 프로세스 없음"
         fi
@@ -167,12 +202,14 @@ case "${1:-}" in
             echo "이미 실행 중 (PID: $(cat "$PID_FILE"))"
             exit 1
         fi
+        ensure_port_available || exit 1
 
         sync_broker_sidecar
 
         echo "🚀 momo-trading 백그라운드 시작"
         echo "   Host: $HOST:$PORT"
         echo "   Admin: http://localhost:$PORT/admin"
+        echo "   Admin: http://127.0.0.1:$PORT/admin"
         echo "   Log: $LOG_FILE"
 
         nohup "$PYTHON_BIN" -m uvicorn main:app \
@@ -187,11 +224,14 @@ case "${1:-}" in
         ;;
 
     ""|--foreground)
+        ensure_port_available || exit 1
+
         sync_broker_sidecar
 
         echo "🚀 momo-trading 시작 (포그라운드)"
         echo "   Host: $HOST:$PORT"
         echo "   Admin: http://localhost:$PORT/admin"
+        echo "   Admin: http://127.0.0.1:$PORT/admin"
         echo "   종료: Ctrl+C"
         echo ""
 

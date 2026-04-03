@@ -27,11 +27,14 @@ import {
 import { buildTradePanelState, buildTradeSummaryCounts } from './trade_state.js';
 import {
   buildActivityIdentityLabel,
+  formatActivityHeadline,
   normalizeActivitySymbol,
   resolveActivityStockMeta,
 } from './activity_state.js';
 import { bindDetailToggleHandlers, buildDetailToggleMarkup } from './detail_toggle.js';
 import { buildStrategyInsightsViewModel } from './strategy_insights_state.js';
+import { buildCatalogErrorCopy, buildCatalogMetaText } from './llm_catalog_state.js';
+import { buildPositionDetailState, groupPositionTimeline } from './position_detail_state.js';
 
 const API = '/api/v1/admin';
 let currentView = 'live';
@@ -44,6 +47,10 @@ let llmUsageSnapshot = null;
 let llmCatalog = null;
 let runtimeControlPending = false;
 let activeSettingsTab = 'operating';
+let activePositionSymbol = null;
+let activePositionDetailState = null;
+let activePositionTimelineFilter = 'all';
+let positionTimelineLoadingMore = false;
 const knownStockNames = {};
 const knownStockMeta = {};
 let paneLayout = {
@@ -147,9 +154,296 @@ function renderSettingsModal() {
 
 function handleSettingsModalKeydown(event) {
   if (event.key === 'Escape') {
+    const positionOverlay = document.getElementById('position-detail-overlay');
+    if (positionOverlay?.classList.contains('open')) {
+      closePositionDetailModal();
+      return;
+    }
     closeSettingsModal();
   }
 }
+
+function openPositionDetailModalShell() {
+  const overlay = document.getElementById('position-detail-overlay');
+  if (!overlay) return;
+  overlay.classList.add('open');
+  document.body.classList.add('overflow-hidden');
+}
+
+function closePositionDetailModal() {
+  const overlay = document.getElementById('position-detail-overlay');
+  if (!overlay) return;
+  overlay.classList.remove('open');
+  activePositionSymbol = null;
+  activePositionDetailState = null;
+  document.body.classList.remove('overflow-hidden');
+}
+
+function closePositionDetailModalOnBackdrop(event) {
+  if (event.target?.id === 'position-detail-overlay') {
+    closePositionDetailModal();
+  }
+}
+
+function renderPositionDetailLoading(symbol) {
+  const titleEl = document.getElementById('position-detail-title');
+  const summaryEl = document.getElementById('position-detail-summary');
+  const filterEl = document.getElementById('position-detail-timeline-filters');
+  const timelineEl = document.getElementById('position-detail-timeline');
+  if (titleEl) titleEl.textContent = `${symbol} 불러오는 중`;
+  if (summaryEl) summaryEl.innerHTML = '<div class="text-sm text-gray-400">종목 요약을 불러오는 중...</div>';
+  if (filterEl) filterEl.innerHTML = '';
+  if (timelineEl) timelineEl.innerHTML = '<div class="text-sm text-gray-500">타임라인을 불러오는 중...</div>';
+  positionTimelineLoadingMore = false;
+}
+
+function renderPositionDetailError(symbol, message) {
+  const titleEl = document.getElementById('position-detail-title');
+  const summaryEl = document.getElementById('position-detail-summary');
+  const filterEl = document.getElementById('position-detail-timeline-filters');
+  const timelineEl = document.getElementById('position-detail-timeline');
+  if (titleEl) titleEl.textContent = `${symbol} 상세`;
+  if (summaryEl) summaryEl.innerHTML = `<div class="text-sm text-red-300">${escapeHtml(message)}</div>`;
+  if (filterEl) filterEl.innerHTML = '';
+  if (timelineEl) timelineEl.innerHTML = '<div class="text-sm text-gray-500">다시 시도해 주세요.</div>';
+  positionTimelineLoadingMore = false;
+}
+
+function openSettingsFromPositionDetail(tab) {
+  closePositionDetailModal();
+  openSettingsModal(tab);
+}
+
+function getPositionTimelineToneClass(entry) {
+  switch (entry.tone) {
+    case 'buy':
+      return 'position-timeline-item tone-buy';
+    case 'sell':
+      return 'position-timeline-item tone-sell';
+    case 'analysis':
+      return 'position-timeline-item tone-analysis';
+    case 'progress':
+      return 'position-timeline-item tone-progress';
+    case 'pending':
+      return 'position-timeline-item tone-pending';
+    case 'error':
+      return 'position-timeline-item tone-error';
+    default:
+      return 'position-timeline-item tone-neutral';
+  }
+}
+
+function renderPositionTimelineFilters(state) {
+  const filterEl = document.getElementById('position-detail-timeline-filters');
+  if (!filterEl) return;
+  filterEl.innerHTML = state.timelineFilters.map((filter) => `
+    <button
+      type="button"
+      class="position-timeline-filter-chip ${filter.key === activePositionTimelineFilter ? 'active' : ''}"
+      data-position-timeline-filter="${escapeHtml(filter.key)}"
+    >
+      <span>${escapeHtml(filter.label)}</span>
+      <span class="position-timeline-filter-count">${escapeHtml(String(filter.count))}</span>
+    </button>
+  `).join('');
+}
+
+function renderPositionTimelineGroups(state) {
+  const timelineEl = document.getElementById('position-detail-timeline');
+  if (!timelineEl) return;
+
+  const groups = groupPositionTimeline(state.timelineEntries, activePositionTimelineFilter);
+  if (!groups.length) {
+    timelineEl.innerHTML = `
+      <div class="rounded-2xl border border-dashed border-gray-700 bg-dark-900/30 px-4 py-5 text-sm text-gray-500">
+        ${escapeHtml(state.emptyMessage)}
+      </div>
+    `;
+    return;
+  }
+
+  const groupsMarkup = groups.map((group) => `
+    <section class="position-timeline-group">
+      <div class="position-timeline-date">
+        <div class="position-timeline-date-label">${escapeHtml(group.dayLabel)}</div>
+        <div class="position-timeline-date-stamp">${escapeHtml(group.dayStamp)}</div>
+        ${group.relativeLabel ? `<div class="position-timeline-date-relative">${escapeHtml(group.relativeLabel)}</div>` : ''}
+      </div>
+      <div class="position-timeline-rail">
+        ${group.entries.map((entry, index) => {
+          const detailId = `position-timeline-detail-${escapeHtml(state.symbol)}-${escapeHtml(group.dayKey)}-${index}`;
+          const detailMarkup = entry.detailLines?.length
+            ? `
+              ${buildDetailToggleMarkup({ detailId, muted: true })}
+              <div id="${detailId}" class="detail-content">
+                <div class="detail-content-inner">
+                  <div class="mt-2 space-y-1 rounded-xl border border-white/5 bg-black/10 px-3 py-2 text-xs text-gray-400">
+                    ${entry.detailLines.map((line) => `<div>${escapeHtml(line)}</div>`).join('')}
+                  </div>
+                </div>
+              </div>
+            `
+            : '';
+          return `
+            <article class="${getPositionTimelineToneClass(entry)}">
+              <div class="position-timeline-node">
+                <div class="position-timeline-dot">${escapeHtml(entry.icon)}</div>
+                ${index < group.entries.length - 1 ? '<div class="position-timeline-stem"></div>' : '<div class="position-timeline-stem position-timeline-stem-fade"></div>'}
+              </div>
+              <div class="position-timeline-card">
+                <div class="position-timeline-card-topline">
+                  <div class="position-timeline-time">${escapeHtml(entry.timeLabel || '--:--')}</div>
+                  <div class="position-timeline-badge">${escapeHtml(entry.kindLabel)}</div>
+                </div>
+                <div class="position-timeline-title-row">
+                  <div class="position-timeline-title">${escapeHtml(entry.title || '이벤트')}</div>
+                  <div class="position-timeline-chip">${escapeHtml(entry.badge)}</div>
+                </div>
+                ${entry.summary ? `<div class="position-timeline-summary">${escapeHtml(entry.summary)}</div>` : ''}
+                ${entry.meta ? `<div class="position-timeline-meta">${escapeHtml(entry.meta)}</div>` : ''}
+                ${detailMarkup}
+              </div>
+            </article>
+          `;
+        }).join('')}
+      </div>
+    </section>
+  `).join('');
+  const loadMoreMarkup = state.timelinePage.hasMore ? `
+    <div class="pt-2 flex justify-center">
+      <button
+        type="button"
+        class="position-timeline-load-more ${positionTimelineLoadingMore ? 'is-loading' : ''}"
+        data-position-timeline-load-more="true"
+        ${positionTimelineLoadingMore ? 'disabled' : ''}
+      >
+        ${positionTimelineLoadingMore ? '이전 이력 불러오는 중...' : '이전 이력 더 보기'}
+      </button>
+    </div>
+  ` : '';
+  timelineEl.innerHTML = `${groupsMarkup}${loadMoreMarkup}`;
+  bindDetailToggleHandlers(document);
+}
+
+function syncPositionTimelineView() {
+  if (!activePositionDetailState) return;
+  renderPositionTimelineFilters(activePositionDetailState);
+  renderPositionTimelineGroups(activePositionDetailState);
+}
+
+function renderPositionDetailModal(payload) {
+  const state = buildPositionDetailState(payload);
+  activePositionDetailState = state;
+  activePositionTimelineFilter = 'all';
+  positionTimelineLoadingMore = false;
+  const titleEl = document.getElementById('position-detail-title');
+  const summaryEl = document.getElementById('position-detail-summary');
+  const shortcutEl = document.getElementById('position-detail-settings-shortcut');
+  if (titleEl) titleEl.textContent = state.title;
+  if (shortcutEl) {
+    shortcutEl.textContent = '관련 설정 열기';
+    shortcutEl.onclick = () => openSettingsFromPositionDetail(state.settingsShortcutTab);
+  }
+  if (summaryEl) {
+    summaryEl.innerHTML = state.summaryCards.map((card) => `
+      <section class="position-summary-card tone-${escapeHtml(card.accent || 'neutral')}">
+        <div class="position-summary-card-topline">
+          <div>
+            <div class="position-summary-card-eyebrow">${escapeHtml(card.eyebrow || card.title)}</div>
+            <div class="position-summary-card-title">${escapeHtml(card.title)}</div>
+          </div>
+        </div>
+        <div class="position-summary-card-hero">${escapeHtml(card.hero || '-')}</div>
+        <div class="position-summary-card-hero-meta">${escapeHtml(card.heroMeta || '')}</div>
+        <div class="position-summary-card-metrics">
+          ${card.metrics.map((metric) => `
+            <div class="position-summary-metric">
+              <div class="position-summary-metric-label">${escapeHtml(metric.label)}</div>
+              <div class="position-summary-metric-value">${escapeHtml(metric.value)}</div>
+            </div>
+          `).join('')}
+        </div>
+        <div class="position-summary-card-body">
+          ${card.body.map((item) => `<div>${escapeHtml(item)}</div>`).join('')}
+        </div>
+        ${card.caption ? `<div class="position-summary-card-caption">${escapeHtml(card.caption)}</div>` : ''}
+      </section>
+    `).join('');
+  }
+  syncPositionTimelineView();
+}
+
+function mergePositionDetailState(baseState, payload) {
+  const nextState = buildPositionDetailState(payload);
+  return {
+    ...nextState,
+    timelineEntries: [...baseState.timelineEntries, ...nextState.timelineEntries],
+    timelineFilters: nextState.timelineFilters.map((filter) => {
+      if (filter.key === 'all') {
+        return { ...filter, count: baseState.timelineEntries.length + nextState.timelineEntries.length };
+      }
+      const combinedCount = [...baseState.timelineEntries, ...nextState.timelineEntries]
+        .filter((entry) => filter.key === 'all' || entry.filterKey === filter.key)
+        .length;
+      return { ...filter, count: combinedCount };
+    }),
+  };
+}
+
+async function fetchPositionDetail(symbol, offset = 0, limit = 20) {
+  const resp = await fetch(`${API}/positions/${encodeURIComponent(symbol)}?timeline_offset=${offset}&timeline_limit=${limit}`);
+  const json = await resp.json();
+  if (!resp.ok || !json?.data) {
+    throw new Error(json?.message || `HTTP ${resp.status}`);
+  }
+  return json.data;
+}
+
+async function openPositionDetailModal(symbol) {
+  activePositionSymbol = symbol;
+  activePositionDetailState = null;
+  activePositionTimelineFilter = 'all';
+  openPositionDetailModalShell();
+  renderPositionDetailLoading(symbol);
+  try {
+    const data = await fetchPositionDetail(symbol);
+    if (activePositionSymbol !== symbol) return;
+    renderPositionDetailModal(data);
+  } catch (err) {
+    if (activePositionSymbol !== symbol) return;
+    console.error('position detail error:', err);
+    renderPositionDetailError(symbol, err.message || '종목 상세 조회 실패');
+  }
+}
+
+document.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-position-timeline-filter]');
+  if (!button || !activePositionDetailState) return;
+  activePositionTimelineFilter = button.dataset.positionTimelineFilter || 'all';
+  syncPositionTimelineView();
+});
+
+document.addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-position-timeline-load-more]');
+  if (!button || !activePositionDetailState || !activePositionSymbol || positionTimelineLoadingMore) return;
+  positionTimelineLoadingMore = true;
+  syncPositionTimelineView();
+  try {
+    const data = await fetchPositionDetail(
+      activePositionSymbol,
+      activePositionDetailState.timelinePage.nextOffset,
+      activePositionDetailState.timelinePage.limit,
+    );
+    if (!activePositionDetailState || activePositionSymbol !== data.symbol) return;
+    activePositionDetailState = mergePositionDetailState(activePositionDetailState, data);
+  } catch (err) {
+    console.error('position detail pagination error:', err);
+    setStatus('warn', err.message || '이전 이력 로드 실패');
+  } finally {
+    positionTimelineLoadingMore = false;
+    syncPositionTimelineView();
+  }
+});
 
 // ── Workspace Layout ──
 function loadPaneLayout() {
@@ -528,9 +822,9 @@ function renderAccountHoldings(data) {
     const evalAmt = h.current_price * h.quantity;
     const barColor = h.pnl_rate >= 0 ? 'bg-green-500' : 'bg-red-500';
     const barWidth = Math.min(Math.abs(h.pnl_rate) * 10, 100);
-    return `<div class="border border-gray-700 rounded p-1.5 space-y-0.5 ${bgTint}">
+    return `<button type="button" onclick="openPositionDetailModal('${escapeHtml(h.symbol)}')" class="w-full text-left border border-gray-700 rounded p-1.5 space-y-0.5 ${bgTint} hover:border-blue-500/60 transition">
       <div class="flex justify-between items-center">
-        <span class="text-gray-200 font-medium truncate" title="${h.symbol}">${h.name}</span>
+        <span class="text-gray-200 font-medium truncate" title="${escapeHtml(h.symbol)}">${escapeHtml(h.name)}</span>
         <span class="${pnlColor} font-bold text-sm">${h.pnl_rate >= 0 ? '+' : ''}${h.pnl_rate.toFixed(2)}%</span>
       </div>
       <div class="pnl-bar">
@@ -544,7 +838,7 @@ function renderAccountHoldings(data) {
         <span>평가 ${formatKRW(evalAmt)}</span>
         <span class="${pnlColor} font-medium">${h.pnl >= 0 ? '+' : ''}${formatKRW(h.pnl)}</span>
       </div>
-    </div>`;
+    </button>`;
   }).join('');
 }
 
@@ -1015,7 +1309,7 @@ function addStepToCard(card, data) {
     step.className = 'stock-step';
     step.setAttribute('data-progress-key', progressKey);
     const time = formatTime(data.created_at);
-    const label = (data.summary || '').replace(/시작$/, '').trim();
+    const label = formatActivityHeadline((data.summary || '').replace(/시작$/, '').trim(), stockMeta);
     step.innerHTML = `
       <span class="text-xs text-gray-600 shrink-0 w-14">${time}</span>
       <span class="progress-spinner" style="width:10px;height:10px;border-width:1.5px"></span>
@@ -1046,7 +1340,7 @@ function addStepToCard(card, data) {
     <span class="shrink-0 w-2 h-2 rounded-full bg-${dotColor}-400 mt-1.5"></span>
     <div class="flex-1 min-w-0">
       ${buildActivityMetaLine(stockMeta)}
-      <div class="text-xs">${escapeHtml(data.summary)}</div>`;
+      <div class="text-xs">${escapeHtml(formatActivityHeadline(data.summary, stockMeta))}</div>`;
 
   // Meta line
   const metaParts = [];
@@ -1248,7 +1542,7 @@ function createBubble(data) {
       <span class="text-xs text-gray-500 mt-0.5 shrink-0 w-14">${time}</span>
       <div class="flex-1 min-w-0">
         ${buildActivityMetaLine(stockMeta)}
-        <div class="text-sm whitespace-pre-wrap">${escapeHtml(data.summary)}</div>`;
+        <div class="text-sm whitespace-pre-wrap">${escapeHtml(formatActivityHeadline(data.summary, stockMeta))}</div>`;
 
   const metaParts = [];
   if (data.llm_provider) metaParts.push(`<span class="text-${typeColor}-400">${data.llm_provider}</span>`);
@@ -2111,33 +2405,31 @@ async function loadLLMCatalog(forceRefresh = false) {
   try {
     const suffix = forceRefresh ? '?force_refresh=true' : '';
     const resp = await fetch(`${API}/llm/catalog${suffix}`);
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status}`);
+    }
     const json = await resp.json();
+    if (!json?.data) {
+      throw new Error(json?.message || '카탈로그 응답이 비어 있습니다.');
+    }
     llmCatalog = json.data;
     renderLLMCatalogMeta();
     renderTierModelSelectors();
+    if (forceRefresh && json.message) {
+      setStatus('warn', json.message);
+    }
   } catch (err) {
     console.error('LLM catalog error:', err);
     const metaEl = document.getElementById('llm-catalog-meta');
-    if (metaEl) metaEl.textContent = '공식 모델 목록 조회 실패';
+    if (metaEl) metaEl.textContent = buildCatalogErrorCopy(err);
+    setStatus('error', buildCatalogErrorCopy(err));
   }
 }
 
 function renderLLMCatalogMeta() {
   const metaEl = document.getElementById('llm-catalog-meta');
   if (!metaEl) return;
-  if (!llmCatalog) {
-    metaEl.textContent = '공식 모델 목록 불러오는 중...';
-    return;
-  }
-  const parts = [];
-  if (llmCatalog.fetched_at) {
-    parts.push(`동기화 ${formatDateTime(llmCatalog.fetched_at)}`);
-  } else {
-    parts.push('내장 seed 목록 사용 중');
-  }
-  if (llmCatalog.stale) parts.push('stale');
-  if (llmCatalog.fetch_error) parts.push(`동기화 실패: ${llmCatalog.fetch_error}`);
-  metaEl.textContent = parts.join(' · ');
+  metaEl.textContent = buildCatalogMetaText(llmCatalog);
 }
 
 async function refreshLLMCatalog() {
@@ -2578,4 +2870,7 @@ Object.assign(window, {
   openSettingsModal,
   closeSettingsModal,
   closeSettingsModalOnBackdrop,
+  openPositionDetailModal,
+  closePositionDetailModal,
+  closePositionDetailModalOnBackdrop,
 });

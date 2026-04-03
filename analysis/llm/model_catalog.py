@@ -60,6 +60,12 @@ class ModelCatalogService:
         payload["cache_age_sec"] = max(0, int(time.monotonic() - self._cached_at)) if self._cached_at else None
         return payload
 
+    def fallback_catalog(self, error_message: str = "") -> dict:
+        seed = self._seed_catalog()
+        if error_message:
+            seed["fetch_error"] = error_message
+        return self._decorate(seed, stale=True)
+
     async def _build_catalog(self) -> dict:
         fetched_at = datetime.now().astimezone().isoformat()
         claude_catalog, codex_catalog = await asyncio.gather(

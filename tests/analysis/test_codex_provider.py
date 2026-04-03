@@ -76,6 +76,22 @@ async def test_codex_provider_is_temporarily_unavailable_during_failure_cooldown
     assert await provider.is_available() is False
 
 
+def test_codex_provider_reports_cooldown_status_details(monkeypatch) -> None:
+    provider = CodexProvider(LLMTier.TIER1)
+    monkeypatch.setattr(provider, "_find_codex", lambda: "/opt/homebrew/bin/codex")
+    provider._disabled_until = time.monotonic() + 42
+    provider._last_failure_reason = "Codex CLI timeout (60s)"
+    provider._last_failure_kind = "timeout"
+
+    status = provider.status_snapshot()
+
+    assert status["available"] is False
+    assert status["cooldown_active"] is True
+    assert status["last_failure_reason"] == "Codex CLI timeout (60s)"
+    assert status["last_failure_kind"] == "timeout"
+    assert status["disabled_for_sec"] > 0
+
+
 @pytest.mark.asyncio
 async def test_codex_provider_timeout_enters_failure_cooldown(monkeypatch) -> None:
     provider = CodexProvider(LLMTier.TIER1)
@@ -119,3 +135,5 @@ async def test_codex_provider_timeout_enters_failure_cooldown(monkeypatch) -> No
     assert proc.terminated is True
     assert proc.wait_calls == 1
     assert provider._disabled_until > time.monotonic()
+    assert provider._last_failure_kind == "timeout"
+    assert "timeout" in provider._last_failure_reason

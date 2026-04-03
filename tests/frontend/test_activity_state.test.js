@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import {
   buildActivityIdentityLabel,
   buildStockMetaSummary,
+  formatActivityHeadline,
   normalizeActivitySymbol,
   resolveActivityStockMeta,
 } from "../../admin/static/js/activity_state.js";
@@ -69,5 +70,19 @@ describe("activity_state", () => {
       stockName: "리센스메디컬",
       summaryText: "22,700원 · +1.69% · 1300주",
     })).toBe("리센스메디컬 (394420) · 22,700원 · +1.69% · 1300주");
+  });
+
+  test("formats tier start summary with stock name first", () => {
+    expect(formatActivityHeadline("📊 [A394420] Tier1 분석 시작", {
+      symbol: "A394420",
+      stockName: "리센스메디컬",
+    })).toBe("리센스메디컬 분석 시작");
+  });
+
+  test("formats tier completion summary with stock name first", () => {
+    expect(formatActivityHeadline("🧠 [후성] Tier2: ✅ 승인 | 수량 3000주", {
+      symbol: "093370",
+      stockName: "후성",
+    })).toBe("후성 최종 검토: ✅ 승인 | 수량 3000주");
   });
 });

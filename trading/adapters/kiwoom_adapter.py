@@ -151,13 +151,21 @@ class KiwoomBrokerAdapter(BrokerAdapter):
         for order in pending_orders:
             if order.order_id != order_id:
                 continue
+            filled_price = order.order_price if order.filled_qty > 0 else 0.0
+            if filled_price <= 0:
+                submitted = self._submitted_orders.get(str(order_id))
+                holding = await self._get_holding(order.symbol)
+                if holding is not None and holding.avg_buy_price > 0:
+                    filled_price = holding.avg_buy_price
+                elif submitted is not None and submitted.order_price > 0:
+                    filled_price = submitted.order_price
             return OrderStatusInfo(
                 order_id=order.order_id,
                 symbol=order.symbol,
                 filled_qty=order.filled_qty,
-                filled_price=order.order_price if order.filled_qty > 0 else 0.0,
+                filled_price=filled_price,
                 remaining_qty=order.remaining_qty,
-                order_price=order.order_price,
+                order_price=filled_price if filled_price > 0 else order.order_price,
             )
 
         submitted = self._submitted_orders.get(str(order_id))

@@ -256,6 +256,48 @@ async def test_run_trading_cycle_caches_scan_metadata_before_analysis(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_tier1_analysis_retries_once_when_first_response_is_unparseable(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    responses = iter([
+        ("not-json", "CODEX"),
+        ('{"recommendation":"BUY","confidence":0.7,"reason":"ok","target_price":12000,"stop_loss_price":11000}', "CODEX"),
+    ])
+    parse_calls = []
+
+    async def fake_generate_manual(*args, **kwargs):
+        return next(responses)
+
+    def fake_parse_json(text: str):
+        parse_calls.append(text)
+        if text == "not-json":
+            return None
+        return {
+            "recommendation": "BUY",
+            "confidence": 0.7,
+            "reason": "ok",
+            "target_price": 12000,
+            "stop_loss_price": 11000,
+        }
+
+    monkeypatch.setattr("agent.trading_agent.llm_factory.generate_manual", fake_generate_manual)
+    monkeypatch.setattr(agent, "_parse_json", fake_parse_json)
+    monkeypatch.setattr(agent, "_validate_llm_prices", lambda parsed, _price: parsed)
+
+    result = await agent._tier1_analysis(
+        symbol="005930",
+        name="삼성전자",
+        current_price=11500.0,
+        chart_result=SimpleNamespace(indicators_text="", patterns_text="", trend_text=""),
+        price_data={},
+    )
+
+    assert result is not None
+    assert result["recommendation"] == "BUY"
+    assert result["provider"] == "CODEX"
+    assert parse_calls == ["not-json", '{"recommendation":"BUY","confidence":0.7,"reason":"ok","target_price":12000,"stop_loss_price":11000}']
+
+
+@pytest.mark.asyncio
 async def test_run_trading_cycle_skips_buy_candidate_when_cash_is_blocked(monkeypatch) -> None:
     agent = TradingAgent(broker_adapter=StubBrokerAdapter())
     logs = []

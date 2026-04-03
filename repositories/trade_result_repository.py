@@ -183,3 +183,18 @@ class TradeResultRepository(AsyncBaseRepository[TradeResult]):
         )
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
+
+    async def get_confirmed_open_buys_with_zero_entry_price(self) -> list[TradeResult]:
+        """미청산 CONFIRMED BUY 중 체결가가 0인 레코드 조회"""
+        stmt = (
+            select(TradeResult)
+            .where(and_(
+                TradeResult.side == "BUY",
+                TradeResult.exit_at.is_(None),
+                TradeResult.status == "CONFIRMED",
+                TradeResult.entry_price <= 0,
+            ))
+            .order_by(TradeResult.entry_at.asc(), TradeResult.created_at.asc())
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())

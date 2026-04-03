@@ -24,6 +24,7 @@ def _build_test_env(
 
     docker_log = tmp_path / "docker.log"
     python_log = tmp_path / "python.log"
+    lsof_bin = tmp_path / "lsof"
     docker_bin = tmp_path / "docker"
     python_bin = tmp_path / "python"
     env_file = tmp_path / ".env.test"
@@ -42,6 +43,12 @@ printf '%s\\n' "$@" >> '{python_log}'
 exit 0
 """,
     )
+    _write_executable(
+        lsof_bin,
+        """#!/bin/sh
+exit 0
+""",
+    )
     env_lines = [f"BROKER_PROVIDER={broker_provider}"]
     env_lines.extend(extra_env_lines or [])
     env_file.write_text("\n".join(env_lines) + "\n", encoding="utf-8")
@@ -55,6 +62,7 @@ exit 0
             "MOMO_LOG_FILE": str(tmp_path / "momo.log"),
             "MOMO_DOCKER_BIN": str(docker_bin),
             "MOMO_PYTHON_BIN": str(python_bin),
+            "MOMO_LSOF_BIN": str(lsof_bin),
             "MOMO_HOST": "127.0.0.1",
             "MOMO_PORT": "9900",
         }
@@ -124,3 +132,56 @@ def test_start_script_stops_kis_mcp_when_broker_provider_is_not_kis(tmp_path: Pa
     assert result.returncode == 0
     assert docker_log.read_text(encoding="utf-8").splitlines() == ["compose", "stop", "kis-mcp"]
     assert python_log.read_text(encoding="utf-8").splitlines()[0:3] == ["-m", "uvicorn", "main:app"]
+
+
+def test_start_script_blocks_start_when_target_port_is_already_in_use(tmp_path: Path) -> None:
+    env, docker_log, python_log = _build_test_env(tmp_path, "KIWOOM")
+
+    lsof_bin = Path(env["MOMO_LSOF_BIN"])
+    _write_executable(
+        lsof_bin,
+        """#!/bin/sh
+printf 'Python 3131\\n'
+exit 0
+""",
+    )
+
+    result = subprocess.run(
+        ["bash", str(START_SCRIPT)],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "이미 사용 중" in result.stdout
+    assert not docker_log.exists()
+    assert not python_log.exists()
+
+
+def test_start_script_status_reports_running_when_port_is_listening_without_pid_file(tmp_path: Path) -> None:
+    env, _, _ = _build_test_env(tmp_path, "KIWOOM")
+
+    lsof_bin = Path(env["MOMO_LSOF_BIN"])
+    _write_executable(
+        lsof_bin,
+        """#!/bin/sh
+printf 'Python 3131\\n'
+exit 0
+""",
+    )
+
+    result = subprocess.run(
+        ["bash", str(START_SCRIPT), "status"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "실행 중" in result.stdout
+    assert "localhost:9900/admin" in result.stdout

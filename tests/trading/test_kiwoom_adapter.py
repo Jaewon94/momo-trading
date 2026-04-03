@@ -266,6 +266,59 @@ async def test_kiwoom_adapter_infers_filled_buy_from_holdings_when_order_leaves_
 
 
 @pytest.mark.asyncio
+async def test_kiwoom_adapter_uses_holding_avg_price_when_pending_fill_has_zero_order_price() -> None:
+    account_client = MutableAccountClient(
+        holdings=[
+            HoldingInfo(
+                symbol="005930",
+                name="삼성전자",
+                quantity=8,
+                avg_buy_price=72_400,
+                current_price=72_400,
+                pnl=0,
+                pnl_rate=0,
+            )
+        ],
+        pending_orders=[
+            PendingOrderInfo(
+                order_id="K-1",
+                symbol="005930",
+                name="삼성전자",
+                side="매수",
+                order_qty=3,
+                filled_qty=3,
+                remaining_qty=0,
+                order_price=0,
+                order_time="100000",
+            )
+        ],
+    )
+    order_executor = FakeOrderExecutor()
+    adapter = KiwoomBrokerAdapter(
+        account_client=account_client,
+        market_data_client=FakeMarketDataClient(),
+        order_executor=order_executor,
+    )
+
+    request = OrderRequest(
+        symbol="005930",
+        market=Market.KRX,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=3,
+        price=None,
+    )
+    result = await adapter.place_order(request)
+
+    status = await adapter.get_order_status(result.order_id or "")
+
+    assert status is not None
+    assert status.filled_qty == 3
+    assert status.filled_price == 72_400
+    assert status.order_price == 72_400
+
+
+@pytest.mark.asyncio
 async def test_kiwoom_adapter_returns_normalized_candles() -> None:
     adapter, _ = build_adapter()
 

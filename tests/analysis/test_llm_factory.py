@@ -11,6 +11,14 @@ class FakeProvider:
         self._result = result
         self.calls: list[tuple[str, str]] = []
         self.model_id = f"{provider.value.lower()}-model"
+        self.status = {
+            "available": available,
+            "cooldown_active": False,
+            "last_failure_reason": "",
+            "last_failure_kind": "",
+            "disabled_for_sec": 0,
+            "cli_path": f"/tmp/{provider.value.lower()}",
+        }
 
     @property
     def provider(self) -> LLMProvider:
@@ -26,6 +34,9 @@ class FakeProvider:
     async def generate(self, prompt: str, system_prompt: str = "") -> str:
         self.calls.append((prompt, system_prompt))
         return self._result
+
+    def status_snapshot(self) -> dict:
+        return dict(self.status)
 
 
 class FakeFailingProvider(FakeProvider):
@@ -108,6 +119,34 @@ def test_llm_factory_reports_status_for_both_providers(monkeypatch) -> None:
     assert status["tier2"]["model"] == "claude-sonnet-4-6"
     assert status["tier2"]["model_mode"] == "explicit"
     assert {item["id"] for item in status["available_providers"]} == {"CLAUDE_CODE", "CODEX"}
+
+
+def test_llm_factory_includes_provider_runtime_status(monkeypatch) -> None:
+    factory = LLMFactory()
+    codex = FakeProvider(LLMProvider.CODEX, available=False)
+    codex.status.update({
+        "available": False,
+        "cooldown_active": True,
+        "last_failure_reason": "Codex CLI timeout (60s)",
+        "last_failure_kind": "timeout",
+        "disabled_for_sec": 123,
+    })
+    claude = FakeProvider(LLMProvider.CLAUDE_CODE, available=True)
+    factory._providers[LLMTier.TIER1] = {
+        LLMProvider.CODEX: codex,
+        LLMProvider.CLAUDE_CODE: claude,
+    }
+    factory._providers[LLMTier.TIER2] = {
+        LLMProvider.CODEX: codex,
+        LLMProvider.CLAUDE_CODE: claude,
+    }
+
+    status = factory.get_llm_status()
+
+    codex_status = next(item for item in status["available_providers"] if item["id"] == "CODEX")
+    assert codex_status["runtime"]["cooldown_active"] is True
+    assert codex_status["runtime"]["last_failure_kind"] == "timeout"
+    assert codex_status["runtime"]["last_failure_reason"] == "Codex CLI timeout (60s)"
 
 
 @pytest.mark.asyncio

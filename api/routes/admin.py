@@ -29,9 +29,121 @@ from trading.account_manager import account_manager
 from trading.broker_factory import get_broker_adapter
 from trading.enums import ActivityPhase, ActivityType, LLMTier
 from trading.mcp_client import mcp_client
+from trading.symbols import normalize_krx_symbol
 from scheduler.scheduler import trading_scheduler
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+POSITION_DETAIL_HOLDING_TIMEOUT_SEC = 2.0
+POSITION_DETAIL_HOLDING_CACHE_TTL_SEC = 15.0
+_position_holdings_cache = {"items": None, "fetched_at": 0.0}
+
+
+def _parse_json_detail(detail):
+    if not detail:
+        return None
+    if isinstance(detail, dict):
+        return detail
+    try:
+        return _json.loads(detail)
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_latest_signal(trades, activities):
+    for activity in activities:
+        detail = _parse_json_detail(getattr(activity, "detail", None)) or {}
+        recommendation = detail.get("recommendation")
+        target_price = detail.get("target_price") or detail.get("ai_target_price")
+        stop_loss_price = detail.get("stop_loss_price") or detail.get("ai_stop_loss_price")
+        reason = detail.get("reason") or activity.summary
+        if recommendation or target_price or stop_loss_price:
+            return {
+                "recommendation": recommendation or "",
+                "confidence": getattr(activity, "confidence", None),
+                "reason": reason,
+                "target_price": target_price,
+                "stop_loss_price": stop_loss_price,
+                "llm_provider": getattr(activity, "llm_provider", None),
+                "llm_tier": getattr(activity, "llm_tier", None),
+                "created_at": getattr(activity, "created_at", None),
+            }
+
+    for trade in trades:
+        if (
+            getattr(trade, "ai_recommendation", "")
+            or getattr(trade, "ai_target_price", None) is not None
+            or getattr(trade, "ai_stop_loss_price", None) is not None
+        ):
+            return {
+                "recommendation": getattr(trade, "ai_recommendation", ""),
+                "confidence": getattr(trade, "ai_confidence", None),
+                "reason": getattr(trade, "exit_reason", "") or getattr(trade, "strategy_type", ""),
+                "target_price": getattr(trade, "ai_target_price", None),
+                "stop_loss_price": getattr(trade, "ai_stop_loss_price", None),
+                "llm_provider": None,
+                "llm_tier": None,
+                "created_at": getattr(trade, "created_at", None),
+            }
+
+    return None
+
+
+def _build_position_timeline(trades, activities):
+    timeline = []
+
+    for trade in trades:
+        trade_time = getattr(trade, "exit_at", None) or getattr(trade, "entry_at", None) or getattr(trade, "created_at", None)
+        side = getattr(trade, "side", "")
+        title = "매수 체결" if side == "BUY" else "매도 기록"
+        summary = f"{getattr(trade, 'stock_name', getattr(trade, 'stock_symbol', ''))} · {getattr(trade, 'quantity', 0)}주"
+        timeline.append({
+            "type": "trade",
+            "at": trade_time.isoformat() if trade_time else None,
+            "title": title,
+            "summary": summary,
+            "side": side,
+            "status": getattr(trade, "status", ""),
+            "detail": {
+                "strategy_type": getattr(trade, "strategy_type", ""),
+                "entry_price": getattr(trade, "entry_price", 0.0),
+                "exit_price": getattr(trade, "exit_price", 0.0),
+                "pnl": getattr(trade, "pnl", 0.0),
+                "return_pct": getattr(trade, "return_pct", 0.0),
+                "exit_reason": getattr(trade, "exit_reason", ""),
+            },
+        })
+
+    for activity in activities:
+        timeline.append({
+            "type": "activity",
+            "at": getattr(activity, "created_at", None).isoformat() if getattr(activity, "created_at", None) else None,
+            "title": getattr(activity, "activity_type", "EVENT"),
+            "summary": getattr(activity, "summary", ""),
+            "phase": getattr(activity, "phase", ""),
+            "confidence": getattr(activity, "confidence", None),
+            "detail": _parse_json_detail(getattr(activity, "detail", None)),
+        })
+
+    timeline.sort(key=lambda item: item.get("at") or "", reverse=True)
+    return timeline
+
+
+def _get_cached_holdings():
+    items = _position_holdings_cache.get("items")
+    fetched_at = float(_position_holdings_cache.get("fetched_at") or 0.0)
+    if not items or (_time.monotonic() - fetched_at) > POSITION_DETAIL_HOLDING_CACHE_TTL_SEC:
+        return None
+    return items
+
+
+async def _load_position_holdings():
+    holdings = await asyncio.wait_for(
+        get_broker_adapter().get_holdings(),
+        timeout=POSITION_DETAIL_HOLDING_TIMEOUT_SEC,
+    )
+    _position_holdings_cache["items"] = holdings
+    _position_holdings_cache["fetched_at"] = _time.monotonic()
+    return holdings
 
 
 # ── SSE 실시간 스트림 ──
@@ -221,7 +333,7 @@ async def get_account_holdings():
         holdings = await get_broker_adapter().get_holdings()
         return SuccessResponse(data=[
             {
-                "symbol": h.symbol,
+                "symbol": normalize_krx_symbol(getattr(h, "symbol", "")),
                 "name": h.name,
                 "quantity": h.quantity,
                 "avg_buy_price": h.avg_buy_price,
@@ -258,6 +370,123 @@ async def get_pending_orders():
     except Exception as e:
         logger.error("미체결 주문 조회 실패: {}", str(e))
         return SuccessResponse(data=[], message=f"미체결 주문 조회 실패: {str(e)[:100]}")
+
+
+@router.get("/positions/{symbol}")
+async def get_position_detail(
+    symbol: str,
+    timeline_limit: int = Query(20, ge=1, le=100),
+    timeline_offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """보유/관심 종목 상세 요약 + 타임라인"""
+    normalized_symbol = normalize_krx_symbol(symbol)
+    trade_repo = TradeResultRepository(db)
+    activity_repo = AgentActivityRepository(db)
+
+    source_fetch_limit = timeline_limit + timeline_offset + 1
+    trades = await trade_repo.get_by_symbol(normalized_symbol, limit=source_fetch_limit)
+    activities = await activity_repo.get_by_symbol(normalized_symbol, limit=source_fetch_limit)
+    open_buys = await trade_repo.get_all_open_buys(normalized_symbol)
+
+    holding_payload = None
+    holding_status = "unavailable"
+    holding_message = "실시간 보유 정보 없음"
+    try:
+        holdings = await _load_position_holdings()
+        for holding in holdings:
+            if normalize_krx_symbol(getattr(holding, "symbol", "")) == normalized_symbol:
+                current_price = float(getattr(holding, "current_price", 0.0) or 0.0)
+                quantity = int(getattr(holding, "quantity", 0) or 0)
+                holding_payload = {
+                    "symbol": normalized_symbol,
+                    "name": getattr(holding, "name", normalized_symbol),
+                    "quantity": quantity,
+                    "avg_buy_price": float(getattr(holding, "avg_buy_price", 0.0) or 0.0),
+                    "current_price": current_price,
+                    "pnl": float(getattr(holding, "pnl", 0.0) or 0.0),
+                    "pnl_rate": float(getattr(holding, "pnl_rate", 0.0) or 0.0),
+                    "market_value": current_price * quantity,
+                }
+                holding_status = "ok"
+                holding_message = ""
+                break
+        if holding_payload is None and holdings is not None:
+            holding_status = "missing"
+            holding_message = "실시간 보유 목록에는 현재 보이지 않습니다."
+    except asyncio.TimeoutError:
+        holdings = _get_cached_holdings()
+        if holdings:
+            for holding in holdings:
+                if normalize_krx_symbol(getattr(holding, "symbol", "")) == normalized_symbol:
+                    current_price = float(getattr(holding, "current_price", 0.0) or 0.0)
+                    quantity = int(getattr(holding, "quantity", 0) or 0)
+                    holding_payload = {
+                        "symbol": normalized_symbol,
+                        "name": getattr(holding, "name", normalized_symbol),
+                        "quantity": quantity,
+                        "avg_buy_price": float(getattr(holding, "avg_buy_price", 0.0) or 0.0),
+                        "current_price": current_price,
+                        "pnl": float(getattr(holding, "pnl", 0.0) or 0.0),
+                        "pnl_rate": float(getattr(holding, "pnl_rate", 0.0) or 0.0),
+                        "market_value": current_price * quantity,
+                    }
+                    break
+            if holding_payload:
+                holding_status = "cached"
+                holding_message = "최근 캐시된 보유 정보를 표시합니다."
+            else:
+                holding_status = "timeout"
+                holding_message = "실시간 보유 정보 조회가 지연되어 최근 거래 이력만 표시합니다."
+        else:
+            holding_status = "timeout"
+            holding_message = "실시간 보유 정보 조회가 지연되어 최근 거래 이력만 표시합니다."
+    except Exception as exc:
+        logger.warning("종목 상세 보유 정보 조회 실패 ({}): {}", normalized_symbol, str(exc))
+        holding_status = "error"
+        holding_message = f"실시간 보유 정보 조회 실패: {str(exc)[:80]}"
+
+    latest_signal = _extract_latest_signal(trades, activities)
+    name = (
+        (holding_payload or {}).get("name")
+        or (getattr(trades[0], "stock_name", None) if trades else None)
+        or normalized_symbol
+    )
+    realized_pnl = sum(
+        float(getattr(trade, "pnl", 0.0) or 0.0)
+        for trade in trades
+        if getattr(trade, "exit_at", None) is not None
+    )
+
+    full_timeline = _build_position_timeline(trades, activities)
+    timeline_slice = full_timeline[timeline_offset: timeline_offset + timeline_limit]
+    has_more_timeline = len(full_timeline) > (timeline_offset + timeline_limit)
+
+    return SuccessResponse(data={
+        "symbol": normalized_symbol,
+        "name": name,
+        "summary": {
+            "holding": holding_payload,
+            "holding_status": holding_status,
+            "holding_message": holding_message,
+            "latest_signal": latest_signal,
+            "trade_stats": {
+                "total_trades": len(trades),
+                "open_buy_count": len(open_buys),
+                "completed_count": sum(1 for trade in trades if getattr(trade, "exit_at", None) is not None),
+                "realized_pnl": realized_pnl,
+            },
+            "settings_shortcut_tab": "strategy",
+        },
+        "timeline": timeline_slice,
+        "timeline_page": {
+            "limit": timeline_limit,
+            "offset": timeline_offset,
+            "returned": len(timeline_slice),
+            "has_more": has_more_timeline,
+            "next_offset": timeline_offset + len(timeline_slice),
+        },
+    })
 
 
 # ── 설정 조회/변경 ──
@@ -377,7 +606,14 @@ async def get_llm_catalog(
     force_refresh: bool = Query(False, description="공식 모델 카탈로그 강제 동기화"),
 ):
     """공식 문서 기반 LLM 모델 카탈로그"""
-    return SuccessResponse(data=await model_catalog_service.get_catalog(force_refresh=force_refresh))
+    try:
+        return SuccessResponse(data=await model_catalog_service.get_catalog(force_refresh=force_refresh))
+    except Exception as exc:
+        logger.error("LLM 카탈로그 조회 실패: {}", str(exc))
+        return SuccessResponse(
+            data=model_catalog_service.fallback_catalog(str(exc)),
+            message="LLM catalog fallback returned after upstream failure",
+        )
 
 
 # ── 시스템 상태 ──

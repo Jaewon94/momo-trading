@@ -1674,19 +1674,33 @@ class TradingAgent:
         )
 
         try:
-            result_text, provider = await llm_factory.generate_manual(
-                prompt,
-                system_prompt=STOCK_ANALYSIS_SYSTEM,
-                default_tier=LLMTier.TIER1,
-                symbol=symbol,
-                cycle_id=cycle_id,
-                manual_provider_override=manual_provider_override,
+            last_result_text = ""
+            last_provider = None
+            for attempt in range(2):
+                result_text, provider = await llm_factory.generate_manual(
+                    prompt,
+                    system_prompt=STOCK_ANALYSIS_SYSTEM,
+                    default_tier=LLMTier.TIER1,
+                    symbol=symbol,
+                    cycle_id=cycle_id,
+                    manual_provider_override=manual_provider_override,
+                )
+                last_result_text = result_text
+                last_provider = provider
+                parsed = self._parse_json(result_text)
+                if parsed:
+                    parsed["provider"] = provider
+                    parsed = self._validate_llm_prices(parsed, current_price)
+                    return parsed
+                if attempt == 0:
+                    logger.warning("[{}] Tier1 JSON 파싱 실패 → 같은 provider로 1회 재시도", symbol)
+            logger.warning(
+                "[{}] Tier1 JSON 파싱 최종 실패 (provider={}): {}",
+                symbol,
+                last_provider or "UNKNOWN",
+                (last_result_text or "")[:200],
             )
-            parsed = self._parse_json(result_text)
-            if parsed:
-                parsed["provider"] = provider
-                parsed = self._validate_llm_prices(parsed, current_price)
-            return parsed
+            return None
         except Exception as e:
             logger.error("Tier 1 분석 실패 ({}): {}", symbol, str(e))
             return None

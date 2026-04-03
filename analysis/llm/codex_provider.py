@@ -26,6 +26,8 @@ class CodexProvider:
         self._tier = tier
         self._codex_path: str | None = None
         self._disabled_until = 0.0
+        self._last_failure_reason = ""
+        self._last_failure_kind = ""
         if model_override is not None:
             configured_model = model_override
         elif tier == LLMTier.TIER1:
@@ -116,6 +118,20 @@ class CodexProvider:
     def _timeout_sec(self) -> float:
         return self._TIER1_TIMEOUT_SEC if self._tier == LLMTier.TIER1 else self._TIER2_TIMEOUT_SEC
 
+    def status_snapshot(self) -> dict:
+        path = self._find_codex()
+        disabled_for_sec = max(0, int(self._disabled_until - time.monotonic())) if self._disabled_until else 0
+        cooldown_active = disabled_for_sec > 0
+        available = bool(path) and not cooldown_active
+        return {
+            "available": available,
+            "cli_path": path or "",
+            "cooldown_active": cooldown_active,
+            "disabled_for_sec": disabled_for_sec,
+            "last_failure_reason": self._last_failure_reason,
+            "last_failure_kind": self._last_failure_kind,
+        }
+
     async def _terminate_process(self, proc) -> None:
         if proc.returncode is not None:
             return
@@ -170,6 +186,8 @@ class CodexProvider:
                 )
             except asyncio.TimeoutError as exc:
                 self._disabled_until = time.monotonic() + self._FAILURE_COOLDOWN_SEC
+                self._last_failure_kind = "timeout"
+                self._last_failure_reason = f"Codex CLI timeout ({self._timeout_sec():.0f}s)"
                 await self._terminate_process(proc)
                 logger.error("Codex CLI timeout ({}s)", self._timeout_sec())
                 raise RuntimeError(f"Codex CLI timeout ({self._timeout_sec():.0f}s)") from exc
@@ -179,6 +197,8 @@ class CodexProvider:
                 err = stderr.decode("utf-8", errors="replace")[:500]
                 if not err.strip():
                     err = stdout.decode("utf-8", errors="replace")[:500]
+                self._last_failure_kind = "exit_nonzero"
+                self._last_failure_reason = f"Codex CLI 실패 (exit {proc.returncode}): {err}"
                 logger.error("Codex CLI 호출 실패 (exit {}): {}", proc.returncode, err)
                 raise RuntimeError(f"Codex CLI 실패 (exit {proc.returncode}): {err}")
 
@@ -186,9 +206,13 @@ class CodexProvider:
                 result = handle.read().strip()
 
             if not result:
+                self._last_failure_kind = "empty_response"
+                self._last_failure_reason = "Codex CLI 빈 응답"
                 raise RuntimeError("Codex CLI 빈 응답")
 
             self._disabled_until = 0.0
+            self._last_failure_kind = ""
+            self._last_failure_reason = ""
             return result
         finally:
             try:
@@ -197,11 +221,16 @@ class CodexProvider:
                 pass
 
     async def is_available(self) -> bool:
-        path = self._find_codex()
+        status = self.status_snapshot()
+        path = status["cli_path"]
         if not path:
             logger.debug("Codex CLI를 찾을 수 없음 (PATH, /opt/homebrew/bin 등 확인)")
             return False
-        if self._disabled_until > time.monotonic():
-            logger.debug("Codex CLI 일시 비활성화 상태 (최근 호출 실패)")
+        if status["cooldown_active"]:
+            logger.debug(
+                "Codex CLI 일시 비활성화 상태 (최근 호출 실패: {} / 남은 {}s)",
+                status["last_failure_reason"] or "unknown",
+                status["disabled_for_sec"],
+            )
             return False
         return True

@@ -1,5 +1,8 @@
 """장 마감 후 포트폴리오 정산 — PENDING_CONFIRM 복구 + 계좌/DB 불일치 점검"""
 from loguru import logger
+from models.trade_result import TradeResult
+from trading.symbols import normalize_krx_symbol
+from util.time_util import now_kst
 
 
 async def portfolio_sync_job() -> None:
@@ -8,6 +11,12 @@ async def portfolio_sync_job() -> None:
 
     # 1. PENDING_CONFIRM 복구: 체결 확인 누락된 주문 재확인
     await _recover_pending_confirms()
+
+    # 1-1. 계좌에는 있는데 DB에 없는 열린 매수 백필
+    await _backfill_missing_open_buys_from_holdings()
+
+    # 1-2. 과거 0원 체결가 복구: 현재 보유 평균단가와 정합할 때만 보정
+    await _repair_confirmed_zero_entry_prices()
 
     # 2. 정산 현황 로깅 (계좌 vs DB 비교, 강제 변경 없음)
     await _check_account_db_consistency()
@@ -46,7 +55,11 @@ async def _recover_pending_confirms() -> dict[str, int | str]:
                 pending_orders = await adapter.get_pending_orders()
                 holdings = await adapter.get_holdings()
                 order_map = {str(order.order_id): order for order in pending_orders if order.order_id}
-                holding_map = {holding.symbol: holding for holding in holdings if holding.quantity > 0}
+                holding_map = {
+                    normalize_krx_symbol(getattr(holding, "symbol", "")): holding
+                    for holding in holdings
+                    if int(getattr(holding, "quantity", 0) or 0) > 0
+                }
 
                 recovered = 0
                 failed = 0
@@ -79,7 +92,7 @@ async def _recover_pending_confirms() -> dict[str, int | str]:
                             summary["skipped"] = int(summary["skipped"]) + 1
                             continue
                     elif tr.side == "BUY":
-                        holding = holding_map.get(tr.stock_symbol)
+                        holding = holding_map.get(normalize_krx_symbol(getattr(tr, "stock_symbol", "")))
                         if holding is not None:
                             inferred_qty = min(int(holding.quantity), int(tr.quantity or holding.quantity))
                             if inferred_qty > 0:
@@ -136,6 +149,187 @@ async def _recover_pending_confirms() -> dict[str, int | str]:
     return summary
 
 
+async def _repair_confirmed_zero_entry_prices() -> dict[str, int | str]:
+    """미청산 CONFIRMED BUY 중 0원 체결가를 안전하게 복구"""
+    summary: dict[str, int | str] = {
+        "provider": "UNKNOWN",
+        "candidates": 0,
+        "repaired": 0,
+        "skipped": 0,
+    }
+    try:
+        from core.database import AsyncSessionLocal
+        from repositories.trade_result_repository import TradeResultRepository
+        from trading.broker_factory import get_broker_adapter
+
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                repo = TradeResultRepository(session)
+                zero_trades = await repo.get_confirmed_open_buys_with_zero_entry_price()
+                summary["candidates"] = len(zero_trades)
+                if not zero_trades:
+                    return summary
+
+                adapter = get_broker_adapter()
+                summary["provider"] = adapter.provider.value
+                holdings = await adapter.get_holdings()
+                holding_map = {
+                    normalize_krx_symbol(getattr(holding, "symbol", "")): holding
+                    for holding in holdings
+                    if int(getattr(holding, "quantity", 0) or 0) > 0
+                }
+
+                pending_symbols = {
+                    normalize_krx_symbol(getattr(tr, "stock_symbol", ""))
+                    for tr in await repo.get_pending_confirms()
+                    if getattr(tr, "side", "") == "BUY"
+                }
+
+                grouped: dict[str, list] = {}
+                for trade in zero_trades:
+                    grouped.setdefault(normalize_krx_symbol(trade.stock_symbol), []).append(trade)
+
+                for symbol, trades in grouped.items():
+                    if symbol in pending_symbols:
+                        logger.warning("0원 체결가 복구 보류: {} — pending confirm 존재", symbol)
+                        summary["skipped"] = int(summary["skipped"]) + len(trades)
+                        continue
+
+                    holding = holding_map.get(symbol)
+                    if holding is None:
+                        logger.warning("0원 체결가 복구 보류: {} — 보유 정보 없음", symbol)
+                        summary["skipped"] = int(summary["skipped"]) + len(trades)
+                        continue
+
+                    open_buys = await repo.get_all_open_buys(symbol)
+                    if not open_buys:
+                        summary["skipped"] = int(summary["skipped"]) + len(trades)
+                        continue
+
+                    holding_qty = int(getattr(holding, "quantity", 0) or 0)
+                    open_qty = sum(int(getattr(tr, "quantity", 0) or 0) for tr in open_buys)
+                    if holding_qty != open_qty:
+                        logger.warning(
+                            "0원 체결가 복구 보류: {} — 보유수량 {} != DB 미청산수량 {}",
+                            symbol, holding_qty, open_qty,
+                        )
+                        summary["skipped"] = int(summary["skipped"]) + len(trades)
+                        continue
+
+                    known_value = sum(
+                        float(getattr(tr, "entry_price", 0.0) or 0.0) * int(getattr(tr, "quantity", 0) or 0)
+                        for tr in open_buys
+                        if float(getattr(tr, "entry_price", 0.0) or 0.0) > 0
+                    )
+                    unknown_qty = sum(
+                        int(getattr(tr, "quantity", 0) or 0)
+                        for tr in open_buys
+                        if float(getattr(tr, "entry_price", 0.0) or 0.0) <= 0
+                    )
+                    if unknown_qty <= 0:
+                        continue
+
+                    target_total_cost = float(getattr(holding, "avg_buy_price", 0.0) or 0.0) * holding_qty
+                    repaired_price = (target_total_cost - known_value) / unknown_qty
+                    if repaired_price <= 0:
+                        logger.warning("0원 체결가 복구 보류: {} — 역산 가격 비정상 {}", symbol, repaired_price)
+                        summary["skipped"] = int(summary["skipped"]) + len(trades)
+                        continue
+
+                    for trade in trades:
+                        trade.entry_price = float(repaired_price)
+                    logger.info(
+                        "0원 체결가 복구 완료: {} {}건 → @{:.2f}원",
+                        symbol, len(trades), repaired_price,
+                    )
+                    summary["repaired"] = int(summary["repaired"]) + len(trades)
+    except Exception as e:
+        logger.error("0원 체결가 복구 오류: {}", str(e))
+        summary["error"] = str(e)[:200]
+    return summary
+
+
+async def _backfill_missing_open_buys_from_holdings() -> dict[str, int | str]:
+    """계좌 보유수량이 DB 미청산수량보다 많을 때 합성 BUY 레코드로 메움"""
+    summary: dict[str, int | str] = {
+        "provider": "UNKNOWN",
+        "backfilled": 0,
+        "skipped": 0,
+    }
+    try:
+        from core.database import AsyncSessionLocal
+        from repositories.trade_result_repository import TradeResultRepository
+        from trading.broker_factory import get_broker_adapter
+
+        now = now_kst()
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                repo = TradeResultRepository(session)
+                adapter = get_broker_adapter()
+                summary["provider"] = adapter.provider.value
+                holdings = await adapter.get_holdings()
+                pending_symbols = {
+                    normalize_krx_symbol(getattr(tr, "stock_symbol", ""))
+                    for tr in await repo.get_pending_confirms()
+                    if getattr(tr, "side", "") == "BUY"
+                }
+
+                for holding in holdings:
+                    symbol = normalize_krx_symbol(getattr(holding, "symbol", ""))
+                    holding_qty = int(getattr(holding, "quantity", 0) or 0)
+                    if not symbol or holding_qty <= 0:
+                        continue
+                    if symbol in pending_symbols:
+                        logger.warning("보유 백필 보류: {} — pending confirm 존재", symbol)
+                        summary["skipped"] = int(summary["skipped"]) + 1
+                        continue
+
+                    open_buys = await repo.get_all_open_buys(symbol)
+                    open_qty = sum(int(getattr(tr, "quantity", 0) or 0) for tr in open_buys)
+                    missing_qty = holding_qty - open_qty
+                    if missing_qty <= 0:
+                        continue
+
+                    avg_buy_price = float(getattr(holding, "avg_buy_price", 0.0) or 0.0)
+                    if avg_buy_price <= 0:
+                        logger.warning("보유 백필 보류: {} — 평균단가 없음", symbol)
+                        summary["skipped"] = int(summary["skipped"]) + 1
+                        continue
+
+                    session.add(TradeResult(
+                        order_id=None,
+                        stock_symbol=symbol,
+                        stock_name=getattr(holding, "name", symbol) or symbol,
+                        side="BUY",
+                        strategy_type="HOLDING_SYNC",
+                        entry_price=avg_buy_price,
+                        exit_price=0.0,
+                        quantity=missing_qty,
+                        pnl=0.0,
+                        return_pct=0.0,
+                        is_win=False,
+                        hold_days=0,
+                        exit_reason="",
+                        ai_recommendation="",
+                        ai_confidence=0.0,
+                        ai_target_price=None,
+                        ai_stop_loss_price=None,
+                        market_regime="",
+                        notes=f"HOLDING_SYNC_BACKFILL: holding_qty={holding_qty}, db_qty={open_qty}",
+                        status="CONFIRMED",
+                        entry_at=now,
+                    ))
+                    logger.warning(
+                        "보유 백필 생성: {} {}주 @{:.2f}원 (계좌 {}주 / DB {}주)",
+                        symbol, missing_qty, avg_buy_price, holding_qty, open_qty,
+                    )
+                    summary["backfilled"] = int(summary["backfilled"]) + 1
+    except Exception as e:
+        logger.error("보유 백필 오류: {}", str(e))
+        summary["error"] = str(e)[:200]
+    return summary
+
+
 async def _cancel_unfilled_order(order_id: str, symbol: str) -> None:
     """미체결 주문 취소 시도 (정산용)"""
     if not order_id:
@@ -160,12 +354,19 @@ async def _check_account_db_consistency() -> None:
         from trading.account_manager import account_manager
 
         holdings = await account_manager.get_holdings()
-        holding_symbols = {h.symbol for h in holdings if h.quantity > 0}
+        holding_symbols = {
+            normalize_krx_symbol(getattr(h, "symbol", ""))
+            for h in holdings
+            if int(getattr(h, "quantity", 0) or 0) > 0
+        }
 
         async with AsyncSessionLocal() as session:
             repo = TradeResultRepository(session)
             open_positions = await repo.get_all_open()
-            db_symbols = {tr.stock_symbol for tr in open_positions}
+            db_symbols = {
+                normalize_krx_symbol(getattr(tr, "stock_symbol", ""))
+                for tr in open_positions
+            }
 
         # 계좌에만 있는 종목 (DB에 기록 없음)
         only_account = holding_symbols - db_symbols

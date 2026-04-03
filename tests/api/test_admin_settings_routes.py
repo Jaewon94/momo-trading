@@ -91,6 +91,40 @@ async def test_llm_status_includes_manual_selection(client):
     assert "manual_selection" in payload["data"]
 
 
+async def test_llm_status_exposes_provider_runtime_visibility(client, monkeypatch):
+    from analysis.llm import llm_factory as llm_factory_module
+
+    monkeypatch.setattr(
+        llm_factory_module.llm_factory,
+        "get_llm_status",
+        lambda: {
+            "tier1": {"provider": "CODEX"},
+            "tier2": {"provider": "CLAUDE_CODE"},
+            "available_providers": [
+                {
+                    "id": "CODEX",
+                    "runtime": {
+                        "available": False,
+                        "cooldown_active": True,
+                        "last_failure_kind": "timeout",
+                        "last_failure_reason": "Codex CLI timeout (60s)",
+                        "disabled_for_sec": 120,
+                    },
+                }
+            ],
+            "manual_selection": {"provider": "AUTOMATIC"},
+        },
+        raising=False,
+    )
+
+    response = await client.get("/api/v1/admin/llm/status")
+
+    assert response.status_code == 200
+    runtime = response.json()["data"]["available_providers"][0]["runtime"]
+    assert runtime["cooldown_active"] is True
+    assert runtime["last_failure_kind"] == "timeout"
+
+
 async def test_admin_settings_includes_risk_appetite_insights(client):
     response = await client.get("/api/v1/admin/settings")
 

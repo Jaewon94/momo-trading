@@ -89,6 +89,19 @@ class LLMFactory:
                 return True
         return False
 
+    def _provider_runtime_status(self, provider_key: LLMProvider) -> dict:
+        provider = self._providers[LLMTier.TIER1][provider_key]
+        if hasattr(provider, "status_snapshot"):
+            return provider.status_snapshot()
+        return {
+            "available": True,
+            "cli_path": "",
+            "cooldown_active": False,
+            "disabled_for_sec": 0,
+            "last_failure_reason": "",
+            "last_failure_kind": "",
+        }
+
     def start_session(self) -> str | None:
         if self._uses_claude_sessions():
             return ClaudeCodeProvider.start_session()
@@ -125,8 +138,22 @@ class LLMFactory:
             fallback_model = self._fallback_model_for_tier(tier) if index > 0 else None
             provider = self._build_provider(tier, provider_key, fallback_model)
             if not await provider.is_available():
-                last_error = RuntimeError(f"{provider.provider.value} CLI를 찾을 수 없습니다 (PATH 확인)")
-                logger.warning("{} 사용 불가, 다음 provider 확인", provider.provider.value)
+                runtime = provider.status_snapshot() if hasattr(provider, "status_snapshot") else {}
+                if runtime.get("cooldown_active"):
+                    last_error = RuntimeError(
+                        f"{provider.provider.value} 최근 호출 실패로 비활성화 "
+                        f"({runtime.get('disabled_for_sec', 0)}s 남음): "
+                        f"{runtime.get('last_failure_reason', 'unknown')}"
+                    )
+                    logger.warning(
+                        "{} 사용 불가 (cooldown {}s, reason: {}), 다음 provider 확인",
+                        provider.provider.value,
+                        runtime.get("disabled_for_sec", 0),
+                        runtime.get("last_failure_reason", "unknown"),
+                    )
+                else:
+                    last_error = RuntimeError(f"{provider.provider.value} CLI를 찾을 수 없습니다 (PATH 확인)")
+                    logger.warning("{} 사용 불가, 다음 provider 확인", provider.provider.value)
                 continue
 
             for attempt in range(2):
@@ -276,12 +303,14 @@ class LLMFactory:
                     "name": "Claude Code (로컬)",
                     "models": {"tier1": tier1_model, "tier2": tier2_model},
                     "has_key": True,
+                    "runtime": self._provider_runtime_status(LLMProvider.CLAUDE_CODE),
                 },
                 {
                     "id": "CODEX",
                     "name": "Codex CLI (로컬)",
                     "models": {"tier1": codex_tier1_model, "tier2": codex_tier2_model},
                     "has_key": True,
+                    "runtime": self._provider_runtime_status(LLMProvider.CODEX),
                 },
             ],
             "manual_selection": {

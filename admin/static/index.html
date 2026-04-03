@@ -114,6 +114,219 @@
     .stock-step { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0; border-top: 1px solid #1f2937; }
     .stock-step:first-child { border-top: none; }
 
+    /* Position detail timeline */
+    .position-timeline-filter-row { display: flex; flex-wrap: wrap; gap: 8px; }
+    .position-timeline-filter-chip {
+      display: inline-flex; align-items: center; gap: 8px;
+      border: 1px solid #374151; border-radius: 999px;
+      background: rgba(15,16,33,0.52); color: #cbd5e1;
+      padding: 6px 10px; font-size: 12px; line-height: 1; transition: 0.15s ease;
+    }
+    .position-timeline-filter-chip:hover { border-color: #60a5fa; color: #eff6ff; }
+    .position-timeline-filter-chip.active {
+      border-color: rgba(96,165,250,0.76);
+      background: rgba(37,99,235,0.18);
+      color: #dbeafe;
+    }
+    .position-timeline-filter-count {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 20px; height: 20px; border-radius: 999px;
+      background: rgba(255,255,255,0.06); font-size: 11px; color: #94a3b8;
+      padding: 0 6px;
+    }
+    .position-summary-card {
+      position: relative;
+      border: 1px solid rgba(51,65,85,0.92);
+      border-radius: 20px;
+      padding: 16px;
+      background:
+        linear-gradient(180deg, rgba(15,16,33,0.9), rgba(15,23,42,0.7)),
+        radial-gradient(circle at top left, rgba(255,255,255,0.05), transparent 44%);
+      overflow: hidden;
+    }
+    .position-summary-card::after {
+      content: "";
+      position: absolute; inset: 0 auto auto 0;
+      width: 100%; height: 1px;
+      background: linear-gradient(90deg, rgba(255,255,255,0.15), transparent 70%);
+      pointer-events: none;
+    }
+    .position-summary-card.tone-buy {
+      border-color: rgba(248,113,113,0.22);
+      background:
+        linear-gradient(180deg, rgba(33,14,18,0.92), rgba(15,16,33,0.74)),
+        radial-gradient(circle at top left, rgba(248,113,113,0.16), transparent 40%);
+    }
+    .position-summary-card.tone-analysis {
+      border-color: rgba(167,139,250,0.22);
+      background:
+        linear-gradient(180deg, rgba(28,16,48,0.92), rgba(15,16,33,0.74)),
+        radial-gradient(circle at top left, rgba(167,139,250,0.14), transparent 40%);
+    }
+    .position-summary-card.tone-sell {
+      border-color: rgba(96,165,250,0.22);
+      background:
+        linear-gradient(180deg, rgba(11,23,52,0.92), rgba(15,16,33,0.74)),
+        radial-gradient(circle at top left, rgba(96,165,250,0.14), transparent 40%);
+    }
+    .position-summary-card-topline { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .position-summary-card-eyebrow {
+      color: #94a3b8; font-size: 11px; text-transform: uppercase; letter-spacing: 0.16em;
+    }
+    .position-summary-card-title {
+      color: #f8fafc; font-size: 13px; font-weight: 600; margin-top: 6px;
+    }
+    .position-summary-card-hero {
+      color: #ffffff; font-size: 28px; line-height: 1.05; font-weight: 700;
+      margin-top: 18px; letter-spacing: -0.04em;
+    }
+    .position-summary-card-hero-meta {
+      color: #cbd5e1; font-size: 13px; margin-top: 6px; min-height: 20px;
+    }
+    .position-summary-card-metrics {
+      display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px; margin-top: 14px;
+    }
+    .position-summary-metric {
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 14px; background: rgba(255,255,255,0.03);
+      padding: 10px 10px 9px;
+    }
+    .position-summary-metric-label { color: #64748b; font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; }
+    .position-summary-metric-value { color: #e2e8f0; font-size: 13px; font-weight: 600; margin-top: 6px; }
+    .position-summary-card-body {
+      margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.06);
+      color: #cbd5e1; font-size: 12px; line-height: 1.55; display: grid; gap: 6px;
+    }
+    .position-summary-card-caption { margin-top: 10px; color: #64748b; font-size: 11px; }
+    .position-timeline-group {
+      display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 14px;
+      align-items: flex-start;
+    }
+    .position-timeline-date {
+      position: sticky; top: 0;
+      padding-top: 4px;
+    }
+    .position-timeline-date-label {
+      color: #f8fafc; font-size: 18px; font-weight: 700; letter-spacing: -0.02em;
+    }
+    .position-timeline-date-stamp { color: #64748b; font-size: 11px; margin-top: 2px; }
+    .position-timeline-date-relative {
+      display: inline-flex; align-items: center;
+      margin-top: 8px; border-radius: 999px; padding: 4px 8px;
+      background: rgba(96,165,250,0.12); color: #bfdbfe; font-size: 11px;
+    }
+    .position-timeline-rail { display: grid; gap: 12px; }
+    .position-timeline-item {
+      display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 10px;
+      align-items: stretch;
+    }
+    .position-timeline-node {
+      display: grid; grid-template-rows: 28px minmax(20px, 1fr);
+      justify-items: center;
+    }
+    .position-timeline-dot {
+      width: 28px; height: 28px; border-radius: 999px;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 10px; font-weight: 700; letter-spacing: -0.02em;
+      border: 1px solid rgba(148,163,184,0.22); background: rgba(15,23,42,0.96);
+      color: #e2e8f0;
+      box-shadow: 0 0 0 4px rgba(15,16,33,0.82);
+    }
+    .position-timeline-stem {
+      width: 2px; border-radius: 999px; background: linear-gradient(180deg, rgba(71,85,105,0.78), rgba(51,65,85,0.2));
+      min-height: 26px;
+    }
+    .position-timeline-stem-fade { opacity: 0.35; }
+    .position-timeline-card {
+      border: 1px solid rgba(51,65,85,0.9);
+      border-radius: 18px;
+      background:
+        linear-gradient(180deg, rgba(15,16,33,0.84), rgba(15,23,42,0.6)),
+        radial-gradient(circle at top left, rgba(255,255,255,0.05), transparent 40%);
+      padding: 12px 14px 13px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+    }
+    .position-timeline-card-topline {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      font-size: 11px; color: #94a3b8;
+    }
+    .position-timeline-time { font-variant-numeric: tabular-nums; letter-spacing: 0.04em; }
+    .position-timeline-badge {
+      display: inline-flex; align-items: center; gap: 6px; color: #cbd5e1;
+      text-transform: uppercase; letter-spacing: 0.08em; font-size: 10px;
+    }
+    .position-timeline-title-row {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+      margin-top: 8px;
+    }
+    .position-timeline-title { color: #f8fafc; font-size: 15px; font-weight: 600; line-height: 1.35; }
+    .position-timeline-chip {
+      flex-shrink: 0;
+      border-radius: 999px; padding: 3px 8px;
+      background: rgba(148,163,184,0.12); color: #cbd5e1; font-size: 11px;
+      border: 1px solid rgba(148,163,184,0.14);
+    }
+    .position-timeline-summary { margin-top: 8px; color: #dbe4f0; font-size: 13px; line-height: 1.5; }
+    .position-timeline-meta { margin-top: 6px; color: #64748b; font-size: 11px; line-height: 1.45; }
+    .position-timeline-item.tone-buy .position-timeline-dot {
+      background: rgba(127,29,29,0.7); color: #fecaca; border-color: rgba(248,113,113,0.4);
+    }
+    .position-timeline-item.tone-buy .position-timeline-card {
+      border-color: rgba(248,113,113,0.25);
+      background:
+        linear-gradient(180deg, rgba(33,14,18,0.9), rgba(15,16,33,0.72)),
+        radial-gradient(circle at top left, rgba(248,113,113,0.12), transparent 42%);
+    }
+    .position-timeline-item.tone-sell .position-timeline-dot {
+      background: rgba(30,58,138,0.7); color: #bfdbfe; border-color: rgba(96,165,250,0.4);
+    }
+    .position-timeline-item.tone-sell .position-timeline-card {
+      border-color: rgba(96,165,250,0.25);
+      background:
+        linear-gradient(180deg, rgba(11,23,52,0.92), rgba(15,16,33,0.72)),
+        radial-gradient(circle at top left, rgba(96,165,250,0.11), transparent 44%);
+    }
+    .position-timeline-item.tone-analysis .position-timeline-dot,
+    .position-timeline-item.tone-progress .position-timeline-dot {
+      background: rgba(76,29,149,0.7); color: #e9d5ff; border-color: rgba(167,139,250,0.4);
+    }
+    .position-timeline-item.tone-analysis .position-timeline-card,
+    .position-timeline-item.tone-progress .position-timeline-card {
+      border-color: rgba(167,139,250,0.2);
+      background:
+        linear-gradient(180deg, rgba(28,16,48,0.9), rgba(15,16,33,0.72)),
+        radial-gradient(circle at top left, rgba(167,139,250,0.11), transparent 44%);
+    }
+    .position-timeline-item.tone-pending .position-timeline-dot {
+      background: rgba(120,53,15,0.72); color: #fde68a; border-color: rgba(251,191,36,0.35);
+    }
+    .position-timeline-item.tone-pending .position-timeline-card {
+      border-color: rgba(251,191,36,0.22);
+    }
+    .position-timeline-item.tone-error .position-timeline-dot {
+      background: rgba(127,29,29,0.82); color: #fecaca; border-color: rgba(248,113,113,0.55);
+    }
+    .position-timeline-item.tone-error .position-timeline-card {
+      border-color: rgba(248,113,113,0.32);
+      background:
+        linear-gradient(180deg, rgba(52,16,22,0.92), rgba(15,16,33,0.72)),
+        radial-gradient(circle at top left, rgba(248,113,113,0.12), transparent 46%);
+    }
+    .position-timeline-load-more {
+      border: 1px solid #374151; border-radius: 999px; background: rgba(15,16,33,0.7);
+      color: #cbd5e1; font-size: 12px; padding: 8px 14px; transition: 0.15s ease;
+    }
+    .position-timeline-load-more:hover { border-color: #60a5fa; color: #eff6ff; }
+    .position-timeline-load-more.is-loading,
+    .position-timeline-load-more:disabled { opacity: 0.72; cursor: wait; }
+    @media (max-width: 768px) {
+      .position-summary-card-metrics { grid-template-columns: 1fr; }
+      .position-timeline-group { grid-template-columns: 1fr; gap: 8px; }
+      .position-timeline-date { position: static; }
+      .position-timeline-date-label { font-size: 15px; }
+    }
+
     /* Cycle divider */
     .cycle-divider { display: flex; align-items: center; gap: 8px; padding: 6px 12px; margin: 8px 0 4px 0; color: #6b7280; font-size: 12px; }
     .cycle-divider::before, .cycle-divider::after { content: ''; flex: 1; height: 1px; background: #374151; }
@@ -752,6 +965,40 @@
               </div>
             </div>
           </section>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="position-detail-overlay" class="settings-modal-overlay" onclick="closePositionDetailModalOnBackdrop(event)">
+    <div class="settings-modal">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-gray-700">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.2em] text-gray-500">Position Detail</div>
+          <div id="position-detail-title" class="text-lg font-semibold text-white">종목 상세</div>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="position-detail-settings-shortcut"
+            class="rounded-md border border-gray-600 bg-dark-800 px-3 py-1.5 text-xs font-medium text-gray-200 transition hover:border-blue-400 hover:text-white">
+            관련 설정 열기
+          </button>
+          <button onclick="closePositionDetailModal()"
+            class="rounded-md border border-gray-600 bg-dark-800 px-3 py-1.5 text-xs font-medium text-gray-200 transition hover:border-gray-400 hover:text-white">
+            닫기
+          </button>
+        </div>
+      </div>
+      <div class="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+        <div id="position-detail-summary" class="grid gap-3 md:grid-cols-3">
+          <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4 text-sm text-gray-400">종목 요약을 불러오는 중...</div>
+        </div>
+        <div>
+          <div class="text-sm font-medium text-white">종목 타임라인</div>
+          <div class="mt-1 text-xs text-gray-500">거래 이력, AI 분석, 활동 로그를 시간순으로 묶어 봅니다.</div>
+        </div>
+        <div id="position-detail-timeline-filters" class="position-timeline-filter-row"></div>
+        <div id="position-detail-timeline" class="space-y-3">
+          <div class="text-sm text-gray-500">타임라인을 불러오는 중...</div>
         </div>
       </div>
     </div>

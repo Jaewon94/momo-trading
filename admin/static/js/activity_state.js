@@ -77,6 +77,36 @@ export function buildActivityIdentityLabel({
   return identity.join(" · ");
 }
 
+export function formatActivityHeadline(summary = "", meta = {}) {
+  const stockName = meta.stockName || "";
+  const normalizedSymbol = normalizeActivitySymbol(meta.symbol || "");
+  const identity = stockName && stockName !== normalizedSymbol
+    ? stockName
+    : normalizedSymbol;
+  const raw = String(summary || "").trim();
+  if (!raw) return identity;
+
+  let text = raw
+    .replace(/^[^\p{L}\p{N}\[]+/u, "")
+    .replace(/^\[[^\]]+\]\s*/u, "")
+    .trim();
+
+  if (!text) return identity;
+
+  text = text
+    .replace(/^Tier1\s+분석\s*/u, "분석 ")
+    .replace(/^Tier2\s+최종 검토\s*/u, "최종 검토 ")
+    .replace(/^Tier1\b\s*/u, "분석 ")
+    .replace(/^Tier2\b\s*/u, "최종 검토 ")
+    .replace(/^분석\s*:\s*/u, "분석 결과: ")
+    .replace(/^최종 검토\s*:\s*/u, "최종 검토: ")
+    .trim();
+
+  if (!identity) return text;
+  if (text.startsWith(identity)) return text;
+  return `${identity} ${text}`.trim();
+}
+
 export function resolveActivityStockMeta({
   symbol = "",
   summary = "",
