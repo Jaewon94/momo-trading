@@ -2,6 +2,13 @@ import pytest
 from types import SimpleNamespace
 
 from scheduler.scheduler import TradingScheduler
+from trading.enums import Market, OrderSide, OrderType
+from trading.models import CurrentPrice, OrderResult
+
+
+@pytest.fixture(autouse=True)
+def _default_broker_provider(monkeypatch) -> None:
+    monkeypatch.setattr("scheduler.scheduler.settings.BROKER_PROVIDER", "KIS")
 
 
 @pytest.mark.asyncio
@@ -1826,3 +1833,207 @@ async def test_check_overnight_gap_logs_disabled_target_profit_sell(monkeypatch)
 
     assert "갭 상승 익절" in logs[0]
     assert "TRADING_ENABLED=false" in logs[0]
+
+
+@pytest.mark.asyncio
+async def test_holdings_check_uses_broker_adapter_for_kiwoom_sell_path(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    confirmed_orders: list[dict] = []
+    adapter_orders: list = []
+    holding = SimpleNamespace(symbol="A005930", name="삼성전자", quantity=2, avg_buy_price=70_000)
+
+    class FakeBrokerAdapter:
+        async def get_current_price(self, symbol, market):
+            return CurrentPrice(
+                symbol=symbol,
+                market=market,
+                price=73_000,
+                change=0.0,
+                change_rate=0.0,
+                volume=0,
+                timestamp=__import__("datetime").datetime.now(),
+            )
+
+        async def place_order(self, request):
+            adapter_orders.append(request)
+            return OrderResult(success=True, order_id="SELL-ADAPTER", message="ok")
+
+    async def fake_update_realtime_subscriptions() -> None:
+        return None
+
+    async def fake_get_holdings() -> list:
+        return [holding]
+
+    async def fake_log(*args, **kwargs) -> None:
+        return None
+
+    async def fake_acquire_sell(_symbol: str) -> bool:
+        return True
+
+    async def fake_confirm_and_record(**kwargs) -> None:
+        confirmed_orders.append(kwargs)
+
+    async def fail_get_current_price(_symbol: str):
+        raise AssertionError("mcp current price should not be used")
+
+    async def fail_place_order(**kwargs):
+        raise AssertionError("mcp place_order should not be used")
+
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
+    monkeypatch.setattr(scheduler, "_update_realtime_subscriptions", fake_update_realtime_subscriptions)
+    monkeypatch.setattr("util.time_util.now_kst", lambda: __import__("datetime").datetime(2026, 4, 2, 14, 0))
+    monkeypatch.setattr(
+        "realtime.event_detector.event_detector.get_thresholds",
+        lambda _symbol: SimpleNamespace(stop_loss=68_000, take_profit=72_000),
+    )
+    monkeypatch.setattr("scheduler.scheduler.settings.BROKER_PROVIDER", "KIWOOM")
+    monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
+    monkeypatch.setattr("trading.mcp_client.mcp_client.get_current_price", fail_get_current_price)
+    monkeypatch.setattr("trading.mcp_client.mcp_client.place_order", fail_place_order)
+    monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.trading_agent.trading_agent._acquire_sell", fake_acquire_sell)
+    monkeypatch.setattr("agent.trading_agent.trading_agent._release_sell", lambda _symbol: None)
+    monkeypatch.setattr("realtime.event_detector.event_detector.remove_levels", lambda _symbol: None)
+    monkeypatch.setattr("agent.decision_maker.decision_maker.confirm_and_record", fake_confirm_and_record)
+    monkeypatch.setattr("asyncio.create_task", lambda coro: (coro.close(), object())[1])
+
+    await scheduler._holdings_check()
+
+    assert confirmed_orders[0]["order_id"] == "SELL-ADAPTER"
+    assert adapter_orders[0].side == OrderSide.SELL
+    assert adapter_orders[0].order_type == OrderType.MARKET
+    assert adapter_orders[0].market == Market.KRX
+
+
+@pytest.mark.asyncio
+async def test_force_liquidation_uses_broker_adapter_for_kiwoom_sell_path(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    confirmed_orders: list[dict] = []
+    adapter_orders: list = []
+    holding = SimpleNamespace(symbol="A005930", name="삼성전자", quantity=3, pnl_rate=1.5, current_price=71_000)
+
+    class FakeBrokerAdapter:
+        async def place_order(self, request):
+            adapter_orders.append(request)
+            return OrderResult(success=True, order_id="SELL-FORCE", message="ok")
+
+    async def fake_get_holdings() -> list:
+        return [holding]
+
+    async def fake_smart_liquidation(holdings):
+        return holdings, []
+
+    async def fake_log(*args, **kwargs) -> None:
+        return None
+
+    async def fake_acquire_sell(_symbol: str) -> bool:
+        return True
+
+    async def fake_confirm_and_record(**kwargs) -> None:
+        confirmed_orders.append(kwargs)
+
+    async def fail_place_order(**kwargs):
+        raise AssertionError("mcp place_order should not be used")
+
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_holiday", lambda: False)
+    monkeypatch.setattr("scheduler.scheduler.settings.BROKER_PROVIDER", "KIWOOM")
+    monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr("scheduler.scheduler.settings.DAY_TRADING_ONLY", False)
+    monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
+    monkeypatch.setattr(scheduler, "_smart_liquidation", fake_smart_liquidation)
+    monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
+    monkeypatch.setattr("trading.mcp_client.mcp_client.place_order", fail_place_order)
+    monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.trading_agent.trading_agent._acquire_sell", fake_acquire_sell)
+    monkeypatch.setattr("agent.trading_agent.trading_agent._release_sell", lambda _symbol: None)
+    monkeypatch.setattr("agent.decision_maker.decision_maker.confirm_and_record", fake_confirm_and_record)
+    monkeypatch.setattr("realtime.event_detector.event_detector.remove_levels", lambda _symbol: None)
+    monkeypatch.setattr(scheduler, "_trigger_rescan_after_sell", lambda: None)
+    monkeypatch.setattr("asyncio.create_task", lambda coro: (coro.close(), object())[1] if hasattr(coro, "close") else object())
+
+    await scheduler._force_liquidation()
+
+    assert confirmed_orders[0]["order_id"] == "SELL-FORCE"
+    assert adapter_orders[0].side == OrderSide.SELL
+    assert adapter_orders[0].order_type == OrderType.MARKET
+    assert adapter_orders[0].market == Market.KRX
+
+
+@pytest.mark.asyncio
+async def test_check_overnight_gap_uses_broker_adapter_for_kiwoom_sell_path(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    confirmed_orders: list[dict] = []
+    adapter_orders: list = []
+    holding = SimpleNamespace(symbol="A005930", name="삼성전자", quantity=2)
+    trade_result = SimpleNamespace(stock_symbol="A005930", ai_stop_loss_price=68_000, ai_target_price=75_000)
+
+    class FakeSession:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_all_open(self):
+            return [trade_result]
+
+    class FakeBrokerAdapter:
+        async def get_current_price(self, symbol, market):
+            return CurrentPrice(
+                symbol=symbol,
+                market=market,
+                price=67_000,
+                change=0.0,
+                change_rate=0.0,
+                volume=0,
+                timestamp=__import__("datetime").datetime.now(),
+            )
+
+        async def place_order(self, request):
+            adapter_orders.append(request)
+            return OrderResult(success=True, order_id="SELL-GAP-ADAPTER", message="ok")
+
+    async def fake_get_holdings() -> list:
+        return [holding]
+
+    async def fake_log(*args, **kwargs) -> None:
+        return None
+
+    async def fake_acquire_sell(_symbol: str) -> bool:
+        return True
+
+    async def fake_confirm_and_record(**kwargs) -> None:
+        confirmed_orders.append(kwargs)
+
+    async def fail_get_current_price(_symbol: str):
+        raise AssertionError("mcp current price should not be used")
+
+    async def fail_place_order(**kwargs):
+        raise AssertionError("mcp place_order should not be used")
+
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
+    monkeypatch.setattr("scheduler.scheduler.settings.BROKER_PROVIDER", "KIWOOM")
+    monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
+    monkeypatch.setattr("trading.mcp_client.mcp_client.get_current_price", fail_get_current_price)
+    monkeypatch.setattr("trading.mcp_client.mcp_client.place_order", fail_place_order)
+    monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
+    monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr("agent.trading_agent.trading_agent._acquire_sell", fake_acquire_sell)
+    monkeypatch.setattr("agent.trading_agent.trading_agent._release_sell", lambda _symbol: None)
+    monkeypatch.setattr("realtime.event_detector.event_detector.remove_levels", lambda _symbol: None)
+    monkeypatch.setattr("agent.decision_maker.decision_maker.confirm_and_record", fake_confirm_and_record)
+
+    await scheduler._check_overnight_gap()
+
+    assert confirmed_orders[0]["order_id"] == "SELL-GAP-ADAPTER"
+    assert adapter_orders[0].side == OrderSide.SELL
+    assert adapter_orders[0].order_type == OrderType.MARKET
+    assert adapter_orders[0].market == Market.KRX

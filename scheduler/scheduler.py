@@ -21,7 +21,9 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
 
 from core.config import settings
-from trading.enums import ActivityPhase, ActivityType
+from trading.broker_factory import get_broker_adapter
+from trading.enums import ActivityPhase, ActivityType, Market, OrderSide, OrderType
+from trading.models import OrderRequest
 
 
 class TradingScheduler:
@@ -34,6 +36,50 @@ class TradingScheduler:
     @staticmethod
     def _build_scheduler() -> AsyncIOScheduler:
         return AsyncIOScheduler(timezone="Asia/Seoul")
+
+    async def _fetch_current_price(self, symbol: str, market: Market = Market.KRX) -> float:
+        """브로커 어댑터 기준 현재가를 조회한다."""
+        if settings.BROKER_PROVIDER.upper() == "KIS":
+            from trading.mcp_client import mcp_client
+            response = await mcp_client.get_current_price(symbol)
+            if not response.success or not response.data:
+                return 0.0
+            return float(response.data.get("price", 0.0) or 0.0)
+        quote = await get_broker_adapter().get_current_price(symbol, market)
+        return float(quote.price or 0.0)
+
+    async def _place_market_sell(self, symbol: str, quantity: int, market: Market = Market.KRX):
+        """브로커 어댑터 기준 시장가 매도 주문을 실행한다."""
+        if settings.BROKER_PROVIDER.upper() == "KIS":
+            from trading.mcp_client import mcp_client
+            response = await mcp_client.place_order(
+                symbol=symbol,
+                side="SELL",
+                quantity=quantity,
+                price=None,
+                market=market.value,
+            )
+            data = response.data or {}
+            return type("NormalizedOrderResult", (), {
+                "success": bool(response.success),
+                "order_id": data.get("order_id", ""),
+                "message": data.get("message") or response.error or "",
+                "error": response.error,
+            })()
+        request = OrderRequest(
+            symbol=symbol,
+            market=market,
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,
+            quantity=quantity,
+        )
+        result = await get_broker_adapter().place_order(request)
+        return type("NormalizedOrderResult", (), {
+            "success": bool(result.success),
+            "order_id": result.order_id or "",
+            "message": result.message,
+            "error": None if result.success else result.message,
+        })()
 
     async def start(self) -> None:
         if self._running:
@@ -413,7 +459,6 @@ class TradingScheduler:
 
         try:
             from trading.account_manager import account_manager
-            from trading.mcp_client import mcp_client as _mcp
 
             holdings = await account_manager.get_holdings()
             if not holdings:
@@ -436,10 +481,7 @@ class TradingScheduler:
                 if h.avg_buy_price <= 0 or h.quantity <= 0:
                     continue
                 # MCP로 현재가 직접 조회
-                resp = await _mcp.get_current_price(h.symbol)
-                if not resp.success or not resp.data:
-                    continue
-                current = float(resp.data.get("price", 0))
+                current = await self._fetch_current_price(h.symbol)
                 if current <= 0:
                     continue
                 pnl_rate = (current - h.avg_buy_price) / h.avg_buy_price * 100
@@ -486,13 +528,7 @@ class TradingScheduler:
                         )
                         continue
                     try:
-                        sell_resp = await _mcp.place_order(
-                            symbol=h.symbol,
-                            side="SELL",
-                            quantity=h.quantity,
-                            price=None,
-                            market="KRX",
-                        )
+                        sell_resp = await self._place_market_sell(h.symbol, h.quantity)
                         status = "성공" if sell_resp.success else f"실패: {sell_resp.error or ''}"
                         alerts.append(
                             f"\U0001f6a8 {h.name}({h.symbol}): {reason} → 매도 {status}"
@@ -502,11 +538,9 @@ class TradingScheduler:
                             event_detector.remove_levels(h.symbol)
                             # 체결 확인 + TradeResult 기록
                             from agent.decision_maker import decision_maker
-                            order_data = sell_resp.data or {}
-                            order_id = order_data.get("order_id", "")
                             await decision_maker.confirm_and_record(
                                 symbol=h.symbol, side="SELL",
-                                order_id=order_id, quantity=h.quantity,
+                                order_id=str(getattr(sell_resp, "order_id", "") or ""), quantity=h.quantity,
                                 expected_price=current,
                                 exit_reason="HOLDINGS_CHECK",
                             )
@@ -605,7 +639,6 @@ class TradingScheduler:
 
         try:
             from trading.account_manager import account_manager
-            from trading.mcp_client import mcp_client as _mcp
 
             holdings = await account_manager.get_holdings()
             if not holdings:
@@ -643,13 +676,7 @@ class TradingScheduler:
                 if not await trading_agent._acquire_sell(h.symbol):
                     return (None, h)
                 try:
-                    resp = await _mcp.place_order(
-                        symbol=h.symbol,
-                        side="SELL",
-                        quantity=h.quantity,
-                        price=None,
-                        market="KRX",
-                    )
+                    resp = await self._place_market_sell(h.symbol, h.quantity)
                     return (resp, h)
                 finally:
                     trading_agent._release_sell(h.symbol)
@@ -682,11 +709,9 @@ class TradingScheduler:
                     )
                     # 체결 확인 + TradeResult 기록
                     from agent.decision_maker import decision_maker
-                    order_data = resp.data or {}
-                    order_id = order_data.get("order_id", "")
                     await decision_maker.confirm_and_record(
                         symbol=h.symbol, side="SELL",
-                        order_id=order_id, quantity=h.quantity,
+                        order_id=str(getattr(resp, "order_id", "") or ""), quantity=h.quantity,
                         expected_price=h.current_price,
                         exit_reason="FORCE_LIQUIDATION",
                     )
@@ -766,7 +791,6 @@ class TradingScheduler:
         from realtime.event_detector import event_detector
         from repositories.trade_result_repository import TradeResultRepository
         from strategy.holding_policy import _calc_hold_days, _get_max_hold_days
-        from trading.mcp_client import mcp_client as _mcp
 
         holdings_data: list[dict] = []
         holdings_map: dict = {}
@@ -777,10 +801,7 @@ class TradingScheduler:
 
             for h in sellable:
                 try:
-                    resp = await _mcp.get_current_price(h.symbol)
-                    current_price = 0.0
-                    if resp.success and resp.data:
-                        current_price = float(resp.data.get("price", 0))
+                    current_price = await self._fetch_current_price(h.symbol)
 
                     if current_price <= 0:
                         fallback_sell.append(h)
@@ -1041,7 +1062,6 @@ class TradingScheduler:
             from agent.trading_agent import trading_agent
             from realtime.event_detector import event_detector
             from strategy.holding_policy import evaluate_overnight_hold
-            from trading.mcp_client import mcp_client as _mcp
 
             log_lines = []
 
@@ -1069,17 +1089,12 @@ class TradingScheduler:
                         log_lines.append(f"  - {stock_name}({symbol}): SELL → 이미 매도 진행 중")
                         continue
                     try:
-                        sell_resp = await _mcp.place_order(
-                            symbol=symbol, side="SELL",
-                            quantity=h.quantity, price=None, market="KRX",
-                        )
+                        sell_resp = await self._place_market_sell(symbol, h.quantity)
                         if sell_resp.success:
                             event_detector.remove_levels(symbol)
-                            order_data = sell_resp.data or {}
-                            order_id = order_data.get("order_id", "")
                             await decision_maker.confirm_and_record(
                                 symbol=symbol, side="SELL",
-                                order_id=order_id, quantity=h.quantity,
+                                order_id=str(getattr(sell_resp, "order_id", "") or ""), quantity=h.quantity,
                                 expected_price=current_price,
                                 exit_reason="HOLDINGS_REVIEW",
                             )
@@ -1225,10 +1240,7 @@ class TradingScheduler:
                         # exit_price 추정: 현재가 또는 마지막 SELL 레코드
                         exit_price = 0.0
                         try:
-                            from trading.mcp_client import mcp_client
-                            resp = await mcp_client.get_current_price(tr.stock_symbol)
-                            if resp.success and resp.data:
-                                exit_price = float(resp.data.get("price", 0))
+                            exit_price = await self._fetch_current_price(tr.stock_symbol)
                         except Exception:
                             pass
 
@@ -1295,7 +1307,6 @@ class TradingScheduler:
             from core.database import AsyncSessionLocal
             from repositories.trade_result_repository import TradeResultRepository
             from trading.account_manager import account_manager
-            from trading.mcp_client import mcp_client as _mcp
 
             holdings = await account_manager.get_holdings()
             if not holdings:
@@ -1316,10 +1327,7 @@ class TradingScheduler:
                 if not tr:
                     continue  # 당일 매수 등 — 갭 체크 불필요
 
-                resp = await _mcp.get_current_price(h.symbol)
-                if not resp.success or not resp.data:
-                    continue
-                current = float(resp.data.get("price", 0))
+                current = await self._fetch_current_price(h.symbol)
                 if current <= 0:
                     continue
 
@@ -1343,10 +1351,7 @@ class TradingScheduler:
                         alerts.append(f"\u26a0\ufe0f {h.name}({h.symbol}): {reason} → 이미 매도 진행 중")
                         continue
                     try:
-                        sell_resp = await _mcp.place_order(
-                            symbol=h.symbol, side="SELL",
-                            quantity=h.quantity, price=None, market="KRX",
-                        )
+                        sell_resp = await self._place_market_sell(h.symbol, h.quantity)
                         status = "성공" if sell_resp.success else f"실패: {sell_resp.error or ''}"
                         alerts.append(f"\U0001f6a8 {h.name}({h.symbol}): {reason} → 매도 {status}")
                         if sell_resp.success:
@@ -1354,11 +1359,9 @@ class TradingScheduler:
                             event_detector.remove_levels(h.symbol)
                             # 체결 확인 + TradeResult 기록
                             from agent.decision_maker import decision_maker
-                            order_data = sell_resp.data or {}
-                            order_id = order_data.get("order_id", "")
                             await decision_maker.confirm_and_record(
                                 symbol=h.symbol, side="SELL",
-                                order_id=order_id, quantity=h.quantity,
+                                order_id=str(getattr(sell_resp, "order_id", "") or ""), quantity=h.quantity,
                                 expected_price=current,
                                 exit_reason="GAP_CHECK",
                             )
