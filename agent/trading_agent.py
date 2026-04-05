@@ -984,8 +984,8 @@ class TradingAgent:
                     signal.suggested_quantity = max_qty
             # bp 실패 시 → 기존 수량 유지, KIS가 최종 판단
 
-            # 매수 시 시장가 주문 (미체결 방지)
-            signal.suggested_price = None
+            # 매수 주문 실행 정책 적용 (시장가/슬리피지 가드 지정가)
+            self._apply_buy_execution_policy(signal=signal, current_price=current_price)
 
         # 7. 매매 결정 (자율/반자율) — AI 분석 컨텍스트를 TradeResult에 전달
         analysis_context = {
@@ -1006,6 +1006,30 @@ class TradingAgent:
         result["executed"] = exec_result.get("success", False)
 
         return result
+
+    @staticmethod
+    def _apply_buy_execution_policy(signal: TradeSignal, current_price: float) -> None:
+        """매수 주문 실행 정책 적용.
+
+        - MARKET: 시장가 실행 (price=None)
+        - LIMIT_GUARD: 지정가 유지, 미지정 시 현재가+슬리피지(bp)로 가드 지정가 설정
+        """
+        mode = str(getattr(settings, "BUY_ORDER_EXECUTION_MODE", "LIMIT_GUARD") or "LIMIT_GUARD").upper()
+        if mode == "MARKET":
+            signal.suggested_price = None
+            return
+
+        if signal.suggested_price and signal.suggested_price > 0:
+            return
+
+        base_price = float(current_price or 0.0)
+        if base_price <= 0:
+            signal.suggested_price = None
+            return
+
+        bps = max(int(getattr(settings, "BUY_SLIPPAGE_GUARD_BPS", 20) or 0), 0)
+        guarded_price = int(round(base_price * (1 + bps / 10000)))
+        signal.suggested_price = max(guarded_price, 1)
 
     async def _run_after_hours_cycle(self, manual_provider_override: str | None = None) -> dict:
         """장외 사이클: 오늘 데이트레이딩 성과 리뷰 (피드백 학습용)"""

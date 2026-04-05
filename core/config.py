@@ -89,6 +89,15 @@ class Settings(BaseSettings):
     MAX_DAILY_TRADES: int = 0  # 0 = 무제한
     MAX_SINGLE_ORDER_KRW: int = 0  # 0 = AI 자율 결정 (시스템 하드 리밋 없음)
     MAX_SINGLE_ORDER_USD: int = 0  # 0 = AI 자율 결정
+    BUY_ORDER_EXECUTION_MODE: str = "LIMIT_GUARD"  # LIMIT_GUARD | MARKET
+    BUY_SLIPPAGE_GUARD_BPS: int = 20  # LIMIT_GUARD 모드에서 허용 슬리피지 (bp)
+    AUTO_RISK_KILL_SWITCH_ENABLED: bool = True
+    MAX_DAILY_DRAWDOWN_PCT: float = 2.5  # 일손실률 한도(%)
+    MAX_CONSECUTIVE_LOSSES: int = 4
+    MIN_STRATEGY_EXPECTANCY: float = 0.0
+    EXPECTANCY_SAMPLE_SIZE: int = 12
+    VOLATILITY_POSITION_SIZING_ENABLED: bool = True
+    RISK_PER_TRADE_PCT: float = 0.5
 
     # === AI Risk Tuning ===
     AI_RISK_TUNING_ENABLED: bool = True

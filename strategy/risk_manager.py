@@ -4,6 +4,7 @@ from loguru import logger
 from core.config import settings
 from services.activity_logger import activity_logger
 from strategy.signal import TradeSignal
+from strategy.trading_guard import trading_guard as default_trading_guard
 from trading.enums import ActivityPhase, ActivityType, SignalAction
 
 
@@ -17,11 +18,12 @@ class RiskManager:
     - 단일 주문 금액 한도
     """
 
-    def __init__(self):
+    def __init__(self, trading_guard=None):
         self.max_daily_trades = settings.MAX_DAILY_TRADES
         self.max_single_order_krw = settings.MAX_SINGLE_ORDER_KRW
         self.max_single_order_usd = settings.MAX_SINGLE_ORDER_USD
         self.min_cash_ratio = settings.MIN_CASH_RATIO  # 기본 5%
+        self._trading_guard = trading_guard or default_trading_guard
 
     RR_FLOOR = {"THEME": 1.0, "BULL": 1.0}
 
@@ -81,6 +83,21 @@ class RiskManager:
             await self._log_result(symbol, result, today_trade_count, cycle_id)
             return result
 
+        # 자동 킬스위치 + 기대값 게이트 (매수만 적용)
+        guard_result = await self._trading_guard.evaluate_buy_guard(
+            strategy_type=signal.strategy_type,
+            portfolio_budget=portfolio_budget,
+        )
+        if not guard_result.get("approved", False):
+            result = {
+                "approved": False,
+                "reason": guard_result.get("reason", "트레이딩 가드 차단"),
+                "trigger": guard_result.get("trigger", ""),
+                "adjusted_quantity": None,
+            }
+            await self._log_result(symbol, result, today_trade_count, cycle_id)
+            return result
+
         # 일일 매매 한도 검사 (0 = 무제한)
         if eff_max_daily > 0 and today_trade_count >= eff_max_daily:
             logger.warning("일일 매매 한도 초과: {}/{}", today_trade_count, eff_max_daily)
@@ -117,6 +134,26 @@ class RiskManager:
                     }
                     await self._log_result(symbol, result, today_trade_count, cycle_id)
                     return result
+
+        # 변동성 기반 포지션 사이징 (손절 폭 기준 1회 손실 한도)
+        if settings.VOLATILITY_POSITION_SIZING_ENABLED and stop > 0 and entry > 0:
+            risk_per_share = abs(entry - stop)
+            if risk_per_share > 0:
+                risk_budget = portfolio_budget * (float(settings.RISK_PER_TRADE_PCT or 0.0) / 100.0)
+                if risk_budget > 0:
+                    sized_qty = int(risk_budget / risk_per_share)
+                    if sized_qty < eff_min_qty:
+                        result = {"approved": False, "reason": "변동성 사이징 후 최소 수량 미달"}
+                        await self._log_result(symbol, result, today_trade_count, cycle_id)
+                        return result
+                    if sized_qty < quantity:
+                        result = {
+                            "approved": True,
+                            "reason": f"수량 조정 (변동성 리스크): {quantity} → {sized_qty}",
+                            "adjusted_quantity": sized_qty,
+                        }
+                        await self._log_result(symbol, result, today_trade_count, cycle_id)
+                        return result
 
         # 단일 주문 금액 한도 (0이면 AI 자율 → 스킵)
         if eff_max_order > 0 and total_amount > eff_max_order:

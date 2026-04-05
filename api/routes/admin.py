@@ -580,6 +580,15 @@ MUTABLE_SETTINGS = [
     "RECOMMENDATION_EXPIRE_MIN",
     "SCHEDULER_ENABLED",
     "RISK_APPETITE",
+    "BUY_ORDER_EXECUTION_MODE",
+    "BUY_SLIPPAGE_GUARD_BPS",
+    "AUTO_RISK_KILL_SWITCH_ENABLED",
+    "MAX_DAILY_DRAWDOWN_PCT",
+    "MAX_CONSECUTIVE_LOSSES",
+    "MIN_STRATEGY_EXPECTANCY",
+    "EXPECTANCY_SAMPLE_SIZE",
+    "VOLATILITY_POSITION_SIZING_ENABLED",
+    "RISK_PER_TRADE_PCT",
     "LLM_PROVIDER_TIER1",
     "LLM_PROVIDER_TIER2",
     "LLM_FALLBACK_PROVIDER_TIER1",
@@ -641,6 +650,10 @@ async def update_settings(updates: dict):
         elif key == "MANUAL_LLM_PROVIDER":
             value = str(value).upper()
             if value not in {"AUTOMATIC", "CLAUDE_CODE", "CODEX"}:
+                continue
+        elif key == "BUY_ORDER_EXECUTION_MODE":
+            value = str(value).upper()
+            if value not in {"LIMIT_GUARD", "MARKET"}:
                 continue
         elif key in {
             "LLM_FALLBACK_MODEL_TIER1",
