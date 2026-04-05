@@ -226,6 +226,15 @@ function buildTimelineFilters(entries) {
   ];
 }
 
+function buildRecentEventChips(summary = {}) {
+  const events = Array.isArray(summary.recent_events) ? summary.recent_events : [];
+  return events.slice(0, 3).map((event) => ({
+    label: event.event_label || event.event_type || "이벤트",
+    tone: String(event.direction || "").toUpperCase() === "SELL" ? "sell" : "buy",
+    meta: `${Number(event.score || 0)}점 · ${String(event.state || "").toUpperCase() || "TRIGGERED"}`,
+  }));
+}
+
 export function groupPositionTimeline(entries, filterKey = "all") {
   const filteredEntries = entries.filter((entry) => {
     if (filterKey === "all") return true;
@@ -339,6 +348,7 @@ export function buildPositionDetailState(payload) {
     symbol: payload?.symbol || "",
     settingsShortcutTab: summary.settings_shortcut_tab || "strategy",
     summaryCards,
+    recentEventChips: buildRecentEventChips(summary),
     timelineEntries,
     timelineFilters: buildTimelineFilters(timelineEntries),
     timelineGroups: groupPositionTimeline(timelineEntries),

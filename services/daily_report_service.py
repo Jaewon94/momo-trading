@@ -57,6 +57,7 @@ class DailyReportService:
         self,
         report_date: date | None = None,
         manual_provider_override: str | None = None,
+        force_regenerate: bool = False,
     ) -> DailyReport | None:
         """일일 리포트 생성"""
         from util.time_util import now_kst
@@ -94,7 +95,7 @@ class DailyReportService:
 
                     # 기존 리포트 확인 (중복 방지)
                     existing = await report_repo.get_by_date(report_date)
-                    if existing:
+                    if existing and not force_regenerate:
                         logger.debug("이미 리포트 존재: {}", report_date)
                         return existing
 
@@ -135,20 +136,18 @@ class DailyReportService:
                         f"- {k}: {v}건" for k, v in activity_counts.items()
                     )
 
-                    report = DailyReport(
-                        report_date=report_date,
-                        total_cycles=total_cycles,
-                        total_analyses=total_analyses,
-                        total_recommendations=total_recommendations,
-                        total_orders=total_orders,
-                        buy_count=buy_count,
-                        sell_count=sell_count,
-                        win_count=win_count,
-                        loss_count=loss_count,
-                        total_pnl=total_pnl,
-                        unrealized_pnl=unrealized_pnl,
-                        open_position_count=open_position_count,
-                    )
+                    report = existing or DailyReport(report_date=report_date)
+                    report.total_cycles = total_cycles
+                    report.total_analyses = total_analyses
+                    report.total_recommendations = total_recommendations
+                    report.total_orders = total_orders
+                    report.buy_count = buy_count
+                    report.sell_count = sell_count
+                    report.win_count = win_count
+                    report.loss_count = loss_count
+                    report.total_pnl = total_pnl
+                    report.unrealized_pnl = unrealized_pnl
+                    report.open_position_count = open_position_count
 
                     # LLM 요약 생성 시도
                     try:
@@ -191,7 +190,8 @@ class DailyReportService:
                         report.performance_review = f"활동 {len(activities)}건 기록됨"
 
                     report.strategy_stats = json.dumps(activity_counts, ensure_ascii=False)
-                    session.add(report)
+                    if not existing:
+                        session.add(report)
 
         except Exception as e:
             logger.error("일일 리포트 생성 실패: {}", str(e))

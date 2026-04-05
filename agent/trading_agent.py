@@ -1322,6 +1322,7 @@ class TradingAgent:
     ) -> None:
         """장 마감 리뷰 AI 결과를 DailyReport에 저장 (데이트레이딩 성과 리뷰)"""
         from models.daily_report import DailyReport
+        from repositories.trade_result_repository import TradeResultRepository
         from repositories.daily_report_repository import DailyReportRepository
 
         feedback = parsed.get("feedback_for_tomorrow", {})
@@ -1340,12 +1341,32 @@ class TradingAgent:
             async with session.begin():
                 repo = DailyReportRepository(session)
                 report = await repo.get_by_date(report_date)
+                trade_repo = TradeResultRepository(session)
+
+                # 장마감 리뷰 저장 시에도 숫자 집계를 항상 DB 기준으로 맞춘다.
+                opened_trades = await trade_repo.get_opened_by_date(report_date)
+                completed_trades = await trade_repo.get_completed_by_date(report_date)
+                sell_count = await trade_repo.get_sell_count_by_date(report_date)
+                all_open = await trade_repo.get_all_open()
+
+                buy_count = len(opened_trades)
+                win_count = sum(1 for t in completed_trades if t.is_win)
+                loss_count = sum(1 for t in completed_trades if not t.is_win)
+                total_pnl = sum(float(t.pnl or 0.0) for t in completed_trades)
+                open_position_count = len({t.stock_symbol for t in all_open}) if all_open else 0
+                total_orders = buy_count + sell_count
 
                 report_data = {
                     "total_cycles": today_cycles,
                     "total_analyses": today_analyses,
                     "total_recommendations": today_recommendations,
-                    "total_orders": today_orders,
+                    "total_orders": total_orders if total_orders > 0 else today_orders,
+                    "buy_count": buy_count,
+                    "sell_count": sell_count,
+                    "win_count": win_count,
+                    "loss_count": loss_count,
+                    "total_pnl": total_pnl,
+                    "open_position_count": open_position_count,
                     "market_summary": parsed.get("today_review", ""),
                     "performance_review": json.dumps(trade_eval, ensure_ascii=False),
                     "lessons_learned": feedback.get("system_improvement", ""),

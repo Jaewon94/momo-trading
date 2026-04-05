@@ -16,6 +16,7 @@ from core.database import get_async_db
 from repositories.agent_activity_repository import AgentActivityRepository
 from repositories.daily_report_repository import DailyReportRepository
 from repositories.trade_result_repository import TradeResultRepository
+from realtime.event_detector import event_detector
 from schemas.activity_schema import ActivityResponse, CycleResponse
 from schemas.common import SuccessResponse
 from schemas.daily_report_schema import DailyReportResponse
@@ -128,6 +129,56 @@ def _build_position_timeline(trades, activities):
     return timeline
 
 
+def _report_looks_empty(report) -> bool:
+    return (
+        int(getattr(report, "buy_count", 0) or 0) == 0
+        and int(getattr(report, "sell_count", 0) or 0) == 0
+        and float(getattr(report, "total_pnl", 0.0) or 0.0) == 0.0
+        and int(getattr(report, "open_position_count", 0) or 0) == 0
+    )
+
+
+async def _build_report_response(report, trade_repo: TradeResultRepository, open_symbols_cache: set[str] | None = None):
+    payload = DailyReportResponse.model_validate(report)
+    if not _report_looks_empty(report):
+        return payload
+
+    report_date = getattr(report, "report_date", None)
+    if not report_date:
+        return payload
+
+    opened = await trade_repo.get_opened_by_date(report_date)
+    completed = await trade_repo.get_completed_by_date(report_date)
+    trade_has_data = bool(opened or completed)
+    if not trade_has_data:
+        return payload
+
+    if open_symbols_cache is None:
+        all_open = await trade_repo.get_all_open()
+        open_symbols_cache = {
+            str(getattr(item, "stock_symbol", "")).strip()
+            for item in all_open
+            if str(getattr(item, "stock_symbol", "")).strip()
+        }
+
+    buy_count = len(opened)
+    sell_count = len(completed)
+    win_count = sum(1 for item in completed if bool(getattr(item, "is_win", False)))
+    loss_count = max(0, sell_count - win_count)
+    total_pnl = sum(float(getattr(item, "pnl", 0.0) or 0.0) for item in completed)
+    open_position_count = len(open_symbols_cache)
+
+    return payload.model_copy(update={
+        "buy_count": buy_count,
+        "sell_count": sell_count,
+        "win_count": win_count,
+        "loss_count": loss_count,
+        "total_pnl": total_pnl,
+        "open_position_count": open_position_count,
+        "total_orders": max(int(getattr(report, "total_orders", 0) or 0), buy_count + sell_count),
+    })
+
+
 def _get_cached_holdings():
     items = _position_holdings_cache.get("items")
     fetched_at = float(_position_holdings_cache.get("fetched_at") or 0.0)
@@ -235,18 +286,33 @@ async def get_reports(
     db: AsyncSession = Depends(get_async_db),
 ):
     """일일 리포트 목록"""
-    repo = DailyReportRepository(db)
-    reports = await repo.get_reports(limit)
-    return SuccessResponse(data=reports)
+    report_repo = DailyReportRepository(db)
+    trade_repo = TradeResultRepository(db)
+    reports = await report_repo.get_reports(limit)
+
+    all_open = await trade_repo.get_all_open()
+    open_symbols_cache = {
+        str(getattr(item, "stock_symbol", "")).strip()
+        for item in all_open
+        if str(getattr(item, "stock_symbol", "")).strip()
+    }
+    normalized = [
+        await _build_report_response(report, trade_repo, open_symbols_cache=open_symbols_cache)
+        for report in reports
+    ]
+    return SuccessResponse(data=normalized)
 
 
 # ── 특정 날짜 리포트 ──
 @router.get("/reports/latest", response_model=SuccessResponse[DailyReportResponse | None])
 async def get_latest_report(db: AsyncSession = Depends(get_async_db)):
     """최신 리포트"""
-    repo = DailyReportRepository(db)
-    report = await repo.get_latest()
-    return SuccessResponse(data=report)
+    report_repo = DailyReportRepository(db)
+    trade_repo = TradeResultRepository(db)
+    report = await report_repo.get_latest()
+    if not report:
+        return SuccessResponse(data=None)
+    return SuccessResponse(data=await _build_report_response(report, trade_repo))
 
 
 @router.get("/reports/{report_date}", response_model=SuccessResponse[DailyReportResponse | None])
@@ -255,10 +321,13 @@ async def get_report_by_date(
     db: AsyncSession = Depends(get_async_db),
 ):
     """특정 날짜 리포트"""
-    repo = DailyReportRepository(db)
+    report_repo = DailyReportRepository(db)
+    trade_repo = TradeResultRepository(db)
     d = date.fromisoformat(report_date)
-    report = await repo.get_by_date(d)
-    return SuccessResponse(data=report)
+    report = await report_repo.get_by_date(d)
+    if not report:
+        return SuccessResponse(data=None)
+    return SuccessResponse(data=await _build_report_response(report, trade_repo))
 
 
 # ── 매매 내역 ──
@@ -372,6 +441,18 @@ async def get_pending_orders():
         return SuccessResponse(data=[], message=f"미체결 주문 조회 실패: {str(e)[:100]}")
 
 
+@router.get("/events/radar")
+async def get_event_radar(
+    limit: int = Query(8, ge=1, le=50),
+):
+    snapshot = event_detector.get_radar_snapshot()
+    events = list(snapshot.get("events") or [])[:limit]
+    return SuccessResponse(data={
+        "summary": snapshot.get("summary") or {},
+        "events": events,
+    })
+
+
 @router.get("/positions/{symbol}")
 async def get_position_detail(
     symbol: str,
@@ -476,6 +557,10 @@ async def get_position_detail(
                 "completed_count": sum(1 for trade in trades if getattr(trade, "exit_at", None) is not None),
                 "realized_pnl": realized_pnl,
             },
+            "recent_events": [
+                item for item in (event_detector.get_radar_snapshot().get("events") or [])
+                if item.get("symbol") == normalized_symbol
+            ][:3],
             "settings_shortcut_tab": "strategy",
         },
         "timeline": timeline_slice,
@@ -713,13 +798,17 @@ async def trigger_agent_cycle():
 
 # ── 수동 일일 리포트 생성 ──
 @router.post("/reports/generate")
-async def generate_report(target_date: str | None = Query(None)):
+async def generate_report(
+    target_date: str | None = Query(None),
+    force: bool = Query(False, description="기존 리포트가 있어도 재생성"),
+):
     """수동 일일 리포트 생성"""
     from services.daily_report_service import daily_report_service
     d = date.fromisoformat(target_date) if target_date else None
     report = await daily_report_service.generate_daily_report(
         d,
         manual_provider_override=settings.MANUAL_LLM_PROVIDER,
+        force_regenerate=force,
     )
     if report:
         return SuccessResponse(

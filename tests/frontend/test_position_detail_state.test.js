@@ -194,4 +194,51 @@ describe("position_detail_state", () => {
     ]);
     expect(state.timelinePage.hasMore).toBe(false);
   });
+
+  test("builds recent event chips for the summary header", () => {
+    const state = buildPositionDetailState({
+      symbol: "215790",
+      name: "이노인스트루먼트",
+      summary: {
+        holding: null,
+        holding_status: "missing",
+        holding_message: "실시간 보유 목록에는 현재 보이지 않습니다.",
+        latest_signal: null,
+        trade_stats: {
+          total_trades: 2,
+          open_buy_count: 1,
+          completed_count: 1,
+          realized_pnl: 12000,
+        },
+        recent_events: [
+          {
+            event_label: "익절 도달",
+            direction: "SELL",
+            score: 92,
+            state: "ACTIONABLE",
+          },
+          {
+            event_label: "거래량 급증",
+            direction: "BUY",
+            score: 74,
+            state: "TRIGGERED",
+          },
+        ],
+      },
+      timeline: [],
+    });
+
+    expect(state.recentEventChips).toEqual([
+      {
+        label: "익절 도달",
+        tone: "sell",
+        meta: "92점 · ACTIONABLE",
+      },
+      {
+        label: "거래량 급증",
+        tone: "buy",
+        meta: "74점 · TRIGGERED",
+      },
+    ]);
+  });
 });

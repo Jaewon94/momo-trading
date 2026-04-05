@@ -31,6 +31,7 @@ import {
   normalizeActivitySymbol,
   resolveActivityStockMeta,
 } from './activity_state.js';
+import { buildEventRadarState } from './event_radar_state.js';
 import { bindDetailToggleHandlers, buildDetailToggleMarkup } from './detail_toggle.js';
 import { buildStrategyInsightsViewModel } from './strategy_insights_state.js';
 import { buildCatalogErrorCopy, buildCatalogMetaText } from './llm_catalog_state.js';
@@ -51,6 +52,7 @@ let activePositionSymbol = null;
 let activePositionDetailState = null;
 let activePositionTimelineFilter = 'all';
 let positionTimelineLoadingMore = false;
+let activeEventRadarFilter = 'all';
 const knownStockNames = {};
 const knownStockMeta = {};
 let paneLayout = {
@@ -74,6 +76,28 @@ const sidebarState = {
   system: true,
 };
 
+const FETCH_TIMEOUT_MS = 12000;
+
+async function fetchJson(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.message || `HTTP ${response.status}`);
+    }
+    return payload;
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw new Error('요청 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 // ── Init ──
 document.addEventListener('DOMContentLoaded', () => {
   bindDetailToggleHandlers(document);
@@ -86,11 +110,13 @@ document.addEventListener('DOMContentLoaded', () => {
   loadReportList();
   loadAccountInfo();
   loadLLMStatus();
+  loadEventRadar();
   connectSSE();
   loadTodayActivities();
   initSidebarSections();
   initWorkspaceLayout();
   setInterval(loadSystemStatus, 15000);
+  setInterval(loadEventRadar, 15000);
   setInterval(loadLLMUsage, 60000);
   accountPollTimer = setInterval(loadAccountInfo, 30000);
   document.addEventListener('keydown', handleSettingsModalKeydown);
@@ -188,10 +214,12 @@ function closePositionDetailModalOnBackdrop(event) {
 function renderPositionDetailLoading(symbol) {
   const titleEl = document.getElementById('position-detail-title');
   const summaryEl = document.getElementById('position-detail-summary');
+  const recentEventsEl = document.getElementById('position-detail-recent-events');
   const filterEl = document.getElementById('position-detail-timeline-filters');
   const timelineEl = document.getElementById('position-detail-timeline');
   if (titleEl) titleEl.textContent = `${symbol} 불러오는 중`;
   if (summaryEl) summaryEl.innerHTML = '<div class="text-sm text-gray-400">종목 요약을 불러오는 중...</div>';
+  if (recentEventsEl) recentEventsEl.innerHTML = '';
   if (filterEl) filterEl.innerHTML = '';
   if (timelineEl) timelineEl.innerHTML = '<div class="text-sm text-gray-500">타임라인을 불러오는 중...</div>';
   positionTimelineLoadingMore = false;
@@ -200,10 +228,12 @@ function renderPositionDetailLoading(symbol) {
 function renderPositionDetailError(symbol, message) {
   const titleEl = document.getElementById('position-detail-title');
   const summaryEl = document.getElementById('position-detail-summary');
+  const recentEventsEl = document.getElementById('position-detail-recent-events');
   const filterEl = document.getElementById('position-detail-timeline-filters');
   const timelineEl = document.getElementById('position-detail-timeline');
   if (titleEl) titleEl.textContent = `${symbol} 상세`;
   if (summaryEl) summaryEl.innerHTML = `<div class="text-sm text-red-300">${escapeHtml(message)}</div>`;
+  if (recentEventsEl) recentEventsEl.innerHTML = '';
   if (filterEl) filterEl.innerHTML = '';
   if (timelineEl) timelineEl.innerHTML = '<div class="text-sm text-gray-500">다시 시도해 주세요.</div>';
   positionTimelineLoadingMore = false;
@@ -338,6 +368,7 @@ function renderPositionDetailModal(payload) {
   positionTimelineLoadingMore = false;
   const titleEl = document.getElementById('position-detail-title');
   const summaryEl = document.getElementById('position-detail-summary');
+  const recentEventsEl = document.getElementById('position-detail-recent-events');
   const shortcutEl = document.getElementById('position-detail-settings-shortcut');
   if (titleEl) titleEl.textContent = state.title;
   if (shortcutEl) {
@@ -369,6 +400,16 @@ function renderPositionDetailModal(payload) {
         ${card.caption ? `<div class="position-summary-card-caption">${escapeHtml(card.caption)}</div>` : ''}
       </section>
     `).join('');
+  }
+  if (recentEventsEl) {
+    recentEventsEl.innerHTML = state.recentEventChips?.length
+      ? state.recentEventChips.map((chip) => `
+        <div class="position-recent-event-chip tone-${escapeHtml(chip.tone || 'buy')}">
+          <div class="position-recent-event-chip-label">${escapeHtml(chip.label)}</div>
+          <div class="position-recent-event-chip-meta">${escapeHtml(chip.meta)}</div>
+        </div>
+      `).join('')
+      : '<div class="text-xs text-gray-500">최근 이벤트 없음</div>';
   }
   syncPositionTimelineView();
 }
@@ -415,6 +456,93 @@ async function openPositionDetailModal(symbol) {
     renderPositionDetailError(symbol, err.message || '종목 상세 조회 실패');
   }
 }
+
+function filterEventRadarCards(cards, filterKey = 'all') {
+  if (filterKey === 'all') return cards;
+  if (filterKey === 'cooldown') {
+    return cards.filter((card) => String(card.state || '').toUpperCase() === 'COOLDOWN');
+  }
+  return cards.filter((card) => card.tone === filterKey);
+}
+
+function renderEventRadar(state) {
+  const summaryEl = document.getElementById('event-radar-summary');
+  const filtersEl = document.getElementById('event-radar-filters');
+  const listEl = document.getElementById('event-radar-list');
+  if (!summaryEl || !filtersEl || !listEl) return;
+
+  summaryEl.innerHTML = state.summaryPills.map((pill) => `
+    <div class="event-radar-summary-pill">
+      <div class="event-radar-summary-label">${escapeHtml(pill.label)}</div>
+      <div class="event-radar-summary-value">${escapeHtml(pill.value)}</div>
+    </div>
+  `).join('');
+
+  filtersEl.innerHTML = state.filters.map((filter) => `
+    <button
+      type="button"
+      class="event-radar-filter-chip ${filter.key === activeEventRadarFilter ? 'active' : ''}"
+      data-event-radar-filter="${escapeHtml(filter.key)}"
+    >
+      <span>${escapeHtml(filter.label)}</span>
+      <span class="event-radar-filter-count">${escapeHtml(String(filter.count))}</span>
+    </button>
+  `).join('');
+
+  const visibleCards = filterEventRadarCards(state.cards, activeEventRadarFilter);
+  if (!visibleCards.length) {
+    listEl.innerHTML = `<div class="event-radar-empty">${escapeHtml(state.emptyMessage)}</div>`;
+    return;
+  }
+
+  listEl.innerHTML = visibleCards.map((card) => `
+    <article class="event-radar-card tone-${escapeHtml(card.tone)}">
+      <div>
+        <div class="event-radar-eyebrow">${escapeHtml(card.event_type || 'EVENT')}</div>
+        <div class="event-radar-title">${escapeHtml(card.title)}</div>
+        <div class="event-radar-subtitle">${escapeHtml(card.subtitle)}</div>
+        <div class="event-radar-meta">
+          ${escapeHtml(card.metaLine || card.reason || '')}
+          ${card.metaLine && card.reason ? ' · ' : ''}
+          ${escapeHtml(card.reason && card.metaLine ? '' : card.reason || '')}
+        </div>
+      </div>
+      <div class="event-radar-side">
+        <div class="event-radar-score">${escapeHtml(card.scoreLabel)}</div>
+        <div class="event-radar-state">${escapeHtml(card.stateLabel)}</div>
+        <div class="text-[11px] text-gray-500">${escapeHtml(card.occurredTimeLabel || '')}</div>
+        ${card.cooldownLabel ? `<div class="event-radar-cooldown">${escapeHtml(card.cooldownLabel)}</div>` : ''}
+      </div>
+    </article>
+  `).join('');
+}
+
+async function loadEventRadar() {
+  const listEl = document.getElementById('event-radar-list');
+  if (listEl && !listEl.dataset.loading) {
+    listEl.dataset.loading = 'true';
+  }
+  try {
+    const json = await fetchJson(`${API}/events/radar?limit=8`);
+    const state = buildEventRadarState(json?.data || {});
+    renderEventRadar(state);
+  } catch (err) {
+    if (listEl) {
+      listEl.innerHTML = `<div class="event-radar-empty">이벤트 레이더 로드 실패: ${escapeHtml(err.message || '알 수 없는 오류')}</div>`;
+    }
+  } finally {
+    if (listEl) delete listEl.dataset.loading;
+  }
+}
+
+document.addEventListener('click', (event) => {
+  const filterChip = event.target.closest('[data-event-radar-filter]');
+  if (filterChip) {
+    activeEventRadarFilter = filterChip.dataset.eventRadarFilter || 'all';
+    loadEventRadar();
+    return;
+  }
+});
 
 document.addEventListener('click', (event) => {
   const button = event.target.closest('[data-position-timeline-filter]');
@@ -1615,6 +1743,8 @@ function switchView(view) {
     loadTodayActivities();
   } else if (view === 'today') {
     loadReport('today');
+  } else if (view === 'reports') {
+    loadReportsArchive();
   }
 }
 
@@ -1631,8 +1761,7 @@ async function loadTodayActivities() {
   cleanupStockCards();
 
   try {
-    const resp = await fetch(`${API}/activities?limit=2000`);
-    const json = await resp.json();
+    const json = await fetchJson(`${API}/activities?limit=2000`);
     container.innerHTML = '';
     activityCount = 0;
 
@@ -1666,7 +1795,7 @@ async function loadTodayActivities() {
       container.innerHTML = '<div class="text-center text-gray-500 text-sm py-8">아직 활동 기록이 없습니다</div>';
     }
   } catch (err) {
-    container.innerHTML = `<div class="text-center text-red-400 text-sm py-8">로드 실패: ${err.message}</div>`;
+    container.innerHTML = `<div class="text-center text-red-400 text-sm py-8">로드 실패: ${escapeHtml(err.message || '알 수 없는 오류')}</div>`;
   }
 }
 
@@ -1755,32 +1884,62 @@ async function loadReport(dateStr) {
   cleanupStockCards();
 
   try {
-    let url = `${API}/reports/latest`;
-    if (dateStr && dateStr !== 'today') url = `${API}/reports/${dateStr}`;
-    const resp = await fetch(url);
-    const json = await resp.json();
-    const report = json.data;
+    let report = null;
+    let reportDate = dateStr;
+
+    if (dateStr === 'today') {
+      reportDate = getKstDateString();
+      const todayJson = await fetchJson(`${API}/reports/${reportDate}`);
+      report = todayJson?.data || null;
+
+      if (!report) {
+        const latestJson = await fetchJson(`${API}/reports/latest`);
+        report = latestJson?.data || null;
+      }
+    } else {
+      const targetUrl = dateStr ? `${API}/reports/${dateStr}` : `${API}/reports/latest`;
+      const json = await fetchJson(targetUrl);
+      report = json?.data || null;
+      reportDate = report?.report_date || reportDate;
+    }
 
     if (!report) {
       container.innerHTML = '<div class="text-center text-gray-500 text-sm py-8">해당 날짜의 리포트가 없습니다</div>';
       if (dateStr && dateStr !== 'today') await loadDateActivities(dateStr, container);
       return;
     }
-    container.innerHTML = '';
-    container.appendChild(createReportCard(report));
+
+    let tradeSnapshot = null;
     if (report.report_date) {
-      await loadTradeHistory(report.report_date, container);
+      try {
+        const tradesJson = await fetchJson(`${API}/trades?target_date=${report.report_date}`);
+        tradeSnapshot = tradesJson?.data || null;
+      } catch (error) {
+        console.warn('Trade snapshot fallback load failed:', error);
+      }
+    }
+
+    const reportView = applyReportMetricsFallback(report, tradeSnapshot);
+    container.innerHTML = '';
+    container.appendChild(
+      createReportCard(reportView, {
+        requestedDate: dateStr,
+        resolvedDate: reportDate,
+        usingTradeFallback: Boolean(reportView?._fallback_metrics),
+      })
+    );
+    if (report.report_date) {
+      await loadTradeHistory(report.report_date, container, tradeSnapshot);
       await loadDateActivities(report.report_date, container);
     }
   } catch (err) {
-    container.innerHTML = `<div class="text-center text-red-400 text-sm py-8">리포트 로드 실패: ${err.message}</div>`;
+    container.innerHTML = `<div class="text-center text-red-400 text-sm py-8">리포트 로드 실패: ${escapeHtml(err.message || '알 수 없는 오류')}</div>`;
   }
 }
 
 async function loadDateActivities(dateStr, container) {
   try {
-    const resp = await fetch(`${API}/activities?target_date=${dateStr}&limit=500`);
-    const json = await resp.json();
+    const json = await fetchJson(`${API}/activities?target_date=${dateStr}&limit=500`);
     if (json.data && json.data.length) {
       const section = document.createElement('div');
       section.className = 'mt-4 border-t border-gray-800';
@@ -1806,33 +1965,129 @@ async function loadDateActivities(dateStr, container) {
   }
 }
 
-function createReportCard(report) {
+function toNumber(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function normalizeReportSummaryMetrics(report) {
+  if (!report) return report;
+  const buyCountRaw = toNumber(report.buy_count);
+  const sellCountRaw = toNumber(report.sell_count);
+  const openCountRaw = toNumber(report.open_position_count);
+  const totalOrders = toNumber(report.total_orders);
+  const unrealizedPnl = toNumber(report.unrealized_pnl);
+
+  let buyCount = buyCountRaw;
+  let sellCount = sellCountRaw;
+  let openCount = openCountRaw;
+
+  const metricsAreZero = buyCountRaw === 0 && sellCountRaw === 0 && openCountRaw === 0;
+  if (metricsAreZero && totalOrders > 0) {
+    // 집계값이 누락된 과거 리포트 방어: 최소한 주문 건수는 매수 건수로 노출
+    buyCount = Math.max(buyCount, totalOrders);
+  }
+  if (openCount === 0 && unrealizedPnl !== 0) {
+    // 미실현 손익이 존재하면 최소 1개 이상의 보유 포지션이 있다고 간주
+    openCount = 1;
+  }
+
+  return {
+    ...report,
+    buy_count: buyCount,
+    sell_count: sellCount,
+    open_position_count: openCount,
+  };
+}
+
+function applyReportMetricsFallback(report, tradeSnapshot) {
+  if (!report || !tradeSnapshot) return report;
+
+  const opened = Array.isArray(tradeSnapshot.opened) ? tradeSnapshot.opened : [];
+  const completed = Array.isArray(tradeSnapshot.completed) ? tradeSnapshot.completed : [];
+  const openPositions = Array.isArray(tradeSnapshot.open_positions) ? tradeSnapshot.open_positions : [];
+
+  const buyCount = opened.length;
+  const sellCount = completed.length;
+  const winCount = completed.filter((t) => Boolean(t?.is_win)).length;
+  const lossCount = completed.length - winCount;
+  const totalPnl = completed.reduce((sum, item) => sum + toNumber(item?.pnl), 0);
+  const openPositionCount = new Set(
+    openPositions
+      .map((item) => item?.stock_symbol)
+      .filter(Boolean)
+  ).size;
+
+  const reportLooksEmpty = (
+    toNumber(report.buy_count) === 0
+    && toNumber(report.sell_count) === 0
+    && toNumber(report.total_pnl) === 0
+    && toNumber(report.open_position_count) === 0
+  );
+
+  const tradeHasData = buyCount > 0 || sellCount > 0 || openPositionCount > 0;
+  if (!reportLooksEmpty || !tradeHasData) {
+    return report;
+  }
+
+  return {
+    ...report,
+    buy_count: buyCount,
+    sell_count: sellCount,
+    win_count: winCount,
+    loss_count: lossCount,
+    total_pnl: totalPnl,
+    open_position_count: openPositionCount,
+    total_orders: buyCount + sellCount,
+    _fallback_metrics: true,
+  };
+}
+
+function createReportCard(report, context = {}) {
+  const normalizedReport = normalizeReportSummaryMetrics(report);
   const div = document.createElement('div');
   div.className = 'bg-dark-700 rounded-xl p-5 border border-gray-600 mx-2 chat-bubble';
-  const winRate = (report.win_count + report.loss_count) > 0
-    ? ((report.win_count / (report.win_count + report.loss_count)) * 100).toFixed(1)
+  const winCount = toNumber(normalizedReport.win_count);
+  const lossCount = toNumber(normalizedReport.loss_count);
+  const totalPnl = toNumber(normalizedReport.total_pnl);
+  const unrealizedPnl = toNumber(normalizedReport.unrealized_pnl);
+  const totalCycles = toNumber(normalizedReport.total_cycles);
+  const totalAnalyses = toNumber(normalizedReport.total_analyses);
+  const buyCount = toNumber(normalizedReport.buy_count);
+  const sellCount = toNumber(normalizedReport.sell_count);
+  const openCount = toNumber(normalizedReport.open_position_count);
+  const reportDate = normalizedReport.report_date || context.resolvedDate || '-';
+  const requestedDate = context.requestedDate === 'today' ? getKstDateString() : (context.requestedDate || reportDate);
+  const isFallbackReport = context.requestedDate === 'today' && reportDate !== requestedDate;
+  const winRate = (winCount + lossCount) > 0
+    ? ((winCount / (winCount + lossCount)) * 100).toFixed(1)
     : '-';
-  const realizedPnlColor = report.total_pnl >= 0 ? 'text-green-400' : 'text-red-400';
-  const unrealizedPnl = report.unrealized_pnl || 0;
+  const realizedPnlColor = totalPnl >= 0 ? 'text-green-400' : 'text-red-400';
   const unrealizedPnlColor = unrealizedPnl >= 0 ? 'text-green-400' : 'text-red-400';
-  const buyCount = report.buy_count || 0;
-  const sellCount = report.sell_count || 0;
-  const openCount = report.open_position_count || 0;
   let topPicks = '';
   try {
-    const picks = JSON.parse(report.top_picks || '[]');
+    const picks = JSON.parse(normalizedReport.top_picks || '[]');
     topPicks = picks.map(p => typeof p === 'string' ? p : `${p.name || ''}(${p.symbol || ''})`).filter(Boolean).join(', ');
   } catch(e) {}
 
   div.innerHTML = `
-    <div class="text-lg font-bold text-white mb-4">📋 ${report.report_date} 일일 리포트</div>
+    <div class="flex items-start justify-between gap-3 mb-4">
+      <div>
+        <div class="text-lg font-bold text-white">📋 ${reportDate} 일일 리포트</div>
+        <div class="text-xs ${isFallbackReport ? 'text-yellow-400' : 'text-gray-500'} mt-1">
+          ${isFallbackReport ? `오늘(${requestedDate}) 리포트가 없어 최신 리포트(${reportDate})를 표시 중` : `조회 기준일: ${requestedDate}`}
+        </div>
+        ${context.usingTradeFallback ? '<div class="text-xs text-amber-300 mt-1">집계값 불일치로 오늘 거래 원본 기준 수치를 임시 보정해 표시 중</div>' : ''}
+      </div>
+      <button onclick="loadReport('${reportDate}')" class="text-[11px] text-gray-400 hover:text-gray-200 transition">다시 불러오기</button>
+    </div>
     <div class="grid grid-cols-3 gap-3 mb-3">
       <div class="bg-dark-900 rounded-lg p-3 text-center">
-        <div class="text-2xl font-bold text-blue-400">${report.total_cycles}</div>
+        <div class="text-2xl font-bold text-blue-400">${totalCycles}</div>
         <div class="text-xs text-gray-500">사이클</div>
       </div>
       <div class="bg-dark-900 rounded-lg p-3 text-center">
-        <div class="text-2xl font-bold text-purple-400">${report.total_analyses}</div>
+        <div class="text-2xl font-bold text-purple-400">${totalAnalyses}</div>
         <div class="text-xs text-gray-500">분석</div>
       </div>
       <div class="bg-dark-900 rounded-lg p-3 text-center">
@@ -1842,7 +2097,7 @@ function createReportCard(report) {
     </div>
     <div class="grid grid-cols-2 gap-3 mb-4">
       <div class="bg-dark-900 rounded-lg p-3 text-center">
-        <div class="text-xl font-bold ${realizedPnlColor}">${report.total_pnl >= 0 ? '+' : ''}${report.total_pnl.toLocaleString()}원</div>
+        <div class="text-xl font-bold ${realizedPnlColor}">${totalPnl >= 0 ? '+' : ''}${totalPnl.toLocaleString()}원</div>
         <div class="text-xs text-gray-500">실현 손익 (승률 ${winRate}%)</div>
       </div>
       <div class="bg-dark-900 rounded-lg p-3 text-center">
@@ -1850,25 +2105,25 @@ function createReportCard(report) {
         <div class="text-xs text-gray-500">미실현 손익</div>
       </div>
     </div>
-    ${report.market_summary ? `
+    ${normalizedReport.market_summary ? `
     <div class="mb-3">
       <div class="text-sm font-medium text-gray-300 mb-1">📝 오늘 리뷰</div>
-      <div class="text-sm text-gray-400 bg-dark-900 rounded p-3 whitespace-pre-wrap">${escapeHtml(report.market_summary)}</div>
+      <div class="text-sm text-gray-400 bg-dark-900 rounded p-3 whitespace-pre-wrap">${escapeHtml(normalizedReport.market_summary)}</div>
     </div>` : ''}
-    ${report.performance_review ? `
+    ${normalizedReport.performance_review ? `
     <div class="mb-3">
       <div class="text-sm font-medium text-gray-300 mb-1">📊 포트폴리오 진단</div>
-      <div class="text-sm text-gray-400 bg-dark-900 rounded p-3 whitespace-pre-wrap">${escapeHtml(report.performance_review)}</div>
+      <div class="text-sm text-gray-400 bg-dark-900 rounded p-3 whitespace-pre-wrap">${escapeHtml(normalizedReport.performance_review)}</div>
     </div>` : ''}
-    ${report.lessons_learned ? `
+    ${normalizedReport.lessons_learned ? `
     <div class="mb-3">
       <div class="text-sm font-medium text-gray-300 mb-1">🔮 내일 전망</div>
-      <div class="text-sm text-gray-400 bg-dark-900 rounded p-3 whitespace-pre-wrap">${escapeHtml(report.lessons_learned)}</div>
+      <div class="text-sm text-gray-400 bg-dark-900 rounded p-3 whitespace-pre-wrap">${escapeHtml(normalizedReport.lessons_learned)}</div>
     </div>` : ''}
-    ${report.next_day_plan ? `
+    ${normalizedReport.next_day_plan ? `
     <div class="mb-3">
       <div class="text-sm font-medium text-gray-300 mb-1">📈 액션 플랜</div>
-      <div class="text-sm text-gray-400 bg-dark-900 rounded p-3 whitespace-pre-wrap">${escapeHtml(report.next_day_plan)}</div>
+      <div class="text-sm text-gray-400 bg-dark-900 rounded p-3 whitespace-pre-wrap">${escapeHtml(normalizedReport.next_day_plan)}</div>
     </div>` : ''}
     ${topPicks ? `
     <div class="mb-2">
@@ -1878,11 +2133,62 @@ function createReportCard(report) {
   return div;
 }
 
-// ── Trade History ──
-async function loadTradeHistory(dateStr, container) {
+async function loadReportsArchive() {
+  const container = document.getElementById('chat-container');
+  container.innerHTML = '<div class="text-center text-gray-500 text-sm py-4">과거 리포트 불러오는 중...</div>';
+  cleanupStockCards();
   try {
-    const resp = await fetch(`${API}/trades?target_date=${dateStr}`);
-    const json = await resp.json();
+    const json = await fetchJson(`${API}/reports?limit=90`);
+    const reports = json?.data || [];
+    if (!reports.length) {
+      container.innerHTML = '<div class="text-center text-gray-500 text-sm py-8">저장된 리포트가 없습니다</div>';
+      return;
+    }
+
+    const listMarkup = reports.map((rawReport) => {
+      const report = normalizeReportSummaryMetrics(rawReport);
+      return `
+      <button
+        type="button"
+        class="w-full rounded-xl border border-gray-700 bg-dark-900/50 p-4 text-left hover:border-blue-500/60 hover:bg-dark-900 transition"
+        data-archive-report-date="${escapeHtml(report.report_date)}"
+      >
+        <div class="flex items-center justify-between gap-3">
+          <div class="text-sm font-medium text-white">${escapeHtml(report.report_date)}</div>
+          <div class="text-xs text-gray-500">상세 보기</div>
+        </div>
+        <div class="mt-2 text-xs text-gray-400">
+          실현손익 ${toNumber(report.total_pnl).toLocaleString()}원 ·
+          매수 ${toNumber(report.buy_count)}건 / 매도 ${toNumber(report.sell_count)}건 ·
+          보유 ${toNumber(report.open_position_count)}종목
+        </div>
+      </button>
+    `;
+    }).join('');
+
+    container.innerHTML = `
+      <div class="mx-2 rounded-xl border border-gray-700 bg-dark-700/80 p-4 chat-bubble">
+        <div class="text-lg font-bold text-white">🗂 과거 리포트 아카이브</div>
+        <div class="text-xs text-gray-500 mt-1">날짜를 눌러 해당 리포트를 중앙 화면에서 확인합니다.</div>
+      </div>
+      <div class="mx-2 mt-3 grid gap-2">${listMarkup}</div>
+    `;
+
+    container.querySelectorAll('[data-archive-report-date]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const date = button.dataset.archiveReportDate;
+        if (date) switchToReport(date);
+      });
+    });
+  } catch (err) {
+    container.innerHTML = `<div class="text-center text-red-400 text-sm py-8">리포트 아카이브 로드 실패: ${escapeHtml(err.message || '알 수 없는 오류')}</div>`;
+  }
+}
+
+// ── Trade History ──
+async function loadTradeHistory(dateStr, container, prefetched = null) {
+  try {
+    const json = prefetched ? { data: prefetched } : await fetchJson(`${API}/trades?target_date=${dateStr}`);
     const data = json.data;
     if (!data) return;
 
@@ -2659,21 +2965,10 @@ async function loadSystemStatus() {
 // ── Report List ──
 async function loadReportList() {
   try {
-    const resp = await fetch(`${API}/reports?limit=10`);
-    const json = await resp.json();
-    const listEl = document.getElementById('report-list');
-    listEl.innerHTML = '';
-    if (json.data && json.data.length) {
-      json.data.forEach(r => {
-        const btn = document.createElement('button');
-        btn.className = 'w-full text-left px-3 py-1 text-xs text-gray-400 hover:bg-dark-700 rounded';
-        btn.textContent = r.report_date;
-        btn.onclick = () => switchToReport(r.report_date);
-        listEl.appendChild(btn);
-      });
-    } else {
-      listEl.innerHTML = '<div class="px-3 text-xs text-gray-600">리포트 없음</div>';
-    }
+    const json = await fetchJson(`${API}/reports?limit=200`);
+    const countEl = document.getElementById('report-archive-count');
+    const count = Array.isArray(json?.data) ? json.data.length : 0;
+    if (countEl) countEl.textContent = `(${count})`;
   } catch (err) {
     console.error('Report list error:', err);
   }
@@ -2726,6 +3021,20 @@ function formatDateTime(ts) {
       hour12: false,
     });
   } catch { return ts; }
+}
+
+function getKstDateString() {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Seoul',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    return formatter.format(new Date());
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
 }
 
 function formatInteger(value) {
@@ -2942,6 +3251,7 @@ Object.assign(window, {
   generateReport,
   loadLLMUsage,
   loadTodayActivities,
+  loadEventRadar,
   refreshLLMCatalog,
   refreshRuntimePanels,
   reconcilePendingTrades,
