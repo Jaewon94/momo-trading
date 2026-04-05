@@ -25,6 +25,7 @@ import {
   buildCodexUsageCopy,
 } from './llm_usage_state.js';
 import { buildTradePanelState, buildTradeSummaryCounts } from './trade_state.js';
+import { buildTradeCenterState } from './trade_center_state.js';
 import {
   buildActivityIdentityLabel,
   formatActivityHeadline,
@@ -53,6 +54,8 @@ let activePositionDetailState = null;
 let activePositionTimelineFilter = 'all';
 let positionTimelineLoadingMore = false;
 let activeEventRadarFilter = 'all';
+let activeTradeCenterTab = 'pending';
+let latestAccountSnapshot = null;
 const knownStockNames = {};
 const knownStockMeta = {};
 let paneLayout = {
@@ -545,6 +548,30 @@ document.addEventListener('click', (event) => {
 });
 
 document.addEventListener('click', (event) => {
+  const tabButton = event.target.closest('[data-trade-center-tab]');
+  if (!tabButton) return;
+  activeTradeCenterTab = tabButton.dataset.tradeCenterTab || 'pending';
+  loadTradesCenterView();
+});
+
+document.addEventListener('click', async (event) => {
+  const reconcileButton = event.target.closest('#trade-center-reconcile-button');
+  if (!reconcileButton) return;
+  await reconcilePendingTrades(reconcileButton);
+  await loadAccountInfo();
+  if (currentView === 'trades-center') {
+    loadTradesCenterView();
+  }
+});
+
+document.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-trade-center-open-symbol]');
+  if (!button) return;
+  const symbol = button.dataset.tradeCenterOpenSymbol;
+  if (symbol) openPositionDetailModal(symbol);
+});
+
+document.addEventListener('click', (event) => {
   const button = event.target.closest('[data-position-timeline-filter]');
   if (!button || !activePositionDetailState) return;
   activePositionTimelineFilter = button.dataset.positionTimelineFilter || 'all';
@@ -825,12 +852,21 @@ async function loadAccountInfo() {
     const holdJson = await holdResp.json();
     const pendJson = await pendResp.json();
     const tradeJson = await tradeResp.json();
+    latestAccountSnapshot = {
+      balance: balJson?.data || null,
+      holdings: holdJson?.data || [],
+      pendingOrders: pendJson?.data || [],
+      trades: tradeJson?.data || {},
+    };
     primeKnownStockMeta(holdJson.data, tradeJson.data, pendJson.data);
     renderAccountBalance(balJson.data);
     renderAccountHoldings(holdJson.data);
     renderPendingOrders(pendJson.data);
     renderTodayTrades(tradeJson.data);
     renderPortfolioQuickStats(balJson.data, holdJson.data, pendJson.data, tradeJson.data);
+    if (currentView === 'trades-center') {
+      loadTradesCenterView(latestAccountSnapshot);
+    }
   } catch (err) {
     console.error('Account info error:', err);
     const el = document.getElementById('account-info');
@@ -1068,52 +1104,194 @@ function renderTodayTrades(data) {
   if (countEl) countEl.textContent = String(todayCount);
 
   if (!hasContent) {
-    el.innerHTML = '<div class="text-gray-600 text-xs">오늘 매매 내역 없음</div>';
+    el.innerHTML = '<div class="text-gray-600 text-xs">오늘 거래 없음 · 거래 센터에서 상세 확인</div>';
     return;
   }
 
-  const sections = [];
-
-  if (completed.length) {
-    sections.push(`
-      <div>
-        <div class="trade-mini-group-title">오늘 청산</div>
-        ${completed.map((trade) => renderCompactTradeCard(trade, 'completed')).join('')}
+  el.innerHTML = `
+    <div class="trade-mini-card">
+      <div class="flex items-center justify-between">
+        <span class="text-gray-400">오늘 진입</span>
+        <span class="text-blue-300 font-semibold">${opened.length}건</span>
       </div>
-    `);
-  }
+      <div class="flex items-center justify-between mt-1">
+        <span class="text-gray-400">오늘 청산</span>
+        <span class="text-green-300 font-semibold">${completed.length}건</span>
+      </div>
+      <div class="flex items-center justify-between mt-1">
+        <span class="text-gray-400">체결 확인 대기</span>
+        <span class="text-yellow-300 font-semibold">${pendingConfirms.length}건</span>
+      </div>
+      <div class="flex items-center justify-between mt-1">
+        <span class="text-gray-400">현재 보유</span>
+        <span class="text-purple-300 font-semibold">${new Set(openPositions.map((item) => item.stock_symbol).filter(Boolean)).size}종목</span>
+      </div>
+      <div class="text-[11px] text-gray-500 mt-2">상세 목록은 거래 센터에서 확인</div>
+    </div>
+  `;
+}
 
-  if (pendingConfirms.length) {
-    sections.push(`
-      <div>
-        <div class="trade-mini-group-title flex items-center justify-between gap-2">
-          <span>확인 대기</span>
-          <span class="text-[11px] text-yellow-400">PENDING_CONFIRM</span>
+async function fetchTradeCenterSnapshot() {
+  const [balJson, holdJson, pendJson, tradeJson] = await Promise.all([
+    fetchJson(`${API}/account/balance`),
+    fetchJson(`${API}/account/holdings`),
+    fetchJson(`${API}/account/pending-orders`),
+    fetchJson(`${API}/trades`),
+  ]);
+
+  return {
+    balance: balJson?.data || null,
+    holdings: holdJson?.data || [],
+    pendingOrders: pendJson?.data || [],
+    trades: tradeJson?.data || {},
+  };
+}
+
+function renderTradeCenterCard(item, kind) {
+  if (kind === 'pending-confirm') {
+    return `
+      <button type="button" class="trade-center-card tone-pending" data-trade-center-open-symbol="${escapeHtml(item.stock_symbol || '')}">
+        <div class="flex items-center justify-between gap-2">
+          <div class="text-sm font-medium text-white truncate">${escapeHtml(item.stock_name || item.stock_symbol || '-')}</div>
+          <div class="text-xs text-yellow-300">체결 확인 대기</div>
         </div>
-        ${pendingConfirms.map((trade) => renderCompactTradeCard(trade, 'pending')).join('')}
-      </div>
-    `);
+        <div class="trade-center-card-meta">${escapeHtml(item.stock_symbol || '-')} · ${escapeHtml(String(item.quantity || 0))}주</div>
+      </button>
+    `;
   }
 
-  if (opened.length) {
-    sections.push(`
-      <div>
-        <div class="trade-mini-group-title">오늘 진입</div>
-        ${opened.map((trade) => renderCompactTradeCard(trade, 'opened')).join('')}
-      </div>
-    `);
+  if (kind === 'pending-order') {
+    return `
+      <button type="button" class="trade-center-card tone-pending" data-trade-center-open-symbol="${escapeHtml(item.symbol || '')}">
+        <div class="flex items-center justify-between gap-2">
+          <div class="text-sm font-medium text-white truncate">${escapeHtml(item.name || item.symbol || '-')}</div>
+          <div class="text-xs text-yellow-300">${escapeHtml(item.side || '-')}</div>
+        </div>
+        <div class="trade-center-card-meta">${escapeHtml(item.symbol || '-')} · 미체결 ${escapeHtml(String(item.remaining_qty || 0))}주 / ${escapeHtml(String(item.order_qty || 0))}주</div>
+      </button>
+    `;
   }
 
-  if (openPositions.length) {
-    sections.push(`
-      <div>
-        <div class="trade-mini-group-title">보유 포지션</div>
-        ${renderOpenPositionCards(openPositions)}
-      </div>
-    `);
+  if (kind === 'opened') {
+    return `
+      <button type="button" class="trade-center-card tone-opened" data-trade-center-open-symbol="${escapeHtml(item.stock_symbol || '')}">
+        <div class="flex items-center justify-between gap-2">
+          <div class="text-sm font-medium text-white truncate">${escapeHtml(item.stock_name || item.stock_symbol || '-')}</div>
+          <div class="text-xs text-blue-300">${escapeHtml(String(item.quantity || 0))}주</div>
+        </div>
+        <div class="trade-center-card-meta">${escapeHtml(item.stock_symbol || '-')} · 진입가 ${Number(item.entry_price || 0).toLocaleString()}원</div>
+      </button>
+    `;
   }
 
-  el.innerHTML = sections.join('');
+  if (kind === 'completed') {
+    const pnl = Number(item.pnl || 0);
+    const tone = pnl >= 0 ? 'tone-completed-win' : 'tone-completed-loss';
+    const pnlClass = pnl >= 0 ? 'text-green-300' : 'text-red-300';
+    return `
+      <button type="button" class="trade-center-card ${tone}" data-trade-center-open-symbol="${escapeHtml(item.stock_symbol || '')}">
+        <div class="flex items-center justify-between gap-2">
+          <div class="text-sm font-medium text-white truncate">${escapeHtml(item.stock_name || item.stock_symbol || '-')}</div>
+          <div class="text-sm font-semibold ${pnlClass}">${pnl >= 0 ? '+' : ''}${formatKRW(pnl)}</div>
+        </div>
+        <div class="trade-center-card-meta">${escapeHtml(item.stock_symbol || '-')} · ${Number(item.return_pct || 0).toFixed(2)}%</div>
+      </button>
+    `;
+  }
+
+  return `
+    <button type="button" class="trade-center-card tone-position" data-trade-center-open-symbol="${escapeHtml(item.symbol || '')}">
+      <div class="flex items-center justify-between gap-2">
+        <div class="text-sm font-medium text-white truncate">${escapeHtml(item.name || item.symbol || '-')}</div>
+        <div class="text-xs text-purple-300">${escapeHtml(String(item.quantity || 0))}주</div>
+      </div>
+      <div class="trade-center-card-meta">
+        ${escapeHtml(item.symbol || '-')} · 평단 ${Number(item.avgPrice || 0).toLocaleString()}원 · 손익 ${Number(item.pnl || 0) >= 0 ? '+' : ''}${formatKRW(Number(item.pnl || 0))}
+      </div>
+    </button>
+  `;
+}
+
+function renderTradeCenterSection(state, tabKey) {
+  const section = state.sections[tabKey];
+  if (!section) {
+    return '<div class="trade-center-empty">데이터가 없습니다.</div>';
+  }
+
+  if (tabKey === 'pending') {
+    const cards = [
+      ...section.pendingConfirms.map((item) => renderTradeCenterCard(item, 'pending-confirm')),
+      ...section.pendingOrders.map((item) => renderTradeCenterCard(item, 'pending-order')),
+    ];
+    return cards.length
+      ? `<div class="trade-center-list">${cards.join('')}</div>`
+      : '<div class="trade-center-empty">대기 중인 거래가 없습니다.</div>';
+  }
+
+  if (tabKey === 'opened') {
+    return section.length
+      ? `<div class="trade-center-list">${section.map((item) => renderTradeCenterCard(item, 'opened')).join('')}</div>`
+      : '<div class="trade-center-empty">오늘 진입 거래가 없습니다.</div>';
+  }
+
+  if (tabKey === 'completed') {
+    return section.length
+      ? `<div class="trade-center-list">${section.map((item) => renderTradeCenterCard(item, 'completed')).join('')}</div>`
+      : '<div class="trade-center-empty">오늘 청산 거래가 없습니다.</div>';
+  }
+
+  return section.length
+    ? `<div class="trade-center-list">${section.map((item) => renderTradeCenterCard(item, 'positions')).join('')}</div>`
+    : '<div class="trade-center-empty">현재 보유 포지션이 없습니다.</div>';
+}
+
+async function loadTradesCenterView(snapshot = null) {
+  const container = document.getElementById('chat-container');
+  if (!container) return;
+  container.innerHTML = '<div class="text-center text-gray-500 text-sm py-4">거래 센터 불러오는 중...</div>';
+  cleanupStockCards();
+
+  try {
+    const data = snapshot || latestAccountSnapshot || await fetchTradeCenterSnapshot();
+    latestAccountSnapshot = data;
+    const state = buildTradeCenterState(data);
+    const tabKeys = state.tabs.map((tab) => tab.key);
+    if (!tabKeys.includes(activeTradeCenterTab)) {
+      activeTradeCenterTab = state.tabs[0]?.key || 'pending';
+    }
+
+    const activeTabLabel = state.tabs.find((tab) => tab.key === activeTradeCenterTab)?.label || '';
+    container.innerHTML = `
+      <div class="mx-2 rounded-xl border border-gray-700 bg-dark-700/80 p-4 chat-bubble">
+        <div class="text-lg font-bold text-white">📂 거래 센터</div>
+        <div class="text-xs text-gray-500 mt-1">요약은 우측 사이드바, 상세 추적/점검은 여기서 처리합니다.</div>
+        <div class="trade-center-kpi-grid mt-3">
+          ${state.kpis.map((kpi) => `
+            <div class="trade-center-kpi">
+              <div class="trade-center-kpi-label">${escapeHtml(kpi.label)}</div>
+              <div class="trade-center-kpi-value">${escapeHtml(String(kpi.value))}</div>
+            </div>
+          `).join('')}
+        </div>
+        <div class="trade-center-tabs">
+          ${state.tabs.map((tab) => `
+            <button type="button" class="trade-center-tab ${tab.key === activeTradeCenterTab ? 'active' : ''}" data-trade-center-tab="${escapeHtml(tab.key)}">
+              ${escapeHtml(tab.label)} (${escapeHtml(String(tab.count))})
+            </button>
+          `).join('')}
+        </div>
+        <div class="trade-center-toolbar">
+          <button type="button" id="trade-center-reconcile-button" class="trade-center-action">확인 대기 복구</button>
+        </div>
+        <div class="text-xs text-gray-500 mt-2">현재 탭: ${escapeHtml(activeTabLabel)}</div>
+      </div>
+      <div class="mx-2 mt-3">
+        ${renderTradeCenterSection(state, activeTradeCenterTab)}
+      </div>
+    `;
+  } catch (err) {
+    container.innerHTML = `<div class="text-center text-red-400 text-sm py-8">거래 센터 로드 실패: ${escapeHtml(err.message || '알 수 없는 오류')}</div>`;
+  }
 }
 
 function renderCompactTradeCard(trade, type) {
@@ -1745,6 +1923,8 @@ function switchView(view) {
     loadReport('today');
   } else if (view === 'reports') {
     loadReportsArchive();
+  } else if (view === 'trades-center') {
+    loadTradesCenterView();
   }
 }
 
@@ -2306,8 +2486,8 @@ function renderTradeCard(t, type) {
   </div>`;
 }
 
-async function reconcilePendingTrades() {
-  const button = document.getElementById('reconcile-pending-trades');
+async function reconcilePendingTrades(triggerButton = null) {
+  const button = triggerButton || document.getElementById('trade-center-reconcile-button') || document.getElementById('reconcile-pending-trades');
   const originalText = button?.textContent || '확인 대기 복구';
 
   try {

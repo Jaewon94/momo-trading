@@ -481,6 +481,43 @@
     .trade-mini-card.completed-loss { border-left: 3px solid #f87171; }
     .trade-mini-card.opened { border-left: 3px solid #60a5fa; }
     .trade-mini-card.position { border-left: 3px solid #a78bfa; }
+    .trade-center-kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+    .trade-center-kpi {
+      border: 1px solid #374151; border-radius: 12px; background: rgba(15,16,33,0.72);
+      padding: 12px;
+    }
+    .trade-center-kpi-label { font-size: 11px; color: #94a3b8; }
+    .trade-center-kpi-value { margin-top: 6px; font-size: 20px; font-weight: 700; color: #f8fafc; }
+    .trade-center-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .trade-center-tab {
+      border: 1px solid #374151; border-radius: 999px; background: rgba(15,16,33,0.58);
+      color: #cbd5e1; font-size: 12px; padding: 6px 10px; transition: 0.15s ease;
+    }
+    .trade-center-tab.active { border-color: rgba(96,165,250,0.76); background: rgba(37,99,235,0.2); color: #dbeafe; }
+    .trade-center-list { margin-top: 14px; display: grid; gap: 8px; }
+    .trade-center-card {
+      width: 100%; text-align: left;
+      border: 1px solid #374151; border-radius: 12px; background: rgba(15,16,33,0.72);
+      padding: 12px; transition: 0.15s ease;
+    }
+    .trade-center-card:hover { border-color: rgba(96,165,250,0.6); background: rgba(15,23,42,0.85); }
+    .trade-center-card.tone-pending { border-left: 3px solid #fbbf24; }
+    .trade-center-card.tone-opened { border-left: 3px solid #60a5fa; }
+    .trade-center-card.tone-completed-win { border-left: 3px solid #34d399; }
+    .trade-center-card.tone-completed-loss { border-left: 3px solid #f87171; }
+    .trade-center-card.tone-position { border-left: 3px solid #a78bfa; }
+    .trade-center-card-meta { font-size: 11px; color: #94a3b8; margin-top: 4px; }
+    .trade-center-empty {
+      border: 1px dashed #475569; border-radius: 12px; background: rgba(15,16,33,0.42);
+      padding: 16px; color: #64748b; font-size: 13px;
+    }
+    .trade-center-toolbar { margin-top: 10px; display: flex; justify-content: flex-end; gap: 8px; }
+    .trade-center-action {
+      border: 1px solid rgba(251,191,36,0.5); border-radius: 10px;
+      background: rgba(113,63,18,0.25); color: #fde68a; font-size: 11px; padding: 6px 10px;
+      transition: 0.15s ease;
+    }
+    .trade-center-action:hover { border-color: rgba(251,191,36,0.75); background: rgba(113,63,18,0.35); }
     .sidebar-action-dock {
       border-top: 1px solid rgba(71,85,105,0.9);
       background:
@@ -529,6 +566,7 @@
       #admin-center-pane { min-height: 46vh; }
       .pane-collapsed { width: auto !important; }
       .pane-collapsed .pane-header, .pane-collapsed .pane-scroll, .pane-collapsed > .p-3 { display: block; }
+      .trade-center-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
 
     /* Stock confidence mini-bar */
@@ -581,6 +619,9 @@
           </button>
           <button onclick="switchView('reports')" id="nav-reports" class="nav-btn w-full text-left px-3 py-2 rounded-lg text-sm text-gray-400 hover:bg-dark-700">
             &#x1f5c3;&#xfe0f; &#xacfc;&#xac70; &#xb9ac;&#xd3ec;&#xd2b8; &#xc544;&#xce74;&#xc774;&#xbe0c; <span id="report-archive-count" class="ml-1 text-[11px] text-gray-500">(0)</span>
+          </button>
+          <button onclick="switchView('trades-center')" id="nav-trades-center" class="nav-btn w-full text-left px-3 py-2 rounded-lg text-sm text-gray-400 hover:bg-dark-700">
+            &#x1f4bc; &#xac70;&#xb798; &#xc13c;&#xd130;
           </button>
         </nav>
 
@@ -881,15 +922,15 @@
 
           <div class="sidebar-section" id="section-trades">
             <div class="sidebar-section-header" onclick="toggleSidebarSection('trades')">
-              <span>&#x2705; &#xc624;&#xb298; &#xb9e4;&#xb9e4;/&#xccb4;&#xacb0; <span id="trades-count" class="ml-1 px-1.5 py-0.5 rounded-full bg-blue-900/40 text-blue-300 text-xs">0</span></span>
+              <span>&#x2705; &#xc624;&#xb298; &#xac70;&#xb798; &#xc694;&#xc57d; <span id="trades-count" class="ml-1 px-1.5 py-0.5 rounded-full bg-blue-900/40 text-blue-300 text-xs">0</span></span>
               <span class="sidebar-section-arrow" id="arrow-trades">&#x25BC;</span>
             </div>
             <div class="sidebar-section-body open" id="body-trades">
               <div class="px-3 pb-2">
                 <div class="mb-2 flex justify-end">
-                  <button id="reconcile-pending-trades" onclick="reconcilePendingTrades()"
-                    class="rounded-md border border-yellow-700/60 bg-yellow-900/20 px-2 py-1 text-[11px] text-yellow-200 transition hover:border-yellow-600 hover:bg-yellow-900/30">
-                    확인 대기 복구
+                  <button onclick="switchView('trades-center')"
+                    class="rounded-md border border-blue-700/60 bg-blue-900/20 px-2 py-1 text-[11px] text-blue-200 transition hover:border-blue-600 hover:bg-blue-900/30">
+                    거래 센터 열기
                   </button>
                 </div>
                 <div id="today-trades-info" class="text-xs space-y-2"></div>
