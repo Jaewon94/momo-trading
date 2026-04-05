@@ -87,6 +87,118 @@ get_listening_pids() {
     "$LSOF_BIN" -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true
 }
 
+get_child_pids() {
+    local parent_pid="$1"
+
+    if ! has_command ps; then
+        return
+    fi
+
+    ps -o pid= --ppid "$parent_pid" 2>/dev/null | awk '{print $1}' || true
+}
+
+get_parent_pid() {
+    local pid="$1"
+
+    if ! has_command ps; then
+        return
+    fi
+
+    ps -o ppid= -p "$pid" 2>/dev/null | awk '{print $1}' || true
+}
+
+kill_process_tree() {
+    local pid="$1"
+    local child
+
+    for child in $(get_child_pids "$pid"); do
+        kill_process_tree "$child"
+    done
+
+    if kill -0 "$pid" 2>/dev/null; then
+        kill "$pid" 2>/dev/null || true
+    fi
+}
+
+kill_parent_chain() {
+    local pid="$1"
+    local parent
+
+    parent="$(get_parent_pid "$pid")"
+    while [ -n "$parent" ] && [ "$parent" != "1" ] && [ "$parent" != "0" ]; do
+        if ! kill -0 "$parent" 2>/dev/null; then
+            break
+        fi
+        if ! is_momo_process "$parent"; then
+            break
+        fi
+        kill "$parent" 2>/dev/null || true
+        parent="$(get_parent_pid "$parent")"
+    done
+}
+
+pid_command_line() {
+    local pid="$1"
+
+    if ! has_command ps; then
+        return
+    fi
+
+    ps -o command= -p "$pid" 2>/dev/null || true
+}
+
+is_momo_process() {
+    local pid="$1"
+    local command_line
+
+    command_line="$(pid_command_line "$pid")"
+    if [ -z "$command_line" ]; then
+        return 1
+    fi
+
+    case "$command_line" in
+        *"uvicorn main:app"*|*"scripts/dev/start.sh"*)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+stop_momo_processes() {
+    local stopped=0
+    local pid
+
+    if [ -f "$PID_FILE" ]; then
+        pid="$(cat "$PID_FILE")"
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "🛑 momo-trading 종료 (PID: $pid)"
+            kill_process_tree "$pid"
+            stopped=1
+        else
+            echo "프로세스가 이미 종료됨 (stale PID: $pid)"
+        fi
+        rm -f "$PID_FILE"
+    fi
+
+    for pid in $(get_listening_pids "$PORT"); do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            continue
+        fi
+        if is_momo_process "$pid"; then
+            echo "🧹 포트 점유 잔여 프로세스 정리 (PID: $pid)"
+            kill_parent_chain "$pid"
+            kill_process_tree "$pid"
+            stopped=1
+        fi
+    done
+
+    if [ "$stopped" -eq 0 ]; then
+        echo "실행 중인 프로세스 없음"
+    fi
+}
+
 port_is_listening() {
     local port="$1"
     [ -n "$(get_listening_pids "$port")" ]
@@ -149,19 +261,7 @@ mkdir -p "$APP_DIR/runtime/data"
 
 case "${1:-}" in
     stop)
-        if [ -f "$PID_FILE" ]; then
-            PID=$(cat "$PID_FILE")
-            if kill -0 "$PID" 2>/dev/null; then
-                echo "🛑 momo-trading 종료 (PID: $PID)"
-                kill "$PID"
-                rm -f "$PID_FILE"
-            else
-                echo "프로세스가 이미 종료됨 (stale PID: $PID)"
-                rm -f "$PID_FILE"
-            fi
-        else
-            echo "실행 중인 프로세스 없음"
-        fi
+        stop_momo_processes
         ;;
 
     status)
