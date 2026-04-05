@@ -37,6 +37,13 @@
   - 호라이즌별 비용 게이트(예상 비용 대비 기대엣지)
   - 호라이즌별 손절/익절/트레일링 기본값 보정
 
+6. 수익 검증 리포트 API
+- `GET /api/v1/admin/performance/summary?days=30`
+  - overall KPI, 전략별/호라이즌별 KPI, 리스크 차단 횟수
+- `GET /api/v1/admin/performance/periodic?period=weekly|monthly&size=8`
+  - 주간/월간 버킷 기반 성과 추이
+- KPI: trade_count, win_rate, expectancy, profit_factor, total_pnl, avg_return_pct, max_drawdown
+
 ## 기대 효과
 - 급락일 손실 꼬리 위험 감소.
 - 체결 품질 편차(슬리피지) 완화.

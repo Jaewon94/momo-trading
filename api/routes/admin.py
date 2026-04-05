@@ -25,6 +25,7 @@ from schemas.qa_schema import QARequest, QAResponse
 from scheduler.jobs import portfolio_sync_job
 from services.activity_logger import activity_logger
 from services.llm_usage_service import llm_usage_service
+from services.performance_reporting_service import performance_reporting_service
 from strategy.risk_appetite_insights import build_strategy_insights
 from trading.account_manager import account_manager
 from trading.broker_factory import get_broker_adapter
@@ -328,6 +329,34 @@ async def get_report_by_date(
     if not report:
         return SuccessResponse(data=None)
     return SuccessResponse(data=await _build_report_response(report, trade_repo))
+
+
+@router.get("/performance/summary")
+async def get_performance_summary(
+    days: int = Query(30, ge=1, le=365),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """수익 검증용 성과 요약 (전략/호라이즌/KPI/리스크차단)"""
+    data = await performance_reporting_service.build_summary(db, days=days)
+    return SuccessResponse(data=data)
+
+
+@router.get("/performance/periodic")
+async def get_performance_periodic(
+    period: str = Query("weekly"),
+    size: int = Query(8, ge=1, le=24),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """주간/월간 버킷 성과 요약"""
+    normalized = period.lower()
+    if normalized not in {"weekly", "monthly"}:
+        raise HTTPException(status_code=400, detail="period must be weekly or monthly")
+    data = await performance_reporting_service.build_periodic_summary(
+        db,
+        period=normalized,
+        size=size,
+    )
+    return SuccessResponse(data=data)
 
 
 # ── 매매 내역 ──

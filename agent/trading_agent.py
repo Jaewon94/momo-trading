@@ -943,6 +943,7 @@ class TradingAgent:
         )
 
         # 실행 비용 대비 기대수익(엣지) 게이트
+        gate_eval = None
         if signal.action == SignalAction.BUY:
             gate_eval = self._evaluate_cost_gate(
                 signal=signal,
@@ -1034,6 +1035,10 @@ class TradingAgent:
             "market_regime": self._market_regime,
             "strategy_type": strategy_type,
             "stock_name": name,
+            "trade_horizon": (signal.metadata or {}).get("trade_horizon"),
+            "estimated_edge_bps": gate_eval.get("edge_bps") if gate_eval else None,
+            "estimated_cost_bps": gate_eval.get("cost_bps") if gate_eval else None,
+            "cost_gate_ratio": gate_eval.get("min_ratio") if gate_eval else None,
         }
 
         exec_result = await decision_maker.execute(

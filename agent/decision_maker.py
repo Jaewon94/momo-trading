@@ -1,5 +1,6 @@
 """매매 결정 + 자율/반자율 모드 분기 + 체결 확인/기록"""
 import asyncio
+import json
 from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
@@ -194,6 +195,22 @@ class DecisionMaker:
             price=signal.suggested_price,
         )
 
+    @staticmethod
+    def _build_trade_notes(analysis_context: dict | None, *, pending: bool = False) -> str | None:
+        ctx = analysis_context or {}
+        payload = {
+            "trade_horizon": str(ctx.get("trade_horizon", "") or "").upper() or None,
+            "estimated_edge_bps": ctx.get("estimated_edge_bps"),
+            "estimated_cost_bps": ctx.get("estimated_cost_bps"),
+            "cost_gate_ratio": ctx.get("cost_gate_ratio"),
+        }
+        payload = {k: v for k, v in payload.items() if v is not None and v != ""}
+        if not payload:
+            return "PENDING_CONFIRM: 체결 확인 대기 중" if pending else None
+        if pending:
+            payload["status"] = "PENDING_CONFIRM"
+        return json.dumps(payload, ensure_ascii=False)
+
     async def _create_pending_record(
         self,
         symbol: str,
@@ -232,7 +249,7 @@ class DecisionMaker:
                         market_regime=ctx.get("market_regime", ""),
                         entry_at=now if side == "BUY" else None,
                         exit_at=now if side == "SELL" else None,
-                        notes="PENDING_CONFIRM: 체결 확인 대기 중",
+                        notes=self._build_trade_notes(ctx, pending=True),
                     )
                     session.add(tr)
                     await session.flush()
@@ -378,6 +395,7 @@ class DecisionMaker:
                     if side == "BUY":
                         tr.entry_price = filled_price
                         tr.entry_at = tr.entry_at or now
+                        tr.notes = self._build_trade_notes(analysis_context, pending=False)
                     elif side == "SELL":
                         tr.exit_price = filled_price
                         tr.exit_at = now
@@ -398,7 +416,8 @@ class DecisionMaker:
                         if open_buys:
                             logger.debug("[{}] 미청산 BUY {}건 일괄 청산 완료", symbol, len(open_buys))
 
-                    tr.notes = None  # PENDING 메모 제거
+                    if side == "SELL":
+                        tr.notes = None  # PENDING 메모 제거 (매도는 별도 메모 비저장)
                     logger.debug("[{}] PENDING → CONFIRMED: {}주 @{:,.0f}원", symbol, filled_qty, filled_price)
 
                     await activity_logger.log(
@@ -475,6 +494,7 @@ class DecisionMaker:
                             entry_macd_hist=ctx.get("entry_macd_hist"),
                             market_regime=ctx.get("market_regime", ""),
                             entry_at=now,
+                            notes=self._build_trade_notes(ctx, pending=False),
                         )
                         session.add(tr)
 
