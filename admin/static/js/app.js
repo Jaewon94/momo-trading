@@ -54,8 +54,16 @@ let activePositionDetailState = null;
 let activePositionTimelineFilter = 'all';
 let positionTimelineLoadingMore = false;
 let activeEventRadarFilter = 'all';
+let activeEventRadarSymbol = '';
+let eventRadarExpanded = false;
 let activeTradeCenterTab = 'pending';
+let activeTradeCenterSort = 'latest';
+let activeTradeCenterQuery = '';
+let tradeCenterVisibleCount = 20;
 let latestAccountSnapshot = null;
+let latestEventRadarState = null;
+const TRADE_CENTER_PAGE_SIZE = 20;
+const EVENT_RADAR_PANEL_KEY = 'momo:event-radar:expanded';
 const knownStockNames = {};
 const knownStockMeta = {};
 let paneLayout = {
@@ -114,6 +122,8 @@ document.addEventListener('DOMContentLoaded', () => {
   loadAccountInfo();
   loadLLMStatus();
   loadEventRadar();
+  loadEventRadarPanelState();
+  applyEventRadarPanelState();
   connectSSE();
   loadTodayActivities();
   initSidebarSections();
@@ -124,6 +134,44 @@ document.addEventListener('DOMContentLoaded', () => {
   accountPollTimer = setInterval(loadAccountInfo, 30000);
   document.addEventListener('keydown', handleSettingsModalKeydown);
 });
+
+function loadEventRadarPanelState() {
+  try {
+    const raw = localStorage.getItem(EVENT_RADAR_PANEL_KEY);
+    if (raw === null) {
+      eventRadarExpanded = false;
+      return;
+    }
+    eventRadarExpanded = raw === 'true';
+  } catch {
+    eventRadarExpanded = false;
+  }
+}
+
+function saveEventRadarPanelState() {
+  try {
+    localStorage.setItem(EVENT_RADAR_PANEL_KEY, eventRadarExpanded ? 'true' : 'false');
+  } catch {
+    // no-op
+  }
+}
+
+function applyEventRadarPanelState() {
+  const shell = document.getElementById('event-radar-shell');
+  const toggle = document.getElementById('event-radar-toggle');
+  if (shell) {
+    shell.classList.toggle('compact', !eventRadarExpanded);
+  }
+  if (toggle) {
+    toggle.textContent = eventRadarExpanded ? '접기' : '펼치기';
+  }
+}
+
+function toggleEventRadarPanel() {
+  eventRadarExpanded = !eventRadarExpanded;
+  saveEventRadarPanelState();
+  applyEventRadarPanelState();
+}
 
 // ── Sidebar Accordion ──
 function initSidebarSections() {
@@ -468,6 +516,48 @@ function filterEventRadarCards(cards, filterKey = 'all') {
   return cards.filter((card) => card.tone === filterKey);
 }
 
+function buildTradeStageMap(snapshot = null) {
+  const data = snapshot || latestAccountSnapshot || {};
+  const map = {};
+  const ensure = (symbol) => {
+    if (!symbol) return;
+    if (!map[symbol]) map[symbol] = "미진입";
+  };
+  const setStage = (symbol, stage) => {
+    if (!symbol) return;
+    map[symbol] = stage;
+  };
+
+  const trades = data?.trades || {};
+  const pendingOrders = Array.isArray(data?.pendingOrders) ? data.pendingOrders : [];
+  const opened = Array.isArray(trades?.opened) ? trades.opened : [];
+  const completed = Array.isArray(trades?.completed) ? trades.completed : [];
+  const pendingConfirms = Array.isArray(trades?.pending_confirms) ? trades.pending_confirms : [];
+  const openPositions = Array.isArray(trades?.open_positions) ? trades.open_positions : [];
+
+  [...opened, ...completed, ...pendingConfirms, ...openPositions].forEach((item) => ensure(item?.stock_symbol));
+  pendingOrders.forEach((item) => ensure(item?.symbol));
+
+  openPositions.forEach((item) => setStage(item?.stock_symbol, "보유중"));
+  opened.forEach((item) => setStage(item?.stock_symbol, "오늘진입"));
+  completed.forEach((item) => setStage(item?.stock_symbol, "오늘청산"));
+  pendingOrders.forEach((item) => setStage(item?.symbol, "주문대기"));
+  pendingConfirms.forEach((item) => setStage(item?.stock_symbol, "체결확인대기"));
+
+  return map;
+}
+
+function buildLatestRadarBySymbol() {
+  const cards = latestEventRadarState?.cards || [];
+  const map = {};
+  cards.forEach((card) => {
+    const symbol = card?.symbol;
+    if (!symbol || map[symbol]) return;
+    map[symbol] = card;
+  });
+  return map;
+}
+
 function renderEventRadar(state) {
   const summaryEl = document.getElementById('event-radar-summary');
   const filtersEl = document.getElementById('event-radar-filters');
@@ -492,18 +582,29 @@ function renderEventRadar(state) {
     </button>
   `).join('');
 
+  const tradeStageMap = buildTradeStageMap();
   const visibleCards = filterEventRadarCards(state.cards, activeEventRadarFilter);
+  if (activeEventRadarSymbol) {
+    visibleCards.sort((a, b) => {
+      if (a.symbol === activeEventRadarSymbol && b.symbol !== activeEventRadarSymbol) return -1;
+      if (a.symbol !== activeEventRadarSymbol && b.symbol === activeEventRadarSymbol) return 1;
+      return 0;
+    });
+  }
   if (!visibleCards.length) {
     listEl.innerHTML = `<div class="event-radar-empty">${escapeHtml(state.emptyMessage)}</div>`;
     return;
   }
 
   listEl.innerHTML = visibleCards.map((card) => `
-    <article class="event-radar-card tone-${escapeHtml(card.tone)}">
+    <article class="event-radar-card tone-${escapeHtml(card.tone)} ${card.symbol === activeEventRadarSymbol ? 'is-focused' : ''}">
       <div>
         <div class="event-radar-eyebrow">${escapeHtml(card.event_type || 'EVENT')}</div>
         <div class="event-radar-title">${escapeHtml(card.title)}</div>
         <div class="event-radar-subtitle">${escapeHtml(card.subtitle)}</div>
+        <div class="mt-2">
+          <span class="event-radar-trade-badge">거래상태: ${escapeHtml(tradeStageMap[card.symbol] || '미진입')}</span>
+        </div>
         <div class="event-radar-meta">
           ${escapeHtml(card.metaLine || card.reason || '')}
           ${card.metaLine && card.reason ? ' · ' : ''}
@@ -515,6 +616,9 @@ function renderEventRadar(state) {
         <div class="event-radar-state">${escapeHtml(card.stateLabel)}</div>
         <div class="text-[11px] text-gray-500">${escapeHtml(card.occurredTimeLabel || '')}</div>
         ${card.cooldownLabel ? `<div class="event-radar-cooldown">${escapeHtml(card.cooldownLabel)}</div>` : ''}
+        <button type="button" class="event-radar-link" data-radar-open-trade="${escapeHtml(card.symbol || '')}" data-radar-tone="${escapeHtml(card.tone || '')}">
+          거래센터 보기
+        </button>
       </div>
     </article>
   `).join('');
@@ -528,6 +632,7 @@ async function loadEventRadar() {
   try {
     const json = await fetchJson(`${API}/events/radar?limit=8`);
     const state = buildEventRadarState(json?.data || {});
+    latestEventRadarState = state;
     renderEventRadar(state);
   } catch (err) {
     if (listEl) {
@@ -542,15 +647,31 @@ document.addEventListener('click', (event) => {
   const filterChip = event.target.closest('[data-event-radar-filter]');
   if (filterChip) {
     activeEventRadarFilter = filterChip.dataset.eventRadarFilter || 'all';
+    activeEventRadarSymbol = '';
     loadEventRadar();
     return;
   }
 });
 
 document.addEventListener('click', (event) => {
+  const link = event.target.closest('[data-radar-open-trade]');
+  if (!link) return;
+  const symbol = link.dataset.radarOpenTrade || '';
+  const tone = link.dataset.radarTone || '';
+  activeTradeCenterQuery = symbol;
+  activeTradeCenterSort = 'latest';
+  tradeCenterVisibleCount = TRADE_CENTER_PAGE_SIZE;
+  if (tone === 'sell') activeTradeCenterTab = 'positions';
+  else if (tone === 'buy') activeTradeCenterTab = 'opened';
+  else activeTradeCenterTab = 'pending';
+  switchView('trades-center');
+});
+
+document.addEventListener('click', (event) => {
   const tabButton = event.target.closest('[data-trade-center-tab]');
   if (!tabButton) return;
   activeTradeCenterTab = tabButton.dataset.tradeCenterTab || 'pending';
+  tradeCenterVisibleCount = TRADE_CENTER_PAGE_SIZE;
   loadTradesCenterView();
 });
 
@@ -569,6 +690,42 @@ document.addEventListener('click', (event) => {
   if (!button) return;
   const symbol = button.dataset.tradeCenterOpenSymbol;
   if (symbol) openPositionDetailModal(symbol);
+});
+
+document.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-trade-open-radar]');
+  if (!button) return;
+  const symbol = button.dataset.tradeOpenRadar || '';
+  if (!symbol) return;
+  activeEventRadarSymbol = symbol;
+  activeEventRadarFilter = 'all';
+  eventRadarExpanded = true;
+  saveEventRadarPanelState();
+  applyEventRadarPanelState();
+  switchView('live');
+});
+
+document.addEventListener('input', (event) => {
+  const input = event.target.closest('#trade-center-search');
+  if (!input) return;
+  activeTradeCenterQuery = String(input.value || '').trim();
+  tradeCenterVisibleCount = TRADE_CENTER_PAGE_SIZE;
+  loadTradesCenterView();
+});
+
+document.addEventListener('change', (event) => {
+  const select = event.target.closest('#trade-center-sort');
+  if (!select) return;
+  activeTradeCenterSort = select.value || 'latest';
+  tradeCenterVisibleCount = TRADE_CENTER_PAGE_SIZE;
+  loadTradesCenterView();
+});
+
+document.addEventListener('click', (event) => {
+  const button = event.target.closest('#trade-center-load-more');
+  if (!button) return;
+  tradeCenterVisibleCount += TRADE_CENTER_PAGE_SIZE;
+  loadTradesCenterView();
 });
 
 document.addEventListener('click', (event) => {
@@ -1147,7 +1304,11 @@ async function fetchTradeCenterSnapshot() {
   };
 }
 
-function renderTradeCenterCard(item, kind) {
+function renderTradeCenterCard(item, kind, radarEvent = null) {
+  const radarMeta = radarEvent
+    ? `<div class="trade-center-card-meta">신호: ${escapeHtml(radarEvent.subtitle || radarEvent.event_label || radarEvent.event_type || 'EVENT')} · ${escapeHtml(radarEvent.occurredTimeLabel || '')}</div>`
+    : '';
+
   if (kind === 'pending-confirm') {
     return `
       <button type="button" class="trade-center-card tone-pending" data-trade-center-open-symbol="${escapeHtml(item.stock_symbol || '')}">
@@ -1156,6 +1317,7 @@ function renderTradeCenterCard(item, kind) {
           <div class="text-xs text-yellow-300">체결 확인 대기</div>
         </div>
         <div class="trade-center-card-meta">${escapeHtml(item.stock_symbol || '-')} · ${escapeHtml(String(item.quantity || 0))}주</div>
+        ${radarMeta}
       </button>
     `;
   }
@@ -1168,6 +1330,7 @@ function renderTradeCenterCard(item, kind) {
           <div class="text-xs text-yellow-300">${escapeHtml(item.side || '-')}</div>
         </div>
         <div class="trade-center-card-meta">${escapeHtml(item.symbol || '-')} · 미체결 ${escapeHtml(String(item.remaining_qty || 0))}주 / ${escapeHtml(String(item.order_qty || 0))}주</div>
+        ${radarMeta}
       </button>
     `;
   }
@@ -1180,6 +1343,7 @@ function renderTradeCenterCard(item, kind) {
           <div class="text-xs text-blue-300">${escapeHtml(String(item.quantity || 0))}주</div>
         </div>
         <div class="trade-center-card-meta">${escapeHtml(item.stock_symbol || '-')} · 진입가 ${Number(item.entry_price || 0).toLocaleString()}원</div>
+        ${radarMeta}
       </button>
     `;
   }
@@ -1195,6 +1359,7 @@ function renderTradeCenterCard(item, kind) {
           <div class="text-sm font-semibold ${pnlClass}">${pnl >= 0 ? '+' : ''}${formatKRW(pnl)}</div>
         </div>
         <div class="trade-center-card-meta">${escapeHtml(item.stock_symbol || '-')} · ${Number(item.return_pct || 0).toFixed(2)}%</div>
+        ${radarMeta}
       </button>
     `;
   }
@@ -1208,41 +1373,136 @@ function renderTradeCenterCard(item, kind) {
       <div class="trade-center-card-meta">
         ${escapeHtml(item.symbol || '-')} · 평단 ${Number(item.avgPrice || 0).toLocaleString()}원 · 손익 ${Number(item.pnl || 0) >= 0 ? '+' : ''}${formatKRW(Number(item.pnl || 0))}
       </div>
+      ${radarMeta}
     </button>
   `;
 }
 
-function renderTradeCenterSection(state, tabKey) {
+function buildTradeCenterRows(state, tabKey) {
   const section = state.sections[tabKey];
-  if (!section) {
-    return '<div class="trade-center-empty">데이터가 없습니다.</div>';
-  }
+  if (!section) return [];
 
   if (tabKey === 'pending') {
-    const cards = [
-      ...section.pendingConfirms.map((item) => renderTradeCenterCard(item, 'pending-confirm')),
-      ...section.pendingOrders.map((item) => renderTradeCenterCard(item, 'pending-order')),
+    return [
+      ...section.pendingConfirms.map((item) => ({
+        kind: 'pending-confirm',
+        item,
+        symbol: item?.stock_symbol || '',
+        name: item?.stock_name || item?.stock_symbol || '',
+        time: item?.entry_at || item?.created_at || null,
+        pnl: 0,
+      })),
+      ...section.pendingOrders.map((item) => ({
+        kind: 'pending-order',
+        item,
+        symbol: item?.symbol || '',
+        name: item?.name || item?.symbol || '',
+        time: item?.order_time || null,
+        pnl: 0,
+      })),
     ];
-    return cards.length
-      ? `<div class="trade-center-list">${cards.join('')}</div>`
-      : '<div class="trade-center-empty">대기 중인 거래가 없습니다.</div>';
   }
 
   if (tabKey === 'opened') {
-    return section.length
-      ? `<div class="trade-center-list">${section.map((item) => renderTradeCenterCard(item, 'opened')).join('')}</div>`
-      : '<div class="trade-center-empty">오늘 진입 거래가 없습니다.</div>';
+    return section.map((item) => ({
+      kind: 'opened',
+      item,
+      symbol: item?.stock_symbol || '',
+      name: item?.stock_name || item?.stock_symbol || '',
+      time: item?.entry_at || item?.created_at || null,
+      pnl: 0,
+    }));
   }
 
   if (tabKey === 'completed') {
-    return section.length
-      ? `<div class="trade-center-list">${section.map((item) => renderTradeCenterCard(item, 'completed')).join('')}</div>`
-      : '<div class="trade-center-empty">오늘 청산 거래가 없습니다.</div>';
+    return section.map((item) => ({
+      kind: 'completed',
+      item,
+      symbol: item?.stock_symbol || '',
+      name: item?.stock_name || item?.stock_symbol || '',
+      time: item?.exit_at || item?.updated_at || item?.created_at || null,
+      pnl: toNumber(item?.pnl),
+    }));
   }
 
-  return section.length
-    ? `<div class="trade-center-list">${section.map((item) => renderTradeCenterCard(item, 'positions')).join('')}</div>`
-    : '<div class="trade-center-empty">현재 보유 포지션이 없습니다.</div>';
+  return section.map((item) => ({
+    kind: 'positions',
+    item,
+    symbol: item?.symbol || '',
+    name: item?.name || item?.symbol || '',
+    time: null,
+    pnl: toNumber(item?.pnl),
+  }));
+}
+
+function compareTradeCenterRows(a, b, sortKey) {
+  if (sortKey === 'name') {
+    return String(a.name || '').localeCompare(String(b.name || ''), 'ko');
+  }
+  if (sortKey === 'pnl-desc') {
+    return toNumber(b.pnl) - toNumber(a.pnl);
+  }
+  if (sortKey === 'pnl-asc') {
+    return toNumber(a.pnl) - toNumber(b.pnl);
+  }
+  const parseTime = (value) => {
+    if (!value) return 0;
+    const text = String(value);
+    if (/^\d{6}$/.test(text)) {
+      const hh = Number(text.slice(0, 2));
+      const mm = Number(text.slice(2, 4));
+      const ss = Number(text.slice(4, 6));
+      return ((hh * 60 + mm) * 60 + ss) * 1000;
+    }
+    const ts = new Date(text).getTime();
+    return Number.isFinite(ts) ? ts : 0;
+  };
+  const at = parseTime(a.time);
+  const bt = parseTime(b.time);
+  return bt - at;
+}
+
+function renderTradeCenterSection(state, tabKey) {
+  const rawRows = buildTradeCenterRows(state, tabKey);
+  const radarBySymbol = buildLatestRadarBySymbol();
+  const query = activeTradeCenterQuery.toLowerCase();
+  const filteredRows = rawRows.filter((row) => {
+    if (!query) return true;
+    return [row.symbol, row.name].some((value) => String(value || '').toLowerCase().includes(query));
+  });
+
+  filteredRows.sort((a, b) => compareTradeCenterRows(a, b, activeTradeCenterSort));
+  const visibleRows = filteredRows.slice(0, tradeCenterVisibleCount);
+
+  const emptyText = (
+    tabKey === 'pending'
+      ? '대기 중인 거래가 없습니다.'
+      : tabKey === 'opened'
+        ? '오늘 진입 거래가 없습니다.'
+        : tabKey === 'completed'
+          ? '오늘 청산 거래가 없습니다.'
+          : '현재 보유 포지션이 없습니다.'
+  );
+
+  const listMarkup = visibleRows.length
+    ? `<div class="trade-center-list">${visibleRows.map((row) => renderTradeCenterCard(row.item, row.kind, radarBySymbol[row.symbol] || null)).join('')}</div>`
+    : `<div class="trade-center-empty">${emptyText}</div>`;
+
+  const loadMoreMarkup = filteredRows.length > visibleRows.length
+    ? `
+      <div class="pt-2 flex justify-center">
+        <button type="button" id="trade-center-load-more" class="trade-center-load-more">
+          더 보기 (${visibleRows.length}/${filteredRows.length})
+        </button>
+      </div>
+    `
+    : '';
+
+  return {
+    html: `${listMarkup}${loadMoreMarkup}`,
+    total: filteredRows.length,
+    visible: visibleRows.length,
+  };
 }
 
 async function loadTradesCenterView(snapshot = null) {
@@ -1261,6 +1521,7 @@ async function loadTradesCenterView(snapshot = null) {
     }
 
     const activeTabLabel = state.tabs.find((tab) => tab.key === activeTradeCenterTab)?.label || '';
+    const section = renderTradeCenterSection(state, activeTradeCenterTab);
     container.innerHTML = `
       <div class="mx-2 rounded-xl border border-gray-700 bg-dark-700/80 p-4 chat-bubble">
         <div class="text-lg font-bold text-white">📂 거래 센터</div>
@@ -1280,13 +1541,22 @@ async function loadTradesCenterView(snapshot = null) {
             </button>
           `).join('')}
         </div>
+        <div class="trade-center-controls">
+          <input id="trade-center-search" class="trade-center-search" placeholder="종목명/코드 검색" value="${escapeHtml(activeTradeCenterQuery)}" />
+          <select id="trade-center-sort" class="trade-center-sort">
+            <option value="latest" ${activeTradeCenterSort === 'latest' ? 'selected' : ''}>최신순</option>
+            <option value="name" ${activeTradeCenterSort === 'name' ? 'selected' : ''}>종목명순</option>
+            <option value="pnl-desc" ${activeTradeCenterSort === 'pnl-desc' ? 'selected' : ''}>손익 높은순</option>
+            <option value="pnl-asc" ${activeTradeCenterSort === 'pnl-asc' ? 'selected' : ''}>손익 낮은순</option>
+          </select>
+        </div>
         <div class="trade-center-toolbar">
           <button type="button" id="trade-center-reconcile-button" class="trade-center-action">확인 대기 복구</button>
         </div>
-        <div class="text-xs text-gray-500 mt-2">현재 탭: ${escapeHtml(activeTabLabel)}</div>
+        <div class="text-xs text-gray-500 mt-2">현재 탭: ${escapeHtml(activeTabLabel)} · 표시 ${section.visible}/${section.total}</div>
       </div>
       <div class="mx-2 mt-3">
-        ${renderTradeCenterSection(state, activeTradeCenterTab)}
+        ${section.html}
       </div>
     `;
   } catch (err) {
@@ -3441,6 +3711,7 @@ Object.assign(window, {
   setTradingEnabled,
   switchView,
   switchSettingsTab,
+  toggleEventRadarPanel,
   togglePaneCollapse,
   toggleSidebarSection,
   triggerCycle,
