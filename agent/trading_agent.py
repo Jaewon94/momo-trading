@@ -24,6 +24,7 @@ from strategy.aggressive_short import AggressiveShortStrategy
 from strategy.risk_manager import risk_manager
 from strategy.signal import TradeSignal
 from strategy.stable_short import StableShortStrategy
+from strategy.trade_horizon import TradeHorizon, decide_trade_horizon
 from trading.adapters.base import BrokerAdapter
 from trading.broker_factory import get_broker_adapter
 from trading.enums import ActivityPhase, ActivityType, LLMTier, Market, OrderSide, OrderType, SignalAction, SignalUrgency
@@ -870,6 +871,13 @@ class TradingAgent:
                 reason=final.get("reason", "Tier2 승인"),
                 confidence=analysis.get("confidence", 0.7),
             )
+            signal.metadata["trade_horizon"] = decide_trade_horizon(
+                strategy_type=strategy_type,
+                trigger=str(stock_info.get("trigger", "")),
+                change_rate=float(price_resp.data.get("change_rate", 0.0) if price_resp.data else 0.0),
+                confidence=float(analysis.get("confidence", 0.0) or 0.0),
+                market_regime=self._market_regime,
+            )
 
             result["signal"] = True
             await activity_logger.log(
@@ -918,9 +926,37 @@ class TradingAgent:
                 signal.target_price = final["target_price"]
             if final.get("stop_loss_price"):
                 signal.stop_loss_price = final["stop_loss_price"]
+            if "trade_horizon" not in signal.metadata:
+                signal.metadata["trade_horizon"] = decide_trade_horizon(
+                    strategy_type=strategy_type,
+                    trigger=str(stock_info.get("trigger", "")),
+                    change_rate=float(price_resp.data.get("change_rate", 0.0) if price_resp.data else 0.0),
+                    confidence=float(analysis.get("confidence", 0.0) or 0.0),
+                    market_regime=self._market_regime,
+                )
 
         # AI가 결정한 손절/익절/트레일링 스탑을 event_detector에 설정
-        self._apply_trade_thresholds(symbol, analysis, final)
+        self._apply_trade_thresholds(
+            symbol, analysis, final,
+            current_price=current_price,
+            horizon=(signal.metadata or {}).get("trade_horizon"),
+        )
+
+        # 실행 비용 대비 기대수익(엣지) 게이트
+        if signal.action == SignalAction.BUY:
+            gate_eval = self._evaluate_cost_gate(
+                signal=signal,
+                current_price=current_price,
+                horizon=(signal.metadata or {}).get("trade_horizon"),
+            )
+            if not gate_eval["approved"]:
+                await activity_logger.log(
+                    ActivityType.RISK_GATE, ActivityPhase.SKIP,
+                    f"🚫 [{name}] 비용 게이트 차단: {gate_eval['reason']}",
+                    cycle_id=cycle_id, symbol=symbol,
+                    detail=gate_eval,
+                )
+                return result
 
         # 4.5 매도 시 보유 여부 확인 — 미보유 종목 매도 차단
         if signal.action == SignalAction.SELL:
@@ -1655,6 +1691,8 @@ class TradingAgent:
 
     def _apply_trade_thresholds(
         self, symbol: str, tier1: dict, tier2: dict,
+        current_price: float = 0.0,
+        horizon: str | None = None,
     ) -> None:
         """Tier1/Tier2 분석 결과에서 손절/익절/트레일링 스탑을 event_detector에 적용
 
@@ -1677,6 +1715,42 @@ class TradingAgent:
         if trailing and float(trailing) > 0:
             kwargs["trailing_stop_pct"] = float(trailing)
 
+        horizon_key = str(horizon or "").upper()
+        if current_price > 0:
+            stop_loss = kwargs.get("stop_loss")
+            take_profit = kwargs.get("take_profit")
+
+            if stop_loss and stop_loss > 0:
+                risk_pct = ((current_price - stop_loss) / current_price) * 100
+                max_risk_map = {
+                    TradeHorizon.SHORT: 1.8,
+                    TradeHorizon.MID: 2.8,
+                    TradeHorizon.LONG: 4.5,
+                }
+                max_risk_pct = max_risk_map.get(horizon_key)
+                if max_risk_pct and risk_pct > max_risk_pct:
+                    kwargs["stop_loss"] = current_price * (1 - max_risk_pct / 100)
+
+            if take_profit and take_profit > 0:
+                reward_pct = ((take_profit - current_price) / current_price) * 100
+                min_reward_map = {
+                    TradeHorizon.SHORT: 1.2,
+                    TradeHorizon.MID: 2.0,
+                    TradeHorizon.LONG: 4.0,
+                }
+                min_reward_pct = min_reward_map.get(horizon_key)
+                if min_reward_pct and reward_pct < min_reward_pct:
+                    kwargs["take_profit"] = current_price * (1 + min_reward_pct / 100)
+
+            if "trailing_stop_pct" not in kwargs:
+                default_trailing = {
+                    TradeHorizon.SHORT: 0.8,
+                    TradeHorizon.MID: 1.5,
+                    TradeHorizon.LONG: 2.5,
+                }.get(horizon_key)
+                if default_trailing:
+                    kwargs["trailing_stop_pct"] = default_trailing
+
         if kwargs:
             event_detector.set_thresholds(symbol, **kwargs)
             logger.info(
@@ -1684,6 +1758,49 @@ class TradingAgent:
                 symbol,
                 ", ".join(f"{k}={v}" for k, v in kwargs.items()),
             )
+
+    @staticmethod
+    def _evaluate_cost_gate(signal: TradeSignal, current_price: float, horizon: str | None = None) -> dict:
+        if not settings.COST_GATE_ENABLED or signal.action != SignalAction.BUY:
+            return {"approved": True, "reason": "비용 게이트 비활성화"}
+
+        entry_price = float(signal.suggested_price or current_price or 0.0)
+        target_price = float(signal.target_price or 0.0)
+        if entry_price <= 0 or target_price <= entry_price:
+            return {"approved": True, "reason": "엣지 계산 불가(보수적 통과)"}
+
+        horizon_key = str(horizon or TradeHorizon.MID).upper()
+        slippage_bps = {
+            TradeHorizon.SHORT: int(settings.ESTIMATED_SLIPPAGE_BPS_SHORT or 0),
+            TradeHorizon.MID: int(settings.ESTIMATED_SLIPPAGE_BPS_MID or 0),
+            TradeHorizon.LONG: int(settings.ESTIMATED_SLIPPAGE_BPS_LONG or 0),
+        }.get(horizon_key, int(settings.ESTIMATED_SLIPPAGE_BPS_MID or 0))
+        min_ratio = {
+            TradeHorizon.SHORT: float(settings.MIN_EDGE_TO_COST_RATIO_SHORT or 1.0),
+            TradeHorizon.MID: float(settings.MIN_EDGE_TO_COST_RATIO_MID or 1.0),
+            TradeHorizon.LONG: float(settings.MIN_EDGE_TO_COST_RATIO_LONG or 1.0),
+        }.get(horizon_key, float(settings.MIN_EDGE_TO_COST_RATIO_MID or 1.0))
+
+        total_cost_bps = (
+            int(settings.ESTIMATED_ENTRY_COST_BPS or 0)
+            + int(settings.ESTIMATED_EXIT_COST_BPS or 0)
+            + slippage_bps
+        )
+        edge_bps = ((target_price - entry_price) / entry_price) * 10000
+
+        approved = edge_bps >= (total_cost_bps * min_ratio)
+        return {
+            "approved": approved,
+            "reason": (
+                f"엣지 {edge_bps:.1f}bp < 비용×배수 {total_cost_bps * min_ratio:.1f}bp"
+                if not approved else
+                f"엣지 {edge_bps:.1f}bp >= 비용×배수 {total_cost_bps * min_ratio:.1f}bp"
+            ),
+            "edge_bps": edge_bps,
+            "cost_bps": total_cost_bps,
+            "min_ratio": min_ratio,
+            "horizon": horizon_key,
+        }
 
     async def _get_today_trade_count(self) -> int:
         """당일 체결 건수 조회"""

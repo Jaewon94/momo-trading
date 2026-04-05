@@ -26,6 +26,17 @@
 4. 운영 설정 노출 확장
 - `/api/v1/admin/settings` mutable 항목에 신규 리스크/실행 설정 추가.
 
+5. 호라이즌(단기/중기/장기) 기반 운영
+- 신규 유틸: `strategy/trade_horizon.py`
+- 판정 기준:
+  - 단기: 이벤트 급등락/고변동/공격 전략
+  - 장기: 강세/테마 국면 + 고신뢰도
+  - 그 외 중기
+- 적용:
+  - 호라이즌별 리스크 배수 (`RISK_MULTIPLIER_SHORT/MID/LONG`)
+  - 호라이즌별 비용 게이트(예상 비용 대비 기대엣지)
+  - 호라이즌별 손절/익절/트레일링 기본값 보정
+
 ## 기대 효과
 - 급락일 손실 꼬리 위험 감소.
 - 체결 품질 편차(슬리피지) 완화.
@@ -35,3 +46,5 @@
 - `tests/strategy/test_trading_guard.py`
 - `tests/strategy/test_risk_manager_enhancements.py`
 - `tests/agent/test_trading_agent_execution_policy.py`
+- `tests/strategy/test_trade_horizon.py`
+- `tests/agent/test_trading_agent_cost_gate.py`

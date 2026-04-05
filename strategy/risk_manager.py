@@ -5,6 +5,7 @@ from core.config import settings
 from services.activity_logger import activity_logger
 from strategy.signal import TradeSignal
 from strategy.trading_guard import trading_guard as default_trading_guard
+from strategy.trade_horizon import TradeHorizon
 from trading.enums import ActivityPhase, ActivityType, SignalAction
 
 
@@ -54,6 +55,7 @@ class RiskManager:
             {"approved": bool, "reason": str, "adjusted_quantity": int | None}
         """
         symbol = signal.symbol
+        horizon_multiplier = self._resolve_horizon_multiplier(signal)
 
         # 동적 한도 적용 (AI 결정값 또는 기본값)
         eff_max_daily = self.max_daily_trades
@@ -139,7 +141,11 @@ class RiskManager:
         if settings.VOLATILITY_POSITION_SIZING_ENABLED and stop > 0 and entry > 0:
             risk_per_share = abs(entry - stop)
             if risk_per_share > 0:
-                risk_budget = portfolio_budget * (float(settings.RISK_PER_TRADE_PCT or 0.0) / 100.0)
+                risk_budget = (
+                    portfolio_budget
+                    * (float(settings.RISK_PER_TRADE_PCT or 0.0) / 100.0)
+                    * horizon_multiplier
+                )
                 if risk_budget > 0:
                     sized_qty = int(risk_budget / risk_per_share)
                     if sized_qty < eff_min_qty:
@@ -231,6 +237,15 @@ class RiskManager:
         result = {"approved": True, "reason": "리스크 검사 통과", "adjusted_quantity": None}
         await self._log_result(symbol, result, today_trade_count, cycle_id)
         return result
+
+    @staticmethod
+    def _resolve_horizon_multiplier(signal: TradeSignal) -> float:
+        horizon = str((signal.metadata or {}).get("trade_horizon", "")).upper()
+        if horizon == TradeHorizon.SHORT:
+            return float(settings.RISK_MULTIPLIER_SHORT or 1.0)
+        if horizon == TradeHorizon.LONG:
+            return float(settings.RISK_MULTIPLIER_LONG or 1.0)
+        return float(settings.RISK_MULTIPLIER_MID or 1.0)
 
     async def _log_result(
         self, symbol: str, result: dict, today_trade_count: int, cycle_id: str | None

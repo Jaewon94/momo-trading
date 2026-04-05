@@ -98,6 +98,18 @@ class Settings(BaseSettings):
     EXPECTANCY_SAMPLE_SIZE: int = 12
     VOLATILITY_POSITION_SIZING_ENABLED: bool = True
     RISK_PER_TRADE_PCT: float = 0.5
+    RISK_MULTIPLIER_SHORT: float = 0.7
+    RISK_MULTIPLIER_MID: float = 1.0
+    RISK_MULTIPLIER_LONG: float = 1.2
+    COST_GATE_ENABLED: bool = True
+    ESTIMATED_ENTRY_COST_BPS: int = 8
+    ESTIMATED_EXIT_COST_BPS: int = 8
+    ESTIMATED_SLIPPAGE_BPS_SHORT: int = 12
+    ESTIMATED_SLIPPAGE_BPS_MID: int = 8
+    ESTIMATED_SLIPPAGE_BPS_LONG: int = 6
+    MIN_EDGE_TO_COST_RATIO_SHORT: float = 1.5
+    MIN_EDGE_TO_COST_RATIO_MID: float = 1.3
+    MIN_EDGE_TO_COST_RATIO_LONG: float = 1.1
 
     # === AI Risk Tuning ===
     AI_RISK_TUNING_ENABLED: bool = True
