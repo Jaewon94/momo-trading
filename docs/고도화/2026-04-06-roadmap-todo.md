@@ -58,11 +58,11 @@
   - `DB 초기화` 실행 전 `before-reset` 백업 자동 생성
 
 4. 뉴스 인텔 2차 잔여
-- [ ] 해외 소스 확대 여부 판단
-  - Reuters 대체 가능 소스 검토
-  - 이용 조건/안정성 정리
-  - 1차 반영: `Investing.com Stock Market News` RSS 수집기 추가
-  - 2차 반영: `Seeking Alpha All News` RSS 수집기 추가
+- [x] 해외 소스 확대 여부 판단
+  - Reuters 직접 일반 피드는 anti-bot/호출 안정성 이슈로 현재 기준 보류
+  - `Investing.com`은 공식 RSS 카탈로그가 확인돼 있어 현재 `Stock Market News` 유지, 추가 `Economic Indicators`/`Breaking News` 계열은 매크로 매핑 단계에서 검토
+  - `Seeking Alpha`는 `All News`와 부문별 feed(예: sector/financial.xml)가 존재하지만, US 주식/의견성 편향이 커서 일반 뉴스 소스 추가 확대보다 보조 테마 소스로 후순위 유지
+  - 현재 일반 해외 소스는 `Bloomberg + CNBC + Nasdaq + Investing + Seeking Alpha` 조합 유지
 - [ ] 종목 연관도/섹터 영향도/장중 반응 가중치 2차 고도화
   - 메타데이터 기반 `symbol_relevance` / `sector_relevance` 가중치 반영 완료
   - 수집기 단계에서 `matched_stock_names`, `related_symbols`, `sector_label`, `sector_symbols`, `sector_relevance` 자동 채움

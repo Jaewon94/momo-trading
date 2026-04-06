@@ -39,7 +39,10 @@
 ## 다음 우선순위
 - [x] 해외 뉴스 실수집기 추가 확대 1차 (`Investing.com Stock Market News` RSS 추가)
 - [x] 해외 뉴스 실수집기 추가 확대 2차 (`Seeking Alpha All News` RSS 추가)
-- [ ] 해외 뉴스 실수집기 추가 확대(`Reuters` 대체 가능 소스 포함)
+- [x] 해외 뉴스 실수집기 추가 확대 판단(`Reuters` 대체 가능 소스 포함)
+  - `Reuters` 직접 소스는 anti-bot/안정성 이슈로 현재 일반 피드 추가 보류
+  - `Investing.com` 공식 RSS 카탈로그는 확인됐고, 현재는 `Stock Market News` 유지
+  - `Seeking Alpha`는 `All News` 외 섹터별 feed가 존재하지만 US 의견성/편향이 강해 보조 테마 소스로 후순위 유지
 - [x] 거래 상태 표현 정리
   - 3단 UI 배지를 `매수/매도` 단일 문구에서 `접수중/대기중/부분 매도/완료`까지 드러나는 상태 체계로 개편
   - 이벤트 레이더/3단 카드/종목 상세가 동일 상태 모델을 재사용하도록 정리
