@@ -8,15 +8,23 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from fastapi.responses import StreamingResponse
 from loguru import logger
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import OperationalError
 
 from admin.sse_manager import sse_manager
 from analysis.llm.model_catalog import model_catalog_service
 from core.config import settings
-from core.database import get_async_db, get_async_db_with_transaction
+from core.database import AsyncSessionLocal, get_async_db, get_async_db_with_transaction
 from core.runtime_settings import MUTABLE_SETTINGS
 from exceptions.common import ServiceException
+from models.agent_activity import AgentActivityLog
+from models.analysis import AnalysisResult
+from models.daily_report import DailyReport
+from models.news_item import NewsItem
+from models.order import Order
+from models.recommendation import Recommendation
+from models.trade_result import TradeResult
 from repositories.agent_activity_repository import AgentActivityRepository
 from repositories.daily_report_repository import DailyReportRepository
 from repositories.news_item_repository import NewsItemRepository
@@ -621,6 +629,82 @@ async def reconcile_pending_trades():
     message = (
         f"복구 완료 · 성공 {summary.get('recovered', 0)}건 / "
         f"보류 {summary.get('skipped', 0)}건 / 실패 {summary.get('failed', 0)}건"
+    )
+    return SuccessResponse(data=summary, message=message)
+
+
+@router.post("/trades/reconcile-holdings")
+async def reconcile_holdings_trades():
+    """계좌 보유수량 기준으로 누락 BUY lot/0원 체결가를 복구 시도"""
+    backfill = await portfolio_sync_job._backfill_missing_open_buys_from_holdings()
+    repaired = await portfolio_sync_job._repair_confirmed_zero_entry_prices()
+    summary = {
+        "backfill": backfill,
+        "repair": repaired,
+    }
+    await activity_logger.log(
+        ActivityType.EVENT,
+        ActivityPhase.PROGRESS,
+        "🧩 보유수량 기반 TradeResult 정합성 복구 실행",
+        detail=summary,
+    )
+    message = (
+        f"정합성 복구 완료 · 백필 {backfill.get('backfilled', 0)}건 / "
+        f"체결가 복구 {repaired.get('repaired', 0)}건"
+    )
+    return SuccessResponse(data=summary, message=message)
+
+
+@router.post("/system/reset-operational-baseline")
+async def reset_operational_baseline():
+    """설정은 유지하고 운영 이력 DB를 초기화한 뒤 현재 보유 기준선으로 재구성"""
+    deleted: dict[str, int] = {}
+    models_to_clear = [
+        ("recommendations", Recommendation),
+        ("analysis_results", AnalysisResult),
+        ("orders", Order),
+        ("trade_results", TradeResult),
+        ("daily_reports", DailyReport),
+        ("agent_activity_logs", AgentActivityLog),
+        ("news_items", NewsItem),
+    ]
+
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            for key, model in models_to_clear:
+                result = await session.execute(delete(model))
+                deleted[key] = int(result.rowcount or 0)
+
+    account_manager.invalidate_cache()
+    try:
+        get_broker_adapter().invalidate_cache()
+    except Exception:
+        pass
+    news_runtime_service.reset()
+
+    backfill = await portfolio_sync_job._backfill_missing_open_buys_from_holdings()
+    repair = await portfolio_sync_job._repair_confirmed_zero_entry_prices()
+
+    summary = {
+        "deleted": deleted,
+        "backfill": backfill,
+        "repair": repair,
+        "preserved": {
+            "runtime_settings": True,
+            "stocks": True,
+            "portfolios": True,
+        },
+    }
+    await activity_logger.log(
+        ActivityType.EVENT,
+        ActivityPhase.COMPLETE,
+        "🧹 운영 데이터 초기화 및 기준선 리셋 실행",
+        detail=summary,
+    )
+    message = (
+        f"운영 DB 초기화 완료 · 거래 {deleted.get('trade_results', 0)}건 / "
+        f"뉴스 {deleted.get('news_items', 0)}건 삭제, "
+        f"보유 백필 {backfill.get('backfilled', 0)}건"
     )
     return SuccessResponse(data=summary, message=message)
 

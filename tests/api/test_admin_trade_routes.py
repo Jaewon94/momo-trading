@@ -67,3 +67,109 @@ async def test_admin_reconcile_pending_trades_route_returns_summary(client, monk
     assert payload["data"]["recovered"] == 1
     assert payload["data"]["skipped"] == 1
     assert captured["called"] is True
+
+
+@pytest.mark.asyncio
+async def test_admin_reconcile_holdings_trades_route_returns_summary(client, monkeypatch):
+    captured = {}
+
+    async def fake_backfill():
+        captured["backfill"] = True
+        return {
+            "provider": "KIWOOM",
+            "backfilled": 2,
+            "skipped": 1,
+        }
+
+    async def fake_repair():
+        captured["repair"] = True
+        return {
+            "provider": "KIWOOM",
+            "candidates": 2,
+            "repaired": 1,
+            "skipped": 1,
+        }
+
+    monkeypatch.setattr(
+        "scheduler.jobs.portfolio_sync_job._backfill_missing_open_buys_from_holdings",
+        fake_backfill,
+    )
+    monkeypatch.setattr(
+        "scheduler.jobs.portfolio_sync_job._repair_confirmed_zero_entry_prices",
+        fake_repair,
+    )
+
+    response = await client.post("/api/v1/admin/trades/reconcile-holdings")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["data"]["backfill"]["backfilled"] == 2
+    assert payload["data"]["repair"]["repaired"] == 1
+    assert captured == {"backfill": True, "repair": True}
+
+
+@pytest.mark.asyncio
+async def test_admin_reset_operational_baseline_route_returns_summary(client, monkeypatch):
+    class FakeResult:
+        def __init__(self, rowcount):
+            self.rowcount = rowcount
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def begin(self):
+            return self
+
+        async def execute(self, statement):
+            table = statement.table.name
+            counts = {
+                "recommendations": 1,
+                "analysis_results": 2,
+                "orders": 3,
+                "trade_results": 4,
+                "daily_reports": 5,
+                "agent_activity_logs": 6,
+                "news_items": 7,
+            }
+            return FakeResult(counts[table])
+
+    observed = {"reset": 0}
+
+    async def fake_backfill():
+        return {"provider": "KIWOOM", "backfilled": 2, "skipped": 0}
+
+    async def fake_repair():
+        return {"provider": "KIWOOM", "candidates": 0, "repaired": 0, "skipped": 0}
+
+    async def fake_log(*args, **kwargs):
+        observed["logged"] = True
+
+    monkeypatch.setattr("api.routes.admin.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr(
+        "scheduler.jobs.portfolio_sync_job._backfill_missing_open_buys_from_holdings",
+        fake_backfill,
+    )
+    monkeypatch.setattr(
+        "scheduler.jobs.portfolio_sync_job._repair_confirmed_zero_entry_prices",
+        fake_repair,
+    )
+    monkeypatch.setattr("api.routes.admin.account_manager.invalidate_cache", lambda: observed.__setitem__("account_cache", True))
+    monkeypatch.setattr("api.routes.admin.get_broker_adapter", lambda: SimpleNamespace(invalidate_cache=lambda: observed.__setitem__("broker_cache", True)))
+    monkeypatch.setattr("api.routes.admin.news_runtime_service.reset", lambda: observed.__setitem__("reset", observed["reset"] + 1))
+    monkeypatch.setattr("api.routes.admin.activity_logger.log", fake_log)
+
+    response = await client.post("/api/v1/admin/system/reset-operational-baseline")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["data"]["deleted"]["trade_results"] == 4
+    assert payload["data"]["deleted"]["news_items"] == 7
+    assert payload["data"]["backfill"]["backfilled"] == 2
+    assert payload["data"]["preserved"]["runtime_settings"] is True
+    assert observed["reset"] == 1
+    assert observed["account_cache"] is True
+    assert observed["broker_cache"] is True

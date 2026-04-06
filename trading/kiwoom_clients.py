@@ -3,6 +3,8 @@ import asyncio
 from datetime import datetime, timedelta
 from typing import Any
 
+from loguru import logger
+
 from trading.enums import Market, OrderType
 from trading.kiwoom_rest_client import KiwoomAPIResponse, KiwoomRESTClient
 from trading.models import (
@@ -31,6 +33,13 @@ class KiwoomAccountClient:
         total_asset = _abs_float(data.get("prsm_dpst_aset_amt"))
         stock_value = _abs_float(data.get("tot_evlt_amt"))
         if total_asset <= 0 and stock_value > 0:
+            total_asset = stock_value
+        if total_asset < stock_value:
+            logger.warning(
+                "키움 잔고 응답 불일치 보정: total_asset={:,.0f} < stock_value={:,.0f}",
+                total_asset,
+                stock_value,
+            )
             total_asset = stock_value
 
         return AccountBalance(

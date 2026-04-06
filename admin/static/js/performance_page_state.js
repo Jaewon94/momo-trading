@@ -39,6 +39,7 @@ export function buildPerformanceDashboardState({
   monthly = {},
   newsOverview = {},
 } = {}) {
+  const baseline = summary?.baseline || newsOverview?.baseline || {};
   const overall = summary?.overall || {};
   const shadow = summary?.shadow || {};
   const rollout = summary?.rollout || {};
@@ -49,6 +50,15 @@ export function buildPerformanceDashboardState({
   const newsPerformance = newsOverview?.performance || {};
 
   return {
+    baseline: {
+      active: Boolean(baseline?.active),
+      label: String(baseline?.label || ""),
+      effectiveDate: String(baseline?.effective_date || ""),
+      summary: String(baseline?.summary || ""),
+      details: Array.isArray(baseline?.details)
+        ? baseline.details.map((item) => String(item || "")).filter(Boolean)
+        : [],
+    },
     summaryCards: [
       { label: "총 거래", value: `${formatInteger(overall.trade_count || 0)}건` },
       { label: "기대값", value: formatSignedKrW(overall.expectancy || 0) },

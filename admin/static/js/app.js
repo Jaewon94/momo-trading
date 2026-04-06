@@ -47,6 +47,7 @@ import { buildReportActivityInsights } from './report_activity_state.js';
 import {
   buildNewsOverviewCards,
   buildNewsOverviewSourcePills,
+  buildTradeBaselineNotice,
   buildReportNewsStripModel,
   describeManualNewsFetchResult,
   pickNewsDisplayFields,
@@ -237,7 +238,8 @@ function renderNewsOverviewPanels(error = null) {
     return;
   }
 
-  summaryEl.innerHTML = buildNewsOverviewCards(overview, {
+  const baselineNotice = buildTradeBaselineNotice(overview);
+  const summaryCardsHtml = buildNewsOverviewCards(overview, {
     formatInteger,
     formatDateTime,
   }).map((card) => `
@@ -247,6 +249,27 @@ function renderNewsOverviewPanels(error = null) {
       <div class="news-overview-help">${escapeHtml(card.help || '')}</div>
     </div>
   `).join('');
+
+  summaryEl.innerHTML = `
+    ${baselineNotice.active ? `
+      <div class="col-span-full rounded-2xl border border-amber-700/50 bg-amber-950/20 px-4 py-3">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <div class="text-[11px] uppercase tracking-[0.12em] text-amber-300">Trade Baseline</div>
+            <div class="mt-1 text-sm font-medium text-white">${escapeHtml(baselineNotice.label || '기준선 리셋 이후 데이터')}</div>
+            <div class="mt-1 text-xs text-gray-300">${escapeHtml(baselineNotice.summary)}</div>
+          </div>
+          <div class="rounded-full border border-amber-700/50 px-2.5 py-1 text-[10px] text-amber-200">${escapeHtml(baselineNotice.effectiveDate || '-')}</div>
+        </div>
+        ${baselineNotice.details.length ? `
+          <div class="mt-2 space-y-1 text-[11px] leading-5 text-gray-400">
+            ${baselineNotice.details.map((line) => `<div>${escapeHtml(line)}</div>`).join('')}
+          </div>
+        ` : ''}
+      </div>
+    ` : ''}
+    ${summaryCardsHtml}
+  `;
 
   sourcePillsEl.innerHTML = buildNewsOverviewSourcePills(overview)
     .map((pill) => pill.replaceAll(/>([^<]*)</g, (_match, text) => `>${escapeHtml(text)}<`))
@@ -3336,6 +3359,23 @@ function createPerformanceDashboard(state) {
         <button type="button" onclick="openSettingsModal('news')" class="rounded-full border border-gray-600 px-3 py-1 text-[11px] text-gray-200 hover:border-blue-400 hover:text-white transition">뉴스 설정 열기</button>
       </div>
     </div>
+    ${state.baseline.active ? `
+      <section class="rounded-2xl border border-amber-700/50 bg-amber-950/20 px-4 py-4 mb-4">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <div class="text-xs uppercase tracking-[0.12em] text-amber-300">Trade Baseline</div>
+            <div class="mt-1 text-sm font-medium text-white">${escapeHtml(state.baseline.label)}</div>
+            <div class="mt-1 text-sm text-gray-300">${escapeHtml(state.baseline.summary)}</div>
+          </div>
+          <div class="rounded-full border border-amber-700/50 px-3 py-1 text-[11px] text-amber-200">${escapeHtml(state.baseline.effectiveDate || '-')}</div>
+        </div>
+        ${state.baseline.details.length ? `
+          <div class="mt-3 space-y-1 text-[11px] leading-5 text-gray-400">
+            ${state.baseline.details.map((line) => `<div>${escapeHtml(line)}</div>`).join('')}
+          </div>
+        ` : ''}
+      </section>
+    ` : ''}
     <div class="news-overview-grid mb-4">
       ${state.summaryCards.map((card) => `
         <div class="news-overview-card">
@@ -3683,6 +3723,47 @@ async function reconcilePendingTrades(triggerButton = null) {
     await loadAccountInfo();
   } catch (err) {
     console.error('Pending trade reconcile error:', err);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+  }
+}
+
+async function resetOperationalBaseline(triggerButton = null) {
+  const button = triggerButton || document.getElementById('reset-operational-baseline-button');
+  const originalText = button?.textContent || 'DB 초기화';
+  const confirmed = window.confirm(
+    '운영 DB를 초기화하고 현재 브로커 보유 기준으로 다시 시작합니다.\n\n'
+    + '설정은 유지되지만 거래 이력, 리포트, 활동 로그, 뉴스 적재 이력은 삭제됩니다.\n'
+    + '계속할까요?'
+  );
+  if (!confirmed) return;
+
+  try {
+    if (button) {
+      button.disabled = true;
+      button.textContent = '초기화 중...';
+    }
+    const json = await fetchJson(`${API}/system/reset-operational-baseline`, { method: 'POST' }, 30000);
+    await Promise.all([
+      loadSettings(),
+      loadAccountInfo(),
+      loadNewsOverview(true),
+      loadSystemStatus(),
+      loadLLMUsage(),
+    ]);
+    if (currentView === 'performance') {
+      await loadPerformanceView();
+    }
+    if (currentView === 'report') {
+      await loadReportsArchive();
+    }
+    setStatus('runtime', json?.message || '운영 DB 초기화 완료');
+  } catch (err) {
+    console.error('Operational baseline reset error:', err);
+    setStatus('error', err.message || '운영 DB 초기화 실패');
   } finally {
     if (button) {
       button.disabled = false;
@@ -4711,6 +4792,7 @@ Object.assign(window, {
   refreshLLMCatalog,
   refreshRuntimePanels,
   reconcilePendingTrades,
+  resetOperationalBaseline,
   applyRuntimePreset,
   setAutonomyMode,
   setSchedulerRunning,

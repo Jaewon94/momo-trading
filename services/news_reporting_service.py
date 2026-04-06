@@ -75,6 +75,7 @@ class NewsReportingService:
             size=6,
         )
         return {
+            "baseline": performance.get("baseline") or {},
             "settings": self._build_settings_snapshot(),
             "storage": storage,
             "sources": {

@@ -1640,6 +1640,25 @@
               <div class="text-sm font-medium text-white">시스템 정보</div>
               <div class="mt-1 text-xs text-gray-500">운영 중 자주 누르지 않는 상태/사용량 정보는 여기로 모읍니다.</div>
             </div>
+            <div class="rounded-xl border border-red-900/60 bg-red-950/20 p-4">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <div class="text-sm font-medium text-white">운영 DB 초기화</div>
+                  <div class="mt-1 text-xs text-gray-400">
+                    설정은 유지하고 거래/리포트/활동/뉴스 같은 운영 이력만 비웁니다.
+                    이후 현재 브로커 보유 기준으로 열린 BUY lot만 다시 생성합니다.
+                  </div>
+                </div>
+                <button id="reset-operational-baseline-button"
+                  onclick="resetOperationalBaseline(this)"
+                  class="shrink-0 rounded-md border border-red-500/60 bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-200 transition hover:border-red-400 hover:text-white">
+                  DB 초기화
+                </button>
+              </div>
+              <div class="mt-3 text-[11px] leading-5 text-gray-500">
+                과거 실현손익/리포트/뉴스 적재 이력은 복구되지 않습니다. 다른 컴퓨터에서 새 기준선으로 다시 시작할 때만 사용하세요.
+              </div>
+            </div>
             <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4">
               <div class="flex items-center justify-between">
                 <div class="text-xs font-medium text-gray-300">LLM 사용량</div>

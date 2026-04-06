@@ -309,6 +309,68 @@ async def test_kiwoom_account_client_normalizes_balance_holdings_and_pending_ord
 
 
 @pytest.mark.asyncio
+async def test_kiwoom_account_client_clamps_total_asset_when_snapshot_is_lower_than_holdings() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth2/token":
+            return httpx.Response(
+                200,
+                json={
+                    "token": "token",
+                    "expires_dt": "20991231235959",
+                    "token_type": "Bearer",
+                    "return_code": 0,
+                    "return_msg": "정상적으로 처리되었습니다",
+                },
+            )
+
+        if request.headers.get("api-id") == "kt00017":
+            return httpx.Response(
+                200,
+                json={
+                    "tot_pur_amt": "613321891",
+                    "tot_evlt_amt": "640319785",
+                    "tot_evlt_pl": "26997894",
+                    "tot_prft_rt": "4.44",
+                    "prsm_dpst_aset_amt": "534168819",
+                    "acnt_evlt_remn_indv_tot": [
+                        {
+                            "stk_cd": "001250",
+                            "stk_nm": "GS글로벌",
+                            "evltv_prft": "-841451",
+                            "prft_rt": "-0.70",
+                            "pur_pric": "3678",
+                            "rmnd_qty": "32756",
+                            "cur_prc": "3685",
+                        },
+                    ],
+                    "return_code": 0,
+                    "return_msg": "정상적으로 처리되었습니다",
+                },
+            )
+
+        return httpx.Response(404, json={"return_code": -1, "return_msg": "not found"})
+
+    client = KiwoomRESTClient(
+        app_key="real-key",
+        secret_key="real-secret",
+        paper_app_key="paper-key",
+        paper_secret_key="paper-secret",
+        account_type="REAL",
+        transport=httpx.MockTransport(handler),
+        token_cache_path=None,
+    )
+    account_client = KiwoomAccountClient(client)
+
+    balance = await account_client.get_balance()
+
+    assert balance.total_asset == 640319785.0
+    assert balance.stock_value == 640319785.0
+    assert balance.cash == 0.0
+    assert balance.total_pnl == 26997894.0
+    assert balance.total_pnl_rate == 4.44
+
+
+@pytest.mark.asyncio
 async def test_kiwoom_order_executor_submits_order() -> None:
     transport, requests = build_transport()
     client = KiwoomRESTClient(

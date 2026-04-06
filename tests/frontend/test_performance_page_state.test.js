@@ -6,6 +6,13 @@ describe("performance_page_state", () => {
   test("builds dashboard cards, by-horizon rows, and period rows", () => {
     const state = buildPerformanceDashboardState({
       summary: {
+        baseline: {
+          active: true,
+          effective_date: "2026-04-06",
+          label: "2026-04-06 기준선 리셋 이후 데이터",
+          summary: "현재 브로커 계좌 상태와 복구된 열린 BUY lot를 기준선으로 사용 중",
+          details: ["현재 보유 종목/수량은 브로커 응답 기준"],
+        },
         overall: {
           trade_count: 18,
           expectancy: 1200,
@@ -61,6 +68,8 @@ describe("performance_page_state", () => {
     });
 
     expect(state.summaryCards).toHaveLength(6);
+    expect(state.baseline.active).toBe(true);
+    expect(state.baseline.effectiveDate).toBe("2026-04-06");
     expect(state.summaryCards[0]).toMatchObject({ label: "총 거래", value: "18건" });
     expect(state.summaryCards[1]).toMatchObject({ label: "기대값", value: "+1,200원" });
     expect(state.rollout.status).toBe("PROMOTE");
@@ -86,5 +95,6 @@ describe("performance_page_state", () => {
     expect(state.weeklyRows).toEqual([]);
     expect(state.rollout.status).toBe("HOLDOUT");
     expect(state.shadowSummaryRows[0].value).toBe("0건");
+    expect(state.baseline.active).toBe(false);
   });
 });

@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import {
   buildNewsOverviewCards,
+  buildTradeBaselineNotice,
   buildReportNewsStripModel,
   buildNewsOverviewSourcePills,
   describeManualNewsFetchResult,
@@ -88,6 +89,26 @@ describe("news_overview_state", () => {
     expect(pills[1]).toContain("해외 포함");
     expect(pills.some((pill) => pill.includes("DART") && pill.includes("SUCCESS") && pill.includes("24h 3건"))).toBe(true);
     expect(pills.some((pill) => pill.includes("KRX") && pill.includes("24h 0건") && pill.includes("미연결"))).toBe(true);
+  });
+
+  test("builds trade baseline notice for reset guidance", () => {
+    const notice = buildTradeBaselineNotice({
+      baseline: {
+        active: true,
+        effective_date: "2026-04-06",
+        label: "2026-04-06 기준선 리셋 이후 데이터",
+        summary: "현재 브로커 계좌 상태와 복구된 열린 BUY lot를 기준선으로 사용 중",
+        details: [
+          "현재 보유 종목/수량은 브로커 응답 기준",
+          "과거 실현손익은 완전 복구하지 않음",
+        ],
+      },
+    });
+
+    expect(notice.active).toBe(true);
+    expect(notice.effectiveDate).toBe("2026-04-06");
+    expect(notice.label).toContain("기준선 리셋");
+    expect(notice.details).toHaveLength(2);
   });
 
   test("builds report news strip summary for today report header", () => {

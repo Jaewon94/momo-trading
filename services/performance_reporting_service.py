@@ -13,6 +13,17 @@ from core.config import settings
 from models.agent_activity import AgentActivityLog
 from models.trade_result import TradeResult
 
+_TRADE_BASELINE_RESET = {
+    "active": True,
+    "effective_date": "2026-04-06",
+    "label": "2026-04-06 기준선 리셋 이후 데이터",
+    "summary": "현재 브로커 계좌 상태와 복구된 열린 BUY lot를 기준선으로 사용 중",
+    "details": [
+        "현재 보유 종목/수량, 미체결 주문, 잔고는 브로커 응답 기준으로 해석",
+        "과거 실현손익/매도 완료 이력은 로컬 DB 유실 전 구간을 완전 복구하지 않음",
+    ],
+}
+
 
 @dataclass
 class _TradePoint:
@@ -56,6 +67,7 @@ class PerformanceReportingService:
         shadow = self._calc_shadow_context(shadow_points)
 
         return {
+            "baseline": self._build_baseline_snapshot(),
             "window": {
                 "from": from_dt.isoformat(),
                 "to": to_dt.isoformat(),
@@ -103,7 +115,18 @@ class PerformanceReportingService:
         return {
             "period": period_key,
             "bucket_days": bucket_days,
+            "baseline": self._build_baseline_snapshot(),
             "buckets": list(reversed(buckets)),
+        }
+
+    @staticmethod
+    def _build_baseline_snapshot() -> dict:
+        return {
+            "active": bool(_TRADE_BASELINE_RESET["active"]),
+            "effective_date": str(_TRADE_BASELINE_RESET["effective_date"]),
+            "label": str(_TRADE_BASELINE_RESET["label"]),
+            "summary": str(_TRADE_BASELINE_RESET["summary"]),
+            "details": list(_TRADE_BASELINE_RESET["details"]),
         }
 
     async def _fetch_closed_trades(self, session: AsyncSession, *, from_dt: datetime, to_dt: datetime) -> list[_TradePoint]:

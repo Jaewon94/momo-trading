@@ -22,6 +22,19 @@ function defaultFormatSignedKrW(value) {
   return `${sign}${new Intl.NumberFormat("ko-KR").format(numeric)}원`;
 }
 
+export function buildTradeBaselineNotice(overview = {}) {
+  const baseline = overview?.baseline || {};
+  return {
+    active: Boolean(baseline?.active),
+    label: String(baseline?.label || ""),
+    effectiveDate: String(baseline?.effective_date || ""),
+    summary: String(baseline?.summary || ""),
+    details: Array.isArray(baseline?.details)
+      ? baseline.details.map((item) => String(item || "")).filter(Boolean)
+      : [],
+  };
+}
+
 export function pickNewsDisplayFields(item = {}) {
   const displayTitle = String(item.display_title || item.title || "-");
   const displaySummary = String(item.display_summary || item.summary || "");

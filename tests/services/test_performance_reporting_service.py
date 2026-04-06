@@ -20,6 +20,16 @@ def test_calc_metrics_returns_expectancy_and_drawdown():
     assert metrics["max_drawdown"] <= 0
 
 
+def test_build_baseline_snapshot_returns_reset_notice():
+    service = PerformanceReportingService()
+
+    baseline = service._build_baseline_snapshot()
+
+    assert baseline["active"] is True
+    assert baseline["effective_date"] == "2026-04-06"
+    assert "기준선 리셋" in baseline["label"]
+
+
 def test_calc_metrics_includes_cost_adjusted_net_pnl():
     service = PerformanceReportingService()
     trades = [

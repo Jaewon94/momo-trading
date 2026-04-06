@@ -14,6 +14,13 @@ async def test_news_reporting_service_returns_empty_storage_snapshot_when_table_
     async def fake_build_summary(_session, *, days: int):
         assert days == 30
         return {
+            "baseline": {
+                "active": True,
+                "effective_date": "2026-04-06",
+                "label": "2026-04-06 기준선 리셋 이후 데이터",
+                "summary": "현재 브로커 계좌 상태와 복구된 열린 BUY lot를 기준선으로 사용 중",
+                "details": ["현재 보유 종목/수량은 브로커 응답 기준"],
+            },
             "window": {"days": 30, "trade_count": 0},
             "overall": {},
             "risk_controls": {"news_gate_blocks": 0, "news_rechecks": 0},
@@ -52,6 +59,8 @@ async def test_news_reporting_service_returns_empty_storage_snapshot_when_table_
     overview = await service.build_overview(object(), recent_limit=5, performance_days=30)
 
     assert overview["storage"]["ready"] is False
+    assert overview["baseline"]["active"] is True
+    assert overview["baseline"]["effective_date"] == "2026-04-06"
     assert overview["recent_items"] == []
     assert overview["ingestion"]["recent_24h_count"] == 0
     assert overview["runtime"]["overall"]["last_status"] == "IDLE"
