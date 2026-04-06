@@ -123,12 +123,12 @@ let stockCards = {};
 
 // Sidebar section state
 const sidebarState = {
-  account: true,
-  holdings: true,
+  account: false,
+  holdings: false,
   pending: false,
-  trades: true,
-  settings: true,
-  system: true,
+  trades: false,
+  settings: false,
+  system: false,
 };
 
 const FETCH_TIMEOUT_MS = 12000;
@@ -1812,6 +1812,7 @@ function renderTodayTrades(data) {
   const state = buildTradePanelState(data);
   const {
     opened,
+    sellExecutions,
     completed,
     pendingConfirms,
     openPositions,
@@ -1833,7 +1834,11 @@ function renderTodayTrades(data) {
         <span class="text-blue-300 font-semibold">${opened.length}건</span>
       </div>
       <div class="flex items-center justify-between mt-1">
-        <span class="text-gray-400">오늘 청산</span>
+        <span class="text-gray-400">매도 체결</span>
+        <span class="text-green-300 font-semibold">${sellExecutions.length}건</span>
+      </div>
+      <div class="flex items-center justify-between mt-1">
+        <span class="text-gray-400">전량 매도 완료</span>
         <span class="text-green-300 font-semibold">${completed.length}건</span>
       </div>
       <div class="flex items-center justify-between mt-1">
@@ -1919,6 +1924,19 @@ function renderTradeCenterCard(item, kind, radarEvent = null) {
     `;
   }
 
+  if (kind === 'sell-executions') {
+    return `
+      <button type="button" class="trade-center-card tone-completed-win" data-trade-center-open-symbol="${escapeHtml(item.stock_symbol || '')}">
+        <div class="flex items-center justify-between gap-2">
+          <div class="text-sm font-medium text-white truncate">${escapeHtml(item.stock_name || item.stock_symbol || '-')}</div>
+          <div class="text-xs text-green-300">매도 체결</div>
+        </div>
+        <div class="trade-center-card-meta">${escapeHtml(item.stock_symbol || '-')} · ${escapeHtml(String(item.quantity || 0))}주</div>
+        ${radarMeta}
+      </button>
+    `;
+  }
+
   if (kind === 'completed') {
     const pnl = Number(item.pnl || 0);
     const tone = pnl >= 0 ? 'tone-completed-win' : 'tone-completed-loss';
@@ -1982,6 +2000,17 @@ function buildTradeCenterRows(state, tabKey) {
       name: item?.stock_name || item?.stock_symbol || '',
       time: item?.entry_at || item?.created_at || null,
       pnl: 0,
+    }));
+  }
+
+  if (tabKey === 'sell-executions') {
+    return section.map((item) => ({
+      kind: 'sell-executions',
+      item,
+      symbol: item?.stock_symbol || '',
+      name: item?.stock_name || item?.stock_symbol || '',
+      time: item?.exit_at || item?.updated_at || item?.created_at || null,
+      pnl: toNumber(item?.pnl),
     }));
   }
 
@@ -2050,8 +2079,10 @@ function renderTradeCenterSection(state, tabKey) {
       ? '대기 중인 거래가 없습니다.'
       : tabKey === 'opened'
         ? '오늘 진입 거래가 없습니다.'
+        : tabKey === 'sell-executions'
+          ? '오늘 매도 체결이 없습니다.'
         : tabKey === 'completed'
-          ? '오늘 청산 거래가 없습니다.'
+          ? '전량 매도 완료 거래가 없습니다.'
           : '현재 보유 포지션이 없습니다.'
   );
 
@@ -4153,8 +4184,10 @@ async function resetOperationalBaseline(triggerButton = null) {
   const button = triggerButton || document.getElementById('reset-operational-baseline-button');
   const originalText = button?.textContent || 'DB 초기화';
   const confirmed = window.confirm(
-    '운영 DB를 초기화하고 현재 브로커 보유 기준으로 다시 시작합니다.\n\n'
+    '운영 DB를 초기화하고 현재 브로커 상태를 기준선으로 다시 시작합니다.\n\n'
     + '설정은 유지되지만 거래 이력, 리포트, 활동 로그, 뉴스 적재 이력은 삭제됩니다.\n'
+    + '초기화 직후 현재 잔고/보유/미체결을 다시 읽어와 새 기준선을 만듭니다.\n'
+    + '과거 실현손익과 예전 리포트는 복원되지 않습니다.\n'
     + '계속할까요?'
   );
   if (!confirmed) return;
@@ -4178,7 +4211,11 @@ async function resetOperationalBaseline(triggerButton = null) {
     if (currentView === 'report') {
       await loadReportsArchive();
     }
-    setStatus('runtime', json?.message || '운영 DB 초기화 완료');
+    const snapshot = json?.data?.broker_snapshot || {};
+    const statusMessage = snapshot?.synced
+      ? `${json?.message || '운영 DB 초기화 완료'} · 잔고/보유/미체결 재동기화 완료`
+      : (json?.message || '운영 DB 초기화 완료');
+    setStatus('runtime', statusMessage);
   } catch (err) {
     console.error('Operational baseline reset error:', err);
     setStatus('error', err.message || '운영 DB 초기화 실패');

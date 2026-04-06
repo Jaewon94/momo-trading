@@ -14,6 +14,7 @@ describe("trade_center_state", () => {
       trades: {
         date: "2026-04-05",
         opened: [{ stock_symbol: "011930", quantity: 10, entry_price: 1600 }],
+        sell_executions: [{ stock_symbol: "065440", side: "SELL", quantity: 1 }],
         completed: [{ stock_symbol: "065440", pnl: 30000, return_pct: 3.4 }],
         pending_confirms: [{ stock_symbol: "011930", quantity: 5 }],
         open_positions: [{ stock_symbol: "011930", stock_name: "신성이엔지", quantity: 10, entry_price: 1600 }],
@@ -23,12 +24,14 @@ describe("trade_center_state", () => {
     expect(state.tabs).toEqual([
       { key: "pending", label: "대기", count: 2 },
       { key: "opened", label: "오늘 진입", count: 1 },
-      { key: "completed", label: "오늘 청산", count: 1 },
+      { key: "sell-executions", label: "매도 체결", count: 1 },
+      { key: "completed", label: "전량 매도 완료", count: 1 },
       { key: "positions", label: "현재 보유", count: 1 },
     ]);
 
     expect(state.kpis).toEqual([
       { label: "오늘 거래", value: 3 },
+      { label: "매도 체결", value: 1 },
       { label: "확인 대기", value: 1 },
       { label: "미체결 주문", value: 1 },
       { label: "보유 종목", value: 1 },

@@ -28,6 +28,7 @@
 - 과거 손익을 무리하게 재구성하지 않는다.
 - 향후 성과 지표는 이 기준선 이후 누적 데이터부터 신뢰한다.
 - 이미 끝난 과거 매도 건은 옛 DB나 외부 거래내역이 없는 한 완전 복구 대상으로 보지 않는다.
+- `DB 초기화`는 "과거 복원"이 아니라 "현재 브로커 잔고/보유/미체결을 기준으로 새 기준선 재구성"으로 해석한다.
 
 ## 운영 절차
 1. 서버 재시작 후 `/api/v1/admin/account/balance`, `/api/v1/admin/account/holdings`를 다시 확인한다.
@@ -37,6 +38,7 @@
    - `POST /api/v1/admin/trades/reconcile-holdings`
    - 또는 시스템 설정 탭의 `DB 초기화` 버튼으로 운영 이력을 비운 뒤 기준선을 다시 만든다.
    - API: `POST /api/v1/admin/system/reset-operational-baseline`
+   - 초기화 직후 애플리케이션은 브로커 잔고/보유/미체결을 다시 조회해 새 기준선 요약을 남긴다.
 4. 장중에는 미체결이 존재할 수 있으므로 `PENDING_CONFIRM` 종목은 즉시 백필하지 않는다.
 5. 당일 장 종료 후 다시 한 번 `reconcile-pending -> reconcile-holdings` 순서로 점검한다.
 

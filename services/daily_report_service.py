@@ -13,6 +13,7 @@ from repositories.daily_report_repository import DailyReportRepository
 from repositories.trade_result_repository import TradeResultRepository
 from services.activity_logger import activity_logger
 from trading.account_manager import account_manager
+from trading.broker_factory import get_broker_adapter
 from trading.enums import ActivityPhase, ActivityType, LLMTier
 
 DAILY_REPORT_PROMPT = """당신은 AI 트레이딩 시스템의 일일 리포트 작성자입니다.
@@ -87,7 +88,18 @@ class DailyReportService:
                 cash = balance.cash
                 stock_value = balance.stock_value
             except Exception as e:
-                logger.warning("계좌 스냅샷 조회 실패 (리포트 계속): {}", str(e))
+                logger.warning("계좌 스냅샷 조회 실패, 브로커 직접 조회로 폴백: {}", str(e))
+                try:
+                    adapter = get_broker_adapter()
+                    balance = await adapter.get_balance()
+                    holdings = await adapter.get_holdings()
+                    unrealized_pnl = balance.total_pnl
+                    open_position_count = len(holdings)
+                    total_asset = balance.total_asset
+                    cash = balance.cash
+                    stock_value = balance.stock_value
+                except Exception as fallback_exc:
+                    logger.warning("브로커 직접 계좌 조회도 실패 (리포트 계속): {}", str(fallback_exc))
 
             async with AsyncSessionLocal() as session:
                 async with session.begin():

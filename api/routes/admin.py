@@ -376,6 +376,28 @@ def _report_looks_empty(report) -> bool:
     )
 
 
+async def _load_live_report_snapshot(report_date: date) -> dict[str, float | int]:
+    from util.time_util import now_kst
+
+    if report_date != now_kst().date():
+        return {}
+
+    try:
+        adapter = get_broker_adapter()
+        balance, holdings = await asyncio.gather(
+            adapter.get_balance(),
+            adapter.get_holdings(),
+        )
+    except Exception as exc:
+        logger.warning("오늘 리포트 실시간 계좌 보정 실패: {}", str(exc))
+        return {}
+
+    return {
+        "unrealized_pnl": float(getattr(balance, "total_pnl", 0.0) or 0.0),
+        "open_position_count": len(holdings or []),
+    }
+
+
 async def _build_report_response(report, trade_repo: TradeResultRepository, open_symbols_cache: set[str] | None = None):
     payload = DailyReportResponse.model_validate(report)
     report_date = getattr(report, "report_date", None)
@@ -385,15 +407,18 @@ async def _build_report_response(report, trade_repo: TradeResultRepository, open
     trade_comparison = ReportTradeComparisonResponse.model_validate(
         performance_reporting_service.build_trade_comparison_from_results(completed)
     )
+    live_snapshot = await _load_live_report_snapshot(report_date) if report_date else {}
 
     if not _report_looks_empty(report):
         return payload.model_copy(update={
             "trade_comparison": trade_comparison,
+            **live_snapshot,
         })
 
     if not report_date:
         return payload.model_copy(update={
             "trade_comparison": trade_comparison,
+            **live_snapshot,
         })
 
     opened = await trade_repo.get_opened_by_date(report_date)
@@ -401,6 +426,7 @@ async def _build_report_response(report, trade_repo: TradeResultRepository, open
     if not trade_has_data:
         return payload.model_copy(update={
             "trade_comparison": trade_comparison,
+            **live_snapshot,
         })
 
     if open_symbols_cache is None:
@@ -427,6 +453,7 @@ async def _build_report_response(report, trade_repo: TradeResultRepository, open
         "open_position_count": open_position_count,
         "total_orders": max(int(getattr(report, "total_orders", 0) or 0), buy_count + sell_count),
         "trade_comparison": trade_comparison,
+        **live_snapshot,
     })
 
 
@@ -623,6 +650,8 @@ async def get_trades(
 
     # 오늘 진입한 매수
     opened = await repo.get_opened_by_date(d)
+    # 오늘 매도 체결 (SELL 레코드 기준)
+    sell_executions = await repo.get_sell_executions_by_date(d)
     # 오늘 청산된 포지션 (BUY 레코드, pnl 계산됨)
     completed = await repo.get_completed_by_date(d)
     # 오늘 체결 확인 대기
@@ -633,6 +662,7 @@ async def get_trades(
     return SuccessResponse(data={
         "date": str(d),
         "opened": [TradeResultResponse.model_validate(t) for t in opened],
+        "sell_executions": [TradeResultResponse.model_validate(t) for t in sell_executions],
         "completed": [TradeResultResponse.model_validate(t) for t in completed],
         "pending_confirms": [TradeResultResponse.model_validate(t) for t in pending_confirms],
         "open_positions": [TradeResultResponse.model_validate(t) for t in open_positions],
@@ -708,12 +738,49 @@ async def reset_operational_baseline():
 
     backfill = await portfolio_sync_job._backfill_missing_open_buys_from_holdings()
     repair = await portfolio_sync_job._repair_confirmed_zero_entry_prices()
+    broker_snapshot: dict[str, object] = {
+        "synced": False,
+        "holdings_count": 0,
+        "pending_order_count": 0,
+        "total_asset": 0.0,
+        "cash": 0.0,
+        "stock_value": 0.0,
+        "total_pnl": 0.0,
+        "warning": "",
+    }
+    try:
+        adapter = get_broker_adapter()
+        balance, holdings, pending_orders = await asyncio.gather(
+            adapter.get_balance(),
+            adapter.get_holdings(),
+            adapter.get_pending_orders(),
+        )
+        broker_snapshot = {
+            "synced": True,
+            "holdings_count": len(holdings or []),
+            "pending_order_count": len(pending_orders or []),
+            "total_asset": float(getattr(balance, "total_asset", 0.0) or 0.0),
+            "cash": float(getattr(balance, "cash", 0.0) or 0.0),
+            "stock_value": float(getattr(balance, "stock_value", 0.0) or 0.0),
+            "total_pnl": float(getattr(balance, "total_pnl", 0.0) or 0.0),
+            "warning": "",
+        }
+    except Exception as exc:
+        logger.warning("기준선 리셋 후 브로커 스냅샷 재동기화 실패: {}", str(exc))
+        broker_snapshot["warning"] = str(exc)[:160]
 
     summary = {
         "backup": backup,
         "deleted": deleted,
         "backfill": backfill,
         "repair": repair,
+        "baseline_mode": "broker_snapshot",
+        "limitations": {
+            "historical_realized_pnl_restored": False,
+            "historical_reports_restored": False,
+            "historical_news_ingestion_restored": False,
+        },
+        "broker_snapshot": broker_snapshot,
         "preserved": {
             "runtime_settings": True,
             "stocks": True,
@@ -729,7 +796,8 @@ async def reset_operational_baseline():
     message = (
         f"운영 DB 초기화 완료 · 백업 {backup.get('filename')} / 거래 {deleted.get('trade_results', 0)}건 / "
         f"뉴스 {deleted.get('news_items', 0)}건 삭제, "
-        f"보유 백필 {backfill.get('backfilled', 0)}건"
+        f"보유 백필 {backfill.get('backfilled', 0)}건 / "
+        f"현재 보유 {broker_snapshot.get('holdings_count', 0)}종목 기준선 재구성"
     )
     return SuccessResponse(data=summary, message=message)
 

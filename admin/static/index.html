@@ -874,9 +874,9 @@
           <div class="sidebar-section" id="section-settings">
             <div class="sidebar-section-header" onclick="toggleSidebarSection('settings')">
               <span>&#x2699;&#xfe0f; &#xc6b4;&#xc601; &#xd575;&#xc2ec;</span>
-              <span class="sidebar-section-arrow" id="arrow-settings">&#x25BC;</span>
+              <span class="sidebar-section-arrow collapsed" id="arrow-settings">&#x25BC;</span>
             </div>
-            <div class="sidebar-section-body open" id="body-settings">
+            <div class="sidebar-section-body" id="body-settings">
               <div class="px-3 pb-2 space-y-3">
                 <div class="settings-summary-card">
                   <div class="flex items-center justify-between">
@@ -997,9 +997,9 @@
           <div class="sidebar-section" id="section-system">
             <div class="sidebar-section-header" onclick="toggleSidebarSection('system')">
               <span>&#x1f5a5; &#xc2dc;&#xc2a4;&#xd15c; &#xc694;&#xc57d;</span>
-              <span class="sidebar-section-arrow" id="arrow-system">&#x25BC;</span>
+              <span class="sidebar-section-arrow collapsed" id="arrow-system">&#x25BC;</span>
             </div>
-            <div class="sidebar-section-body open" id="body-system">
+            <div class="sidebar-section-body" id="body-system">
               <div class="px-3 pb-2 space-y-3">
                 <div class="settings-summary-card">
                   <div class="text-xs font-medium text-gray-300">런타임 상태</div>
@@ -1142,9 +1142,9 @@
           <div class="sidebar-section" id="section-account">
             <div class="sidebar-section-header" onclick="toggleSidebarSection('account')">
               <span>&#x1f4b0; &#xacc4;&#xc88c; &#xc794;&#xace0;</span>
-              <span class="sidebar-section-arrow" id="arrow-account">&#x25BC;</span>
+              <span class="sidebar-section-arrow collapsed" id="arrow-account">&#x25BC;</span>
             </div>
-            <div class="sidebar-section-body open" id="body-account">
+            <div class="sidebar-section-body" id="body-account">
               <div class="px-3 pb-2">
                 <div id="account-info" class="text-xs space-y-1">
                   <div class="text-gray-600">&#xb85c;&#xb529; &#xc911;...</div>
@@ -1156,9 +1156,9 @@
           <div class="sidebar-section" id="section-holdings">
             <div class="sidebar-section-header" onclick="toggleSidebarSection('holdings')">
               <span>&#x1f4ca; &#xbcf4;&#xc720;&#xc885;&#xbaa9; <span id="holdings-count" class="ml-1 px-1.5 py-0.5 rounded-full bg-green-900/40 text-green-400 text-xs">0</span></span>
-              <span class="sidebar-section-arrow" id="arrow-holdings">&#x25BC;</span>
+              <span class="sidebar-section-arrow collapsed" id="arrow-holdings">&#x25BC;</span>
             </div>
-            <div class="sidebar-section-body open" id="body-holdings">
+            <div class="sidebar-section-body" id="body-holdings">
               <div class="px-3 pb-2">
                 <div id="holdings-info" class="text-xs space-y-1.5"></div>
               </div>
@@ -1180,9 +1180,9 @@
           <div class="sidebar-section" id="section-trades">
             <div class="sidebar-section-header" onclick="toggleSidebarSection('trades')">
               <span>&#x2705; &#xc624;&#xb298; &#xac70;&#xb798; &#xc694;&#xc57d; <span id="trades-count" class="ml-1 px-1.5 py-0.5 rounded-full bg-blue-900/40 text-blue-300 text-xs">0</span></span>
-              <span class="sidebar-section-arrow" id="arrow-trades">&#x25BC;</span>
+              <span class="sidebar-section-arrow collapsed" id="arrow-trades">&#x25BC;</span>
             </div>
-            <div class="sidebar-section-body open" id="body-trades">
+            <div class="sidebar-section-body" id="body-trades">
               <div class="px-3 pb-2">
                 <div class="mb-2 flex justify-end">
                   <button onclick="switchView('trades-center')"
@@ -1676,7 +1676,7 @@
                   <div class="text-sm font-medium text-white">운영 DB 초기화</div>
                   <div class="mt-1 text-xs text-gray-400">
                     설정은 유지하고 거래/리포트/활동/뉴스 같은 운영 이력만 비웁니다.
-                    이후 현재 브로커 보유 기준으로 열린 BUY lot만 다시 생성합니다.
+                    이후 현재 브로커 잔고/보유/미체결을 다시 읽어 새 기준선을 만듭니다.
                   </div>
                 </div>
                 <button id="reset-operational-baseline-button"
@@ -1686,7 +1686,7 @@
                 </button>
               </div>
               <div class="mt-3 text-[11px] leading-5 text-gray-500">
-                과거 실현손익/리포트/뉴스 적재 이력은 복구되지 않습니다. 다른 컴퓨터에서 새 기준선으로 다시 시작할 때만 사용하세요.
+                과거 실현손익/리포트/뉴스 적재 이력은 복구되지 않습니다. 다른 컴퓨터에서 새 기준선으로 다시 시작하거나, 현재 상태만 다시 맞출 때 사용하세요.
               </div>
             </div>
             <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4">

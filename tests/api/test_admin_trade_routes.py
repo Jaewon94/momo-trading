@@ -17,6 +17,10 @@ async def test_admin_trades_route_includes_pending_confirms(client, monkeypatch)
             assert d == target_date
             return [opened_trade]
 
+        async def get_sell_executions_by_date(self, d):
+            assert d == target_date
+            return []
+
         async def get_completed_by_date(self, d):
             assert d == target_date
             return []
@@ -36,6 +40,7 @@ async def test_admin_trades_route_includes_pending_confirms(client, monkeypatch)
     assert response.status_code == 200
     payload = response.json()["data"]
     assert payload["opened"][0]["stock_symbol"] == "005930"
+    assert payload["sell_executions"] == []
     assert payload["pending_confirms"][0]["stock_symbol"] == "003280"
     assert payload["pending_confirms"][0]["status"] == "PENDING_CONFIRM"
 
@@ -165,7 +170,23 @@ async def test_admin_reset_operational_baseline_route_returns_summary(client, mo
         fake_repair,
     )
     monkeypatch.setattr("api.routes.admin.account_manager.invalidate_cache", lambda: observed.__setitem__("account_cache", True))
-    monkeypatch.setattr("api.routes.admin.get_broker_adapter", lambda: SimpleNamespace(invalidate_cache=lambda: observed.__setitem__("broker_cache", True)))
+    monkeypatch.setattr(
+        "api.routes.admin.get_broker_adapter",
+        lambda: SimpleNamespace(
+            invalidate_cache=lambda: observed.__setitem__("broker_cache", True),
+            get_balance=lambda: __import__("asyncio").sleep(0, result=SimpleNamespace(
+                total_asset=527064565.0,
+                cash=323359499.0,
+                stock_value=203705066.0,
+                total_pnl=-2704805.0,
+            )),
+            get_holdings=lambda: __import__("asyncio").sleep(0, result=[
+                SimpleNamespace(symbol="001250"),
+                SimpleNamespace(symbol="049080"),
+            ]),
+            get_pending_orders=lambda: __import__("asyncio").sleep(0, result=[SimpleNamespace(order_id="1")]),
+        ),
+    )
     monkeypatch.setattr("api.routes.admin.news_runtime_service.reset", lambda: observed.__setitem__("reset", observed["reset"] + 1))
     monkeypatch.setattr("api.routes.admin.activity_logger.log", fake_log)
 
@@ -177,6 +198,11 @@ async def test_admin_reset_operational_baseline_route_returns_summary(client, mo
     assert payload["data"]["deleted"]["trade_results"] == 4
     assert payload["data"]["deleted"]["news_items"] == 7
     assert payload["data"]["backfill"]["backfilled"] == 2
+    assert payload["data"]["baseline_mode"] == "broker_snapshot"
+    assert payload["data"]["broker_snapshot"]["synced"] is True
+    assert payload["data"]["broker_snapshot"]["holdings_count"] == 2
+    assert payload["data"]["broker_snapshot"]["pending_order_count"] == 1
+    assert payload["data"]["limitations"]["historical_realized_pnl_restored"] is False
     assert payload["data"]["preserved"]["runtime_settings"] is True
     assert observed["reset"] == 1
     assert observed["account_cache"] is True

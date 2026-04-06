@@ -50,6 +50,7 @@ export function buildTradeCenterState(payload = {}) {
   const holdings = normalizeTradeList(payload?.holdings);
   const pendingOrders = normalizeTradeList(payload?.pendingOrders);
   const opened = normalizeTradeList(trades?.opened);
+  const sellExecutions = normalizeTradeList(trades?.sell_executions);
   const completed = normalizeTradeList(trades?.completed);
   const pendingConfirms = normalizeTradeList(trades?.pending_confirms);
   const openPositions = groupOpenPositions(trades?.open_positions, holdings);
@@ -57,12 +58,14 @@ export function buildTradeCenterState(payload = {}) {
   const tabs = [
     { key: "pending", label: "대기", count: pendingConfirms.length + pendingOrders.length },
     { key: "opened", label: "오늘 진입", count: opened.length },
-    { key: "completed", label: "오늘 청산", count: completed.length },
+    { key: "sell-executions", label: "매도 체결", count: sellExecutions.length },
+    { key: "completed", label: "전량 매도 완료", count: completed.length },
     { key: "positions", label: "현재 보유", count: openPositions.length },
   ];
 
   const kpis = [
-    { label: "오늘 거래", value: opened.length + completed.length + pendingConfirms.length },
+    { label: "오늘 거래", value: opened.length + sellExecutions.length + pendingConfirms.length },
+    { label: "매도 체결", value: sellExecutions.length },
     { label: "확인 대기", value: pendingConfirms.length },
     { label: "미체결 주문", value: pendingOrders.length },
     { label: "보유 종목", value: openPositions.length },
@@ -78,6 +81,7 @@ export function buildTradeCenterState(payload = {}) {
         pendingOrders,
       },
       opened,
+      "sell-executions": sellExecutions,
       completed,
       positions: openPositions,
     },
