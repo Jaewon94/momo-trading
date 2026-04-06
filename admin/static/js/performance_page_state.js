@@ -60,7 +60,25 @@ export function buildPerformanceDashboardState({
     rollout: {
       status: String(rollout.status || "HOLDOUT"),
       reason: String(rollout.reason || "표본 수집 중"),
+      details: Array.isArray(rollout.details)
+        ? rollout.details.map((item) => String(item || "")).filter(Boolean)
+        : [],
+      checks: Array.isArray(rollout.checks)
+        ? rollout.checks.map((item) => ({
+          key: String(item?.key || ""),
+          label: String(item?.label || ""),
+          passed: Boolean(item?.passed),
+          actual: String(item?.actual || "-"),
+          target: String(item?.target || "-"),
+        }))
+        : [],
     },
+    shadowSummaryRows: [
+      { label: "Shadow 후보", value: `${formatInteger(shadow.candidate_count || 0)}건` },
+      { label: "뉴스 차단", value: `${formatInteger(shadow.blocked_by_news_count || 0)}건` },
+      { label: "실제 BUY", value: `${formatInteger(shadow.actual_buy_count || 0)}건` },
+      { label: "기준 BUY", value: `${formatInteger(shadow.baseline_buy_count || 0)}건` },
+    ],
     comparisonRows: [
       {
         label: "뉴스 반영 거래",

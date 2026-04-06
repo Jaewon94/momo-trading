@@ -64,6 +64,12 @@ describe("news_overview_state", () => {
           { code: "KRX", tier: "A", region: "KR", implemented: false },
         ],
       },
+      ingestion: {
+        by_source_24h: [
+          { source_code: "DART", count: 3 },
+          { source_code: "KRX", count: 0 },
+        ],
+      },
       runtime: {
         sources: {
           DART: {
@@ -80,8 +86,8 @@ describe("news_overview_state", () => {
 
     expect(pills[0]).toContain("OLLAMA");
     expect(pills[1]).toContain("해외 포함");
-    expect(pills.some((pill) => pill.includes("DART") && pill.includes("SUCCESS"))).toBe(true);
-    expect(pills.some((pill) => pill.includes("KRX") && pill.includes("미연결"))).toBe(true);
+    expect(pills.some((pill) => pill.includes("DART") && pill.includes("SUCCESS") && pill.includes("24h 3건"))).toBe(true);
+    expect(pills.some((pill) => pill.includes("KRX") && pill.includes("24h 0건") && pill.includes("미연결"))).toBe(true);
   });
 
   test("builds report news strip summary for today report header", () => {

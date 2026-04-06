@@ -112,6 +112,7 @@ def test_calc_shadow_context_counts_news_policy_candidates():
     assert summary["actual_buy_count"] == 1
     assert summary["blocked_by_news_count"] == 1
     assert summary["baseline_buy_count"] == 2
+    assert summary["buy_delta"] == -1
     assert summary["avg_negative_pressure"] == 0.55
     assert summary["block_rate"] == 0.5
 
@@ -186,6 +187,9 @@ def test_build_rollout_status_promotes_when_samples_and_metrics_are_good():
 
     assert rollout["status"] == "PROMOTE"
     assert "확대" in rollout["reason"]
+    assert len(rollout["checks"]) >= 4
+    assert rollout["checks"][0]["key"] == "sample"
+    assert any("Shadow 후보 18건" in line for line in rollout["details"])
 
 
 def test_build_rollout_status_rolls_back_when_metrics_degrade():
@@ -211,6 +215,8 @@ def test_build_rollout_status_rolls_back_when_metrics_degrade():
 
     assert rollout["status"] == "ROLLBACK"
     assert "롤백" in rollout["reason"]
+    assert any(check["key"] == "expectancy" and check["passed"] is False for check in rollout["checks"])
+    assert any(check["key"] == "profit_factor" and check["passed"] is False for check in rollout["checks"])
 
 
 def test_build_rollout_status_keeps_when_news_enriched_underperforms_plain():
@@ -241,3 +247,5 @@ def test_build_rollout_status_keeps_when_news_enriched_underperforms_plain():
 
     assert rollout["status"] == "KEEP"
     assert "열위" in rollout["reason"]
+    assert any(check["key"] == "comparison_expectancy" and check["passed"] is False for check in rollout["checks"])
+    assert any(check["key"] == "comparison_net_pnl" and check["passed"] is False for check in rollout["checks"])

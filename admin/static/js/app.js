@@ -276,6 +276,25 @@ function renderNewsOverviewPanels(error = null) {
       <div class="mt-3 space-y-1 text-[11px] leading-5 text-gray-400">
         ${rollout.lines.map((line) => `<div>${escapeHtml(line)}</div>`).join('')}
       </div>
+      ${rollout.details.length ? `
+        <div class="mt-3 space-y-1 rounded-2xl border border-gray-700 bg-dark-900/40 px-3 py-3 text-[11px] leading-5 text-gray-300">
+          ${rollout.details.map((line) => `<div>${escapeHtml(line)}</div>`).join('')}
+        </div>
+      ` : ''}
+      ${rollout.checks.length ? `
+        <div class="mt-3 grid gap-2 md:grid-cols-2">
+          ${rollout.checks.map((item) => `
+            <div class="rounded-2xl border px-3 py-2 ${item.passed ? 'border-emerald-700/60 bg-emerald-950/20' : 'border-amber-700/60 bg-amber-950/20'}">
+              <div class="flex items-center justify-between gap-2">
+                <div class="text-[11px] font-medium ${item.passed ? 'text-emerald-300' : 'text-amber-300'}">${escapeHtml(item.label)}</div>
+                <div class="text-[10px] ${item.passed ? 'text-emerald-400' : 'text-amber-400'}">${item.passed ? '통과' : '확인 필요'}</div>
+              </div>
+              <div class="mt-1 text-[11px] text-white">${escapeHtml(item.actual)}</div>
+              <div class="mt-1 text-[10px] text-gray-500">기준 ${escapeHtml(item.target)}</div>
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
     `;
   }
 
@@ -3330,6 +3349,33 @@ function createPerformanceDashboard(state) {
         <div class="text-xs uppercase tracking-[0.12em] text-gray-500">Shadow / Rollout</div>
         <div class="mt-2 text-xl font-semibold text-white">${escapeHtml(state.rollout.status)}</div>
         <div class="mt-1 text-sm text-gray-400">${escapeHtml(state.rollout.reason)}</div>
+        ${state.rollout.details.length ? `
+          <div class="mt-3 space-y-1 rounded-2xl border border-gray-700 bg-dark-950/40 px-3 py-3 text-[11px] leading-5 text-gray-300">
+            ${state.rollout.details.map((line) => `<div>${escapeHtml(line)}</div>`).join('')}
+          </div>
+        ` : ''}
+        <div class="mt-3 grid grid-cols-2 gap-3 text-sm">
+          ${state.shadowSummaryRows.map((item) => `
+            <div>
+              <div class="text-gray-500">${escapeHtml(item.label)}</div>
+              <div class="mt-1 font-semibold text-white">${escapeHtml(item.value)}</div>
+            </div>
+          `).join('')}
+        </div>
+        ${state.rollout.checks.length ? `
+          <div class="mt-3 grid gap-2">
+            ${state.rollout.checks.map((item) => `
+              <div class="rounded-2xl border px-3 py-2 ${item.passed ? 'border-emerald-700/50 bg-emerald-950/20' : 'border-amber-700/50 bg-amber-950/20'}">
+                <div class="flex items-center justify-between gap-2">
+                  <div class="text-[11px] font-medium ${item.passed ? 'text-emerald-300' : 'text-amber-300'}">${escapeHtml(item.label)}</div>
+                  <div class="text-[10px] ${item.passed ? 'text-emerald-400' : 'text-amber-400'}">${item.passed ? '통과' : '확인 필요'}</div>
+                </div>
+                <div class="mt-1 text-[11px] text-white">${escapeHtml(item.actual)}</div>
+                <div class="mt-1 text-[10px] text-gray-500">기준 ${escapeHtml(item.target)}</div>
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
       </section>
       <section class="rounded-2xl border border-gray-700 bg-dark-900/40 px-4 py-4">
         <div class="text-xs uppercase tracking-[0.12em] text-gray-500">News Ops</div>

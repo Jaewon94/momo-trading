@@ -45,6 +45,10 @@ describe("news_performance_state", () => {
         rollout: {
           status: "PROMOTE",
           reason: "비중 확대 권장",
+          details: ["Shadow 후보 18건 · 실제 BUY 12건 · 기준 BUY 16건"],
+          checks: [
+            { key: "sample", label: "표본", passed: true, actual: "실거래 14건 / Shadow 18건", target: "각 12건 이상" },
+          ],
         },
       },
     });
@@ -54,5 +58,7 @@ describe("news_performance_state", () => {
     expect(policy.lines[1]).toContain("표본 12건");
     expect(policy.lines[1]).toContain("PF 1.15");
     expect(policy.lines[2]).toContain("MDD -500,000원");
+    expect(policy.details[0]).toContain("Shadow 후보 18건");
+    expect(policy.checks[0]).toMatchObject({ key: "sample", passed: true });
   });
 });

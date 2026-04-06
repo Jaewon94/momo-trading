@@ -166,8 +166,15 @@ export function buildNewsOverviewSourcePills(overview) {
   const settings = overview?.settings || {};
   const storage = overview?.storage || {};
   const sources = overview?.sources || {};
+  const ingestion = overview?.ingestion || {};
   const runtimeSources = overview?.runtime?.sources || {};
   const catalog = Array.isArray(sources.catalog) ? sources.catalog : [];
+  const sourceCounts = new Map(
+    (Array.isArray(ingestion.by_source_24h) ? ingestion.by_source_24h : []).map((item) => [
+      String(item?.source_code || ""),
+      Number(item?.count || 0),
+    ]),
+  );
 
   return [
     `<div class="news-source-pill"><strong>${String(settings.llm_provider || "AUTOMATIC")}</strong><span>${settings.llm_enabled ? "뉴스 AI ON" : "규칙 기반만"}</span></div>`,
@@ -176,10 +183,11 @@ export function buildNewsOverviewSourcePills(overview) {
     ...catalog.slice(0, 6).map((item) => {
       const runtime = runtimeSources?.[item.code] || {};
       const status = String(runtime.status || "IDLE");
+      const count24h = sourceCounts.get(String(item.code || "")) || 0;
       const detail = runtime.message
         ? String(runtime.message)
         : (item.implemented ? `${String(item.tier || "-")} · ${String(item.region || "-")}` : "실수집 미연결");
-      return `<div class="news-source-pill"><strong>${String(item.code || "")}</strong><span>${status} · ${detail}</span></div>`;
+      return `<div class="news-source-pill"><strong>${String(item.code || "")}</strong><span>${status} · 24h ${count24h}건 · ${detail}</span></div>`;
     }),
   ];
 }

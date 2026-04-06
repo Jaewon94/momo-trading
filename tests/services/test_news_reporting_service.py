@@ -19,7 +19,12 @@ async def test_news_reporting_service_returns_empty_storage_snapshot_when_table_
             "risk_controls": {"news_gate_blocks": 0, "news_rechecks": 0},
             "news_context": {"trade_count": 0, "avg_negative_pressure": 0.0},
             "shadow": {"candidate_count": 0, "blocked_by_news_count": 0},
-            "rollout": {"status": "HOLDOUT", "reason": "표본 부족"},
+            "rollout": {
+                "status": "HOLDOUT",
+                "reason": "표본 부족",
+                "details": ["Shadow 후보 0건"],
+                "checks": [{"key": "sample", "label": "표본", "passed": False, "actual": "실거래 0건 / Shadow 0건", "target": "각 12건 이상"}],
+            },
         }
 
     async def fake_periodic(_session, *, period: str, size: int):
@@ -52,6 +57,8 @@ async def test_news_reporting_service_returns_empty_storage_snapshot_when_table_
     assert overview["runtime"]["overall"]["last_status"] == "IDLE"
     assert "news_items" in overview["storage"]["message"]
     assert overview["performance"]["rollout"]["status"] == "HOLDOUT"
+    assert overview["performance"]["rollout"]["details"] == ["Shadow 후보 0건"]
+    assert overview["performance"]["rollout"]["checks"][0]["key"] == "sample"
     assert overview["periodic"]["weekly"]["period"] == "weekly"
     assert overview["periodic"]["monthly"]["period"] == "monthly"
     assert "shadow_enabled" in overview["settings"]

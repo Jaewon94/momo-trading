@@ -70,6 +70,8 @@ export function buildNewsRolloutPolicy(
   const settings = overview?.settings || {};
   const rollout = overview?.performance?.rollout || {};
   const maxDrawdownLimit = -Math.abs(Number(settings.rollout_max_drawdown_krw || 0));
+  const checks = Array.isArray(rollout.checks) ? rollout.checks : [];
+  const details = Array.isArray(rollout.details) ? rollout.details : [];
 
   return {
     status: String(rollout.status || "HOLDOUT"),
@@ -79,5 +81,13 @@ export function buildNewsRolloutPolicy(
       `표본 ${formatInteger(settings.rollout_min_sample_size || 0)}건 · PF ${Number(settings.rollout_min_profit_factor || 0).toFixed(2)} · 기대값 ${formatSignedKrW(settings.rollout_min_expectancy || 0)} 이상`,
       `MDD ${formatSignedKrW(maxDrawdownLimit)} 이상 방어`,
     ],
+    details: details.map((line) => String(line || "")).filter(Boolean),
+    checks: checks.map((item) => ({
+      key: String(item?.key || ""),
+      label: String(item?.label || ""),
+      passed: Boolean(item?.passed),
+      actual: String(item?.actual || "-"),
+      target: String(item?.target || "-"),
+    })),
   };
 }

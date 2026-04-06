@@ -275,6 +275,7 @@ class PerformanceReportingService:
                 "candidate_count": 0,
                 "actual_buy_count": 0,
                 "baseline_buy_count": 0,
+                "buy_delta": 0,
                 "blocked_by_news_count": 0,
                 "avg_negative_pressure": 0.0,
                 "block_rate": 0.0,
@@ -293,6 +294,7 @@ class PerformanceReportingService:
             "candidate_count": candidate_count,
             "actual_buy_count": actual_buys,
             "baseline_buy_count": baseline_buys,
+            "buy_delta": actual_buys - baseline_buys,
             "blocked_by_news_count": blocked,
             "avg_negative_pressure": round(sum(values) / len(values), 4) if values else 0.0,
             "block_rate": round(blocked / candidate_count, 4) if candidate_count else 0.0,
@@ -332,6 +334,8 @@ class PerformanceReportingService:
         max_drawdown = float(overall.get("max_drawdown") or 0.0)
         shadow_candidates = int(shadow.get("candidate_count") or 0)
         blocked = int(shadow.get("blocked_by_news_count") or 0)
+        actual_buys = int(shadow.get("actual_buy_count") or 0)
+        baseline_buys = int(shadow.get("baseline_buy_count") or 0)
         comparisons = comparisons or {}
         comparison_delta = comparisons.get("delta") or {}
         comparison_news = comparisons.get("news_enriched") or {}
@@ -340,30 +344,106 @@ class PerformanceReportingService:
             int(comparison_news.get("trade_count") or 0) > 0
             and int(comparison_plain.get("trade_count") or 0) > 0
         )
+        sample_passed = trade_count >= min_sample_size and shadow_candidates >= min_sample_size
+        expectancy_passed = expectancy >= min_expectancy
+        pf_passed = profit_factor >= min_profit_factor
+        drawdown_passed = max_drawdown > max_drawdown_limit
+        comparison_expectancy_delta = float(comparison_delta.get("expectancy") or 0.0)
+        comparison_net_pnl_delta = float(comparison_delta.get("net_pnl_after_cost") or 0.0)
+        comparison_passed = (
+            not comparison_ready
+            or (
+                comparison_expectancy_delta >= 0
+                and comparison_net_pnl_delta >= 0
+            )
+        )
 
-        if trade_count < min_sample_size or shadow_candidates < min_sample_size:
+        checks = [
+            {
+                "key": "sample",
+                "label": "표본",
+                "passed": sample_passed,
+                "actual": f"실거래 {trade_count}건 / Shadow {shadow_candidates}건",
+                "target": f"각 {min_sample_size}건 이상",
+            },
+            {
+                "key": "expectancy",
+                "label": "기대값",
+                "passed": expectancy_passed,
+                "actual": f"{expectancy:.2f}",
+                "target": f"{min_expectancy:.2f} 이상",
+            },
+            {
+                "key": "profit_factor",
+                "label": "PF",
+                "passed": pf_passed,
+                "actual": f"{profit_factor:.2f}",
+                "target": f"{min_profit_factor:.2f} 이상",
+            },
+            {
+                "key": "drawdown",
+                "label": "MDD",
+                "passed": drawdown_passed,
+                "actual": f"{max_drawdown:,.0f}원",
+                "target": f"{max_drawdown_limit:,.0f}원 초과",
+            },
+        ]
+        if comparison_ready:
+            checks.extend([
+                {
+                    "key": "comparison_expectancy",
+                    "label": "뉴스 E 비교",
+                    "passed": comparison_expectancy_delta >= 0,
+                    "actual": f"{comparison_expectancy_delta:+.2f}",
+                    "target": "0.00 이상",
+                },
+                {
+                    "key": "comparison_net_pnl",
+                    "label": "비용차감 비교",
+                    "passed": comparison_net_pnl_delta >= 0,
+                    "actual": f"{comparison_net_pnl_delta:+,.0f}원",
+                    "target": "0원 이상",
+                },
+            ])
+
+        details = [
+            f"Shadow 후보 {shadow_candidates}건 · 실제 BUY {actual_buys}건 · 기준 BUY {baseline_buys}건",
+            f"뉴스 차단 {blocked}건 · 차단율 {round((blocked / shadow_candidates) * 100, 1) if shadow_candidates else 0.0:.1f}%",
+            f"기대값 {expectancy:.2f} · PF {profit_factor:.2f} · MDD {max_drawdown:,.0f}원",
+        ]
+        if comparison_ready:
+            details.append(
+                "뉴스 반영 거래 비교 "
+                f"E {comparison_expectancy_delta:+.2f} · 비용차감 {comparison_net_pnl_delta:+,.0f}원"
+            )
+        else:
+            details.append("뉴스 반영 거래 비교는 아직 표본 부족")
+
+        if not sample_passed:
             return {
                 "status": "HOLDOUT",
                 "reason": f"표본 부족: 실거래 {trade_count}건 / shadow {shadow_candidates}건",
+                "details": details,
+                "checks": checks,
             }
-        if expectancy < min_expectancy or profit_factor < min_profit_factor or max_drawdown <= max_drawdown_limit:
+        if not expectancy_passed or not pf_passed or not drawdown_passed:
             return {
                 "status": "ROLLBACK",
                 "reason": (
                     f"롤백 권장: 기대값 {expectancy:.2f}, PF {profit_factor:.2f}, MDD {max_drawdown:,.0f}원"
                 ),
+                "details": details,
+                "checks": checks,
             }
-        if comparison_ready and (
-            float(comparison_delta.get("expectancy") or 0.0) < 0
-            or float(comparison_delta.get("net_pnl_after_cost") or 0.0) < 0
-        ):
+        if not comparison_passed:
             return {
                 "status": "KEEP",
                 "reason": (
                     "현 설정 유지: 뉴스 반영 거래가 일반 거래 대비 아직 열위 "
-                    f"(E {float(comparison_delta.get('expectancy') or 0.0):+.2f}, "
-                    f"비용차감 {float(comparison_delta.get('net_pnl_after_cost') or 0.0):+,.0f}원)"
+                    f"(E {comparison_expectancy_delta:+.2f}, 비용차감 {comparison_net_pnl_delta:+,.0f}원)"
                 ),
+                "details": details,
+                "checks": checks,
             }
         if blocked > 0:
             return {
@@ -371,10 +451,14 @@ class PerformanceReportingService:
                 "reason": (
                     f"비중 확대 권장: 기대값 {expectancy:.2f}, PF {profit_factor:.2f}, 뉴스 차단 {blocked}건"
                 ),
+                "details": details,
+                "checks": checks,
             }
         return {
             "status": "KEEP",
             "reason": f"현 설정 유지: 기대값 {expectancy:.2f}, PF {profit_factor:.2f}",
+            "details": details,
+            "checks": checks,
         }
 
     @staticmethod

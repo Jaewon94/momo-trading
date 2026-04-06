@@ -24,10 +24,16 @@ describe("performance_page_state", () => {
           candidate_count: 24,
           blocked_by_news_count: 6,
           block_rate: 0.25,
+          actual_buy_count: 18,
+          baseline_buy_count: 22,
         },
         rollout: {
           status: "PROMOTE",
           reason: "비중 확대 권장",
+          details: ["Shadow 후보 24건 · 실제 BUY 18건 · 기준 BUY 22건"],
+          checks: [
+            { key: "sample", label: "표본", passed: true, actual: "실거래 18건 / Shadow 24건", target: "각 12건 이상" },
+          ],
         },
         comparisons: {
           news_enriched: { trade_count: 11, expectancy: 1500, profit_factor: 1.6, total_pnl: 170000 },
@@ -58,6 +64,9 @@ describe("performance_page_state", () => {
     expect(state.summaryCards[0]).toMatchObject({ label: "총 거래", value: "18건" });
     expect(state.summaryCards[1]).toMatchObject({ label: "기대값", value: "+1,200원" });
     expect(state.rollout.status).toBe("PROMOTE");
+    expect(state.rollout.details[0]).toContain("Shadow 후보 24건");
+    expect(state.rollout.checks[0]).toMatchObject({ key: "sample", passed: true });
+    expect(state.shadowSummaryRows[2]).toMatchObject({ label: "실제 BUY", value: "18건" });
     expect(state.newsOps.newsGateBlocks).toBe("4회");
     expect(state.comparisonRows[0].label).toBe("뉴스 반영 거래");
     expect(state.comparisonRows[1].label).toBe("일반 거래");
@@ -76,5 +85,6 @@ describe("performance_page_state", () => {
     expect(state.byHorizonRows).toEqual([]);
     expect(state.weeklyRows).toEqual([]);
     expect(state.rollout.status).toBe("HOLDOUT");
+    expect(state.shadowSummaryRows[0].value).toBe("0건");
   });
 });
