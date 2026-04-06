@@ -111,7 +111,11 @@ class TradingAgent:
         normalized = normalize_krx_symbol(symbol)
         return self._symbol_names.get(symbol) or self._symbol_names.get(normalized) or normalized
 
-    async def run_cycle(self, manual_provider_override: str | None = None) -> dict:
+    async def run_cycle(
+        self,
+        manual_provider_override: str | None = None,
+        manual_model_override: str | None = None,
+    ) -> dict:
         """에이전트 1회 실행 사이클 — 장중이면 매매, 장외면 리뷰"""
         if self._cycle_lock.locked():
             logger.warning("사이클 이미 실행 중 — 중복 트리거 무시")
@@ -134,11 +138,21 @@ class TradingAgent:
                         )
                         self._last_cycle_time = now_kst()
                         return {"skipped": True, "reason": "buy_cutoff"}
-                return await self._run_trading_cycle(manual_provider_override=manual_provider_override)
+                return await self._run_trading_cycle(
+                    manual_provider_override=manual_provider_override,
+                    manual_model_override=manual_model_override,
+                )
             else:
-                return await self._run_after_hours_cycle(manual_provider_override=manual_provider_override)
+                return await self._run_after_hours_cycle(
+                    manual_provider_override=manual_provider_override,
+                    manual_model_override=manual_model_override,
+                )
 
-    async def _run_trading_cycle(self, manual_provider_override: str | None = None) -> dict:
+    async def _run_trading_cycle(
+        self,
+        manual_provider_override: str | None = None,
+        manual_model_override: str | None = None,
+    ) -> dict:
         """장중 사이클: 스캔 → 분석 → 매매"""
         # 사용 중인 provider가 Claude인 경우 세션 시작, 아니면 no-op
         llm_factory.start_session()
@@ -298,6 +312,7 @@ class TradingAgent:
                         portfolio_snapshot=snapshot,
                         executed_count_ref=lambda: executed_count,
                         manual_provider_override=manual_provider_override,
+                        manual_model_override=manual_model_override,
                     )
                     if r.get("executed"):
                         executed_count += 1
@@ -1142,7 +1157,11 @@ class TradingAgent:
         guarded_price = int(round(base_price * (1 + bps / 10000)))
         signal.suggested_price = max(guarded_price, 1)
 
-    async def _run_after_hours_cycle(self, manual_provider_override: str | None = None) -> dict:
+    async def _run_after_hours_cycle(
+        self,
+        manual_provider_override: str | None = None,
+        manual_model_override: str | None = None,
+    ) -> dict:
         """장외 사이클: 오늘 데이트레이딩 성과 리뷰 (피드백 학습용)"""
         from util.time_util import now_kst
 
@@ -1338,6 +1357,7 @@ class TradingAgent:
                 default_tier=LLMTier.TIER1,
                 cycle_id=cycle_id,
                 manual_provider_override=manual_provider_override,
+                manual_model_override=manual_model_override,
             )
             t1_elapsed = activity_logger.elapsed_ms(t1_timer)
 
@@ -1978,6 +1998,7 @@ class TradingAgent:
         trading_context: str = "",
         cycle_id: str | None = None,
         manual_provider_override: str | None = None,
+        manual_model_override: str | None = None,
     ) -> dict | None:
         """Tier 1 AI 심층 분석"""
         prompt = STOCK_ANALYSIS_PROMPT.format(
@@ -2009,6 +2030,7 @@ class TradingAgent:
                     symbol=symbol,
                     cycle_id=cycle_id,
                     manual_provider_override=manual_provider_override,
+                    manual_model_override=manual_model_override,
                 )
                 last_result_text = result_text
                 last_provider = provider
@@ -2041,6 +2063,7 @@ class TradingAgent:
         portfolio_snapshot: dict | None = None,
         cycle_id: str | None = None,
         manual_provider_override: str | None = None,
+        manual_model_override: str | None = None,
     ) -> dict | None:
         """Tier 2 최종 검토"""
         strategy = self.strategies.get(strategy_type)
@@ -2097,6 +2120,7 @@ class TradingAgent:
                 symbol=symbol,
                 cycle_id=cycle_id,
                 manual_provider_override=manual_provider_override,
+                manual_model_override=manual_model_override,
             )
             parsed = self._parse_json(result_text)
             if parsed:

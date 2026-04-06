@@ -49,8 +49,10 @@ MUTABLE_SETTINGS = [
     "OLLAMA_MODEL_TIER1",
     "OLLAMA_MODEL_TIER2",
     "MANUAL_LLM_PROVIDER",
+    "MANUAL_LLM_MODEL",
     "NEWS_LLM_ENABLED",
     "NEWS_LLM_PROVIDER",
+    "NEWS_OLLAMA_MODEL",
     "NEWS_DOMESTIC_MEDIA_ENABLED",
     "NEWS_INCLUDE_FOREIGN",
     "NEWS_NASDAQ_ENABLED",
@@ -137,6 +139,8 @@ def coerce_runtime_setting_value(key: str, value: Any) -> Any:
         "OLLAMA_MODEL",
         "OLLAMA_MODEL_TIER1",
         "OLLAMA_MODEL_TIER2",
+        "MANUAL_LLM_MODEL",
+        "NEWS_OLLAMA_MODEL",
     }:
         return normalize_llm_model_value(str(value))
 

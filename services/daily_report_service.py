@@ -57,6 +57,7 @@ class DailyReportService:
         self,
         report_date: date | None = None,
         manual_provider_override: str | None = None,
+        manual_model_override: str | None = None,
         force_regenerate: bool = False,
     ) -> DailyReport | None:
         """일일 리포트 생성"""
@@ -173,6 +174,7 @@ class DailyReportService:
                             prompt,
                             default_tier=LLMTier.TIER1,
                             manual_provider_override=manual_provider_override,
+                            manual_model_override=manual_model_override,
                         )
                         parsed = self._parse_json(result_text)
 

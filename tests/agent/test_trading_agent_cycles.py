@@ -55,11 +55,12 @@ async def test_run_cycle_dispatches_trading_cycle_during_market_hours(monkeypatc
     agent = TradingAgent(broker_adapter=StubBrokerAdapter())
     observed: dict[str, str | None] = {}
 
-    async def fake_trading_cycle(*, manual_provider_override: str | None = None) -> dict:
+    async def fake_trading_cycle(*, manual_provider_override: str | None = None, manual_model_override: str | None = None) -> dict:
         observed["manual_provider_override"] = manual_provider_override
+        observed["manual_model_override"] = manual_model_override
         return {"mode": "trading"}
 
-    async def fake_after_hours_cycle(*, manual_provider_override: str | None = None) -> dict:
+    async def fake_after_hours_cycle(*, manual_provider_override: str | None = None, manual_model_override: str | None = None) -> dict:
         raise AssertionError("after-hours cycle should not be called during market hours")
 
     monkeypatch.setattr("agent.trading_agent.market_calendar.is_krx_trading_hours", lambda: True)
@@ -67,10 +68,10 @@ async def test_run_cycle_dispatches_trading_cycle_during_market_hours(monkeypatc
     monkeypatch.setattr(agent, "_run_trading_cycle", fake_trading_cycle)
     monkeypatch.setattr(agent, "_run_after_hours_cycle", fake_after_hours_cycle)
 
-    result = await agent.run_cycle(manual_provider_override="CODEX")
+    result = await agent.run_cycle(manual_provider_override="CODEX", manual_model_override="gpt-5.4")
 
     assert result == {"mode": "trading"}
-    assert observed == {"manual_provider_override": "CODEX"}
+    assert observed == {"manual_provider_override": "CODEX", "manual_model_override": "gpt-5.4"}
 
 
 @pytest.mark.asyncio
@@ -78,21 +79,22 @@ async def test_run_cycle_dispatches_after_hours_cycle_outside_market_hours(monke
     agent = TradingAgent(broker_adapter=StubBrokerAdapter())
     observed: dict[str, str | None] = {}
 
-    async def fake_trading_cycle(*, manual_provider_override: str | None = None) -> dict:
+    async def fake_trading_cycle(*, manual_provider_override: str | None = None, manual_model_override: str | None = None) -> dict:
         raise AssertionError("trading cycle should not be called outside market hours")
 
-    async def fake_after_hours_cycle(*, manual_provider_override: str | None = None) -> dict:
+    async def fake_after_hours_cycle(*, manual_provider_override: str | None = None, manual_model_override: str | None = None) -> dict:
         observed["manual_provider_override"] = manual_provider_override
+        observed["manual_model_override"] = manual_model_override
         return {"mode": "after-hours"}
 
     monkeypatch.setattr("agent.trading_agent.market_calendar.is_krx_trading_hours", lambda: False)
     monkeypatch.setattr(agent, "_run_trading_cycle", fake_trading_cycle)
     monkeypatch.setattr(agent, "_run_after_hours_cycle", fake_after_hours_cycle)
 
-    result = await agent.run_cycle(manual_provider_override="CLAUDE_CODE")
+    result = await agent.run_cycle(manual_provider_override="CLAUDE_CODE", manual_model_override="claude-sonnet-4-6")
 
     assert result == {"mode": "after-hours"}
-    assert observed == {"manual_provider_override": "CLAUDE_CODE"}
+    assert observed == {"manual_provider_override": "CLAUDE_CODE", "manual_model_override": "claude-sonnet-4-6"}
 
 
 @pytest.mark.asyncio
@@ -211,6 +213,7 @@ async def test_run_trading_cycle_caches_scan_metadata_before_analysis(monkeypatc
                 "stock_info": dict(stock_info),
                 "cycle_id": cycle_id,
                 "manual_provider_override": kwargs.get("manual_provider_override"),
+                "manual_model_override": kwargs.get("manual_model_override"),
                 "portfolio_snapshot": kwargs.get("portfolio_snapshot"),
             }
         )
@@ -235,7 +238,7 @@ async def test_run_trading_cycle_caches_scan_metadata_before_analysis(monkeypatc
     monkeypatch.setattr(agent, "_analyze_and_trade", fake_analyze_and_trade)
     monkeypatch.setattr("util.time_util.now_kst", lambda: _kst_time(9, 7))
 
-    result = await agent._run_trading_cycle(manual_provider_override="CODEX")
+    result = await agent._run_trading_cycle(manual_provider_override="CODEX", manual_model_override="gpt-5.4")
 
     assert result["scanned"] == 1
     assert result["analyzed"] == 1
@@ -248,6 +251,7 @@ async def test_run_trading_cycle_caches_scan_metadata_before_analysis(monkeypatc
     assert agent._trading_context == "trade-context"
     assert applied_thresholds == [{"symbol": "005930", "name": "삼성전자", "market": "KRX", "direction": "BUY"}]
     assert analyzed_payloads[0]["manual_provider_override"] == "CODEX"
+    assert analyzed_payloads[0]["manual_model_override"] == "gpt-5.4"
     assert analyzed_payloads[0]["portfolio_snapshot"]["total_asset"] == 2_000_000
     assert resume_calls == ["session-1"]
     assert agent._last_session_id == "ended-session"
@@ -564,10 +568,11 @@ async def test_run_after_hours_cycle_generates_review_and_saves_report(monkeypat
     monkeypatch.setattr("agent.trading_agent.market_calendar.next_krx_open", lambda: _kst_time(9, 0))
     monkeypatch.setattr("util.time_util.now_kst", lambda: _kst_time(16, 0))
 
-    result = await agent._run_after_hours_cycle(manual_provider_override="CODEX")
+    result = await agent._run_after_hours_cycle(manual_provider_override="CODEX", manual_model_override="gpt-5.4")
 
     assert result == {"mode": "AFTER_HOURS", "review_generated": True}
     assert generate_manual_calls[0]["manual_provider_override"] == "CODEX"
+    assert generate_manual_calls[0]["manual_model_override"] == "gpt-5.4"
     assert saved_reports and saved_reports[0][1]["today_review"] == "좋음"
     assert end_session_calls == ["end"]
     assert agent._last_session_id is None

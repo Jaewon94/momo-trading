@@ -1505,6 +1505,15 @@
                 <div class="help">뉴스/수동 작업 공용 기본값입니다. tier 전용 설정이 있으면 그 값이 우선합니다.</div>
               </div>
 
+              <div class="news-settings-field">
+                <label>뉴스 전용 Ollama 모델</label>
+                <input id="set-news-ollama-model" type="text"
+                  onchange="updateSetting('NEWS_OLLAMA_MODEL', this.value)"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200"
+                  placeholder="DEFAULT 또는 qwen2.5:14b">
+                <div class="help">뉴스 Provider가 Ollama일 때만 사용합니다. 비우면 공용 `OLLAMA_MODEL`을 그대로 씁니다.</div>
+              </div>
+
               <div class="news-settings-field full-span">
                 <div class="flex items-center justify-between gap-3">
                   <div>
@@ -1629,7 +1638,19 @@
                 <option value="OLLAMA">Ollama</option>
               </select>
               <div class="text-[11px] text-gray-500 mt-1">
-                Q&amp;A / 수동 사이클 / 리포트 생성에만 적용, 모델은 각 tier 설정 사용
+                Q&amp;A / 수동 사이클 / 장마감 리뷰 / 리포트 생성에 적용합니다.
+              </div>
+              <label class="text-xs block mt-3 mb-1 text-gray-500">수동 작업 모델 / 버전</label>
+              <select id="set-manual-llm-model" onchange="updateSetting('MANUAL_LLM_MODEL', this.value)"
+                class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
+              <div id="llm-manual-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+              <div class="flex gap-2 mt-2">
+                <input id="set-manual-llm-model-custom" type="text" placeholder="예: sonnet / gpt-5.4 / qwen2.5:14b"
+                  class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
+                <button onclick="applyCustomManualModel()"
+                  class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
+                  직접 입력
+                </button>
               </div>
               <div id="llm-manual-selection" class="text-xs text-gray-500 mt-1 truncate"></div>
             </div>

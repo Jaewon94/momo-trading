@@ -29,8 +29,9 @@ async def test_news_translation_service_adds_korean_translation_metadata(monkeyp
 
     service = NewsTranslationService()
 
-    async def fake_generate_manual(prompt, default_tier, manual_provider_override):
+    async def fake_generate_manual(prompt, default_tier, manual_provider_override, manual_model_override=None):
         assert manual_provider_override == "CODEX"
+        assert manual_model_override is None
         assert default_tier.value == "TIER1"
         assert "Translate the following financial news into Korean" in prompt
         return (
@@ -62,3 +63,38 @@ async def test_news_translation_service_adds_korean_translation_metadata(monkeyp
     assert items[0]["sentiment_label"] == "POSITIVE"
     assert items[0]["sentiment_score"] == pytest.approx(0.72)
 
+
+@pytest.mark.asyncio
+async def test_news_translation_service_uses_news_specific_ollama_model(monkeypatch):
+    from services.news_translation_service import NewsTranslationService
+
+    service = NewsTranslationService()
+    captured = {}
+
+    async def fake_generate_manual(prompt, default_tier, manual_provider_override, manual_model_override):
+        captured["provider"] = manual_provider_override
+        captured["model"] = manual_model_override
+        return (
+            '{"translated_title":"현대차 상승","translated_summary":"현지 판매 호조 기대","sentiment_label":"POSITIVE","sentiment_score":0.61}',
+            "OLLAMA",
+        )
+
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_ENABLED", True)
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_PROVIDER", "OLLAMA")
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_OLLAMA_MODEL", "qwen2.5:14b")
+    monkeypatch.setattr(
+        "services.news_translation_service.llm_factory.generate_manual",
+        fake_generate_manual,
+    )
+
+    items = await service.translate_items([
+        {
+            "source_code": "INVESTING",
+            "language": "en",
+            "title": "Hyundai shares rise on stronger outlook",
+            "summary": "Investors cheered the stronger guidance.",
+        },
+    ])
+
+    assert captured == {"provider": "OLLAMA", "model": "qwen2.5:14b"}
+    assert items[0]["metadata"]["translation_provider"] == "OLLAMA"

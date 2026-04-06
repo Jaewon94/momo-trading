@@ -1542,8 +1542,12 @@ async def trigger_agent_cycle():
 
     # 비동기로 실행 (즉시 응답)
     manual_provider_override = settings.MANUAL_LLM_PROVIDER
+    manual_model_override = settings.MANUAL_LLM_MODEL
     asyncio.create_task(
-        trading_agent.run_cycle(manual_provider_override=manual_provider_override)
+        trading_agent.run_cycle(
+            manual_provider_override=manual_provider_override,
+            manual_model_override=manual_model_override,
+        )
     )
     return SuccessResponse(message="에이전트 사이클이 트리거되었습니다")
 
@@ -1560,6 +1564,7 @@ async def generate_report(
     report = await daily_report_service.generate_daily_report(
         d,
         manual_provider_override=settings.MANUAL_LLM_PROVIDER,
+        manual_model_override=settings.MANUAL_LLM_MODEL,
         force_regenerate=force,
     )
     if report:
@@ -1660,6 +1665,7 @@ async def ask_question(
             system_prompt,
             default_tier=LLMTier.TIER1,
             manual_provider_override=settings.MANUAL_LLM_PROVIDER,
+            manual_model_override=settings.MANUAL_LLM_MODEL,
         )
     except Exception as e:
         logger.error("Q&A LLM 호출 실패: {}", str(e))

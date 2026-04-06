@@ -3866,10 +3866,14 @@ async function loadSettings() {
     if (tier2FallbackEl) tier2FallbackEl.value = s.LLM_FALLBACK_PROVIDER_TIER2 || '';
     const manualLlmEl = document.getElementById('set-manual-llm-provider');
     if (manualLlmEl && s.MANUAL_LLM_PROVIDER) manualLlmEl.value = s.MANUAL_LLM_PROVIDER;
+    const manualModelEl = document.getElementById('set-manual-llm-model');
+    if (manualModelEl) manualModelEl.value = s.MANUAL_LLM_MODEL || 'DEFAULT';
     const newsLlmEnabledEl = document.getElementById('set-news-llm-enabled');
     if (newsLlmEnabledEl) newsLlmEnabledEl.checked = Boolean(s.NEWS_LLM_ENABLED);
     const newsLlmProviderEl = document.getElementById('set-news-llm-provider');
     if (newsLlmProviderEl) newsLlmProviderEl.value = s.NEWS_LLM_PROVIDER || 'AUTOMATIC';
+    const newsOllamaModelEl = document.getElementById('set-news-ollama-model');
+    if (newsOllamaModelEl) newsOllamaModelEl.value = s.NEWS_OLLAMA_MODEL || 'DEFAULT';
     const newsIncludeForeignEl = document.getElementById('set-news-include-foreign');
     if (newsIncludeForeignEl) newsIncludeForeignEl.checked = Boolean(s.NEWS_INCLUDE_FOREIGN);
     const newsNasdaqEnabledEl = document.getElementById('set-news-nasdaq-enabled');
@@ -3903,6 +3907,7 @@ async function loadSettings() {
     const ollamaModelEl = document.getElementById('set-ollama-model');
     if (ollamaModelEl) ollamaModelEl.value = s.OLLAMA_MODEL || '';
     renderTierModelSelectors();
+    renderManualModelSelector();
     updateBadge('badge-trading', s.TRADING_ENABLED ? '매매:ON' : '매매:OFF', s.TRADING_ENABLED ? 'green' : 'red');
     updateBadge('badge-mode', formatAutonomyModeLabel(s.AUTONOMY_MODE), 'purple');
     renderSettingGuidance();
@@ -4397,6 +4402,7 @@ async function loadLLMCatalog(forceRefresh = false) {
     llmCatalog = json.data;
     renderLLMCatalogMeta();
     renderTierModelSelectors();
+    renderManualModelSelector();
     if (forceRefresh && json.message) {
       setStatus('warn', json.message);
     }
@@ -4438,6 +4444,76 @@ async function applyCustomTierModel(tier, mode = 'primary') {
   await updateTierModelSetting(tier, value, mode);
 }
 
+function renderManualModelSelector() {
+  if (!runtimeSettings) return;
+  const provider = document.getElementById('set-manual-llm-provider')?.value || 'AUTOMATIC';
+  const currentValue = runtimeSettings.MANUAL_LLM_MODEL || 'DEFAULT';
+  const selectEl = document.getElementById('set-manual-llm-model');
+  const sourceEl = document.getElementById('llm-manual-model-source');
+  const customEl = document.getElementById('set-manual-llm-model-custom');
+  if (!selectEl) return;
+
+  if (provider === 'AUTOMATIC') {
+    selectEl.innerHTML = '<option value="DEFAULT">자동</option>';
+    selectEl.value = 'DEFAULT';
+    selectEl.disabled = true;
+    if (customEl) {
+      customEl.value = '';
+      customEl.disabled = true;
+    }
+    if (sourceEl) sourceEl.textContent = '자동 선택 시 각 tier 기본 모델을 사용합니다';
+    return;
+  }
+
+  const providerCatalog = getCatalogProvider(provider);
+  const entries = providerCatalog?.entries ? [...providerCatalog.entries] : [{ value: 'DEFAULT', label: '기본값 사용' }];
+  if (currentValue && !entries.some((item) => item.value === currentValue)) {
+    entries.push({
+      value: currentValue,
+      label: `${currentValue} (custom)`,
+      kind: 'custom',
+      stability: 'custom',
+      source_scope: 'manual',
+      source_url: '',
+    });
+  }
+
+  selectEl.innerHTML = entries.map((item) => {
+    const suffix = item.kind === 'snapshot'
+      ? ' [고정]'
+      : (item.value === 'DEFAULT' ? ' [provider 기본값]' : '');
+    return `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label || item.value)}${suffix}</option>`;
+  }).join('');
+  selectEl.value = currentValue;
+  selectEl.disabled = false;
+
+  if (customEl) {
+    customEl.placeholder = provider === 'CODEX'
+      ? '예: gpt-5-codex / gpt-5.4'
+      : provider === 'OLLAMA'
+        ? '예: llama3.1:8b / qwen2.5:14b'
+        : '예: sonnet / claude-sonnet-4-6';
+    customEl.value = '';
+    customEl.disabled = false;
+  }
+
+  if (sourceEl) {
+    const selected = entries.find((item) => item.value === currentValue);
+    const sourceBits = [];
+    if (selected?.source_scope) sourceBits.push(`출처: ${selected.source_scope}`);
+    if (selected?.stability) sourceBits.push(`성격: ${selected.stability}`);
+    sourceEl.textContent = sourceBits.join(' · ');
+  }
+}
+
+async function applyCustomManualModel() {
+  const inputEl = document.getElementById('set-manual-llm-model-custom');
+  if (!inputEl) return;
+  const value = inputEl.value.trim();
+  if (!value) return;
+  await updateSetting('MANUAL_LLM_MODEL', value);
+}
+
 // ── LLM Status ──
 async function loadLLMStatus() {
   try {
@@ -4470,7 +4546,9 @@ async function loadLLMStatus() {
     const manualSelection = document.getElementById('llm-manual-selection');
     if (manualSelection && s.manual_selection) {
       const provider = s.manual_selection.provider || 'AUTOMATIC';
-      const label = provider === 'AUTOMATIC' ? '자동 (기본 tier 설정 사용)' : provider;
+      const model = s.manual_selection.model || 'DEFAULT';
+      const modelLabel = model === 'DEFAULT' ? '기본값' : model;
+      const label = provider === 'AUTOMATIC' ? '자동 (기본 tier 설정 사용)' : `${provider} (${modelLabel})`;
       manualSelection.textContent = `현재 수동 작업 선택: ${label}`;
     }
   } catch (err) {

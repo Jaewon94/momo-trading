@@ -3,6 +3,7 @@ from trading.enums import LLMTier
 
 async def test_admin_qa_uses_manual_llm_provider(client, monkeypatch):
     monkeypatch.setattr("api.routes.admin.settings.MANUAL_LLM_PROVIDER", "CODEX", raising=False)
+    monkeypatch.setattr("api.routes.admin.settings.MANUAL_LLM_MODEL", "gpt-5.4", raising=False)
 
     called = {}
 
@@ -27,6 +28,8 @@ async def test_admin_qa_uses_manual_llm_provider(client, monkeypatch):
         called["prompt"] = prompt
         called["system_prompt"] = system_prompt
         called["default_tier"] = default_tier
+        called["manual_provider_override"] = kwargs.get("manual_provider_override")
+        called["manual_model_override"] = kwargs.get("manual_model_override")
         return "answer", "CODEX"
 
     monkeypatch.setattr(
@@ -47,4 +50,5 @@ async def test_admin_qa_uses_manual_llm_provider(client, monkeypatch):
     payload = response.json()
     assert payload["data"]["llm_provider"] == "CODEX"
     assert called["default_tier"] == LLMTier.TIER1
-
+    assert called["manual_provider_override"] == "CODEX"
+    assert called["manual_model_override"] == "gpt-5.4"

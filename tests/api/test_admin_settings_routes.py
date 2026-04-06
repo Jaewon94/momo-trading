@@ -4,6 +4,7 @@ async def test_admin_settings_exposes_manual_llm_provider(client):
     assert response.status_code == 200
     payload = response.json()
     assert "MANUAL_LLM_PROVIDER" in payload["data"]
+    assert "MANUAL_LLM_MODEL" in payload["data"]
     assert "LLM_PROVIDER_TIER1" in payload["data"]
     assert "LLM_PROVIDER_TIER2" in payload["data"]
     assert "LLM_FALLBACK_PROVIDER_TIER1" in payload["data"]
@@ -18,6 +19,7 @@ async def test_admin_settings_exposes_manual_llm_provider(client):
     assert "CODEX_MODEL_TIER2" in payload["data"]
     assert "NEWS_LLM_ENABLED" in payload["data"]
     assert "NEWS_LLM_PROVIDER" in payload["data"]
+    assert "NEWS_OLLAMA_MODEL" in payload["data"]
     assert "NEWS_DOMESTIC_MEDIA_ENABLED" in payload["data"]
     assert "NEWS_INCLUDE_FOREIGN" in payload["data"]
     assert "NEWS_NASDAQ_ENABLED" in payload["data"]
@@ -41,7 +43,7 @@ async def test_admin_settings_exposes_manual_llm_provider(client):
 async def test_admin_settings_updates_manual_llm_provider(client):
     response = await client.put(
         "/api/v1/admin/settings",
-        json={"MANUAL_LLM_PROVIDER": "CODEX"},
+        json={"MANUAL_LLM_PROVIDER": "CODEX", "MANUAL_LLM_MODEL": "gpt-5.4"},
     )
 
     assert response.status_code == 200
@@ -50,6 +52,7 @@ async def test_admin_settings_updates_manual_llm_provider(client):
 
     assert settings_response.status_code == 200
     assert settings_response.json()["data"]["MANUAL_LLM_PROVIDER"] == "CODEX"
+    assert settings_response.json()["data"]["MANUAL_LLM_MODEL"] == "gpt-5.4"
 
 
 async def test_admin_settings_updates_news_llm_provider(client):
@@ -57,6 +60,7 @@ async def test_admin_settings_updates_news_llm_provider(client):
         "/api/v1/admin/settings",
         json={
             "NEWS_LLM_PROVIDER": "OLLAMA",
+            "NEWS_OLLAMA_MODEL": "qwen2.5:14b",
             "NEWS_LLM_ENABLED": False,
             "NEWS_DOMESTIC_MEDIA_ENABLED": True,
             "NEWS_INCLUDE_FOREIGN": False,
@@ -80,6 +84,7 @@ async def test_admin_settings_updates_news_llm_provider(client):
 
     assert settings_response.status_code == 200
     assert settings_response.json()["data"]["NEWS_LLM_PROVIDER"] == "OLLAMA"
+    assert settings_response.json()["data"]["NEWS_OLLAMA_MODEL"] == "qwen2.5:14b"
     assert settings_response.json()["data"]["NEWS_LLM_ENABLED"] is False
     assert settings_response.json()["data"]["NEWS_DOMESTIC_MEDIA_ENABLED"] is True
     assert settings_response.json()["data"]["NEWS_INCLUDE_FOREIGN"] is False

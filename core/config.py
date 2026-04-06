@@ -71,8 +71,10 @@ class Settings(BaseSettings):
     CODEX_MODEL_TIER2: str = DEFAULT_LLM_MODEL  # Tier2 override
     CODEX_PATH: str = ""  # 비어있으면 자동 탐색 (예: /opt/homebrew/bin/codex)
     MANUAL_LLM_PROVIDER: str = "AUTOMATIC"  # AUTOMATIC | CLAUDE_CODE | CODEX | OLLAMA
+    MANUAL_LLM_MODEL: str = DEFAULT_LLM_MODEL
     NEWS_LLM_ENABLED: bool = True
     NEWS_LLM_PROVIDER: str = "AUTOMATIC"  # AUTOMATIC | CLAUDE_CODE | CODEX | OLLAMA
+    NEWS_OLLAMA_MODEL: str = DEFAULT_LLM_MODEL
     NEWS_DOMESTIC_MEDIA_ENABLED: bool = False
     NEWS_INCLUDE_FOREIGN: bool = True
     NEWS_NASDAQ_ENABLED: bool = False

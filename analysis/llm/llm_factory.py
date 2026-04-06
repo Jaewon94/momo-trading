@@ -134,6 +134,7 @@ class LLMFactory:
         self, prompt: str, tier: LLMTier = LLMTier.TIER1, system_prompt: str = "",
         *, symbol: str | None = None, cycle_id: str | None = None,
         provider_chain: list[LLMProvider] | None = None,
+        provider_model_overrides: dict[LLMProvider, str] | None = None,
     ) -> tuple[str, str]:
         """텍스트 생성 (최대 2회 시도)
 
@@ -145,7 +146,14 @@ class LLMFactory:
 
         for index, provider_key in enumerate(provider_chain):
             fallback_model = self._fallback_model_for_tier(tier) if index > 0 else None
-            provider = self._build_provider(tier, provider_key, fallback_model)
+            explicit_model_override = None
+            if provider_model_overrides:
+                explicit_model_override = provider_model_overrides.get(provider_key)
+            provider = self._build_provider(
+                tier,
+                provider_key,
+                explicit_model_override if explicit_model_override is not None else fallback_model,
+            )
             if not await provider.is_available():
                 runtime = provider.status_snapshot() if hasattr(provider, "status_snapshot") else {}
                 if runtime.get("cooldown_active"):
@@ -252,19 +260,25 @@ class LLMFactory:
         symbol: str | None = None,
         cycle_id: str | None = None,
         manual_provider_override: str | None = None,
+        manual_model_override: str | None = None,
     ) -> tuple[str, str]:
         """수동 작업용 LLM 생성.
 
         `AUTOMATIC`이면 기존 tier 설정을 사용하고,
         명시적 provider가 주어지면 해당 provider만 사용한다.
         """
+        provider_chain = self._manual_provider_chain(default_tier, manual_provider_override)
+        provider_model_overrides: dict[LLMProvider, str] | None = None
+        if manual_model_override and len(provider_chain) == 1:
+            provider_model_overrides = {provider_chain[0]: manual_model_override}
         return await self.generate(
             prompt,
             default_tier,
             system_prompt,
             symbol=symbol,
             cycle_id=cycle_id,
-            provider_chain=self._manual_provider_chain(default_tier, manual_provider_override),
+            provider_chain=provider_chain,
+            provider_model_overrides=provider_model_overrides,
         )
 
     def get_llm_status(self) -> dict:
@@ -341,11 +355,13 @@ class LLMFactory:
             ],
             "manual_selection": {
                 "provider": (settings.MANUAL_LLM_PROVIDER or "AUTOMATIC").upper(),
+                "model": normalize_llm_model_value(settings.MANUAL_LLM_MODEL),
                 "options": ["AUTOMATIC", "CLAUDE_CODE", "CODEX", "OLLAMA"],
             },
             "news_selection": {
                 "enabled": bool(settings.NEWS_LLM_ENABLED),
                 "provider": (settings.NEWS_LLM_PROVIDER or "AUTOMATIC").upper(),
+                "model": normalize_llm_model_value(settings.NEWS_OLLAMA_MODEL),
                 "options": ["AUTOMATIC", "CLAUDE_CODE", "CODEX", "OLLAMA"],
             },
         }
