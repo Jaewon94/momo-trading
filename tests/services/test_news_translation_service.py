@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 from trading.enums import LLMProvider
+from services.news_translation_service import NewsTranslationService
 
 
 @pytest.mark.asyncio
@@ -131,6 +132,32 @@ async def test_news_translation_service_records_parse_failure_reason(monkeypatch
 
     assert items[0]["metadata"]["translation_status"] == "FAILED"
     assert items[0]["metadata"]["translation_error"] == "translation JSON parse failed"
+
+
+@pytest.mark.asyncio
+async def test_news_translation_service_clears_previous_error_on_success(monkeypatch):
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_ENABLED", True)
+
+    async def fake_generate(prompt, tier, system_prompt="", **kwargs):
+        return (
+            '{"translated_title":"번역 제목","translated_summary":"번역 요약","sentiment_label":"NEUTRAL","sentiment_score":0.5}',
+            "OLLAMA",
+        )
+
+    monkeypatch.setattr("services.news_translation_service.llm_factory.generate", fake_generate)
+
+    service = NewsTranslationService()
+    items = await service.translate_items([
+        {
+            "title": "Hello world",
+            "summary": "summary",
+            "language": "en",
+            "metadata": {"translation_error": "ReadTimeout"},
+        }
+    ])
+
+    assert items[0]["metadata"]["translation_status"] == "SUCCESS"
+    assert "translation_error" not in items[0]["metadata"]
 
 
 @pytest.mark.asyncio

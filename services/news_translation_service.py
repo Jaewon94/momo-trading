@@ -115,6 +115,7 @@ Summary: {summary}
                 metadata["translated_summary"] = translated_summary
             metadata["translation_provider"] = provider
             metadata["translation_status"] = "SUCCESS"
+            metadata.pop("translation_error", None)
             copied["metadata"] = metadata
             if payload.get("sentiment_label"):
                 copied["sentiment_label"] = str(payload["sentiment_label"]).upper()

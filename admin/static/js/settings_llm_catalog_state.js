@@ -20,6 +20,10 @@ export function buildProviderModelEntries(providerCatalog, currentValue, default
 
   return entries.map((item) => ({
     ...item,
+    label:
+      item.value === "DEFAULT"
+        ? (item.label || "기본값 사용")
+        : item.value,
     suffix:
       item.kind === "snapshot"
         ? " [고정]"

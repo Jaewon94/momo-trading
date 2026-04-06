@@ -66,6 +66,12 @@ export function buildNewsOverviewCards(
   const settings = overview?.settings || {};
   const storage = overview?.storage || {};
   const runtime = overview?.runtime?.overall || {};
+  const runtimeSources = overview?.runtime?.sources || {};
+  const sourceCountValues = Object.values(runtimeSources).map((source) => source?.counts || {});
+  const totalReceived = sourceCountValues.reduce((acc, counts) => acc + Number(counts?.received || 0), 0);
+  const totalCreated = sourceCountValues.reduce((acc, counts) => acc + Number(counts?.created || 0), 0);
+  const totalDuplicates = sourceCountValues.reduce((acc, counts) => acc + Number(counts?.duplicates || 0), 0);
+  const totalSkipped = sourceCountValues.reduce((acc, counts) => acc + Number(counts?.skipped || 0), 0);
 
   return [
     {
@@ -83,6 +89,11 @@ export function buildNewsOverviewCards(
       help: runtime.last_run_at
         ? `${String(runtime.last_mode || "UNKNOWN")} · ${formatDateTime(runtime.last_run_at)} · ${String(runtime.last_message || "")}`.trim()
         : "아직 수집 이력이 없습니다.",
+    },
+    {
+      label: "최근 실행 결과",
+      value: `${formatInteger(totalCreated)}건 신규`,
+      help: `조회 ${formatInteger(totalReceived)} · 중복 ${formatInteger(totalDuplicates)} · 스킵 ${formatInteger(totalSkipped)}`,
     },
     {
       label: "뉴스 게이트",
@@ -233,8 +244,21 @@ export function buildNewsOverviewSourcePills(overview) {
         || Number(runtimeCounts.skipped || 0) > 0
       ) {
         details.push(
-          `신규 ${Number(runtimeCounts.created || 0)} · 중복 ${Number(runtimeCounts.duplicates || 0)} · 스킵 ${Number(runtimeCounts.skipped || 0)}`,
+          `조회 ${Number(runtimeCounts.received || 0)} · 신규 ${Number(runtimeCounts.created || 0)} · 중복 ${Number(runtimeCounts.duplicates || 0)} · 스킵 ${Number(runtimeCounts.skipped || 0)}`,
         );
+      }
+      if (
+        Number(runtimeCounts.received || 0) > 0
+        && Number(runtimeCounts.created || 0) === 0
+        && Number(runtimeCounts.duplicates || 0) >= Number(runtimeCounts.received || 0)
+      ) {
+        details.push("이번 실행은 대부분 기존 기사와 중복");
+      } else if (
+        Number(runtimeCounts.received || 0) > 0
+        && Number(runtimeCounts.created || 0) === 0
+        && Number(runtimeCounts.skipped || 0) > 0
+      ) {
+        details.push("필터/비활성 조건으로 스킵된 항목이 있습니다");
       }
       if (runtime.last_success_at) {
         details.push(`마지막 성공 ${defaultFormatDateTime(runtime.last_success_at)}`);

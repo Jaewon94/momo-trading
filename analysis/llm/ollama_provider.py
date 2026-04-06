@@ -54,7 +54,7 @@ class OllamaProvider:
         async with httpx.AsyncClient(
             base_url=settings.OLLAMA_BASE_URL,
             transport=self._transport,
-            timeout=httpx.Timeout(90.0, connect=5.0),
+            timeout=httpx.Timeout(float(settings.OLLAMA_GENERATE_TIMEOUT_SEC), connect=5.0),
         ) as client:
             response = await client.post("/api/generate", json=payload)
             response.raise_for_status()

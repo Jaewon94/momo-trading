@@ -1544,7 +1544,10 @@
             <details class="settings-accordion">
               <summary>
                 <div>
-                  <div class="text-sm font-medium text-white">분석용 AI (T1)</div>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <div class="text-sm font-medium text-white">분석용 AI (T1)</div>
+                    <span class="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] text-sky-200">추천: 빠르고 저비용인 분석형 모델</span>
+                  </div>
                   <div class="text-[11px] text-gray-500 mt-1">시장 스캔, 선별, 빠른 분석 단계에 쓰는 기본 모델과 fallback을 설정합니다.</div>
                 </div>
                 <span class="settings-accordion-arrow">&#x25BC;</span>
@@ -1561,14 +1564,6 @@
                 <select id="set-llm-tier1-model" onchange="updateTierModelSetting('tier1', this.value)"
                   class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
                 <div id="llm-tier1-model-source" class="text-[11px] text-gray-500 mt-1"></div>
-                <div class="flex gap-2 mt-2">
-                  <input id="set-llm-tier1-model-custom" type="text" placeholder="예: claude-sonnet-4-6 / gpt-5.4"
-                    class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
-                  <button onclick="applyCustomTierModel('tier1')"
-                    class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
-                    직접 입력
-                  </button>
-                </div>
                 <label class="text-xs block mt-3 mb-1 text-gray-500">T1 Fallback</label>
                 <select id="set-llm-tier1-fallback"
                   class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
@@ -1581,21 +1576,16 @@
                 <select id="set-llm-tier1-fallback-model" onchange="updateTierModelSetting('tier1', this.value, 'fallback')"
                   class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
                 <div id="llm-tier1-fallback-model-source" class="text-[11px] text-gray-500 mt-1"></div>
-                <div class="flex gap-2 mt-2">
-                  <input id="set-llm-tier1-fallback-model-custom" type="text" placeholder="예: claude-opus-4-6 / gpt-5.1-codex-max"
-                    class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
-                  <button onclick="applyCustomTierModel('tier1', 'fallback')"
-                    class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
-                    직접 입력
-                  </button>
-                </div>
               </div>
             </details>
 
             <details class="settings-accordion">
               <summary>
                 <div>
-                  <div class="text-sm font-medium text-white">최종 검토용 AI (T2)</div>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <div class="text-sm font-medium text-white">최종 검토용 AI (T2)</div>
+                    <span class="rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-[10px] text-violet-200">추천: 추론 품질이 높은 검토형 모델</span>
+                  </div>
                   <div class="text-[11px] text-gray-500 mt-1">최종 매매 판단, 더 무거운 검토, 정밀 분석 단계에 쓰는 모델을 설정합니다.</div>
                 </div>
                 <span class="settings-accordion-arrow">&#x25BC;</span>
@@ -1612,14 +1602,6 @@
                 <select id="set-llm-tier2-model" onchange="updateTierModelSetting('tier2', this.value)"
                   class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
                 <div id="llm-tier2-model-source" class="text-[11px] text-gray-500 mt-1"></div>
-                <div class="flex gap-2 mt-2">
-                  <input id="set-llm-tier2-model-custom" type="text" placeholder="예: claude-opus-4-6 / gpt-5-codex"
-                    class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
-                  <button onclick="applyCustomTierModel('tier2')"
-                    class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
-                    직접 입력
-                  </button>
-                </div>
                 <label class="text-xs block mt-3 mb-1 text-gray-500">T2 Fallback</label>
                 <select id="set-llm-tier2-fallback"
                   class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
@@ -1632,21 +1614,16 @@
                 <select id="set-llm-tier2-fallback-model" onchange="updateTierModelSetting('tier2', this.value, 'fallback')"
                   class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
                 <div id="llm-tier2-fallback-model-source" class="text-[11px] text-gray-500 mt-1"></div>
-                <div class="flex gap-2 mt-2">
-                  <input id="set-llm-tier2-fallback-model-custom" type="text" placeholder="예: gpt-5-codex / claude-sonnet-4-6"
-                    class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
-                  <button onclick="applyCustomTierModel('tier2', 'fallback')"
-                    class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
-                    직접 입력
-                  </button>
-                </div>
               </div>
             </details>
 
             <details class="settings-accordion">
               <summary>
                 <div>
-                  <div class="text-sm font-medium text-white">리포트·수동 작업용 AI</div>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <div class="text-sm font-medium text-white">리포트·수동 작업용 AI</div>
+                    <span class="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-200">추천: 문장 품질과 안정성이 좋은 요약형 모델</span>
+                  </div>
                   <div class="text-[11px] text-gray-500 mt-1">Q&A, 수동 사이클, 장마감 리뷰, 일일 리포트 생성에 쓰는 1순위와 풀백 AI를 설정합니다.</div>
                 </div>
                 <span class="settings-accordion-arrow">&#x25BC;</span>
@@ -1666,14 +1643,6 @@
                 <select id="set-manual-llm-model"
                   class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
                 <div id="llm-manual-model-source" class="text-[11px] text-gray-500 mt-1"></div>
-                <div class="flex gap-2 mt-2">
-                  <input id="set-manual-llm-model-custom" type="text" placeholder="예: sonnet / gpt-5.4 / qwen2.5:14b"
-                    class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
-                  <button onclick="applyCustomStandaloneModel('manual')"
-                    class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
-                    직접 입력
-                  </button>
-                </div>
                 <label class="text-xs block mt-3 mb-1 text-gray-500">풀백 Provider</label>
                 <select id="set-manual-llm-fallback-provider"
                   class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
@@ -1686,14 +1655,6 @@
                 <select id="set-manual-llm-fallback-model"
                   class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
                 <div id="llm-manual-fallback-model-source" class="text-[11px] text-gray-500 mt-1"></div>
-                <div class="flex gap-2 mt-2">
-                  <input id="set-manual-llm-fallback-model-custom" type="text" placeholder="예: sonnet / gpt-5.4 / qwen2.5:14b"
-                    class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
-                  <button onclick="applyCustomStandaloneModel('manual', 'fallback')"
-                    class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
-                    직접 입력
-                  </button>
-                </div>
                 <div id="llm-manual-selection" class="text-xs text-gray-500 mt-1 truncate"></div>
               </div>
             </details>
@@ -1701,7 +1662,10 @@
             <details class="settings-accordion">
               <summary>
                 <div>
-                  <div class="text-sm font-medium text-white">뉴스용 AI</div>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <div class="text-sm font-medium text-white">뉴스용 AI</div>
+                    <span class="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-200">추천: 짧은 번역과 요약에 빠르게 응답하는 모델</span>
+                  </div>
                   <div class="text-[11px] text-gray-500 mt-1">뉴스 번역, 감성/요약, 뉴스 인텔 해석에 쓰는 1순위와 풀백 AI, 병렬도를 같이 설정합니다.</div>
                 </div>
                 <span class="settings-accordion-arrow">&#x25BC;</span>
@@ -1721,14 +1685,6 @@
                 <select id="set-news-llm-model"
                   class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
                 <div id="llm-news-model-source" class="text-[11px] text-gray-500 mt-1"></div>
-                <div class="flex gap-2 mt-2">
-                  <input id="set-news-llm-model-custom" type="text" placeholder="예: sonnet / gpt-5.4 / qwen2.5:14b"
-                    class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
-                  <button onclick="applyCustomStandaloneModel('news')"
-                    class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
-                    직접 입력
-                  </button>
-                </div>
                 <label class="text-xs block mt-3 mb-1 text-gray-500">풀백 Provider</label>
                 <select id="set-news-llm-fallback-provider"
                   class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
@@ -1741,15 +1697,6 @@
                 <select id="set-news-llm-fallback-model"
                   class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
                 <div id="llm-news-fallback-model-source" class="text-[11px] text-gray-500 mt-1"></div>
-                <div class="flex gap-2 mt-2">
-                  <input id="set-news-llm-fallback-model-custom" type="text" placeholder="예: sonnet / gpt-5.4 / qwen2.5:14b"
-                    class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
-                  <button onclick="applyCustomStandaloneModel('news', 'fallback')"
-                    class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
-                    직접 입력
-                  </button>
-                </div>
-
                 <div class="grid gap-3 md:grid-cols-2 mt-4">
                   <div>
                     <label class="text-xs block mb-1 text-gray-500">뉴스 fetch 병렬도</label>

@@ -27,8 +27,8 @@ export function buildCatalogMetaText(catalog) {
   } else {
     parts.push("내장 seed 목록 사용 중");
   }
-  if (catalog.stale) parts.push("stale");
-  if (catalog.fetch_error) parts.push(`동기화 실패: ${catalog.fetch_error}`);
+  if (catalog.stale) parts.push("이전 동기화 캐시 사용 중");
+  if (catalog.fetch_error) parts.push(`일부 참고 문서 접근 실패: ${catalog.fetch_error}`);
   return parts.join(" · ");
 }
 

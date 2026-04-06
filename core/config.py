@@ -104,6 +104,7 @@ class Settings(BaseSettings):
     OLLAMA_MODEL: str = "llama3.1:8b"
     OLLAMA_MODEL_TIER1: str = DEFAULT_LLM_MODEL
     OLLAMA_MODEL_TIER2: str = DEFAULT_LLM_MODEL
+    OLLAMA_GENERATE_TIMEOUT_SEC: int = 180
     OPEN_DART_API_KEY: str = ""
 
     # === AI Agent ===

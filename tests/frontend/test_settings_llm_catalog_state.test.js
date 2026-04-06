@@ -32,7 +32,7 @@ describe("settings_llm_catalog_state", () => {
     expect(entries[0].suffix).toBe(" [CLI 기본값]");
     expect(entries[1]).toMatchObject({
       value: "gpt-5.4",
-      label: "gpt-5.4 (custom)",
+      label: "gpt-5.4",
       suffix: "",
     });
   });

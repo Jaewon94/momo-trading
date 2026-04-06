@@ -14,8 +14,8 @@ describe("llm_catalog_state", () => {
     });
 
     expect(text).toContain("동기화");
-    expect(text).toContain("stale");
-    expect(text).toContain("동기화 실패: upstream timeout");
+    expect(text).toContain("이전 동기화 캐시 사용 중");
+    expect(text).toContain("일부 참고 문서 접근 실패: upstream timeout");
   });
 
   test("builds user-facing error copy for refresh failures", () => {

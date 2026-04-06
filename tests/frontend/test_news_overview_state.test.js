@@ -37,6 +37,10 @@ describe("news_overview_state", () => {
           last_message: "조회된 데이터 없음",
           last_run_at: "2026-04-06T09:20:00+09:00",
         },
+        sources: {
+          DART: { counts: { received: 10, created: 2, duplicates: 8, skipped: 0 } },
+          KRX: { counts: { received: 5, created: 0, duplicates: 5, skipped: 0 } },
+        },
       },
     });
 
@@ -45,8 +49,12 @@ describe("news_overview_state", () => {
     expect(cards[1].label).toBe("마지막 폴링");
     expect(cards[1].value).toBe("EMPTY");
     expect(cards[1].help).toContain("AUTO_OFF_HOURS");
-    expect(cards[2].label).toBe("뉴스 게이트");
-    expect(cards[3].label).toBe("재검증");
+    expect(cards[2].label).toBe("최근 실행 결과");
+    expect(cards[2].value).toBe("2건 신규");
+    expect(cards[2].help).toContain("조회 15");
+    expect(cards[2].help).toContain("중복 13");
+    expect(cards[3].label).toBe("뉴스 게이트");
+    expect(cards[4].label).toBe("재검증");
   });
 
   test("builds source pills with runtime status and unimplemented hints", () => {
@@ -96,8 +104,39 @@ describe("news_overview_state", () => {
 
     expect(pills[0]).toContain("OLLAMA");
     expect(pills[1]).toContain("해외 포함");
-    expect(pills.some((pill) => pill.includes("DART") && pill.includes("SUCCESS") && pill.includes("24h 3건") && pill.includes("최근 실행") && pill.includes("신규 2 · 중복 1") && pill.includes("마지막 성공"))).toBe(true);
+    expect(pills.some((pill) => pill.includes("DART") && pill.includes("SUCCESS") && pill.includes("24h 3건") && pill.includes("최근 실행") && pill.includes("조회 0 · 신규 2 · 중복 1 · 스킵 0") && pill.includes("마지막 성공"))).toBe(true);
     expect(pills.some((pill) => pill.includes("KRX") && pill.includes("24h 0건") && pill.includes("마지막 실패") && pill.includes("연속 실패 3회") && pill.includes("미연결"))).toBe(true);
+  });
+
+  test("highlights duplicate-heavy polling runs for operators", () => {
+    const pills = buildNewsOverviewSourcePills({
+      settings: {
+        llm_provider: "OLLAMA",
+        llm_enabled: true,
+        include_foreign: true,
+      },
+      storage: { ready: true },
+      sources: {
+        enabled_count: 1,
+        implemented_count: 1,
+        catalog: [{ code: "SEEKING_ALPHA", tier: "B", region: "GLOBAL", implemented: true }],
+      },
+      ingestion: {
+        by_source_24h: [{ source_code: "SEEKING_ALPHA", count: 2 }],
+      },
+      runtime: {
+        sources: {
+          SEEKING_ALPHA: {
+            status: "SUCCESS",
+            message: "신규 뉴스 반영 완료",
+            updated_at: "2026-04-06T23:04:01+09:00",
+            counts: { received: 7, created: 0, duplicates: 7, skipped: 0 },
+          },
+        },
+      },
+    });
+
+    expect(pills.some((pill) => pill.includes("조회 7 · 신규 0 · 중복 7 · 스킵 0") && pill.includes("대부분 기존 기사와 중복"))).toBe(true);
   });
 
   test("builds trade baseline notice for reset guidance", () => {

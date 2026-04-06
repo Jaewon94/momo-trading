@@ -25,7 +25,6 @@ import { applySettingsToForm } from './settings_form_state.js';
 import {
   getStandaloneModelSelectorState,
   getTierProviderElementId,
-  getTierModelElementIds,
   resolveTierModelState,
   getTierModelSettingKey,
 } from './settings_llm_state.js';
@@ -4852,31 +4851,6 @@ async function updateTierModelSetting(tier, value, mode = 'primary') {
   await updateSetting(key, value || 'DEFAULT');
 }
 
-async function applyCustomTierModel(tier, mode = 'primary') {
-  const { customId } = getTierModelElementIds(tier, mode);
-  const inputEl = document.getElementById(customId);
-  if (!inputEl) return;
-  const value = inputEl.value.trim();
-  if (!value) return;
-  await updateTierModelSetting(tier, value, mode);
-}
-
-async function applyCustomStandaloneModel(kind, mode = 'primary') {
-  const state = getStandaloneModelSelectorState(
-    kind,
-    runtimeSettings || {},
-    mode === 'fallback'
-      ? (document.getElementById(`set-${kind}-llm-fallback-provider`)?.value || '')
-      : (document.getElementById(`set-${kind}-llm-provider`)?.value || ''),
-    mode,
-  );
-  const inputEl = document.getElementById(state.customId);
-  if (!inputEl) return;
-  const value = inputEl.value.trim();
-  if (!value) return;
-  await updateSetting(state.key, value);
-}
-
 // ── LLM Status ──
 async function loadLLMStatus() {
   try {
@@ -5281,8 +5255,6 @@ document.getElementById('chat-container').addEventListener('scroll', function() 
 });
 
 Object.assign(window, {
-  applyCustomStandaloneModel,
-  applyCustomTierModel,
   askQuestion,
   clearChat,
   fetchBloombergNews,
@@ -5322,4 +5294,7 @@ Object.assign(window, {
   openPositionDetailModal,
   closePositionDetailModal,
   closePositionDetailModalOnBackdrop,
+  openNewsArchiveDetailModal,
+  closeNewsArchiveDetailModal,
+  closeNewsArchiveDetailOnBackdrop,
 });
