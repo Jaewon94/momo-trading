@@ -10,4 +10,5 @@ from models.trade_result import TradeResult
 from models.agent_activity import AgentActivityLog
 from models.daily_report import DailyReport
 from models.news_item import NewsItem
+from models.runtime_setting import RuntimeSetting
 from models.trading_rule import TradingRule

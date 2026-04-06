@@ -50,6 +50,38 @@ export function getMcpBadgeState(systemStatus = {}) {
   };
 }
 
+export function buildRuntimeOperationsViewModel(systemStatus = {}) {
+  const operations = systemStatus?.operations || {};
+  const items = [
+    { key: "broker", title: "브로커", ...operations.broker },
+    { key: "news_polling", title: "뉴스", ...operations.news_polling },
+    { key: "orders", title: "주문", ...operations.orders },
+  ].filter((item) => item.label || item.message);
+
+  return items.map((item) => {
+    const status = String(item.status || "OK").toUpperCase();
+    const tone = status === "ERROR" ? "red" : status === "WARN" ? "yellow" : "green";
+    const dotClass = status === "ERROR"
+      ? "bg-red-400"
+      : status === "WARN"
+        ? "bg-yellow-400"
+        : "bg-green-400";
+    const metaParts = [];
+    if (item.symbol) metaParts.push(String(item.symbol));
+    if (item.created_at) metaParts.push(String(item.created_at));
+    if (item.last_run_at) metaParts.push(String(item.last_run_at));
+    return {
+      key: item.key,
+      title: item.title || item.key,
+      label: String(item.label || ""),
+      message: String(item.message || ""),
+      tone,
+      dotClass,
+      meta: metaParts.join(" · "),
+    };
+  });
+}
+
 export function buildRuntimeControlState({
   runtimeSettings = null,
   runtimeSystemStatus = null,

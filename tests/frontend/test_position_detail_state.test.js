@@ -268,6 +268,31 @@ describe("position_detail_state", () => {
     expect(entry.detailLines[0]).toContain("영향도");
   });
 
+  test("renders closed buy lots with partial-exit label instead of buy-filled label", () => {
+    const entry = buildPositionTimelineEntry({
+      type: "trade",
+      at: "2026-04-03T10:15:00+09:00",
+      title: "부분 매도",
+      side: "BUY",
+      status: "CONFIRMED",
+      summary: "삼성전자 · 1주",
+      detail: {
+        notes: JSON.stringify({
+          fill_type: "PARTIAL_EXIT",
+          remaining_open_quantity: 2,
+        }),
+        trade_state_kind_label: "부분 매도",
+        trade_state_badge: "PARTIAL_EXIT",
+        trade_state_tone: "sell",
+        trade_state_icon: "부분",
+      },
+    });
+
+    expect(entry.kindLabel).toBe("부분 매도");
+    expect(entry.badge).toBe("PARTIAL_EXIT");
+    expect(entry.tone).toBe("sell");
+  });
+
   test("builds recent event chips for the summary header", () => {
     const state = buildPositionDetailState({
       symbol: "215790",

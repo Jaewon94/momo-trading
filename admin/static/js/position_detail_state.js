@@ -1,3 +1,5 @@
+import { parseTradeNotes, resolveTradeExecutionState } from "./trade_status_state.js";
+
 function formatInt(value) {
   return Number(value || 0).toLocaleString("ko-KR");
 }
@@ -113,21 +115,38 @@ function classifyTimelineEntry(entry) {
   const detail = entry.detail && typeof entry.detail === "object" ? entry.detail : {};
 
   if (type === "trade") {
-    if (side === "SELL") {
+    if (detail.trade_state_kind_label || detail.trade_state_badge) {
       return {
         filterKey: "trade",
-        tone: "sell",
-        icon: "매도",
-        badge: status || "SELL",
-        kindLabel: "매도",
+        tone: detail.trade_state_tone || "buy",
+        icon: detail.trade_state_icon || detail.trade_state_kind_label || "거래",
+        badge: detail.trade_state_badge || status || side || "TRADE",
+        kindLabel: detail.trade_state_kind_label || "거래",
+      };
+    }
+
+    const executionState = resolveTradeExecutionState({
+      side,
+      status,
+      notes: parseTradeNotes(detail.notes),
+      hasExit: Boolean(detail.exit_price || entry.title?.includes("매도")),
+    });
+
+    if (executionState.code.startsWith("SELL")) {
+      return {
+        filterKey: "trade",
+        tone: executionState.tone,
+        icon: executionState.code === "SELL_PARTIAL" ? "부분" : "매도",
+        badge: executionState.badge,
+        kindLabel: executionState.shortLabel,
       };
     }
     return {
       filterKey: "trade",
-      tone: status === "PENDING_CONFIRM" ? "pending" : "buy",
-      icon: status === "PENDING_CONFIRM" ? "대기" : "매수",
-      badge: status || "BUY",
-      kindLabel: status === "PENDING_CONFIRM" ? "매수 대기" : "매수",
+      tone: executionState.tone,
+      icon: executionState.code === "BUY_PENDING" ? "대기" : "매수",
+      badge: executionState.badge,
+      kindLabel: executionState.shortLabel,
     };
   }
 

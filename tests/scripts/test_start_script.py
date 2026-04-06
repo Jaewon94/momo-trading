@@ -23,8 +23,15 @@ def _build_test_env(
     extra_env_lines: list[str] | None = None,
 ) -> tuple[dict[str, str], Path, Path]:
     venv_activate = tmp_path / "venv" / "bin" / "activate"
+    venv_alembic = tmp_path / "venv" / "bin" / "alembic"
     venv_activate.parent.mkdir(parents=True, exist_ok=True)
     venv_activate.write_text("#!/bin/sh\n", encoding="utf-8")
+    _write_executable(
+        venv_alembic,
+        """#!/bin/sh
+exit 0
+""",
+    )
 
     docker_log = tmp_path / "docker.log"
     python_log = tmp_path / "python.log"
@@ -69,6 +76,7 @@ exit 0
             "MOMO_LSOF_BIN": str(lsof_bin),
             "MOMO_HOST": "127.0.0.1",
             "MOMO_PORT": "9900",
+            "MOMO_STARTUP_WAIT_SEC": "0",
         }
     )
     return env, docker_log, python_log
@@ -224,4 +232,34 @@ exit 0
 
     assert result.returncode == 0
     assert "실행 중" in result.stdout
+    assert "PID: 3131" in result.stdout
     assert "localhost:9900/admin" in result.stdout
+
+
+def test_start_script_status_recovers_stale_pid_file_from_listening_port(tmp_path: Path) -> None:
+    env, _, _ = _build_test_env(tmp_path, "KIWOOM")
+    pid_file = Path(env["MOMO_PID_FILE"])
+    pid_file.write_text("99999\n", encoding="utf-8")
+
+    lsof_bin = Path(env["MOMO_LSOF_BIN"])
+    _write_executable(
+        lsof_bin,
+        """#!/bin/sh
+printf '3131\\n'
+exit 0
+""",
+    )
+
+    result = subprocess.run(
+        ["bash", str(START_SCRIPT), "status"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "stale PID" in result.stdout
+    assert "PID: 3131" in result.stdout
+    assert pid_file.read_text(encoding="utf-8").strip() == "3131"

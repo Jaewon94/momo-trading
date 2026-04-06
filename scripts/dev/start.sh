@@ -23,6 +23,7 @@ PORT="${MOMO_PORT:-9000}"
 DOCKER_BIN="${MOMO_DOCKER_BIN:-docker}"
 PYTHON_BIN="${MOMO_PYTHON_BIN:-python}"
 LSOF_BIN="${MOMO_LSOF_BIN:-lsof}"
+STARTUP_WAIT_SEC="${MOMO_STARTUP_WAIT_SEC:-1}"
 
 has_command() {
     local command_name="$1"
@@ -85,7 +86,15 @@ get_listening_pids() {
         return
     fi
 
-    "$LSOF_BIN" -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true
+    "$LSOF_BIN" -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null | awk '
+        {
+            for (i = 1; i <= NF; i++) {
+                if ($i ~ /^[0-9]+$/) {
+                    print $i
+                }
+            }
+        }
+    ' || true
 }
 
 get_child_pids() {
@@ -205,6 +214,26 @@ port_is_listening() {
     [ -n "$(get_listening_pids "$port")" ]
 }
 
+write_pid_file_from_port() {
+    local pid
+
+    pid="$(get_listening_pids "$PORT" | head -n 1)"
+    if [ -z "$pid" ]; then
+        return 1
+    fi
+
+    printf '%s\n' "$pid" > "$PID_FILE"
+    return 0
+}
+
+print_running_status() {
+    local pid="$1"
+
+    echo "✅ momo-trading 실행 중 (PID: $pid)"
+    echo "   http://localhost:$PORT/admin"
+    echo "   http://127.0.0.1:$PORT/admin"
+}
+
 ensure_port_available() {
     if port_is_listening "$PORT"; then
         local pids
@@ -248,10 +277,26 @@ sync_broker_sidecar() {
 
 run_db_migrations() {
     echo "🗂️  DB 마이그레이션 확인"
-    if ! "$PYTHON_BIN" -m alembic upgrade head; then
-        echo "❌ alembic upgrade head 실패"
-        exit 1
+    local alembic_bin="${VENV_DIR}/bin/alembic"
+
+    if [ -x "$alembic_bin" ]; then
+        if "$alembic_bin" upgrade head; then
+            return
+        fi
+    elif has_command alembic; then
+        if alembic upgrade head; then
+            return
+        fi
     fi
+
+    if ! "$PYTHON_BIN" -m pip show alembic >/dev/null 2>&1; then
+        echo "❌ alembic 패키지가 현재 가상환경에 설치되어 있지 않습니다: $VENV_DIR"
+        echo "   먼저 requirements 설치가 필요합니다."
+    else
+        echo "❌ alembic upgrade head 실패"
+    fi
+
+    exit 1
 }
 
 if [ -f "$VENV_DIR/bin/activate" ]; then
@@ -267,6 +312,7 @@ cd "$APP_DIR"
 mkdir -p "$(dirname "$LOG_FILE")"
 mkdir -p "$(dirname "$PID_FILE")"
 mkdir -p "$APP_DIR/runtime/data"
+mkdir -p "$APP_DIR/data"
 
 case "${1:-}" in
     stop)
@@ -277,22 +323,16 @@ case "${1:-}" in
         if [ -f "$PID_FILE" ]; then
             PID=$(cat "$PID_FILE")
             if kill -0 "$PID" 2>/dev/null; then
-                echo "✅ momo-trading 실행 중 (PID: $PID)"
-                echo "   http://localhost:$PORT/admin"
-                echo "   http://127.0.0.1:$PORT/admin"
+                print_running_status "$PID"
             else
                 echo "❌ 프로세스 종료됨 (stale PID: $PID)"
                 rm -f "$PID_FILE"
-                if port_is_listening "$PORT"; then
-                    echo "✅ momo-trading 실행 중 (PID 추적 없음)"
-                    echo "   http://localhost:$PORT/admin"
-                    echo "   http://127.0.0.1:$PORT/admin"
+                if write_pid_file_from_port; then
+                    print_running_status "$(cat "$PID_FILE")"
                 fi
             fi
-        elif port_is_listening "$PORT"; then
-            echo "✅ momo-trading 실행 중 (PID 추적 없음)"
-            echo "   http://localhost:$PORT/admin"
-            echo "   http://127.0.0.1:$PORT/admin"
+        elif write_pid_file_from_port; then
+            print_running_status "$(cat "$PID_FILE")"
         else
             echo "❌ 실행 중인 프로세스 없음"
         fi
@@ -327,7 +367,18 @@ case "${1:-}" in
             --log-level info \
             >> "$LOG_FILE" 2>&1 &
 
-        echo $! > "$PID_FILE"
+        LAUNCHER_PID="$!"
+        echo "$LAUNCHER_PID" > "$PID_FILE"
+        if [ "$STARTUP_WAIT_SEC" != "0" ]; then
+            sleep "$STARTUP_WAIT_SEC"
+        fi
+        if write_pid_file_from_port; then
+            :
+        elif ! kill -0 "$LAUNCHER_PID" 2>/dev/null; then
+            echo "❌ momo-trading 시작 실패 (로그 확인: $LOG_FILE)"
+            rm -f "$PID_FILE"
+            exit 1
+        fi
         echo "   PID: $(cat "$PID_FILE")"
         echo ""
         echo "종료: ./start.sh stop"

@@ -15,6 +15,7 @@ from exceptions.common import ServiceException
 from middleware.request_id import RequestIDMiddleware
 from models import Base  # noqa: F401 - 모든 모델 import하여 metadata에 등록
 from schemas.common import BasicErrorResponse
+from services.runtime_settings_service import runtime_settings_service
 from trading.mcp_client import mcp_client
 from util.time_util import now_kst
 
@@ -22,6 +23,12 @@ from util.time_util import now_kst
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
+    try:
+        applied = await runtime_settings_service.apply_persisted_settings()
+        if applied:
+            logger.info("영속 런타임 설정 로드 완료 ({}개)", len(applied))
+    except Exception as exc:
+        logger.warning("영속 런타임 설정 로드 실패: {}", str(exc))
     settings.validate_on_startup()
     # DB 스키마는 Alembic으로 관리: python -m alembic upgrade head
     logger.info("애플리케이션 시작 (ENVIRONMENT={})", settings.ENVIRONMENT)

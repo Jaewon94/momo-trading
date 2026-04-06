@@ -13,6 +13,7 @@ import {
 } from './pane_layout.js';
 import {
   buildRuntimeControlState,
+  buildRuntimeOperationsViewModel,
   buildRuntimeSettingCopy,
   formatAutonomyModeLabel,
   formatRiskAppetiteLabel,
@@ -37,7 +38,7 @@ import {
   normalizeActivitySymbol,
   resolveActivityStockMeta,
 } from './activity_state.js';
-import { buildEventRadarState } from './event_radar_state.js';
+import { buildEventRadarState, buildTradeStageLabel } from './event_radar_state.js';
 import { bindDetailToggleHandlers, buildDetailToggleMarkup } from './detail_toggle.js';
 import { buildStrategyInsightsViewModel } from './strategy_insights_state.js';
 import { buildCatalogErrorCopy, buildCatalogMetaText } from './llm_catalog_state.js';
@@ -54,6 +55,7 @@ import { buildNewsPerformanceCards, buildNewsRolloutPolicy } from './news_perfor
 import { buildPerformanceDashboardState } from './performance_page_state.js';
 import { buildReportNewsRationale } from './report_news_state.js';
 import { buildTradeCardViewModel } from './trade_history_state.js';
+import { resolveTradeExecutionState } from './trade_status_state.js';
 
 const API = '/api/v1/admin';
 let currentView = 'live';
@@ -858,10 +860,6 @@ function buildTradeStageMap(snapshot = null) {
     if (!symbol) return;
     if (!map[symbol]) map[symbol] = "미진입";
   };
-  const setStage = (symbol, stage) => {
-    if (!symbol) return;
-    map[symbol] = stage;
-  };
 
   const trades = data?.trades || {};
   const pendingOrders = Array.isArray(data?.pendingOrders) ? data.pendingOrders : [];
@@ -872,12 +870,9 @@ function buildTradeStageMap(snapshot = null) {
 
   [...opened, ...completed, ...pendingConfirms, ...openPositions].forEach((item) => ensure(item?.stock_symbol));
   pendingOrders.forEach((item) => ensure(item?.symbol));
-
-  openPositions.forEach((item) => setStage(item?.stock_symbol, "보유중"));
-  opened.forEach((item) => setStage(item?.stock_symbol, "오늘진입"));
-  completed.forEach((item) => setStage(item?.stock_symbol, "오늘청산"));
-  pendingOrders.forEach((item) => setStage(item?.symbol, "주문대기"));
-  pendingConfirms.forEach((item) => setStage(item?.stock_symbol, "체결확인대기"));
+  Object.keys(map).forEach((symbol) => {
+    map[symbol] = buildTradeStageLabel(data, symbol);
+  });
 
   return map;
 }
@@ -1980,6 +1975,12 @@ async function loadTradesCenterView(snapshot = null) {
 function renderCompactTradeCard(trade, type) {
   const isCompleted = type === 'completed';
   const isPending = type === 'pending';
+  const executionState = resolveTradeExecutionState({
+    side: trade?.side || 'BUY',
+    status: trade?.status || (isPending ? 'PENDING_CONFIRM' : 'CONFIRMED'),
+    notes: trade?.notes,
+    hasExit: isCompleted,
+  });
   const time = isCompleted
     ? (trade.exit_at ? new Date(trade.exit_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }) : '')
     : (trade.entry_at ? new Date(trade.entry_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }) : '');
@@ -1991,7 +1992,7 @@ function renderCompactTradeCard(trade, type) {
       <div class="flex items-center justify-between gap-2">
         <div class="min-w-0">
           <div class="text-gray-100 font-medium truncate">${trade.stock_name}</div>
-          <div class="text-[11px] text-gray-500">${trade.stock_symbol} · ${time}</div>
+          <div class="text-[11px] text-gray-500">${trade.stock_symbol} · ${time} · ${escapeHtml(executionState.shortLabel)}</div>
         </div>
         <div class="text-right ${pnlColor}">
           <div class="font-semibold">${trade.pnl >= 0 ? '+' : ''}${formatKRW(trade.pnl)}</div>
@@ -2006,11 +2007,11 @@ function renderCompactTradeCard(trade, type) {
       <div class="flex items-center justify-between gap-2">
         <div class="min-w-0">
           <div class="text-gray-100 font-medium truncate">${trade.stock_name}</div>
-          <div class="text-[11px] text-gray-500">${trade.stock_symbol} · ${time}</div>
+          <div class="text-[11px] text-gray-500">${trade.stock_symbol} · ${time} · ${escapeHtml(executionState.shortLabel)}</div>
         </div>
         <div class="text-right text-yellow-300">
           <div class="font-semibold">${trade.quantity}주</div>
-          <div class="text-[11px]">체결 확인 대기</div>
+          <div class="text-[11px]">${escapeHtml(executionState.label)}</div>
         </div>
       </div>
     </div>`;
@@ -2020,7 +2021,7 @@ function renderCompactTradeCard(trade, type) {
     <div class="flex items-center justify-between gap-2">
       <div class="min-w-0">
         <div class="text-gray-100 font-medium truncate">${trade.stock_name}</div>
-        <div class="text-[11px] text-gray-500">${trade.stock_symbol} · ${time}</div>
+        <div class="text-[11px] text-gray-500">${trade.stock_symbol} · ${time} · ${escapeHtml(executionState.shortLabel)}</div>
       </div>
       <div class="text-right text-blue-300">
         <div class="font-semibold">${trade.quantity}주</div>
@@ -3552,6 +3553,12 @@ async function loadTradeHistory(dateStr, container, prefetched = null) {
 
 function renderTradeCard(t, type) {
   const tradeCardState = buildTradeCardViewModel(t, type);
+  const executionState = resolveTradeExecutionState({
+    side: t?.side || 'BUY',
+    status: t?.status || (type === 'pending' ? 'PENDING_CONFIRM' : 'CONFIRMED'),
+    notes: t?.notes,
+    hasExit: type === 'completed',
+  });
   const time = (type === 'completed' && t.exit_at)
     ? new Date(t.exit_at).toLocaleTimeString('ko-KR', {hour:'2-digit',minute:'2-digit'})
     : (t.entry_at ? new Date(t.entry_at).toLocaleTimeString('ko-KR', {hour:'2-digit',minute:'2-digit'}) : '');
@@ -3570,6 +3577,7 @@ function renderTradeCard(t, type) {
         <span>${t.quantity}주 · ${t.entry_price.toLocaleString()} → ${t.exit_price.toLocaleString()}원</span>
         <span>${time} · ${t.exit_reason || 'SIGNAL'}${t.hold_days > 0 ? ` · ${t.hold_days}일 보유` : ''}</span>
       </div>
+      <div class="text-[11px] text-gray-400 mt-1">${escapeHtml(executionState.label)}</div>
       ${tradeCardState.fillStatusLabel ? `<div class="text-[11px] text-amber-300 mt-1">${escapeHtml(tradeCardState.fillStatusLabel)}</div>` : ''}
       ${t.ai_confidence ? `<div class="text-xs text-gray-600 mt-1">신뢰도 ${(t.ai_confidence*100).toFixed(0)}% · ${t.strategy_type || ''}</div>` : ''}
     </div>`;
@@ -3580,7 +3588,7 @@ function renderTradeCard(t, type) {
     return `<div class="bg-dark-900 rounded-lg p-3 mb-2 border-l-2 border-yellow-500">
       <div class="flex justify-between items-center">
         <span class="text-sm text-white font-medium">${t.stock_name}<span class="text-gray-500 text-xs ml-1">${t.stock_symbol}</span></span>
-        <span class="text-xs text-yellow-400">대기 ${t.quantity}주 @${t.entry_price.toLocaleString()}원</span>
+        <span class="text-xs text-yellow-400">${escapeHtml(executionState.label)} · ${t.quantity}주 @${t.entry_price.toLocaleString()}원</span>
       </div>
       <div class="flex justify-between text-xs text-gray-500 mt-1">
         <span>${time} · 체결 확인 대기</span>
@@ -3594,7 +3602,7 @@ function renderTradeCard(t, type) {
   return `<div class="bg-dark-900 rounded-lg p-3 mb-2 border-l-2 border-red-500">
     <div class="flex justify-between items-center">
       <span class="text-sm text-white font-medium">${t.stock_name}<span class="text-gray-500 text-xs ml-1">${t.stock_symbol}</span></span>
-      <span class="text-xs text-red-400">매수 ${t.quantity}주 @${t.entry_price.toLocaleString()}원</span>
+      <span class="text-xs text-red-400">${escapeHtml(executionState.label)} · ${t.quantity}주 @${t.entry_price.toLocaleString()}원</span>
     </div>
     <div class="flex justify-between text-xs text-gray-500 mt-1">
       <span>${time} · ${t.strategy_type || ''}</span>
@@ -4299,9 +4307,20 @@ async function loadSystemStatus() {
     updateBadge('badge-trading', s.trading_enabled ? '매매:ON' : '매매:OFF', s.trading_enabled ? 'green' : 'red');
     updateBadge('badge-mcp', mcpBadge.label, mcpBadge.tone);
     const statusEl = document.getElementById('sys-status');
+    const operationItems = buildRuntimeOperationsViewModel(s);
     const marketStatusLabel = s.market_open ? '장중' : (isHoliday ? `휴장 (${s.market_holiday})` : '장외');
     const marketColor = s.market_open ? 'bg-green-400' : (isHoliday ? 'bg-yellow-400' : 'bg-gray-500');
     const marketExtra = s.market_open ? '' : ` (다음: ${s.next_market_open || ''})`;
+    const operationsHtml = operationItems.map((item) => `
+      <div class="rounded-lg border ${item.tone === 'red' ? 'border-red-500/30 bg-red-500/10 text-red-100' : item.tone === 'yellow' ? 'border-yellow-500/30 bg-yellow-500/10 text-yellow-100' : 'border-green-500/30 bg-green-500/10 text-green-100'} px-2.5 py-2">
+        <div class="flex items-center gap-1.5">
+          <span class="status-dot w-1.5 h-1.5 rounded-full ${item.dotClass}"></span>
+          <strong>${escapeHtml(item.title)}:</strong> ${escapeHtml(item.label)}
+        </div>
+        <div class="mt-1 text-[11px] leading-4 opacity-90">${escapeHtml(item.message)}</div>
+        ${item.meta ? `<div class="mt-1 text-[10px] text-gray-300">${escapeHtml(item.meta)}</div>` : ''}
+      </div>
+    `).join('');
     statusEl.innerHTML = `
       <div class="flex items-center gap-1.5">
         <span class="status-dot w-1.5 h-1.5 rounded-full ${marketColor}"></span>
@@ -4320,7 +4339,8 @@ async function loadSystemStatus() {
         에이전트: ${s.agent_running ? '동작' : '중지'}
       </div>
       ${s.last_cycle_time ? `<div class="text-gray-600">마지막: ${formatTime(s.last_cycle_time)}</div>` : ''}
-      <div class="text-gray-600">SSE: ${s.sse_clients}명</div>`;
+      <div class="text-gray-600">SSE: ${s.sse_clients}명</div>
+      ${operationsHtml}`;
     renderRuntimeControls();
     document.querySelectorAll('[data-cycle-trigger="true"]').forEach((btn) => {
       btn.textContent = s.market_open ? '▶ 매매 사이클 실행' : '▶ 장마감 리뷰 실행';

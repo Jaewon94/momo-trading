@@ -7,7 +7,7 @@ import {
 
 describe("settings_modal_state", () => {
   test("keeps tab order stable for settings center", () => {
-    expect(SETTINGS_TABS).toEqual(["operating", "strategy", "llm", "system"]);
+    expect(SETTINGS_TABS).toEqual(["operating", "strategy", "news", "llm", "system"]);
   });
 
   test("normalizes unknown tabs to operating", () => {

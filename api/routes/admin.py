@@ -13,8 +13,9 @@ from sqlalchemy.exc import OperationalError
 
 from admin.sse_manager import sse_manager
 from analysis.llm.model_catalog import model_catalog_service
-from core.config import normalize_llm_model_value, settings
+from core.config import settings
 from core.database import get_async_db, get_async_db_with_transaction
+from core.runtime_settings import MUTABLE_SETTINGS
 from exceptions.common import ServiceException
 from repositories.agent_activity_repository import AgentActivityRepository
 from repositories.daily_report_repository import DailyReportRepository
@@ -40,6 +41,7 @@ from services.open_dart_disclosure_service import open_dart_disclosure_service
 from services.news_reporting_service import news_reporting_service
 from services.news_runtime_service import news_runtime_service
 from services.performance_reporting_service import performance_reporting_service
+from services.runtime_settings_service import runtime_settings_service
 from services.yonhap_news_service import yonhap_news_service
 from strategy.risk_appetite_insights import build_strategy_insights
 from trading.account_manager import account_manager
@@ -220,9 +222,59 @@ def _build_position_timeline(trades, activities):
     timeline = []
 
     for trade in trades:
+        notes = _parse_json_detail(getattr(trade, "notes", None)) or {}
         trade_time = getattr(trade, "exit_at", None) or getattr(trade, "entry_at", None) or getattr(trade, "created_at", None)
         side = getattr(trade, "side", "")
-        title = "매수 체결" if side == "BUY" else "매도 기록"
+        status = str(getattr(trade, "status", "") or "").upper()
+        fill_type = str(notes.get("fill_type") or "").upper()
+        remaining_open_quantity = int(notes.get("remaining_open_quantity") or 0)
+        has_exit = getattr(trade, "exit_at", None) is not None
+
+        if side == "SELL":
+            if status == "PENDING_CONFIRM":
+                title = "매도 대기중"
+                kind_label = "매도 대기중"
+                badge = status or "SELL"
+                tone = "pending"
+                icon = "대기"
+            elif fill_type == "PARTIAL_EXIT" or remaining_open_quantity > 0:
+                title = "부분 매도"
+                kind_label = "부분 매도"
+                badge = fill_type or "PARTIAL_EXIT"
+                tone = "sell"
+                icon = "부분"
+            else:
+                title = "매도 완료"
+                kind_label = "매도 완료"
+                badge = status or "SELL"
+                tone = "sell"
+                icon = "매도"
+        else:
+            if status == "PENDING_CONFIRM":
+                title = "매수 대기중"
+                kind_label = "매수 대기중"
+                badge = status or "BUY"
+                tone = "pending"
+                icon = "대기"
+            elif has_exit and (fill_type == "PARTIAL_EXIT" or remaining_open_quantity > 0):
+                title = "부분 매도"
+                kind_label = "부분 매도"
+                badge = fill_type or "PARTIAL_EXIT"
+                tone = "sell"
+                icon = "부분"
+            elif has_exit:
+                title = "매도 완료"
+                kind_label = "매도 완료"
+                badge = status or "SELL"
+                tone = "sell"
+                icon = "매도"
+            else:
+                title = "매수 완료"
+                kind_label = "매수 완료"
+                badge = status or "BUY"
+                tone = "buy"
+                icon = "매수"
+
         summary = f"{getattr(trade, 'stock_name', getattr(trade, 'stock_symbol', ''))} · {getattr(trade, 'quantity', 0)}주"
         timeline.append({
             "type": "trade",
@@ -238,6 +290,13 @@ def _build_position_timeline(trades, activities):
                 "pnl": getattr(trade, "pnl", 0.0),
                 "return_pct": getattr(trade, "return_pct", 0.0),
                 "exit_reason": getattr(trade, "exit_reason", ""),
+                "notes": getattr(trade, "notes", None),
+                "fill_type": fill_type,
+                "remaining_open_quantity": remaining_open_quantity,
+                "trade_state_kind_label": kind_label,
+                "trade_state_badge": badge,
+                "trade_state_tone": tone,
+                "trade_state_icon": icon,
             },
         })
 
@@ -1064,72 +1123,6 @@ async def get_position_detail(
 
 
 # ── 설정 조회/변경 ──
-MUTABLE_SETTINGS = [
-    "TRADING_ENABLED", "AUTONOMY_MODE",
-    "RECOMMENDATION_EXPIRE_MIN",
-    "SCHEDULER_ENABLED",
-    "RISK_APPETITE",
-    "BUY_ORDER_EXECUTION_MODE",
-    "BUY_SLIPPAGE_GUARD_BPS",
-    "AUTO_RISK_KILL_SWITCH_ENABLED",
-    "MAX_DAILY_DRAWDOWN_PCT",
-    "MAX_CONSECUTIVE_LOSSES",
-    "MIN_STRATEGY_EXPECTANCY",
-    "EXPECTANCY_SAMPLE_SIZE",
-    "VOLATILITY_POSITION_SIZING_ENABLED",
-    "RISK_PER_TRADE_PCT",
-    "RISK_MULTIPLIER_SHORT",
-    "RISK_MULTIPLIER_MID",
-    "RISK_MULTIPLIER_LONG",
-    "COST_GATE_ENABLED",
-    "ESTIMATED_ENTRY_COST_BPS",
-    "ESTIMATED_EXIT_COST_BPS",
-    "ESTIMATED_SLIPPAGE_BPS_SHORT",
-    "ESTIMATED_SLIPPAGE_BPS_MID",
-    "ESTIMATED_SLIPPAGE_BPS_LONG",
-    "MIN_EDGE_TO_COST_RATIO_SHORT",
-    "MIN_EDGE_TO_COST_RATIO_MID",
-    "MIN_EDGE_TO_COST_RATIO_LONG",
-    "LLM_PROVIDER_TIER1",
-    "LLM_PROVIDER_TIER2",
-    "LLM_FALLBACK_PROVIDER_TIER1",
-    "LLM_FALLBACK_PROVIDER_TIER2",
-    "LLM_FALLBACK_MODEL_TIER1",
-    "LLM_FALLBACK_MODEL_TIER2",
-    "CLAUDE_CODE_MODEL",
-    "CLAUDE_CODE_MODEL_TIER1",
-    "CLAUDE_CODE_MODEL_TIER2",
-    "CODEX_MODEL",
-    "CODEX_MODEL_TIER1",
-    "CODEX_MODEL_TIER2",
-    "OLLAMA_BASE_URL",
-    "OLLAMA_MODEL",
-    "OLLAMA_MODEL_TIER1",
-    "OLLAMA_MODEL_TIER2",
-    "MANUAL_LLM_PROVIDER",
-    "NEWS_LLM_ENABLED",
-    "NEWS_LLM_PROVIDER",
-    "NEWS_DOMESTIC_MEDIA_ENABLED",
-    "NEWS_INCLUDE_FOREIGN",
-    "NEWS_NASDAQ_ENABLED",
-    "NEWS_GATE_ENABLED",
-    "NEWS_LOOKBACK_HOURS",
-    "NEWS_MAX_ITEMS_PER_SYMBOL",
-    "NEWS_NEGATIVE_BLOCK_THRESHOLD",
-    "NEWS_FRESHNESS_HALFLIFE_HOURS",
-    "NEWS_POLL_ENABLED",
-    "NEWS_POLL_INTERVAL_MIN_TRADING",
-    "NEWS_POLL_INTERVAL_MIN_OFF_HOURS",
-    "NEWS_POLL_PAGE_COUNT",
-    "NEWS_RECHECK_COOLDOWN_SEC",
-    "NEWS_SHADOW_ENABLED",
-    "NEWS_ROLLOUT_MIN_SAMPLE_SIZE",
-    "NEWS_ROLLOUT_MIN_PROFIT_FACTOR",
-    "NEWS_ROLLOUT_MIN_EXPECTANCY",
-    "NEWS_ROLLOUT_MAX_DRAWDOWN_KRW",
-]
-
-
 @router.get("/settings")
 async def get_settings():
     """런타임 설정 조회"""
@@ -1143,66 +1136,7 @@ async def get_settings():
 @router.put("/settings")
 async def update_settings(updates: dict):
     """런타임 설정 변경 (재시작 불필요)"""
-    changed = {}
-    for key, value in updates.items():
-        if key not in MUTABLE_SETTINGS:
-            continue
-        old = getattr(settings, key, None)
-        # 타입 변환
-        if isinstance(old, bool):
-            value = str(value).lower() in ("true", "1", "yes")
-        elif isinstance(old, int):
-            try:
-                value = int(value)
-            except (TypeError, ValueError) as exc:
-                raise HTTPException(status_code=400, detail=f"{key} must be an integer") from exc
-        elif isinstance(old, float):
-            try:
-                value = float(value)
-            except (TypeError, ValueError) as exc:
-                raise HTTPException(status_code=400, detail=f"{key} must be a number") from exc
-        elif key in {
-            "LLM_PROVIDER_TIER1",
-            "LLM_PROVIDER_TIER2",
-            "LLM_FALLBACK_PROVIDER_TIER1",
-            "LLM_FALLBACK_PROVIDER_TIER2",
-        }:
-            value = str(value).upper()
-            if key.startswith("LLM_FALLBACK_PROVIDER_") and value in {"", "NONE"}:
-                value = ""
-            elif value not in {"CLAUDE_CODE", "CODEX", "OLLAMA"}:
-                continue
-        elif key == "MANUAL_LLM_PROVIDER":
-            value = str(value).upper()
-            if value not in {"AUTOMATIC", "CLAUDE_CODE", "CODEX", "OLLAMA"}:
-                continue
-        elif key == "NEWS_LLM_PROVIDER":
-            value = str(value).upper()
-            if value not in {"AUTOMATIC", "CLAUDE_CODE", "CODEX", "OLLAMA"}:
-                continue
-        elif key == "BUY_ORDER_EXECUTION_MODE":
-            value = str(value).upper()
-            if value not in {"LIMIT_GUARD", "MARKET"}:
-                continue
-        elif key in {
-            "LLM_FALLBACK_MODEL_TIER1",
-            "LLM_FALLBACK_MODEL_TIER2",
-            "CLAUDE_CODE_MODEL",
-            "CLAUDE_CODE_MODEL_TIER1",
-            "CLAUDE_CODE_MODEL_TIER2",
-            "CODEX_MODEL",
-            "CODEX_MODEL_TIER1",
-            "CODEX_MODEL_TIER2",
-            "OLLAMA_MODEL",
-            "OLLAMA_MODEL_TIER1",
-            "OLLAMA_MODEL_TIER2",
-        }:
-            value = normalize_llm_model_value(str(value))
-        elif isinstance(old, str):
-            value = str(value)
-        setattr(settings, key, value)
-        changed[key] = {"old": old, "new": value}
-        logger.info("설정 변경: {} = {} → {}", key, old, value)
+    changed = await runtime_settings_service.update_settings(updates)
 
     if changed:
         await activity_logger.log(
@@ -1250,18 +1184,106 @@ async def get_llm_catalog(
 
 # ── 시스템 상태 ──
 @router.get("/system/status")
-async def get_system_status():
+async def get_system_status(db: AsyncSession = Depends(get_async_db)):
     """시스템 전체 상태"""
     from agent.trading_agent import trading_agent
 
     from scheduler.market_calendar import market_calendar
 
+    broker_provider = settings.BROKER_PROVIDER.upper()
+    mcp_required = broker_provider == "KIS"
+    mcp_connected = mcp_client.is_connected
+    activity_repo = AgentActivityRepository(db)
+    latest_order_error = await activity_repo.get_latest_error(activity_type=ActivityType.ORDER)
+    news_runtime = news_runtime_service.get_snapshot(
+        include_foreign=bool(settings.NEWS_INCLUDE_FOREIGN)
+    )
+    news_overall = news_runtime.get("overall") or {}
+    news_sources = news_runtime.get("sources") or {}
+    news_error_sources = [
+        code for code, state in news_sources.items()
+        if str((state or {}).get("status") or "").upper() == "ERROR"
+    ]
+
+    if not mcp_required:
+        broker_ops = {
+            "status": "OK",
+            "label": "브로커 정상",
+            "message": f"{broker_provider}는 MCP 없이 직접 연동합니다.",
+        }
+    elif mcp_connected:
+        broker_ops = {
+            "status": "OK",
+            "label": "브로커 정상",
+            "message": "MCP 연결이 살아 있어 브로커 호출 준비가 되어 있습니다.",
+        }
+    else:
+        broker_ops = {
+            "status": "ERROR",
+            "label": "브로커 확인 필요",
+            "message": "KIS MCP 연결이 끊겨 있어 브로커 호출이 실패할 수 있습니다.",
+        }
+
+    news_last_status = str(news_overall.get("last_status") or "IDLE").upper()
+    if news_error_sources:
+        news_ops = {
+            "status": "ERROR",
+            "label": "뉴스 폴링 오류",
+            "message": f"오류 소스 {len(news_error_sources)}개: {', '.join(news_error_sources[:3])}",
+            "last_run_at": news_overall.get("last_run_at"),
+        }
+    elif news_last_status == "ERROR":
+        news_ops = {
+            "status": "ERROR",
+            "label": "뉴스 폴링 오류",
+            "message": str(news_overall.get("last_message") or "최근 뉴스 수집이 실패했습니다."),
+            "last_run_at": news_overall.get("last_run_at"),
+        }
+    elif not settings.NEWS_POLL_ENABLED:
+        news_ops = {
+            "status": "WARN",
+            "label": "뉴스 폴링 꺼짐",
+            "message": "자동 뉴스 폴링이 비활성화되어 수동 수집만 동작합니다.",
+            "last_run_at": news_overall.get("last_run_at"),
+        }
+    elif news_overall.get("last_run_at"):
+        news_ops = {
+            "status": "OK",
+            "label": "뉴스 폴링 정상",
+            "message": str(news_overall.get("last_message") or "최근 폴링 기록이 있습니다."),
+            "last_run_at": news_overall.get("last_run_at"),
+        }
+    else:
+        news_ops = {
+            "status": "WARN",
+            "label": "뉴스 폴링 대기",
+            "message": "아직 자동 뉴스 수집 이력이 없습니다.",
+            "last_run_at": None,
+        }
+
+    if latest_order_error is not None:
+        order_ops = {
+            "status": "WARN",
+            "label": "최근 주문 오류",
+            "message": latest_order_error.error_message or latest_order_error.summary,
+            "symbol": latest_order_error.symbol,
+            "created_at": latest_order_error.created_at.isoformat() if latest_order_error.created_at else None,
+        }
+    else:
+        order_ops = {
+            "status": "OK",
+            "label": "주문 오류 없음",
+            "message": "최근 주문 오류 로그가 없습니다.",
+            "symbol": None,
+            "created_at": None,
+        }
+
     return SuccessResponse(data={
-        "broker_provider": settings.BROKER_PROVIDER.upper(),
-        "mcp_required": settings.BROKER_PROVIDER.upper() == "KIS",
+        "broker_provider": broker_provider,
+        "mcp_required": mcp_required,
         "trading_enabled": settings.TRADING_ENABLED,
         "autonomy_mode": settings.AUTONOMY_MODE,
-        "mcp_connected": mcp_client.is_connected,
+        "mcp_connected": mcp_connected,
         "scheduler_running": trading_scheduler.is_running,
         "agent_running": trading_agent._running,
         "last_cycle_time": trading_agent.last_cycle_time.isoformat() if trading_agent.last_cycle_time else None,
@@ -1270,6 +1292,11 @@ async def get_system_status():
         "market_open": market_calendar.is_krx_trading_hours(),
         "market_holiday": market_calendar.get_holiday_name(),
         "next_market_open": market_calendar.next_krx_open().strftime("%m/%d %H:%M"),
+        "operations": {
+            "broker": broker_ops,
+            "news_polling": news_ops,
+            "orders": order_ops,
+        },
     })
 
 
@@ -1295,7 +1322,7 @@ async def reconnect_mcp():
 @router.post("/scheduler/start")
 async def start_scheduler():
     """런타임 스케줄러 시작"""
-    settings.SCHEDULER_ENABLED = True
+    await runtime_settings_service.update_settings({"SCHEDULER_ENABLED": True})
     await trading_scheduler.start()
     await activity_logger.log(
         ActivityType.EVENT, ActivityPhase.PROGRESS,
@@ -1311,7 +1338,7 @@ async def start_scheduler():
 @router.post("/scheduler/stop")
 async def stop_scheduler():
     """런타임 스케줄러 중지"""
-    settings.SCHEDULER_ENABLED = False
+    await runtime_settings_service.update_settings({"SCHEDULER_ENABLED": False})
     await trading_scheduler.stop()
     await activity_logger.log(
         ActivityType.EVENT, ActivityPhase.PROGRESS,

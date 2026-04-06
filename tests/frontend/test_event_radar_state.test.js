@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import {
   buildEventRadarState,
   buildEventRadarCard,
+  buildTradeStageLabel,
 } from "../../admin/static/js/event_radar_state.js";
 
 describe("event_radar_state", () => {
@@ -83,5 +84,28 @@ describe("event_radar_state", () => {
     expect(card.cooldownLabel).toBe("12초 남음");
     expect(card.metaLine).toContain("+5.12%");
     expect(card.metaLine).toContain("2.8배");
+  });
+
+  test("derives unified trade-stage labels from account snapshot", () => {
+    expect(buildTradeStageLabel({
+      pendingOrders: [{ symbol: "005930", side: "매수" }],
+    }, "005930")).toBe("매수 대기중");
+
+    expect(buildTradeStageLabel({
+      trades: {
+        open_positions: [{ stock_symbol: "005930" }],
+      },
+    }, "005930")).toBe("보유 중");
+
+    expect(buildTradeStageLabel({
+      trades: {
+        completed: [{
+          stock_symbol: "005930",
+          side: "BUY",
+          status: "CONFIRMED",
+          notes: JSON.stringify({ fill_type: "PARTIAL_EXIT", remaining_open_quantity: 3 }),
+        }],
+      },
+    }, "005930")).toBe("부분 매도");
   });
 });

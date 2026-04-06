@@ -146,6 +146,62 @@ async def test_admin_settings_updates_provider_models_and_default_mode(client):
     assert payload["LLM_FALLBACK_MODEL_TIER2"] == "DEFAULT"
 
 
+async def test_admin_settings_persists_across_runtime_reload(client):
+    from core.config import settings
+    from services.runtime_settings_service import runtime_settings_service
+
+    original = settings.MANUAL_LLM_PROVIDER
+
+    try:
+        response = await client.put(
+            "/api/v1/admin/settings",
+            json={"MANUAL_LLM_PROVIDER": "CODEX"},
+        )
+
+        assert response.status_code == 200
+
+        settings.MANUAL_LLM_PROVIDER = original
+        await runtime_settings_service.apply_persisted_settings()
+
+        settings_response = await client.get("/api/v1/admin/settings")
+        assert settings_response.status_code == 200
+        assert settings_response.json()["data"]["MANUAL_LLM_PROVIDER"] == "CODEX"
+    finally:
+        settings.MANUAL_LLM_PROVIDER = original
+
+
+async def test_admin_scheduler_routes_persist_enabled_flag(client, monkeypatch):
+    from core.config import settings
+    from services.runtime_settings_service import runtime_settings_service
+
+    original = settings.SCHEDULER_ENABLED
+
+    async def fake_start() -> None:
+        return None
+
+    async def fake_stop() -> None:
+        return None
+
+    try:
+        monkeypatch.setattr("api.routes.admin.trading_scheduler.start", fake_start)
+        monkeypatch.setattr("api.routes.admin.trading_scheduler.stop", fake_stop)
+        monkeypatch.setattr("api.routes.admin.trading_scheduler._running", False)
+
+        stop_response = await client.post("/api/v1/admin/scheduler/stop")
+        assert stop_response.status_code == 200
+        settings.SCHEDULER_ENABLED = original
+        await runtime_settings_service.apply_persisted_settings()
+        assert settings.SCHEDULER_ENABLED is False
+
+        start_response = await client.post("/api/v1/admin/scheduler/start")
+        assert start_response.status_code == 200
+        settings.SCHEDULER_ENABLED = False
+        await runtime_settings_service.apply_persisted_settings()
+        assert settings.SCHEDULER_ENABLED is True
+    finally:
+        settings.SCHEDULER_ENABLED = original
+
+
 async def test_llm_status_includes_manual_selection(client):
     response = await client.get("/api/v1/admin/llm/status")
 

@@ -20,6 +20,7 @@ describe("trade_history_state", () => {
     }, "completed");
 
     expect(viewModel.isPartialExit).toBe(true);
+    expect(viewModel.executionStateLabel).toBe("부분 매도");
     expect(viewModel.fillStatusLabel).toBe("부분 매도 · 잔량 2주");
   });
 
@@ -27,6 +28,7 @@ describe("trade_history_state", () => {
     const viewModel = buildTradeCardViewModel({ notes: null }, "completed");
 
     expect(viewModel.isPartialExit).toBe(false);
+    expect(viewModel.executionStateLabel).toBe("매도 완료");
     expect(viewModel.fillStatusLabel).toBe("");
   });
 });

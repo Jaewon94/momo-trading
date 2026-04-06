@@ -7,6 +7,7 @@ from analysis.feedback.performance_tracker import PerformanceTracker
 from core.config import settings
 from core.database import AsyncSessionLocal
 from models.trade_result import TradeResult
+from services.runtime_settings_service import runtime_settings_service
 
 
 class TradingGuard:
@@ -16,17 +17,26 @@ class TradingGuard:
         drawdown_pct = await self._get_daily_realized_pnl_pct(portfolio_budget=portfolio_budget)
         max_drawdown = abs(float(settings.MAX_DAILY_DRAWDOWN_PCT or 0))
         if max_drawdown > 0 and drawdown_pct <= -max_drawdown:
-            return self._block("DAILY_DRAWDOWN", f"일손실 한도 초과 ({drawdown_pct:.2f}% <= -{max_drawdown:.2f}%)")
+            return await self._block(
+                "DAILY_DRAWDOWN",
+                f"일손실 한도 초과 ({drawdown_pct:.2f}% <= -{max_drawdown:.2f}%)",
+            )
 
         consecutive_losses = await self._get_consecutive_losses()
         max_losses = int(settings.MAX_CONSECUTIVE_LOSSES or 0)
         if max_losses > 0 and consecutive_losses >= max_losses:
-            return self._block("CONSECUTIVE_LOSSES", f"연속 손실 한도 도달 ({consecutive_losses}회)")
+            return await self._block(
+                "CONSECUTIVE_LOSSES",
+                f"연속 손실 한도 도달 ({consecutive_losses}회)",
+            )
 
         expectancy = await self._get_strategy_expectancy(strategy_type)
         min_expectancy = float(settings.MIN_STRATEGY_EXPECTANCY or 0.0)
         if expectancy is not None and expectancy < min_expectancy:
-            return self._block("NEGATIVE_EXPECTANCY", f"전략 기대값 하회 ({expectancy:+.4f} < {min_expectancy:+.4f})")
+            return await self._block(
+                "NEGATIVE_EXPECTANCY",
+                f"전략 기대값 하회 ({expectancy:+.4f} < {min_expectancy:+.4f})",
+            )
 
         return {
             "approved": True,
@@ -36,9 +46,9 @@ class TradingGuard:
         }
 
     @staticmethod
-    def _block(trigger: str, reason: str) -> dict:
+    async def _block(trigger: str, reason: str) -> dict:
         if settings.AUTO_RISK_KILL_SWITCH_ENABLED:
-            settings.TRADING_ENABLED = False
+            await runtime_settings_service.update_settings({"TRADING_ENABLED": False})
         return {
             "approved": False,
             "reason": f"자동 킬스위치: {reason}",
