@@ -68,13 +68,14 @@ class ModelCatalogService:
 
     async def _build_catalog(self) -> dict:
         fetched_at = datetime.now().astimezone().isoformat()
-        claude_catalog, codex_catalog = await asyncio.gather(
+        claude_catalog, codex_catalog, ollama_catalog = await asyncio.gather(
             self._build_claude_catalog(),
             self._build_codex_catalog(),
+            self._build_ollama_catalog(),
         )
         return {
             "fetched_at": fetched_at,
-            "providers": [claude_catalog, codex_catalog],
+            "providers": [claude_catalog, codex_catalog, ollama_catalog],
         }
 
     async def _fetch_text(self, url: str) -> str:
@@ -155,6 +156,57 @@ class ModelCatalogService:
             "entries": entries,
         }
 
+    async def _build_ollama_catalog(self) -> dict:
+        entries = self._seed_ollama_entries()
+        warnings: list[str] = []
+        try:
+            async with httpx.AsyncClient(
+                base_url=settings.OLLAMA_BASE_URL,
+                timeout=httpx.Timeout(5.0, connect=2.0),
+            ) as client:
+                response = await client.get("/api/tags")
+                response.raise_for_status()
+                payload = response.json()
+        except Exception as exc:
+            logger.debug("Ollama 모델 카탈로그 조회 실패: {}", exc)
+            warnings.append(f"Ollama runtime unavailable: {exc}")
+            return {
+                "id": "OLLAMA",
+                "name": "Ollama",
+                "cli_path": "",
+                "cli_version": "",
+                "custom_value_supported": True,
+                "source_urls": [],
+                "warnings": warnings,
+                "entries": entries,
+            }
+
+        seen = {item["value"] for item in entries}
+        for item in payload.get("models", []):
+            value = str(item.get("name", "") or "").strip()
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            entries.append({
+                "value": value,
+                "label": value,
+                "kind": "runtime",
+                "stability": "local",
+                "source_scope": "ollama-runtime",
+                "source_url": "",
+            })
+
+        return {
+            "id": "OLLAMA",
+            "name": "Ollama",
+            "cli_path": "",
+            "cli_version": "",
+            "custom_value_supported": True,
+            "source_urls": [],
+            "warnings": warnings,
+            "entries": entries,
+        }
+
     def _seed_catalog(self) -> dict:
         return {
             "fetched_at": None,
@@ -181,6 +233,15 @@ class ModelCatalogService:
                         _OPENAI_CODEX_HELP_URL,
                     ],
                     "entries": self._seed_codex_entries(),
+                },
+                {
+                    "id": "OLLAMA",
+                    "name": "Ollama",
+                    "cli_path": "",
+                    "cli_version": "",
+                    "custom_value_supported": True,
+                    "source_urls": [],
+                    "entries": self._seed_ollama_entries(),
                 },
             ],
         }
@@ -248,6 +309,19 @@ class ModelCatalogService:
                 "stability": "moving",
                 "source_scope": "official-doc",
                 "source_url": _OPENAI_CODEX_MODEL_URL,
+            },
+        ]
+
+    @staticmethod
+    def _seed_ollama_entries() -> list[dict]:
+        return [
+            {
+                "value": DEFAULT_LLM_MODEL,
+                "label": "기본값 사용",
+                "kind": "default",
+                "stability": "moving",
+                "source_scope": "runtime-default",
+                "source_url": "",
             },
         ]
 
