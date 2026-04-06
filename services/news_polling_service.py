@@ -11,6 +11,7 @@ from services.news_ingest_service import news_ingest_service
 from services.krx_kind_disclosure_service import krx_kind_disclosure_service
 from services.open_dart_disclosure_service import open_dart_disclosure_service
 from services.news_runtime_service import news_runtime_service
+from services.seeking_alpha_news_service import seeking_alpha_news_service
 from services.yonhap_news_service import yonhap_news_service
 
 
@@ -62,6 +63,13 @@ class NewsPollingService:
             )
             news_runtime_service.record_source_result(
                 "INVESTING",
+                status="SKIPPED",
+                mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                message=summary["reason"],
+                counts=summary,
+            )
+            news_runtime_service.record_source_result(
+                "SEEKING_ALPHA",
                 status="SKIPPED",
                 mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
                 message=summary["reason"],
@@ -235,6 +243,25 @@ class NewsPollingService:
                     mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
                     message=str(exc),
                 )
+            try:
+                seeking_alpha_items = await seeking_alpha_news_service.fetch_recent_news(
+                    limit=page_count,
+                )
+                news_runtime_service.record_source_result(
+                    "SEEKING_ALPHA",
+                    status="SUCCESS" if seeking_alpha_items else "EMPTY",
+                    mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                    message="신규 뉴스 반영 완료" if seeking_alpha_items else "조회된 데이터 없음",
+                    counts={"received": len(seeking_alpha_items), "created": 0, "duplicates": 0, "skipped": 0},
+                )
+                all_items.extend(seeking_alpha_items)
+            except Exception as exc:
+                news_runtime_service.record_source_result(
+                    "SEEKING_ALPHA",
+                    status="ERROR",
+                    mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                    message=str(exc),
+                )
         else:
             news_runtime_service.record_source_result(
                 "BLOOMBERG",
@@ -259,6 +286,13 @@ class NewsPollingService:
             )
             news_runtime_service.record_source_result(
                 "INVESTING",
+                status="SKIPPED",
+                mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                message="NEWS_INCLUDE_FOREIGN disabled",
+                counts={"skipped": 1},
+            )
+            news_runtime_service.record_source_result(
+                "SEEKING_ALPHA",
                 status="SKIPPED",
                 mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
                 message="NEWS_INCLUDE_FOREIGN disabled",

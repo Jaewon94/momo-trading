@@ -51,6 +51,7 @@ from services.news_reporting_service import news_reporting_service
 from services.news_runtime_service import news_runtime_service
 from services.performance_reporting_service import performance_reporting_service
 from services.runtime_settings_service import runtime_settings_service
+from services.seeking_alpha_news_service import seeking_alpha_news_service
 from services.yonhap_news_service import yonhap_news_service
 from strategy.risk_appetite_insights import build_strategy_insights
 from trading.account_manager import account_manager
@@ -1114,6 +1115,36 @@ async def fetch_investing_news(
         counts=summary,
     )
     return SuccessResponse(data=summary, message="Investing.com 뉴스 수집 완료")
+
+
+@router.post("/news/fetch/seeking-alpha")
+async def fetch_seeking_alpha_news(
+    limit: int = Query(30, ge=1, le=100),
+    db: AsyncSession = Depends(get_async_db_with_transaction),
+):
+    """Seeking Alpha All News RSS를 수집해 news_items에 적재"""
+    try:
+        summary = await seeking_alpha_news_service.fetch_and_ingest(
+            db=db,
+            limit=limit,
+        )
+    except Exception as exc:
+        news_runtime_service.record_source_result(
+            "SEEKING_ALPHA",
+            status="ERROR",
+            mode="MANUAL",
+            message=str(exc),
+        )
+        raise
+
+    news_runtime_service.record_source_result(
+        "SEEKING_ALPHA",
+        status="SUCCESS" if summary.get("received") else "EMPTY",
+        mode="MANUAL",
+        message="Seeking Alpha 해외 뉴스 적재 완료" if summary.get("created") else "조회된 데이터 없음",
+        counts=summary,
+    )
+    return SuccessResponse(data=summary, message="Seeking Alpha 뉴스 수집 완료")
 
 
 @router.get("/positions/{symbol}")

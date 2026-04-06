@@ -154,6 +154,23 @@ async def test_admin_news_fetch_investing_route_returns_summary(client, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_admin_news_fetch_seeking_alpha_route_returns_summary(client, monkeypatch):
+    async def fake_fetch_and_ingest(*, db, limit):
+        assert limit == 12
+        return {"received": 5, "created": 4, "duplicates": 1, "skipped": 0}
+
+    monkeypatch.setattr(
+        "api.routes.admin.seeking_alpha_news_service.fetch_and_ingest",
+        fake_fetch_and_ingest,
+    )
+
+    response = await client.post("/api/v1/admin/news/fetch/seeking-alpha?limit=12")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["created"] == 4
+
+
+@pytest.mark.asyncio
 async def test_admin_news_fetch_nasdaq_route_returns_502_for_upstream_timeout(client, monkeypatch):
     async def fake_fetch_and_ingest(*, db, limit):
         assert limit == 8

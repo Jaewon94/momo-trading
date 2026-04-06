@@ -9,7 +9,7 @@ from util.time_util import now_kst
 
 
 class NewsRuntimeService:
-    IMPLEMENTED_SOURCES = {"DART", "KRX", "YONHAP", "BLOOMBERG", "CNBC", "NASDAQ", "INVESTING"}
+    IMPLEMENTED_SOURCES = {"DART", "KRX", "YONHAP", "BLOOMBERG", "CNBC", "NASDAQ", "INVESTING", "SEEKING_ALPHA"}
 
     def __init__(self) -> None:
         self.reset()

@@ -114,6 +114,16 @@ class NewsIngestService:
             domains=("investing.com",),
             language="en",
         ),
+        "SEEKING_ALPHA": NewsSourceDefinition(
+            code="SEEKING_ALPHA",
+            name="Seeking Alpha All News",
+            tier="B",
+            region="GLOBAL",
+            official=False,
+            trust_score=0.81,
+            domains=("seekingalpha.com",),
+            language="en",
+        ),
     }
 
     def get_source_catalog(self, *, include_foreign: bool = True) -> list[dict[str, Any]]:

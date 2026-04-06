@@ -537,6 +537,100 @@ async def test_news_polling_service_includes_investing_when_foreign_enabled(monk
 
 
 @pytest.mark.asyncio
+async def test_news_polling_service_includes_seeking_alpha_when_foreign_enabled(monkeypatch):
+    from services.news_polling_service import NewsPollingService
+
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_POLL_ENABLED", True)
+    monkeypatch.setattr("services.news_polling_service.settings.OPEN_DART_API_KEY", "")
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_DOMESTIC_MEDIA_ENABLED", False)
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_INCLUDE_FOREIGN", True)
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_NASDAQ_ENABLED", False)
+
+    async def fake_fetch_recent_krx_disclosures(*, page_count):
+        assert page_count == 25
+        return []
+
+    async def fake_fetch_recent_bloomberg_news(*, limit):
+        assert limit == 25
+        return []
+
+    async def fake_fetch_recent_cnbc_news(*, limit):
+        assert limit == 25
+        return []
+
+    async def fake_fetch_recent_investing_news(*, limit):
+        assert limit == 25
+        return []
+
+    async def fake_fetch_recent_seeking_alpha_news(*, limit):
+        assert limit == 25
+        return [
+            {
+                "source_code": "SEEKING_ALPHA",
+                "title": "Semiconductor winners extend rally",
+                "published_at": "2026-04-05T09:20:00+09:00",
+                "symbols": ["005930"],
+                "url": "https://seekingalpha.com/news/example",
+                "external_id": "sa-1",
+                "language": "en",
+            }
+        ]
+
+    async def fake_ingest_items_detailed(session, items):
+        assert len(items) == 1
+        assert items[0]["source_code"] == "SEEKING_ALPHA"
+        return {
+            "summary": {"received": 1, "created": 1, "duplicates": 0, "skipped": 0},
+            "created_items": [
+                {
+                    "source_code": "SEEKING_ALPHA",
+                    "title": "Semiconductor winners extend rally",
+                    "published_at": "2026-04-05T09:20:00+09:00",
+                    "symbols": ["005930"],
+                }
+            ],
+        }
+
+    published = []
+
+    async def fake_publish(event):
+        published.append(event)
+
+    monkeypatch.setattr(
+        "services.news_polling_service.krx_kind_disclosure_service.fetch_recent_disclosures",
+        fake_fetch_recent_krx_disclosures,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.bloomberg_news_service.fetch_recent_news",
+        fake_fetch_recent_bloomberg_news,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.cnbc_news_service.fetch_recent_news",
+        fake_fetch_recent_cnbc_news,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.investing_news_service.fetch_recent_news",
+        fake_fetch_recent_investing_news,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.seeking_alpha_news_service.fetch_recent_news",
+        fake_fetch_recent_seeking_alpha_news,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.news_ingest_service.ingest_items_detailed",
+        fake_ingest_items_detailed,
+    )
+    monkeypatch.setattr("services.news_polling_service.event_bus.publish", fake_publish)
+
+    service = NewsPollingService()
+    summary = await service.poll_sources(object(), market_hours=False)
+
+    assert summary["created"] == 1
+    assert summary["published_events"] == 1
+    assert published[0].data["symbols"] == ["005930"]
+
+
+@pytest.mark.asyncio
 async def test_news_polling_service_skips_nasdaq_when_source_disabled(monkeypatch):
     from services.news_polling_service import NewsPollingService
     from services.news_runtime_service import news_runtime_service
