@@ -198,10 +198,26 @@ class DailyReportService:
                             report.top_picks = json.dumps(
                                 parsed.get("top_picks", []), ensure_ascii=False
                             )
+                        else:
+                            raise ValueError("daily report JSON parse failed")
                     except Exception as e:
                         logger.warning("LLM 리포트 요약 생성 실패: {}", str(e))
-                        report.market_summary = "LLM 요약 생성 실패"
-                        report.performance_review = f"활동 {len(activities)}건 기록됨"
+                        report.market_summary = self._build_market_summary_fallback(
+                            total_cycles=total_cycles,
+                            total_analyses=total_analyses,
+                            total_recommendations=total_recommendations,
+                            total_pnl=total_pnl,
+                            unrealized_pnl=unrealized_pnl,
+                        )
+                        report.performance_review = self._build_performance_review_fallback(
+                            activity_count=len(activities),
+                            buy_count=buy_count,
+                            sell_count=sell_count,
+                            open_position_count=open_position_count,
+                        )
+                        report.lessons_learned = "LLM 요약 생성이 실패해 활동/계좌 스냅샷 기준으로 fallback 요약을 기록했습니다."
+                        report.next_day_plan = "LLM 요약 복구 후 다음 거래일 전략/관심 종목을 다시 생성해 확인하세요."
+                        report.top_picks = json.dumps([], ensure_ascii=False)
 
                     report.strategy_stats = json.dumps(activity_counts, ensure_ascii=False)
                     if not existing:
@@ -237,6 +253,33 @@ class DailyReportService:
     def _parse_json(self, text: str) -> dict | None:
         result = parse_llm_json(text)
         return result or None
+
+    def _build_market_summary_fallback(
+        self,
+        *,
+        total_cycles: int,
+        total_analyses: int,
+        total_recommendations: int,
+        total_pnl: float,
+        unrealized_pnl: float,
+    ) -> str:
+        return (
+            f"오늘 사이클 {total_cycles}회, 분석 {total_analyses}건, 추천 {total_recommendations}건을 기록했습니다. "
+            f"실현 손익은 {total_pnl:+,.0f}원, 현재 미실현 손익은 {unrealized_pnl:+,.0f}원입니다."
+        )
+
+    def _build_performance_review_fallback(
+        self,
+        *,
+        activity_count: int,
+        buy_count: int,
+        sell_count: int,
+        open_position_count: int,
+    ) -> str:
+        return (
+            f"활동 {activity_count}건, 매수 {buy_count}건, 매도 {sell_count}건이 기록됐고 "
+            f"현재 보유는 {open_position_count}종목입니다."
+        )
 
 
 daily_report_service = DailyReportService()

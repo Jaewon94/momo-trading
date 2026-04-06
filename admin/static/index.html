@@ -1012,15 +1012,6 @@
                   </div>
                 </button>
 
-                <button onclick="openSettingsModal('system')" class="settings-jump-btn">
-                  <div class="flex items-center justify-between gap-3">
-                    <div>
-                      <div class="text-sm text-gray-200">고급 설정</div>
-                      <div class="text-xs text-gray-500 mt-1">사용량, 시스템 상태, 세부 설정</div>
-                    </div>
-                    <span class="text-xs text-blue-300">열기</span>
-                  </div>
-                </button>
               </div>
             </div>
           </div>
@@ -1028,25 +1019,21 @@
           <!-- System -->
           <div class="sidebar-section" id="section-system">
             <div class="sidebar-section-header" onclick="toggleSidebarSection('system')">
-              <span>&#x1f5a5; &#xc2dc;&#xc2a4;&#xd15c; &#xc694;&#xc57d;</span>
+              <span>&#x1f5a5; &#xc6b4;&#xc601; &#xc2dc;&#xadf8;&#xb110;</span>
               <span class="sidebar-section-arrow collapsed" id="arrow-system">&#x25BC;</span>
             </div>
             <div class="sidebar-section-body" id="body-system">
               <div class="px-3 pb-2 space-y-3">
                 <div class="settings-summary-card">
-                  <div class="text-xs font-medium text-gray-300">런타임 상태</div>
+                  <div class="flex items-center justify-between gap-3">
+                    <div class="text-xs font-medium text-gray-300">브로커 · 뉴스 · 주문 상태</div>
+                    <button onclick="openSettingsModal('system')"
+                      class="text-[11px] text-gray-400 hover:text-gray-200 transition">
+                      상세
+                    </button>
+                  </div>
                   <div id="sys-status" class="mt-2 text-xs space-y-1"></div>
                 </div>
-
-                <button onclick="openSettingsModal('system')" class="settings-jump-btn">
-                  <div class="flex items-center justify-between gap-3">
-                    <div>
-                      <div class="text-sm text-gray-200">시스템/사용량 열기</div>
-                      <div class="text-xs text-gray-500 mt-1">LLM 사용량과 상세 상태는 설정 센터에서 확인</div>
-                    </div>
-                    <span class="text-xs text-blue-300">열기</span>
-                  </div>
-                </button>
               </div>
             </div>
           </div>
@@ -1158,15 +1145,15 @@
               <div class="text-sm text-white font-semibold">로딩 중...</div>
             </div>
             <div class="rounded-lg border border-gray-700 bg-dark-900/70 p-2">
-              <div class="text-[11px] text-gray-500">현금 비중</div>
+              <div class="text-[11px] text-gray-500">현재 손익</div>
               <div class="text-sm text-white font-semibold">-</div>
             </div>
             <div class="rounded-lg border border-gray-700 bg-dark-900/70 p-2">
-              <div class="text-[11px] text-gray-500">보유 종목</div>
+              <div class="text-[11px] text-gray-500">보유 / 미체결</div>
               <div class="text-sm text-white font-semibold">0</div>
             </div>
             <div class="rounded-lg border border-gray-700 bg-dark-900/70 p-2">
-              <div class="text-[11px] text-gray-500">미체결/오늘 거래</div>
+              <div class="text-[11px] text-gray-500">오늘 진입 / 매도 체결</div>
               <div class="text-sm text-white font-semibold">0 / 0</div>
             </div>
           </div>

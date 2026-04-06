@@ -105,6 +105,8 @@ Summary: {summary}
             start = result.find("{")
             end = result.rfind("}") + 1
             payload = json.loads(result[start:end]) if start >= 0 and end > start else {}
+            if not payload:
+                raise ValueError("translation JSON parse failed")
             translated_title = str(payload.get("translated_title") or "").strip()
             translated_summary = str(payload.get("translated_summary") or "").strip()
             if translated_title:
@@ -122,7 +124,8 @@ Summary: {summary}
         except Exception as exc:
             logger.debug("해외 뉴스 번역 실패: {}", str(exc))
             metadata["translation_status"] = "FAILED"
-            metadata["translation_error"] = str(exc)[:120]
+            error_text = str(exc).strip() or exc.__class__.__name__
+            metadata["translation_error"] = error_text[:120]
             copied["metadata"] = metadata
             return copied
 

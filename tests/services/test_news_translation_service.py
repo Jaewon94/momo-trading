@@ -105,6 +105,35 @@ async def test_news_translation_service_uses_news_specific_ollama_model(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_news_translation_service_records_parse_failure_reason(monkeypatch):
+    from services.news_translation_service import NewsTranslationService
+
+    service = NewsTranslationService()
+
+    async def fake_generate(*args, **kwargs):
+        return ("not-json-response", "CODEX")
+
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_ENABLED", True)
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_PROVIDER", "CODEX")
+    monkeypatch.setattr(
+        "services.news_translation_service.llm_factory.generate",
+        fake_generate,
+    )
+
+    items = await service.translate_items([
+        {
+            "source_code": "INVESTING",
+            "language": "en",
+            "title": "Hyundai shares rise on stronger outlook",
+            "summary": "Investors cheered the stronger guidance.",
+        },
+    ])
+
+    assert items[0]["metadata"]["translation_status"] == "FAILED"
+    assert items[0]["metadata"]["translation_error"] == "translation JSON parse failed"
+
+
+@pytest.mark.asyncio
 async def test_news_translation_service_translates_non_korean_items_with_limited_parallelism(monkeypatch):
     from services.news_translation_service import NewsTranslationService
 

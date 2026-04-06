@@ -1729,7 +1729,7 @@ function renderPendingOrders(data) {
   if (!el) return;
   if (!data || !data.length) {
     if (countEl) countEl.textContent = '0';
-    el.innerHTML = '';
+    el.innerHTML = '<div class="text-gray-600 text-xs">미체결 주문 없음</div>';
     return;
   }
   if (countEl) {
@@ -1778,11 +1778,14 @@ function renderPortfolioQuickStats(balance, holdings, pendingOrders, trades) {
   if (!el) return;
 
   const totalAsset = balance?.total_asset || 0;
-  const cash = balance?.cash || 0;
-  const cashRatio = totalAsset > 0 ? `${((cash / totalAsset) * 100).toFixed(1)}%` : '-';
+  const totalPnl = Number(balance?.total_pnl || 0);
+  const pnlRate = Number(balance?.total_pnl_rate || 0);
   const holdingCount = holdings?.length || 0;
   const pendingCount = pendingOrders?.length || 0;
-  const tradeCount = buildTradeSummaryCounts(trades).todayTradeCount;
+  const tradeCounts = buildTradeSummaryCounts(trades);
+  const openedCount = Array.isArray(trades?.opened) ? trades.opened.length : 0;
+  const totalPnlLabel = `${totalPnl >= 0 ? '+' : ''}${formatKRW(totalPnl)}`;
+  const totalPnlClass = totalPnl >= 0 ? 'text-green-300' : 'text-red-300';
 
   el.innerHTML = `
     <div class="portfolio-stat">
@@ -1790,16 +1793,17 @@ function renderPortfolioQuickStats(balance, holdings, pendingOrders, trades) {
       <div class="portfolio-stat-value">${formatKRW(totalAsset)}</div>
     </div>
     <div class="portfolio-stat">
-      <div class="portfolio-stat-label">현금 비중</div>
-      <div class="portfolio-stat-value">${cashRatio}</div>
+      <div class="portfolio-stat-label">현재 손익</div>
+      <div class="portfolio-stat-value ${totalPnlClass}">${totalPnlLabel}</div>
+      <div class="mt-1 text-[11px] text-gray-500">${Number.isFinite(pnlRate) ? `${pnlRate >= 0 ? '+' : ''}${pnlRate.toFixed(2)}%` : '-'}</div>
     </div>
     <div class="portfolio-stat">
-      <div class="portfolio-stat-label">보유 종목</div>
-      <div class="portfolio-stat-value">${holdingCount}개</div>
+      <div class="portfolio-stat-label">보유 / 미체결</div>
+      <div class="portfolio-stat-value">${holdingCount} / ${pendingCount}</div>
     </div>
     <div class="portfolio-stat">
-      <div class="portfolio-stat-label">미체결 / 오늘 거래</div>
-      <div class="portfolio-stat-value">${pendingCount} / ${tradeCount}</div>
+      <div class="portfolio-stat-label">오늘 진입 / 매도 체결</div>
+      <div class="portfolio-stat-value">${openedCount} / ${tradeCounts.sellExecutionCount}</div>
     </div>
   `;
 }
@@ -4490,16 +4494,19 @@ function renderStrategyInsightsPanel() {
   }
 
   const optionMarkup = (viewModel.options || []).map((option) => `
-    <div class="rounded-lg border ${option.isSelected ? 'border-blue-500/50 bg-blue-500/10' : 'border-gray-800 bg-dark-800/60'} p-3">
+    <div class="flex h-full flex-col rounded-xl border ${option.isSelected ? 'border-blue-500/60 bg-blue-500/10 shadow-[0_0_0_1px_rgba(59,130,246,0.08)]' : 'border-gray-800 bg-dark-800/60'} p-4">
       <div class="flex items-start justify-between gap-3">
         <div>
-          <div class="text-sm font-medium text-white">${escapeHtml(option.label)} <span class="text-[11px] font-medium text-gray-500">${escapeHtml(option.key)}</span></div>
-          <div class="mt-1 text-xs text-gray-400">${escapeHtml(option.headline || '')}</div>
+          <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <div class="text-sm font-semibold text-white">${escapeHtml(option.label)}</div>
+            <span class="text-[11px] font-medium tracking-[0.08em] text-gray-500">${escapeHtml(option.key)}</span>
+          </div>
+          <div class="mt-2 text-xs leading-5 text-gray-400">${escapeHtml(option.headline || '')}</div>
         </div>
-        ${option.isSelected ? '<div class="rounded-full border border-blue-500/40 bg-blue-500/10 px-2 py-0.5 text-[11px] text-blue-200">현재</div>' : ''}
+        ${option.isSelected ? '<div class="shrink-0 rounded-full border border-blue-500/40 bg-blue-500/10 px-2.5 py-1 text-[11px] font-medium text-blue-200">현재 적용</div>' : ''}
       </div>
-      <div class="mt-2 text-xs text-gray-300">${escapeHtml(option.description || '')}</div>
-      <div class="mt-2 text-[11px] text-gray-500">${escapeHtml(option.effectSummary || '')}</div>
+      <div class="mt-3 text-sm leading-6 text-gray-200">${escapeHtml(option.description || '')}</div>
+      <div class="mt-auto pt-4 text-[11px] leading-5 text-gray-500">${escapeHtml(option.effectSummary || '')}</div>
     </div>
   `).join('');
 
@@ -4533,7 +4540,7 @@ function renderStrategyInsightsPanel() {
     ${optionMarkup ? `
       <div class="mt-3">
         <div class="text-xs font-medium text-gray-400">성향별 비교</div>
-        <div class="mt-2 grid gap-3 xl:grid-cols-3">
+        <div class="mt-2 grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
           ${optionMarkup}
         </div>
       </div>
@@ -4978,16 +4985,6 @@ async function loadSystemStatus() {
         <span class="status-dot w-1.5 h-1.5 rounded-full ${mcpBadge.dotClass}"></span>
         MCP: ${escapeHtml(mcpBadge.detailLabel)}
       </div>
-      <div class="flex items-center gap-1.5">
-        <span class="status-dot w-1.5 h-1.5 rounded-full ${s.scheduler_running ? 'bg-green-400' : 'bg-yellow-400'}"></span>
-        스케줄러: ${s.scheduler_running ? '동작' : '중지'}
-      </div>
-      <div class="flex items-center gap-1.5">
-        <span class="status-dot w-1.5 h-1.5 rounded-full ${s.agent_running ? 'bg-green-400' : 'bg-yellow-400'}"></span>
-        에이전트: ${s.agent_running ? '동작' : '중지'}
-      </div>
-      ${s.last_cycle_time ? `<div class="text-gray-600">마지막: ${formatTime(s.last_cycle_time)}</div>` : ''}
-      <div class="text-gray-600">SSE: ${s.sse_clients}명</div>
       ${operationsHtml}`;
     renderRuntimeControls();
     document.querySelectorAll('[data-cycle-trigger="true"]').forEach((btn) => {
