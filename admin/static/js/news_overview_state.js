@@ -197,15 +197,29 @@ export function buildNewsOverviewSourcePills(overview) {
       const runtime = runtimeSources?.[item.code] || {};
       const status = String(runtime.status || "IDLE");
       const count24h = sourceCounts.get(String(item.code || "")) || 0;
+      const runtimeCounts = runtime.counts || {};
       const details = [];
       details.push(`24h ${count24h}건`);
+      if (runtime.updated_at) {
+        details.push(`최근 실행 ${defaultFormatDateTime(runtime.updated_at)}`);
+      }
+      if (
+        Number(runtimeCounts.created || 0) > 0
+        || Number(runtimeCounts.duplicates || 0) > 0
+        || Number(runtimeCounts.skipped || 0) > 0
+      ) {
+        details.push(
+          `신규 ${Number(runtimeCounts.created || 0)} · 중복 ${Number(runtimeCounts.duplicates || 0)} · 스킵 ${Number(runtimeCounts.skipped || 0)}`,
+        );
+      }
       if (runtime.last_success_at) {
         details.push(`마지막 성공 ${defaultFormatDateTime(runtime.last_success_at)}`);
       }
-      if (Number(runtime.consecutive_failures || 0) > 0) {
-        details.push(`실패 ${Number(runtime.consecutive_failures || 0)}회`);
-      } else if (runtime.last_error_at && status === "ERROR") {
+      if (runtime.last_error_at) {
         details.push(`마지막 실패 ${defaultFormatDateTime(runtime.last_error_at)}`);
+      }
+      if (Number(runtime.consecutive_failures || 0) > 0) {
+        details.push(`연속 실패 ${Number(runtime.consecutive_failures || 0)}회`);
       }
       details.push(
         runtime.message
