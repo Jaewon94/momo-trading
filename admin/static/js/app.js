@@ -30,6 +30,12 @@ import {
   getTierModelSettingKey,
 } from './settings_llm_state.js';
 import {
+  buildProviderModelEntries,
+  buildProviderModelSourceText,
+  getCatalogProvider,
+  getProviderModelPlaceholder,
+} from './settings_llm_catalog_state.js';
+import {
   buildClaudeUsageCopy,
   buildCodexAuthLabel,
   buildCodexUsageCopy,
@@ -4244,10 +4250,6 @@ function getTierProvider(tier, mode = 'primary') {
   return providerEl?.value || 'CLAUDE_CODE';
 }
 
-function getCatalogProvider(provider) {
-  return llmCatalog?.providers?.find((item) => item.id === provider) || null;
-}
-
 function renderProviderModelSelector({
   provider,
   currentValue = 'DEFAULT',
@@ -4271,45 +4273,23 @@ function renderProviderModelSelector({
     return;
   }
 
-  const providerCatalog = getCatalogProvider(provider);
-  const entries = providerCatalog?.entries ? [...providerCatalog.entries] : [{ value: 'DEFAULT', label: '기본값 사용' }];
-  if (currentValue && !entries.some((item) => item.value === currentValue)) {
-    entries.push({
-      value: currentValue,
-      label: `${currentValue} (custom)`,
-      kind: 'custom',
-      stability: 'custom',
-      source_scope: 'manual',
-      source_url: '',
-    });
-  }
+  const providerCatalog = getCatalogProvider(llmCatalog, provider);
+  const entries = buildProviderModelEntries(providerCatalog, currentValue, defaultSuffix);
 
   selectEl.innerHTML = entries.map((item) => {
-    const suffix = item.kind === 'snapshot'
-      ? ' [고정]'
-      : (item.value === 'DEFAULT' ? ` ${defaultSuffix}` : '');
-    return `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label || item.value)}${suffix}</option>`;
+    return `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label || item.value)}${item.suffix || ''}</option>`;
   }).join('');
   selectEl.value = currentValue;
   selectEl.disabled = false;
 
   if (customEl) {
-    customEl.placeholder = provider === 'CODEX'
-      ? '예: gpt-5-codex / gpt-5.4'
-      : provider === 'OLLAMA'
-        ? '예: llama3.1:8b / qwen2.5:14b'
-        : '예: sonnet / claude-sonnet-4-6';
+    customEl.placeholder = getProviderModelPlaceholder(provider);
     customEl.value = '';
     customEl.disabled = false;
   }
 
   if (sourceEl) {
-    const selected = entries.find((item) => item.value === currentValue);
-    const sourceBits = [];
-    if (selected?.source_scope) sourceBits.push(`출처: ${selected.source_scope}`);
-    if (selected?.stability) sourceBits.push(`성격: ${selected.stability}`);
-    if (providerCatalog?.cli_version) sourceBits.push(`CLI ${providerCatalog.cli_version}`);
-    sourceEl.textContent = sourceBits.join(' · ');
+    sourceEl.textContent = buildProviderModelSourceText(providerCatalog, entries, currentValue);
   }
 }
 
