@@ -2,6 +2,7 @@
 from loguru import logger
 
 from analysis.llm.llm_factory import llm_factory
+from analysis.llm.selection_policy import resolve_news_selection
 from core.config import settings
 from trading.enums import LLMTier
 
@@ -37,10 +38,13 @@ sentiment: POSITIVE | NEUTRAL | NEGATIVE
 score: 0.0 (매우 부정) ~ 1.0 (매우 긍정)"""
 
         try:
-            result, provider = await llm_factory.generate_manual(
+            news_selection = resolve_news_selection()
+            result, provider = await llm_factory.generate(
                 prompt,
-                default_tier=LLMTier.TIER1,
-                manual_provider_override=(settings.NEWS_LLM_PROVIDER or "AUTOMATIC"),
+                LLMTier.TIER1,
+                "",
+                provider_chain=list(news_selection.provider_chain),
+                provider_model_overrides=news_selection.provider_model_overrides,
             )
             import json
             # JSON 파싱 시도

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import {
-  getManualModelSelectorState,
+  getStandaloneModelSelectorState,
   getTierModelElementIds,
   getTierModelSettingKey,
   getTierProviderElementId,
@@ -60,19 +60,28 @@ describe("settings_llm_state", () => {
     expect(state.selectId).toBe("set-llm-tier2-fallback-model");
   });
 
-  test("builds manual selector state with automatic fallback", () => {
-    expect(getManualModelSelectorState({}, "")).toMatchObject({
-      provider: "AUTOMATIC",
+  test("builds standalone selector state for primary and fallback", () => {
+    expect(getStandaloneModelSelectorState("manual", {}, "CODEX")).toMatchObject({
+      key: "MANUAL_LLM_MODEL",
+      provider: "CODEX",
       currentValue: "DEFAULT",
-      automatic: true,
+      hasProvider: true,
+      selectId: "set-manual-llm-model",
     });
 
     expect(
-      getManualModelSelectorState({ MANUAL_LLM_MODEL: "gpt-5.4" }, "CODEX"),
+      getStandaloneModelSelectorState(
+        "news",
+        { NEWS_LLM_FALLBACK_MODEL: "qwen2.5:14b" },
+        "OLLAMA",
+        "fallback",
+      ),
     ).toMatchObject({
-      provider: "CODEX",
-      currentValue: "gpt-5.4",
-      automatic: false,
+      key: "NEWS_LLM_FALLBACK_MODEL",
+      provider: "OLLAMA",
+      currentValue: "qwen2.5:14b",
+      hasProvider: true,
+      selectId: "set-news-llm-fallback-model",
     });
   });
 });

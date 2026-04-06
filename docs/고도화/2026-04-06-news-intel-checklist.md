@@ -12,7 +12,9 @@
 - [x] `CNBC` Markets RSS 수동 수집기
 - [x] `Nasdaq` Markets RSS 수동 수집기
 - [x] 장중/장외 자동 뉴스 폴링 구조
+- [x] 서버 시작 직후 뉴스 자동 폴링 1회 실행
 - [x] 신규 뉴스 이벤트 기반 증분 재검증
+- [x] 이벤트 기반 타겟 뉴스 재수집(`AUTO_EVENT`)
 - [x] 뉴스 게이트(부정 뉴스 압력 기반)
 - [x] `NEWS_LLM_PROVIDER`, `NEWS_LLM_ENABLED`, `OLLAMA` 지원
 - [x] 관리자 `뉴스` 탭 / 최근 뉴스 조회 / 수동 적재 API
@@ -21,6 +23,13 @@
   - 날짜별 그룹 카드와 원문 링크, 번역 제목/요약, 연관 심볼/섹터 배지
   - 소스별 건수 요약과 기사별 상세 보기 드로어
 - [x] 해외 뉴스 한글 제목/요약 우선 표시(`display_title`, `display_summary`)
+- [x] 해외 뉴스 번역 제한 병렬화
+  - 일반 provider는 최대 3개 동시 번역
+  - `OLLAMA`는 로컬 부하를 고려해 단일 in-flight 유지
+- [x] 관리자 설정에서 뉴스 병렬도 조정 지원
+  - `NEWS_FETCH_CONCURRENCY`로 소스 fetch 병렬도 조절
+  - `NEWS_TRANSLATION_CONCURRENCY`로 해외 뉴스 번역 병렬도 조절
+  - `NEWS_CLAUDE_SHARE_SESSION`으로 Claude Code 뉴스 번역 시 세션 공유 유지 여부 선택
 - [x] 종목 상세 모달 타임라인 뉴스 이벤트
 - [x] `오늘 안 산 이유` 카드의 뉴스 차단 집계
 - [x] `오늘 리포트` 상단 접이식 `뉴스 인텔` 스트립
@@ -64,6 +73,9 @@
   - 시스템 설정 탭의 `DB 백업` 버튼
   - `POST /api/v1/admin/system/backup-operational-db`
   - `DB 초기화` 실행 전 자동 백업
+- [x] 뉴스 소스 fetch 병렬화
+  - `DART`, `KRX`, `YONHAP`, `BLOOMBERG`, `CNBC`, `NASDAQ`, `INVESTING`, `SEEKING_ALPHA`를 task 단위로 병렬 조회
+  - 소스별 런타임 상태 기록과 DB ingest/save 순서는 기존 의미 유지
 - [x] 뉴스 감성/영향도 점수 정교화
   - 장중/장외 세션 가중치 반영
   - `pressure_base`와 세션/다중소스 보정 후 최종 압력 분리 집계

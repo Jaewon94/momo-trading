@@ -23,7 +23,7 @@ import { SETTINGS_TABS, normalizeSettingsTab } from './settings_modal_state.js';
 import { resolveDirectSettingChange } from './settings_action_state.js';
 import { applySettingsToForm } from './settings_form_state.js';
 import {
-  getManualModelSelectorState,
+  getStandaloneModelSelectorState,
   getTierProviderElementId,
   getTierModelElementIds,
   resolveTierModelState,
@@ -4293,7 +4293,7 @@ async function loadSettings() {
     runtimeSettings = s;
     applySettingsToForm(s);
     renderTierModelSelectors();
-    renderManualModelSelector();
+    renderStandaloneModelSelectors();
     updateBadge('badge-trading', s.TRADING_ENABLED ? '매매:ON' : '매매:OFF', s.TRADING_ENABLED ? 'green' : 'red');
     updateBadge('badge-mode', formatAutonomyModeLabel(s.AUTONOMY_MODE), 'purple');
     renderSettingGuidance();
@@ -4466,7 +4466,7 @@ function renderSidebarSettingSummaries() {
   }
   const newsSummaryEl = document.getElementById('left-news-summary');
   if (newsSummaryEl) {
-    const provider = runtimeSettings?.NEWS_LLM_PROVIDER || 'AUTOMATIC';
+    const provider = runtimeSettings?.NEWS_LLM_PROVIDER || 'CLAUDE_CODE';
     const includeForeign = runtimeSettings?.NEWS_INCLUDE_FOREIGN ? '해외 포함' : '국내 중심';
     const domesticMedia = runtimeSettings?.NEWS_DOMESTIC_MEDIA_ENABLED ? '국내 미디어 ON' : '국내 미디어 OFF';
     const recent24h = newsOverviewSnapshot?.ingestion?.recent_24h_count;
@@ -4718,6 +4718,13 @@ function renderTierModelSelectors() {
   renderTierModelSelector('tier2', 'fallback');
 }
 
+function renderStandaloneModelSelectors() {
+  renderStandaloneModelSelector('manual');
+  renderStandaloneModelSelector('manual', 'fallback');
+  renderStandaloneModelSelector('news');
+  renderStandaloneModelSelector('news', 'fallback');
+}
+
 function renderTierModelSelector(tier, mode = 'primary') {
   if (!runtimeSettings) return;
   const state = resolveTierModelState({
@@ -4753,6 +4760,44 @@ function renderTierModelSelector(tier, mode = 'primary') {
   });
 }
 
+function renderStandaloneModelSelector(kind, mode = 'primary') {
+  if (!runtimeSettings) return;
+  const providerElementId = mode === 'fallback'
+    ? `set-${kind}-llm-fallback-provider`
+    : `set-${kind}-llm-provider`;
+  const state = getStandaloneModelSelectorState(
+    kind,
+    runtimeSettings,
+    document.getElementById(providerElementId)?.value || '',
+    mode,
+  );
+  const selectEl = document.getElementById(state.selectId);
+  const sourceEl = document.getElementById(state.sourceId);
+  const customEl = document.getElementById(state.customId);
+  if (!selectEl) return;
+
+  if (!state.hasProvider) {
+    renderProviderModelSelector({
+      provider: '',
+      currentValue: 'DEFAULT',
+      selectEl,
+      sourceEl,
+      customEl,
+      disabledMessage: 'fallback provider를 먼저 선택하세요',
+    });
+    return;
+  }
+
+  renderProviderModelSelector({
+    provider: state.provider,
+    currentValue: state.currentValue,
+    selectEl,
+    sourceEl,
+    customEl,
+    defaultSuffix: '[provider 기본값]',
+  });
+}
+
 async function loadLLMCatalog(forceRefresh = false) {
   try {
     const suffix = forceRefresh ? '?force_refresh=true' : '';
@@ -4767,7 +4812,7 @@ async function loadLLMCatalog(forceRefresh = false) {
     llmCatalog = json.data;
     renderLLMCatalogMeta();
     renderTierModelSelectors();
-    renderManualModelSelector();
+    renderStandaloneModelSelectors();
     if (forceRefresh && json.message) {
       setStatus('warn', json.message);
     }
@@ -4806,45 +4851,20 @@ async function applyCustomTierModel(tier, mode = 'primary') {
   await updateTierModelSetting(tier, value, mode);
 }
 
-function renderManualModelSelector() {
-  if (!runtimeSettings) return;
-  const state = getManualModelSelectorState(
-    runtimeSettings,
-    document.getElementById('set-manual-llm-provider')?.value || 'AUTOMATIC',
+async function applyCustomStandaloneModel(kind, mode = 'primary') {
+  const state = getStandaloneModelSelectorState(
+    kind,
+    runtimeSettings || {},
+    mode === 'fallback'
+      ? (document.getElementById(`set-${kind}-llm-fallback-provider`)?.value || '')
+      : (document.getElementById(`set-${kind}-llm-provider`)?.value || ''),
+    mode,
   );
-  const selectEl = document.getElementById(state.selectId);
-  const sourceEl = document.getElementById(state.sourceId);
-  const customEl = document.getElementById(state.customId);
-  if (!selectEl) return;
-
-  if (state.automatic) {
-    renderProviderModelSelector({
-      provider: '',
-      currentValue: 'DEFAULT',
-      selectEl,
-      sourceEl,
-      customEl,
-      disabledMessage: '자동 선택 시 각 tier 기본 모델을 사용합니다',
-    });
-    return;
-  }
-
-  renderProviderModelSelector({
-    provider: state.provider,
-    currentValue: state.currentValue,
-    selectEl,
-    sourceEl,
-    customEl,
-    defaultSuffix: '[provider 기본값]',
-  });
-}
-
-async function applyCustomManualModel() {
-  const inputEl = document.getElementById('set-manual-llm-model-custom');
+  const inputEl = document.getElementById(state.customId);
   if (!inputEl) return;
   const value = inputEl.value.trim();
   if (!value) return;
-  await updateSetting('MANUAL_LLM_MODEL', value);
+  await updateSetting(state.key, value);
 }
 
 // ── LLM Status ──
@@ -4878,11 +4898,16 @@ async function loadLLMStatus() {
     }
     const manualSelection = document.getElementById('llm-manual-selection');
     if (manualSelection && s.manual_selection) {
-      const provider = s.manual_selection.provider || 'AUTOMATIC';
+      const provider = s.manual_selection.provider || 'CLAUDE_CODE';
       const model = s.manual_selection.model || 'DEFAULT';
+      const fallbackProvider = s.manual_selection.fallback_provider || '';
+      const fallbackModel = s.manual_selection.fallback_model || 'DEFAULT';
       const modelLabel = model === 'DEFAULT' ? '기본값' : model;
-      const label = provider === 'AUTOMATIC' ? '자동 (기본 tier 설정 사용)' : `${provider} (${modelLabel})`;
-      manualSelection.textContent = `현재 수동 작업 선택: ${label}`;
+      const fallbackLabel = fallbackProvider
+        ? ` → ${fallbackProvider} (${fallbackModel === 'DEFAULT' ? '기본값' : fallbackModel})`
+        : '';
+      const label = `${provider} (${modelLabel})${fallbackLabel}`;
+      manualSelection.textContent = `현재 리포트·수동 작업 선택: ${label}`;
     }
   } catch (err) {
     console.error('LLM status error:', err);
@@ -5256,6 +5281,7 @@ document.getElementById('chat-container').addEventListener('scroll', function() 
 });
 
 Object.assign(window, {
+  applyCustomStandaloneModel,
   applyCustomTierModel,
   askQuestion,
   clearChat,

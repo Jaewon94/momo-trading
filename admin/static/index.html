@@ -199,6 +199,38 @@
     .news-settings-field.full-span { grid-column: 1 / -1; }
     .news-settings-field label { display: block; color: #e5e7eb; font-size: 13px; margin-bottom: 6px; }
     .news-settings-field .help { color: #64748b; font-size: 11px; margin-top: 6px; line-height: 1.5; }
+    .settings-accordion {
+      border: 1px solid #374151;
+      border-radius: 16px;
+      background: rgba(15, 16, 33, 0.6);
+      overflow: hidden;
+    }
+    .settings-accordion > summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 14px 16px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .settings-accordion > summary::-webkit-details-marker { display: none; }
+    .settings-accordion[open] > summary {
+      border-bottom: 1px solid rgba(55, 65, 81, 0.9);
+      background: rgba(30, 41, 59, 0.35);
+    }
+    .settings-accordion-arrow {
+      color: #94a3b8;
+      font-size: 12px;
+      transition: transform 0.18s ease;
+      margin-top: 2px;
+    }
+    .settings-accordion[open] .settings-accordion-arrow {
+      transform: rotate(180deg);
+    }
+    .settings-accordion-body {
+      padding: 16px;
+    }
     .performance-table { display: grid; gap: 8px; }
     .performance-table-row {
       display: grid;
@@ -1362,15 +1394,8 @@
               </div>
 
               <div class="news-settings-field">
-                <label>뉴스 전용 Provider</label>
-                <select id="set-news-llm-provider"
-                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
-                  <option value="AUTOMATIC">자동</option>
-                  <option value="CLAUDE_CODE">Claude Code</option>
-                  <option value="CODEX">Codex</option>
-                  <option value="OLLAMA">Ollama</option>
-                </select>
-                <div class="help">뉴스 감성/요약에만 적용합니다. 로컬 모델은 Ollama로 선택합니다.</div>
+                <div class="text-sm text-white">뉴스 AI 선택은 `LLM` 탭으로 이동</div>
+                <div class="help">뉴스 전용 Provider, Ollama 모델, 병렬도, Claude 세션 공유 여부는 `LLM` 탭에서 함께 관리합니다.</div>
               </div>
 
               <div class="news-settings-field">
@@ -1499,14 +1524,6 @@
                 <div class="help">뉴스/수동 작업 공용 기본값입니다. tier 전용 설정이 있으면 그 값이 우선합니다.</div>
               </div>
 
-              <div class="news-settings-field">
-                <label>뉴스 전용 Ollama 모델</label>
-                <input id="set-news-ollama-model" type="text"
-                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200"
-                  placeholder="DEFAULT 또는 qwen2.5:14b">
-                <div class="help">뉴스 Provider가 Ollama일 때만 사용합니다. 비우면 공용 `OLLAMA_MODEL`을 그대로 씁니다.</div>
-              </div>
-
               <div class="news-settings-field full-span">
                 <div class="flex items-center justify-between gap-3">
                   <div>
@@ -1537,116 +1554,238 @@
               </button>
             </div>
 
-            <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4">
-              <label class="text-sm block mb-1">기본 분석 AI (T1)</label>
-              <select id="set-llm-tier1-provider"
-                class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
-                <option value="CLAUDE_CODE">Claude Code</option>
-                <option value="CODEX">Codex</option>
-                <option value="OLLAMA">Ollama</option>
-              </select>
-              <label class="text-xs block mt-2 mb-1 text-gray-500">모델 / 버전</label>
-              <select id="set-llm-tier1-model" onchange="updateTierModelSetting('tier1', this.value)"
-                class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
-              <div id="llm-tier1-model-source" class="text-[11px] text-gray-500 mt-1"></div>
-              <div class="flex gap-2 mt-2">
-                <input id="set-llm-tier1-model-custom" type="text" placeholder="예: claude-sonnet-4-6 / gpt-5.4"
-                  class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
-                <button onclick="applyCustomTierModel('tier1')"
-                  class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
-                  직접 입력
-                </button>
+            <details class="settings-accordion">
+              <summary>
+                <div>
+                  <div class="text-sm font-medium text-white">분석용 AI (T1)</div>
+                  <div class="text-[11px] text-gray-500 mt-1">시장 스캔, 선별, 빠른 분석 단계에 쓰는 기본 모델과 fallback을 설정합니다.</div>
+                </div>
+                <span class="settings-accordion-arrow">&#x25BC;</span>
+              </summary>
+              <div class="settings-accordion-body">
+                <label class="text-sm block mb-1">기본 분석 AI (T1)</label>
+                <select id="set-llm-tier1-provider"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                  <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CODEX">Codex</option>
+                  <option value="OLLAMA">Ollama</option>
+                </select>
+                <label class="text-xs block mt-2 mb-1 text-gray-500">모델 / 버전</label>
+                <select id="set-llm-tier1-model" onchange="updateTierModelSetting('tier1', this.value)"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
+                <div id="llm-tier1-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+                <div class="flex gap-2 mt-2">
+                  <input id="set-llm-tier1-model-custom" type="text" placeholder="예: claude-sonnet-4-6 / gpt-5.4"
+                    class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
+                  <button onclick="applyCustomTierModel('tier1')"
+                    class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
+                    직접 입력
+                  </button>
+                </div>
+                <label class="text-xs block mt-3 mb-1 text-gray-500">T1 Fallback</label>
+                <select id="set-llm-tier1-fallback"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                  <option value="">없음</option>
+                  <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CODEX">Codex</option>
+                  <option value="OLLAMA">Ollama</option>
+                </select>
+                <label class="text-xs block mt-2 mb-1 text-gray-500">Fallback 모델 / 버전</label>
+                <select id="set-llm-tier1-fallback-model" onchange="updateTierModelSetting('tier1', this.value, 'fallback')"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
+                <div id="llm-tier1-fallback-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+                <div class="flex gap-2 mt-2">
+                  <input id="set-llm-tier1-fallback-model-custom" type="text" placeholder="예: claude-opus-4-6 / gpt-5.1-codex-max"
+                    class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
+                  <button onclick="applyCustomTierModel('tier1', 'fallback')"
+                    class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
+                    직접 입력
+                  </button>
+                </div>
               </div>
-              <label class="text-xs block mt-3 mb-1 text-gray-500">T1 Fallback</label>
-              <select id="set-llm-tier1-fallback"
-                class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
-                <option value="">없음</option>
-                <option value="CLAUDE_CODE">Claude Code</option>
-                <option value="CODEX">Codex</option>
-                <option value="OLLAMA">Ollama</option>
-              </select>
-              <label class="text-xs block mt-2 mb-1 text-gray-500">Fallback 모델 / 버전</label>
-              <select id="set-llm-tier1-fallback-model" onchange="updateTierModelSetting('tier1', this.value, 'fallback')"
-                class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
-              <div id="llm-tier1-fallback-model-source" class="text-[11px] text-gray-500 mt-1"></div>
-              <div class="flex gap-2 mt-2">
-                <input id="set-llm-tier1-fallback-model-custom" type="text" placeholder="예: claude-opus-4-6 / gpt-5.1-codex-max"
-                  class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
-                <button onclick="applyCustomTierModel('tier1', 'fallback')"
-                  class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
-                  직접 입력
-                </button>
-              </div>
-            </div>
+            </details>
 
-            <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4">
-              <label class="text-sm block mb-1">최종 검토 AI (T2)</label>
-              <select id="set-llm-tier2-provider"
-                class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
-                <option value="CLAUDE_CODE">Claude Code</option>
-                <option value="CODEX">Codex</option>
-                <option value="OLLAMA">Ollama</option>
-              </select>
-              <label class="text-xs block mt-2 mb-1 text-gray-500">모델 / 버전</label>
-              <select id="set-llm-tier2-model" onchange="updateTierModelSetting('tier2', this.value)"
-                class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
-              <div id="llm-tier2-model-source" class="text-[11px] text-gray-500 mt-1"></div>
-              <div class="flex gap-2 mt-2">
-                <input id="set-llm-tier2-model-custom" type="text" placeholder="예: claude-opus-4-6 / gpt-5-codex"
-                  class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
-                <button onclick="applyCustomTierModel('tier2')"
-                  class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
-                  직접 입력
-                </button>
+            <details class="settings-accordion">
+              <summary>
+                <div>
+                  <div class="text-sm font-medium text-white">최종 검토용 AI (T2)</div>
+                  <div class="text-[11px] text-gray-500 mt-1">최종 매매 판단, 더 무거운 검토, 정밀 분석 단계에 쓰는 모델을 설정합니다.</div>
+                </div>
+                <span class="settings-accordion-arrow">&#x25BC;</span>
+              </summary>
+              <div class="settings-accordion-body">
+                <label class="text-sm block mb-1">최종 검토 AI (T2)</label>
+                <select id="set-llm-tier2-provider"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                  <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CODEX">Codex</option>
+                  <option value="OLLAMA">Ollama</option>
+                </select>
+                <label class="text-xs block mt-2 mb-1 text-gray-500">모델 / 버전</label>
+                <select id="set-llm-tier2-model" onchange="updateTierModelSetting('tier2', this.value)"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
+                <div id="llm-tier2-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+                <div class="flex gap-2 mt-2">
+                  <input id="set-llm-tier2-model-custom" type="text" placeholder="예: claude-opus-4-6 / gpt-5-codex"
+                    class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
+                  <button onclick="applyCustomTierModel('tier2')"
+                    class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
+                    직접 입력
+                  </button>
+                </div>
+                <label class="text-xs block mt-3 mb-1 text-gray-500">T2 Fallback</label>
+                <select id="set-llm-tier2-fallback"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                  <option value="">없음</option>
+                  <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CODEX">Codex</option>
+                  <option value="OLLAMA">Ollama</option>
+                </select>
+                <label class="text-xs block mt-2 mb-1 text-gray-500">Fallback 모델 / 버전</label>
+                <select id="set-llm-tier2-fallback-model" onchange="updateTierModelSetting('tier2', this.value, 'fallback')"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
+                <div id="llm-tier2-fallback-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+                <div class="flex gap-2 mt-2">
+                  <input id="set-llm-tier2-fallback-model-custom" type="text" placeholder="예: gpt-5-codex / claude-sonnet-4-6"
+                    class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
+                  <button onclick="applyCustomTierModel('tier2', 'fallback')"
+                    class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
+                    직접 입력
+                  </button>
+                </div>
               </div>
-              <label class="text-xs block mt-3 mb-1 text-gray-500">T2 Fallback</label>
-              <select id="set-llm-tier2-fallback"
-                class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
-                <option value="">없음</option>
-                <option value="CLAUDE_CODE">Claude Code</option>
-                <option value="CODEX">Codex</option>
-                <option value="OLLAMA">Ollama</option>
-              </select>
-              <label class="text-xs block mt-2 mb-1 text-gray-500">Fallback 모델 / 버전</label>
-              <select id="set-llm-tier2-fallback-model" onchange="updateTierModelSetting('tier2', this.value, 'fallback')"
-                class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
-              <div id="llm-tier2-fallback-model-source" class="text-[11px] text-gray-500 mt-1"></div>
-              <div class="flex gap-2 mt-2">
-                <input id="set-llm-tier2-fallback-model-custom" type="text" placeholder="예: gpt-5-codex / claude-sonnet-4-6"
-                  class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
-                <button onclick="applyCustomTierModel('tier2', 'fallback')"
-                  class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
-                  직접 입력
-                </button>
-              </div>
-            </div>
+            </details>
 
-            <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4">
-              <label class="text-sm block mb-1">수동 작업 AI</label>
-              <select id="set-manual-llm-provider"
-                class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
-                <option value="AUTOMATIC">자동</option>
-                <option value="CLAUDE_CODE">Claude Code</option>
-                <option value="CODEX">Codex</option>
-                <option value="OLLAMA">Ollama</option>
-              </select>
-              <div class="text-[11px] text-gray-500 mt-1">
-                Q&amp;A / 수동 사이클 / 장마감 리뷰 / 리포트 생성에 적용합니다.
+            <details class="settings-accordion">
+              <summary>
+                <div>
+                  <div class="text-sm font-medium text-white">리포트·수동 작업용 AI</div>
+                  <div class="text-[11px] text-gray-500 mt-1">Q&A, 수동 사이클, 장마감 리뷰, 일일 리포트 생성에 쓰는 1순위와 풀백 AI를 설정합니다.</div>
+                </div>
+                <span class="settings-accordion-arrow">&#x25BC;</span>
+              </summary>
+              <div class="settings-accordion-body">
+                <label class="text-sm block mb-1">1순위 Provider</label>
+                <select id="set-manual-llm-provider"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                  <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CODEX">Codex</option>
+                  <option value="OLLAMA">Ollama</option>
+                </select>
+                <div class="text-[11px] text-gray-500 mt-1">
+                  Q&amp;A / 수동 사이클 / 장마감 리뷰 / 리포트 생성에 적용합니다.
+                </div>
+                <label class="text-xs block mt-3 mb-1 text-gray-500">1순위 모델 / 버전</label>
+                <select id="set-manual-llm-model"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
+                <div id="llm-manual-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+                <div class="flex gap-2 mt-2">
+                  <input id="set-manual-llm-model-custom" type="text" placeholder="예: sonnet / gpt-5.4 / qwen2.5:14b"
+                    class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
+                  <button onclick="applyCustomStandaloneModel('manual')"
+                    class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
+                    직접 입력
+                  </button>
+                </div>
+                <label class="text-xs block mt-3 mb-1 text-gray-500">풀백 Provider</label>
+                <select id="set-manual-llm-fallback-provider"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                  <option value="">없음</option>
+                  <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CODEX">Codex</option>
+                  <option value="OLLAMA">Ollama</option>
+                </select>
+                <label class="text-xs block mt-3 mb-1 text-gray-500">풀백 모델 / 버전</label>
+                <select id="set-manual-llm-fallback-model"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
+                <div id="llm-manual-fallback-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+                <div class="flex gap-2 mt-2">
+                  <input id="set-manual-llm-fallback-model-custom" type="text" placeholder="예: sonnet / gpt-5.4 / qwen2.5:14b"
+                    class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
+                  <button onclick="applyCustomStandaloneModel('manual', 'fallback')"
+                    class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
+                    직접 입력
+                  </button>
+                </div>
+                <div id="llm-manual-selection" class="text-xs text-gray-500 mt-1 truncate"></div>
               </div>
-              <label class="text-xs block mt-3 mb-1 text-gray-500">수동 작업 모델 / 버전</label>
-              <select id="set-manual-llm-model"
-                class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
-              <div id="llm-manual-model-source" class="text-[11px] text-gray-500 mt-1"></div>
-              <div class="flex gap-2 mt-2">
-                <input id="set-manual-llm-model-custom" type="text" placeholder="예: sonnet / gpt-5.4 / qwen2.5:14b"
-                  class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
-                <button onclick="applyCustomManualModel()"
-                  class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
-                  직접 입력
-                </button>
+            </details>
+
+            <details class="settings-accordion">
+              <summary>
+                <div>
+                  <div class="text-sm font-medium text-white">뉴스용 AI</div>
+                  <div class="text-[11px] text-gray-500 mt-1">뉴스 번역, 감성/요약, 뉴스 인텔 해석에 쓰는 1순위와 풀백 AI, 병렬도를 같이 설정합니다.</div>
+                </div>
+                <span class="settings-accordion-arrow">&#x25BC;</span>
+              </summary>
+              <div class="settings-accordion-body">
+                <label class="text-sm block mb-1">1순위 Provider</label>
+                <select id="set-news-llm-provider"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                  <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CODEX">Codex</option>
+                  <option value="OLLAMA">Ollama</option>
+                </select>
+                <div class="text-[11px] text-gray-500 mt-1">
+                  뉴스 감성/요약, 번역, 뉴스 인텔 해석에만 적용합니다.
+                </div>
+                <label class="text-xs block mt-3 mb-1 text-gray-500">1순위 모델 / 버전</label>
+                <select id="set-news-llm-model"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
+                <div id="llm-news-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+                <div class="flex gap-2 mt-2">
+                  <input id="set-news-llm-model-custom" type="text" placeholder="예: sonnet / gpt-5.4 / qwen2.5:14b"
+                    class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
+                  <button onclick="applyCustomStandaloneModel('news')"
+                    class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
+                    직접 입력
+                  </button>
+                </div>
+                <label class="text-xs block mt-3 mb-1 text-gray-500">풀백 Provider</label>
+                <select id="set-news-llm-fallback-provider"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                  <option value="">없음</option>
+                  <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CODEX">Codex</option>
+                  <option value="OLLAMA">Ollama</option>
+                </select>
+                <label class="text-xs block mt-3 mb-1 text-gray-500">풀백 모델 / 버전</label>
+                <select id="set-news-llm-fallback-model"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
+                <div id="llm-news-fallback-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+                <div class="flex gap-2 mt-2">
+                  <input id="set-news-llm-fallback-model-custom" type="text" placeholder="예: sonnet / gpt-5.4 / qwen2.5:14b"
+                    class="flex-1 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200">
+                  <button onclick="applyCustomStandaloneModel('news', 'fallback')"
+                    class="shrink-0 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">
+                    직접 입력
+                  </button>
+                </div>
+
+                <div class="grid gap-3 md:grid-cols-2 mt-4">
+                  <div>
+                    <label class="text-xs block mb-1 text-gray-500">뉴스 fetch 병렬도</label>
+                    <input id="set-news-fetch-concurrency" type="number" min="1" max="8" step="1"
+                      class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
+                    <div class="text-[11px] text-gray-500 mt-1">뉴스 소스 수집을 동시에 몇 개까지 실행할지 정합니다.</div>
+                  </div>
+                  <div>
+                    <label class="text-xs block mb-1 text-gray-500">뉴스 번역 병렬도</label>
+                    <input id="set-news-translation-concurrency" type="number" min="1" max="8" step="1"
+                      class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
+                    <div class="text-[11px] text-gray-500 mt-1">해외 뉴스 번역/감성 분석 동시 처리 수입니다. Ollama는 항상 1개씩 처리합니다.</div>
+                  </div>
+                </div>
+
+                <label class="flex items-center justify-between gap-3 rounded-lg border border-gray-700 bg-dark-800/50 p-3 mt-4">
+                  <span class="text-sm text-gray-200">Claude Code 뉴스 세션 공유 유지</span>
+                  <input id="set-news-claude-share-session" type="checkbox"
+                    class="h-4 w-4 rounded border-gray-600 bg-dark-900 text-blue-500 focus:ring-blue-500">
+                </label>
+                <div class="text-[11px] text-gray-500 mt-2">켜면 기존 세션 맥락을 유지하지만 직렬화될 수 있고, 끄면 병렬 처리 이점이 커집니다.</div>
               </div>
-              <div id="llm-manual-selection" class="text-xs text-gray-500 mt-1 truncate"></div>
-            </div>
+            </details>
           </section>
 
           <section id="settings-panel-system" class="settings-tab-panel space-y-4">

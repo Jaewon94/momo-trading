@@ -255,8 +255,8 @@ class LLMFactory:
     ) -> tuple[str, str]:
         """수동 작업용 LLM 생성.
 
-        `AUTOMATIC`이면 기존 tier 설정을 사용하고,
-        명시적 provider가 주어지면 해당 provider만 사용한다.
+        수동 작업 전용 primary/fallback 설정을 사용하고,
+        provider/model override가 주어지면 primary만 덮어쓴다.
         """
         selection = resolve_manual_selection(
             default_tier,
@@ -336,13 +336,17 @@ class LLMFactory:
             "manual_selection": {
                 "provider": manual_selection.provider,
                 "model": manual_selection.model,
-                "options": ["AUTOMATIC", "CLAUDE_CODE", "CODEX", "OLLAMA"],
+                "fallback_provider": manual_selection.fallback_provider,
+                "fallback_model": manual_selection.fallback_model if manual_selection.fallback_provider else "",
+                "options": ["CLAUDE_CODE", "CODEX", "OLLAMA"],
             },
             "news_selection": {
                 "enabled": news_selection.enabled,
                 "provider": news_selection.provider,
                 "model": news_selection.model,
-                "options": ["AUTOMATIC", "CLAUDE_CODE", "CODEX", "OLLAMA"],
+                "fallback_provider": news_selection.fallback_provider,
+                "fallback_model": news_selection.fallback_model if news_selection.fallback_provider else "",
+                "options": ["CLAUDE_CODE", "CODEX", "OLLAMA"],
             },
         }
 

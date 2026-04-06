@@ -1,6 +1,10 @@
 """자동 뉴스 폴링 + 신규 뉴스 이벤트 발행."""
 from __future__ import annotations
 
+import asyncio
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable
+
 from core.config import settings
 from core.events import Event, EventType, event_bus
 from services.bloomberg_news_service import bloomberg_news_service
@@ -15,290 +19,50 @@ from services.seeking_alpha_news_service import seeking_alpha_news_service
 from services.yonhap_news_service import yonhap_news_service
 
 
+@dataclass(frozen=True)
+class NewsSourcePollSpec:
+    source_code: str
+    enabled: bool
+    skip_message: str
+    fetch: Callable[[], Awaitable[list[dict[str, Any]]]]
+
+
+@dataclass(frozen=True)
+class NewsSourcePollResult:
+    source_code: str
+    status: str
+    message: str
+    counts: dict[str, int] | None
+    items: list[dict[str, Any]]
+
+
 class NewsPollingService:
     async def poll_sources(self, session, *, market_hours: bool, mode: str | None = None) -> dict:
         runtime_mode = mode or ("AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS")
+        source_specs = self._build_source_specs(session, page_count=max(int(settings.NEWS_POLL_PAGE_COUNT or 25), 1))
         if not settings.NEWS_POLL_ENABLED:
             summary = {"skipped": True, "reason": "NEWS_POLL_ENABLED disabled"}
-            news_runtime_service.record_source_result(
-                "DART",
-                status="SKIPPED",
-                mode=runtime_mode,
-                message=summary["reason"],
-                counts=summary,
-            )
-            news_runtime_service.record_source_result(
-                "KRX",
-                status="SKIPPED",
-                mode=runtime_mode,
-                message=summary["reason"],
-                counts=summary,
-            )
-            news_runtime_service.record_source_result(
-                "YONHAP",
-                status="SKIPPED",
-                mode=runtime_mode,
-                message=summary["reason"],
-                counts=summary,
-            )
-            news_runtime_service.record_source_result(
-                "BLOOMBERG",
-                status="SKIPPED",
-                mode=runtime_mode,
-                message=summary["reason"],
-                counts=summary,
-            )
-            news_runtime_service.record_source_result(
-                "CNBC",
-                status="SKIPPED",
-                mode=runtime_mode,
-                message=summary["reason"],
-                counts=summary,
-            )
-            news_runtime_service.record_source_result(
-                "NASDAQ",
-                status="SKIPPED",
-                mode=runtime_mode,
-                message=summary["reason"],
-                counts=summary,
-            )
-            news_runtime_service.record_source_result(
-                "INVESTING",
-                status="SKIPPED",
-                mode=runtime_mode,
-                message=summary["reason"],
-                counts=summary,
-            )
-            news_runtime_service.record_source_result(
-                "SEEKING_ALPHA",
-                status="SKIPPED",
-                mode=runtime_mode,
-                message=summary["reason"],
-                counts=summary,
-            )
-            return summary
-        all_items = []
-        page_count = max(int(settings.NEWS_POLL_PAGE_COUNT or 25), 1)
-
-        if settings.OPEN_DART_API_KEY:
-            try:
-                dart_items = await open_dart_disclosure_service.fetch_recent_disclosures(
-                    days=1,
-                    page_count=page_count,
-                )
+            for spec in source_specs:
                 news_runtime_service.record_source_result(
-                    "DART",
-                    status="SUCCESS" if dart_items else "EMPTY",
-                    mode=runtime_mode,
-                    message="신규 뉴스 반영 완료" if dart_items else "조회된 데이터 없음",
-                    counts={"received": len(dart_items), "created": 0, "duplicates": 0, "skipped": 0},
-                )
-                all_items.extend(dart_items)
-            except Exception as exc:
-                news_runtime_service.record_source_result(
-                    "DART",
-                    status="ERROR",
-                    mode=runtime_mode,
-                    message=str(exc),
-                )
-        else:
-            news_runtime_service.record_source_result(
-                "DART",
-                status="SKIPPED",
-                mode=runtime_mode,
-                message="OPEN_DART_API_KEY missing",
-                counts={"skipped": 1},
-            )
-
-        try:
-            krx_items = await krx_kind_disclosure_service.fetch_recent_disclosures(page_count=page_count)
-            news_runtime_service.record_source_result(
-                "KRX",
-                status="SUCCESS" if krx_items else "EMPTY",
-                mode=runtime_mode,
-                message="신규 뉴스 반영 완료" if krx_items else "조회된 데이터 없음",
-                counts={"received": len(krx_items), "created": 0, "duplicates": 0, "skipped": 0},
-            )
-            all_items.extend(krx_items)
-        except Exception as exc:
-            news_runtime_service.record_source_result(
-                "KRX",
-                status="ERROR",
-                mode=runtime_mode,
-                message=str(exc),
-            )
-
-        if settings.NEWS_DOMESTIC_MEDIA_ENABLED:
-            try:
-                yonhap_items = await yonhap_news_service.fetch_recent_news(
-                    session,
-                    limit=page_count,
-                )
-                news_runtime_service.record_source_result(
-                    "YONHAP",
-                    status="SUCCESS" if yonhap_items else "EMPTY",
-                    mode=runtime_mode,
-                    message="신규 뉴스 반영 완료" if yonhap_items else "조회된 데이터 없음",
-                    counts={"received": len(yonhap_items), "created": 0, "duplicates": 0, "skipped": 0},
-                )
-                all_items.extend(yonhap_items)
-            except Exception as exc:
-                news_runtime_service.record_source_result(
-                    "YONHAP",
-                    status="ERROR",
-                    mode=runtime_mode,
-                    message=str(exc),
-                )
-        else:
-            news_runtime_service.record_source_result(
-                "YONHAP",
-                status="SKIPPED",
-                mode=runtime_mode,
-                message="NEWS_DOMESTIC_MEDIA_ENABLED disabled",
-                counts={"skipped": 1},
-            )
-
-        if settings.NEWS_INCLUDE_FOREIGN:
-            try:
-                bloomberg_items = await bloomberg_news_service.fetch_recent_news(
-                    limit=page_count,
-                )
-                news_runtime_service.record_source_result(
-                    "BLOOMBERG",
-                    status="SUCCESS" if bloomberg_items else "EMPTY",
-                    mode=runtime_mode,
-                    message="신규 뉴스 반영 완료" if bloomberg_items else "조회된 데이터 없음",
-                    counts={"received": len(bloomberg_items), "created": 0, "duplicates": 0, "skipped": 0},
-                )
-                all_items.extend(bloomberg_items)
-            except Exception as exc:
-                news_runtime_service.record_source_result(
-                    "BLOOMBERG",
-                    status="ERROR",
-                    mode=runtime_mode,
-                    message=str(exc),
-                )
-            try:
-                cnbc_items = await cnbc_news_service.fetch_recent_news(
-                    limit=page_count,
-                )
-                news_runtime_service.record_source_result(
-                    "CNBC",
-                    status="SUCCESS" if cnbc_items else "EMPTY",
-                    mode=runtime_mode,
-                    message="신규 뉴스 반영 완료" if cnbc_items else "조회된 데이터 없음",
-                    counts={"received": len(cnbc_items), "created": 0, "duplicates": 0, "skipped": 0},
-                )
-                all_items.extend(cnbc_items)
-            except Exception as exc:
-                news_runtime_service.record_source_result(
-                    "CNBC",
-                    status="ERROR",
-                    mode=runtime_mode,
-                    message=str(exc),
-                )
-            if settings.NEWS_NASDAQ_ENABLED:
-                try:
-                    nasdaq_items = await nasdaq_news_service.fetch_recent_news(
-                        limit=page_count,
-                    )
-                    news_runtime_service.record_source_result(
-                        "NASDAQ",
-                        status="SUCCESS" if nasdaq_items else "EMPTY",
-                        mode=runtime_mode,
-                        message="신규 뉴스 반영 완료" if nasdaq_items else "조회된 데이터 없음",
-                        counts={"received": len(nasdaq_items), "created": 0, "duplicates": 0, "skipped": 0},
-                    )
-                    all_items.extend(nasdaq_items)
-                except Exception as exc:
-                    news_runtime_service.record_source_result(
-                        "NASDAQ",
-                        status="ERROR",
-                        mode=runtime_mode,
-                        message=str(exc),
-                    )
-            else:
-                news_runtime_service.record_source_result(
-                    "NASDAQ",
+                    spec.source_code,
                     status="SKIPPED",
                     mode=runtime_mode,
-                    message="NEWS_NASDAQ_ENABLED disabled",
-                    counts={"skipped": 1},
+                    message=summary["reason"],
+                    counts=summary,
                 )
-            try:
-                investing_items = await investing_news_service.fetch_recent_news(
-                    limit=page_count,
-                )
-                news_runtime_service.record_source_result(
-                    "INVESTING",
-                    status="SUCCESS" if investing_items else "EMPTY",
-                    mode=runtime_mode,
-                    message="신규 뉴스 반영 완료" if investing_items else "조회된 데이터 없음",
-                    counts={"received": len(investing_items), "created": 0, "duplicates": 0, "skipped": 0},
-                )
-                all_items.extend(investing_items)
-            except Exception as exc:
-                news_runtime_service.record_source_result(
-                    "INVESTING",
-                    status="ERROR",
-                    mode=runtime_mode,
-                    message=str(exc),
-                )
-            try:
-                seeking_alpha_items = await seeking_alpha_news_service.fetch_recent_news(
-                    limit=page_count,
-                )
-                news_runtime_service.record_source_result(
-                    "SEEKING_ALPHA",
-                    status="SUCCESS" if seeking_alpha_items else "EMPTY",
-                    mode=runtime_mode,
-                    message="신규 뉴스 반영 완료" if seeking_alpha_items else "조회된 데이터 없음",
-                    counts={"received": len(seeking_alpha_items), "created": 0, "duplicates": 0, "skipped": 0},
-                )
-                all_items.extend(seeking_alpha_items)
-            except Exception as exc:
-                news_runtime_service.record_source_result(
-                    "SEEKING_ALPHA",
-                    status="ERROR",
-                    mode=runtime_mode,
-                    message=str(exc),
-                )
-        else:
+            return summary
+        source_results = await self._poll_enabled_sources(source_specs)
+        all_items: list[dict[str, Any]] = []
+        for spec in source_specs:
+            result = source_results[spec.source_code]
             news_runtime_service.record_source_result(
-                "BLOOMBERG",
-                status="SKIPPED",
+                spec.source_code,
+                status=result.status,
                 mode=runtime_mode,
-                message="NEWS_INCLUDE_FOREIGN disabled",
-                counts={"skipped": 1},
+                message=result.message,
+                counts=result.counts,
             )
-            news_runtime_service.record_source_result(
-                "CNBC",
-                status="SKIPPED",
-                mode=runtime_mode,
-                message="NEWS_INCLUDE_FOREIGN disabled",
-                counts={"skipped": 1},
-            )
-            news_runtime_service.record_source_result(
-                "NASDAQ",
-                status="SKIPPED",
-                mode=runtime_mode,
-                message="NEWS_INCLUDE_FOREIGN disabled",
-                counts={"skipped": 1},
-            )
-            news_runtime_service.record_source_result(
-                "INVESTING",
-                status="SKIPPED",
-                mode=runtime_mode,
-                message="NEWS_INCLUDE_FOREIGN disabled",
-                counts={"skipped": 1},
-            )
-            news_runtime_service.record_source_result(
-                "SEEKING_ALPHA",
-                status="SKIPPED",
-                mode=runtime_mode,
-                message="NEWS_INCLUDE_FOREIGN disabled",
-                counts={"skipped": 1},
-            )
+            all_items.extend(result.items)
 
         detailed = await news_ingest_service.ingest_items_detailed(session, all_items)
         summary = dict(detailed["summary"])
@@ -325,6 +89,109 @@ class NewsPollingService:
             "published_events": published_events,
             "market_hours": market_hours,
         }
+
+    def _build_source_specs(self, session, *, page_count: int) -> list[NewsSourcePollSpec]:
+        return [
+            NewsSourcePollSpec(
+                source_code="DART",
+                enabled=bool(settings.OPEN_DART_API_KEY),
+                skip_message="OPEN_DART_API_KEY missing",
+                fetch=lambda: open_dart_disclosure_service.fetch_recent_disclosures(
+                    days=1,
+                    page_count=page_count,
+                ),
+            ),
+            NewsSourcePollSpec(
+                source_code="KRX",
+                enabled=True,
+                skip_message="",
+                fetch=lambda: krx_kind_disclosure_service.fetch_recent_disclosures(page_count=page_count),
+            ),
+            NewsSourcePollSpec(
+                source_code="YONHAP",
+                enabled=bool(settings.NEWS_DOMESTIC_MEDIA_ENABLED),
+                skip_message="NEWS_DOMESTIC_MEDIA_ENABLED disabled",
+                fetch=lambda: yonhap_news_service.fetch_recent_news(session, limit=page_count),
+            ),
+            NewsSourcePollSpec(
+                source_code="BLOOMBERG",
+                enabled=bool(settings.NEWS_INCLUDE_FOREIGN),
+                skip_message="NEWS_INCLUDE_FOREIGN disabled",
+                fetch=lambda: bloomberg_news_service.fetch_recent_news(limit=page_count),
+            ),
+            NewsSourcePollSpec(
+                source_code="CNBC",
+                enabled=bool(settings.NEWS_INCLUDE_FOREIGN),
+                skip_message="NEWS_INCLUDE_FOREIGN disabled",
+                fetch=lambda: cnbc_news_service.fetch_recent_news(limit=page_count),
+            ),
+            NewsSourcePollSpec(
+                source_code="NASDAQ",
+                enabled=bool(settings.NEWS_INCLUDE_FOREIGN and settings.NEWS_NASDAQ_ENABLED),
+                skip_message=(
+                    "NEWS_NASDAQ_ENABLED disabled"
+                    if settings.NEWS_INCLUDE_FOREIGN
+                    else "NEWS_INCLUDE_FOREIGN disabled"
+                ),
+                fetch=lambda: nasdaq_news_service.fetch_recent_news(limit=page_count),
+            ),
+            NewsSourcePollSpec(
+                source_code="INVESTING",
+                enabled=bool(settings.NEWS_INCLUDE_FOREIGN),
+                skip_message="NEWS_INCLUDE_FOREIGN disabled",
+                fetch=lambda: investing_news_service.fetch_recent_news(limit=page_count),
+            ),
+            NewsSourcePollSpec(
+                source_code="SEEKING_ALPHA",
+                enabled=bool(settings.NEWS_INCLUDE_FOREIGN),
+                skip_message="NEWS_INCLUDE_FOREIGN disabled",
+                fetch=lambda: seeking_alpha_news_service.fetch_recent_news(limit=page_count),
+            ),
+        ]
+
+    async def _poll_enabled_sources(
+        self,
+        source_specs: list[NewsSourcePollSpec],
+    ) -> dict[str, NewsSourcePollResult]:
+        semaphore = asyncio.Semaphore(max(int(settings.NEWS_FETCH_CONCURRENCY or 1), 1))
+        tasks: dict[str, asyncio.Task[NewsSourcePollResult]] = {}
+        async with asyncio.TaskGroup() as task_group:
+            for spec in source_specs:
+                tasks[spec.source_code] = task_group.create_task(self._poll_single_source(spec, semaphore=semaphore))
+        return {source_code: task.result() for source_code, task in tasks.items()}
+
+    async def _poll_single_source(
+        self,
+        spec: NewsSourcePollSpec,
+        *,
+        semaphore: asyncio.Semaphore,
+    ) -> NewsSourcePollResult:
+        if not spec.enabled:
+            return NewsSourcePollResult(
+                source_code=spec.source_code,
+                status="SKIPPED",
+                message=spec.skip_message,
+                counts={"skipped": 1},
+                items=[],
+            )
+        try:
+            async with semaphore:
+                items = await spec.fetch()
+        except Exception as exc:
+            return NewsSourcePollResult(
+                source_code=spec.source_code,
+                status="ERROR",
+                message=str(exc),
+                counts=None,
+                items=[],
+            )
+        return NewsSourcePollResult(
+            source_code=spec.source_code,
+            status="SUCCESS" if items else "EMPTY",
+            message="신규 뉴스 반영 완료" if items else "조회된 데이터 없음",
+            counts={"received": len(items), "created": 0, "duplicates": 0, "skipped": 0},
+            items=items,
+        )
 
 
 news_polling_service = NewsPollingService()

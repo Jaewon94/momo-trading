@@ -50,9 +50,13 @@ MUTABLE_SETTINGS = [
     "OLLAMA_MODEL_TIER2",
     "MANUAL_LLM_PROVIDER",
     "MANUAL_LLM_MODEL",
+    "MANUAL_LLM_FALLBACK_PROVIDER",
+    "MANUAL_LLM_FALLBACK_MODEL",
     "NEWS_LLM_ENABLED",
     "NEWS_LLM_PROVIDER",
-    "NEWS_OLLAMA_MODEL",
+    "NEWS_LLM_MODEL",
+    "NEWS_LLM_FALLBACK_PROVIDER",
+    "NEWS_LLM_FALLBACK_MODEL",
     "NEWS_DOMESTIC_MEDIA_ENABLED",
     "NEWS_INCLUDE_FOREIGN",
     "NEWS_NASDAQ_ENABLED",
@@ -65,6 +69,9 @@ MUTABLE_SETTINGS = [
     "NEWS_POLL_INTERVAL_MIN_TRADING",
     "NEWS_POLL_INTERVAL_MIN_OFF_HOURS",
     "NEWS_POLL_PAGE_COUNT",
+    "NEWS_FETCH_CONCURRENCY",
+    "NEWS_TRANSLATION_CONCURRENCY",
+    "NEWS_CLAUDE_SHARE_SESSION",
     "NEWS_RECHECK_COOLDOWN_SEC",
     "NEWS_SHADOW_ENABLED",
     "NEWS_ROLLOUT_MIN_SAMPLE_SIZE",
@@ -86,9 +93,13 @@ def coerce_runtime_setting_value(key: str, value: Any) -> Any:
 
     if isinstance(current, int) and not isinstance(current, bool):
         try:
-            return int(value)
+            normalized_int = int(value)
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=f"{key} must be an integer") from exc
+        if key in {"NEWS_FETCH_CONCURRENCY", "NEWS_TRANSLATION_CONCURRENCY"}:
+            if normalized_int < 1 or normalized_int > 8:
+                raise HTTPException(status_code=400, detail=f"{key} must be between 1 and 8")
+        return normalized_int
 
     if isinstance(current, float):
         try:
@@ -109,15 +120,17 @@ def coerce_runtime_setting_value(key: str, value: Any) -> Any:
             return _SKIP
         return normalized
 
-    if key == "MANUAL_LLM_PROVIDER":
+    if key in {"MANUAL_LLM_PROVIDER", "NEWS_LLM_PROVIDER"}:
         normalized = str(value).upper()
-        if normalized not in {"AUTOMATIC", "CLAUDE_CODE", "CODEX", "OLLAMA"}:
+        if normalized not in {"CLAUDE_CODE", "CODEX", "OLLAMA"}:
             return _SKIP
         return normalized
 
-    if key == "NEWS_LLM_PROVIDER":
+    if key in {"MANUAL_LLM_FALLBACK_PROVIDER", "NEWS_LLM_FALLBACK_PROVIDER"}:
         normalized = str(value).upper()
-        if normalized not in {"AUTOMATIC", "CLAUDE_CODE", "CODEX", "OLLAMA"}:
+        if normalized in {"", "NONE"}:
+            return ""
+        if normalized not in {"CLAUDE_CODE", "CODEX", "OLLAMA"}:
             return _SKIP
         return normalized
 
@@ -140,7 +153,9 @@ def coerce_runtime_setting_value(key: str, value: Any) -> Any:
         "OLLAMA_MODEL_TIER1",
         "OLLAMA_MODEL_TIER2",
         "MANUAL_LLM_MODEL",
-        "NEWS_OLLAMA_MODEL",
+        "MANUAL_LLM_FALLBACK_MODEL",
+        "NEWS_LLM_MODEL",
+        "NEWS_LLM_FALLBACK_MODEL",
     }:
         return normalize_llm_model_value(str(value))
 

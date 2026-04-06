@@ -35,8 +35,16 @@ const SETTINGS_CONTROL_BINDINGS = [
     shouldApply: (value) => Boolean(value),
   },
   {
+    key: 'MANUAL_LLM_FALLBACK_PROVIDER',
+    elementId: 'set-manual-llm-fallback-provider',
+  },
+  {
     elementId: 'set-manual-llm-model',
     getValue: (settings) => settings.MANUAL_LLM_MODEL || 'DEFAULT',
+  },
+  {
+    elementId: 'set-manual-llm-fallback-model',
+    getValue: (settings) => settings.MANUAL_LLM_FALLBACK_MODEL || 'DEFAULT',
   },
   {
     elementId: 'set-news-llm-enabled',
@@ -45,11 +53,19 @@ const SETTINGS_CONTROL_BINDINGS = [
   },
   {
     elementId: 'set-news-llm-provider',
-    getValue: (settings) => settings.NEWS_LLM_PROVIDER || 'AUTOMATIC',
+    getValue: (settings) => settings.NEWS_LLM_PROVIDER || 'CLAUDE_CODE',
   },
   {
-    elementId: 'set-news-ollama-model',
-    getValue: (settings) => settings.NEWS_OLLAMA_MODEL || 'DEFAULT',
+    elementId: 'set-news-llm-model',
+    getValue: (settings) => settings.NEWS_LLM_MODEL || 'DEFAULT',
+  },
+  {
+    elementId: 'set-news-llm-fallback-provider',
+    getValue: (settings) => settings.NEWS_LLM_FALLBACK_PROVIDER || '',
+  },
+  {
+    elementId: 'set-news-llm-fallback-model',
+    getValue: (settings) => settings.NEWS_LLM_FALLBACK_MODEL || 'DEFAULT',
   },
   {
     elementId: 'set-news-include-foreign',
@@ -91,6 +107,19 @@ const SETTINGS_CONTROL_BINDINGS = [
   {
     elementId: 'set-news-poll-interval-off',
     getValue: (settings) => stringifyNullable(settings.NEWS_POLL_INTERVAL_MIN_OFF_HOURS),
+  },
+  {
+    elementId: 'set-news-fetch-concurrency',
+    getValue: (settings) => stringifyNullable(settings.NEWS_FETCH_CONCURRENCY),
+  },
+  {
+    elementId: 'set-news-translation-concurrency',
+    getValue: (settings) => stringifyNullable(settings.NEWS_TRANSLATION_CONCURRENCY),
+  },
+  {
+    elementId: 'set-news-claude-share-session',
+    getValue: (settings) => Boolean(settings.NEWS_CLAUDE_SHARE_SESSION),
+    type: 'checked',
   },
   {
     elementId: 'set-news-shadow-enabled',

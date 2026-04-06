@@ -1,4 +1,7 @@
+import asyncio
+
 import pytest
+from trading.enums import LLMProvider
 
 
 @pytest.mark.asyncio
@@ -29,10 +32,10 @@ async def test_news_translation_service_adds_korean_translation_metadata(monkeyp
 
     service = NewsTranslationService()
 
-    async def fake_generate_manual(prompt, default_tier, manual_provider_override, manual_model_override=None):
-        assert manual_provider_override == "CODEX"
-        assert manual_model_override is None
-        assert default_tier.value == "TIER1"
+    async def fake_generate(prompt, tier, system_prompt="", *, provider_chain=None, provider_model_overrides=None, **kwargs):
+        assert [provider.value for provider in provider_chain] == ["CODEX"]
+        assert provider_model_overrides is None
+        assert tier.value == "TIER1"
         assert "Translate the following financial news into Korean" in prompt
         return (
             '{"translated_title":"삼성·LG 상승","translated_summary":"반도체 사이클 개선 기대","sentiment_label":"POSITIVE","sentiment_score":0.72}',
@@ -42,8 +45,8 @@ async def test_news_translation_service_adds_korean_translation_metadata(monkeyp
     monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_ENABLED", True)
     monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_PROVIDER", "CODEX")
     monkeypatch.setattr(
-        "services.news_translation_service.llm_factory.generate_manual",
-        fake_generate_manual,
+        "services.news_translation_service.llm_factory.generate",
+        fake_generate,
     )
 
     items = await service.translate_items([
@@ -71,9 +74,9 @@ async def test_news_translation_service_uses_news_specific_ollama_model(monkeypa
     service = NewsTranslationService()
     captured = {}
 
-    async def fake_generate_manual(prompt, default_tier, manual_provider_override, manual_model_override):
-        captured["provider"] = manual_provider_override
-        captured["model"] = manual_model_override
+    async def fake_generate(prompt, tier, system_prompt="", *, provider_chain=None, provider_model_overrides=None, **kwargs):
+        captured["provider_chain"] = [provider.value for provider in provider_chain]
+        captured["model_overrides"] = provider_model_overrides
         return (
             '{"translated_title":"현대차 상승","translated_summary":"현지 판매 호조 기대","sentiment_label":"POSITIVE","sentiment_score":0.61}',
             "OLLAMA",
@@ -81,10 +84,10 @@ async def test_news_translation_service_uses_news_specific_ollama_model(monkeypa
 
     monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_ENABLED", True)
     monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_PROVIDER", "OLLAMA")
-    monkeypatch.setattr("services.news_translation_service.settings.NEWS_OLLAMA_MODEL", "qwen2.5:14b")
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_MODEL", "qwen2.5:14b")
     monkeypatch.setattr(
-        "services.news_translation_service.llm_factory.generate_manual",
-        fake_generate_manual,
+        "services.news_translation_service.llm_factory.generate",
+        fake_generate,
     )
 
     items = await service.translate_items([
@@ -96,5 +99,148 @@ async def test_news_translation_service_uses_news_specific_ollama_model(monkeypa
         },
     ])
 
-    assert captured == {"provider": "OLLAMA", "model": "qwen2.5:14b"}
+    assert captured["provider_chain"] == ["OLLAMA"]
+    assert captured["model_overrides"] == {LLMProvider.OLLAMA: "qwen2.5:14b"}
     assert items[0]["metadata"]["translation_provider"] == "OLLAMA"
+
+
+@pytest.mark.asyncio
+async def test_news_translation_service_translates_non_korean_items_with_limited_parallelism(monkeypatch):
+    from services.news_translation_service import NewsTranslationService
+
+    service = NewsTranslationService()
+    started: list[str] = []
+    release = asyncio.Event()
+
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_ENABLED", True)
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_PROVIDER", "CODEX")
+
+    async def fake_translate_item(item, *, news_selection=None):
+        assert news_selection is not None
+        started.append(item["title"])
+        await release.wait()
+        copied = dict(item)
+        copied["metadata"] = {"translated_title": f"{item['title']} 번역"}
+        return copied
+
+    monkeypatch.setattr(service, "_translate_item", fake_translate_item)
+
+    task = asyncio.create_task(service.translate_items([
+        {"language": "en", "title": "A", "summary": "1"},
+        {"language": "en", "title": "B", "summary": "2"},
+        {"language": "en", "title": "C", "summary": "3"},
+    ]))
+
+    async def wait_for_parallel_starts():
+        while len(started) < 3:
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(wait_for_parallel_starts(), timeout=0.2)
+    release.set()
+    translated = await task
+
+    assert [item["title"] for item in translated] == ["A", "B", "C"]
+    assert translated[0]["metadata"]["translated_title"] == "A 번역"
+
+
+@pytest.mark.asyncio
+async def test_news_translation_service_limits_ollama_to_single_inflight_request(monkeypatch):
+    from services.news_translation_service import NewsTranslationService
+
+    service = NewsTranslationService()
+    release = asyncio.Event()
+    active = {"count": 0, "max": 0}
+
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_ENABLED", True)
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_PROVIDER", "OLLAMA")
+
+    async def fake_translate_item(item, *, news_selection=None):
+        active["count"] += 1
+        active["max"] = max(active["max"], active["count"])
+        await release.wait()
+        active["count"] -= 1
+        return item
+
+    monkeypatch.setattr(service, "_translate_item", fake_translate_item)
+
+    task = asyncio.create_task(service.translate_items([
+        {"language": "en", "title": "A", "summary": "1"},
+        {"language": "en", "title": "B", "summary": "2"},
+    ]))
+
+    await asyncio.sleep(0.05)
+    assert active["max"] == 1
+
+    release.set()
+    translated = await task
+
+    assert len(translated) == 2
+
+
+@pytest.mark.asyncio
+async def test_news_translation_service_uses_configured_concurrency_for_non_ollama(monkeypatch):
+    from services.news_translation_service import NewsTranslationService
+
+    service = NewsTranslationService()
+    release = asyncio.Event()
+    active = {"count": 0, "max": 0}
+
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_ENABLED", True)
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_PROVIDER", "CODEX")
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_TRANSLATION_CONCURRENCY", 2)
+
+    async def fake_translate_item(item, *, news_selection=None):
+        active["count"] += 1
+        active["max"] = max(active["max"], active["count"])
+        await release.wait()
+        active["count"] -= 1
+        return item
+
+    monkeypatch.setattr(service, "_translate_item", fake_translate_item)
+
+    task = asyncio.create_task(service.translate_items([
+        {"language": "en", "title": "A", "summary": "1"},
+        {"language": "en", "title": "B", "summary": "2"},
+        {"language": "en", "title": "C", "summary": "3"},
+    ]))
+
+    await asyncio.sleep(0.05)
+    assert active["max"] == 2
+
+    release.set()
+    translated = await task
+
+    assert len(translated) == 3
+
+
+@pytest.mark.asyncio
+async def test_news_translation_service_can_disable_claude_session_sharing(monkeypatch):
+    from services.news_translation_service import NewsTranslationService
+
+    service = NewsTranslationService()
+    events = []
+
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_ENABLED", True)
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_PROVIDER", "CLAUDE_CODE")
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_CLAUDE_SHARE_SESSION", False)
+
+    def fake_pause_session():
+        events.append("pause")
+        return "session-1"
+
+    def fake_resume_session(session_id):
+        events.append(f"resume:{session_id}")
+
+    async def fake_translate_item(item, *, news_selection=None):
+        return item
+
+    monkeypatch.setattr("services.news_translation_service.llm_factory.pause_session", fake_pause_session)
+    monkeypatch.setattr("services.news_translation_service.llm_factory.resume_session", fake_resume_session)
+    monkeypatch.setattr(service, "_translate_item", fake_translate_item)
+
+    translated = await service.translate_items([
+        {"language": "en", "title": "A", "summary": "1"},
+    ])
+
+    assert len(translated) == 1
+    assert events == ["pause", "resume:session-1"]

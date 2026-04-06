@@ -15,7 +15,7 @@ async def test_admin_settings_ignores_unknown_keys(client):
 
 @pytest.mark.asyncio
 async def test_admin_settings_rejects_invalid_manual_provider_without_overwriting(client, monkeypatch):
-    monkeypatch.setattr("api.routes.admin.settings.MANUAL_LLM_PROVIDER", "AUTOMATIC")
+    monkeypatch.setattr("api.routes.admin.settings.MANUAL_LLM_PROVIDER", "CLAUDE_CODE")
 
     response = await client.put(
         "/api/v1/admin/settings",
@@ -28,7 +28,7 @@ async def test_admin_settings_rejects_invalid_manual_provider_without_overwritin
     settings_response = await client.get("/api/v1/admin/settings")
 
     assert settings_response.status_code == 200
-    assert settings_response.json()["data"]["MANUAL_LLM_PROVIDER"] == "AUTOMATIC"
+    assert settings_response.json()["data"]["MANUAL_LLM_PROVIDER"] == "CLAUDE_CODE"
 
 
 @pytest.mark.asyncio
@@ -47,7 +47,7 @@ async def test_admin_settings_normalizes_empty_manual_model_to_default(client, m
 
 @pytest.mark.asyncio
 async def test_admin_settings_rejects_invalid_news_provider_without_overwriting(client, monkeypatch):
-    monkeypatch.setattr("api.routes.admin.settings.NEWS_LLM_PROVIDER", "AUTOMATIC")
+    monkeypatch.setattr("api.routes.admin.settings.NEWS_LLM_PROVIDER", "CLAUDE_CODE")
 
     response = await client.put(
         "/api/v1/admin/settings",
@@ -60,26 +60,26 @@ async def test_admin_settings_rejects_invalid_news_provider_without_overwriting(
     settings_response = await client.get("/api/v1/admin/settings")
 
     assert settings_response.status_code == 200
-    assert settings_response.json()["data"]["NEWS_LLM_PROVIDER"] == "AUTOMATIC"
+    assert settings_response.json()["data"]["NEWS_LLM_PROVIDER"] == "CLAUDE_CODE"
 
 
 @pytest.mark.asyncio
-async def test_admin_settings_normalizes_empty_news_ollama_model_to_default(client, monkeypatch):
-    monkeypatch.setattr("api.routes.admin.settings.NEWS_OLLAMA_MODEL", "qwen2.5:14b")
+async def test_admin_settings_normalizes_empty_news_model_to_default(client, monkeypatch):
+    monkeypatch.setattr("api.routes.admin.settings.NEWS_LLM_MODEL", "qwen2.5:14b")
 
     response = await client.put(
         "/api/v1/admin/settings",
-        json={"NEWS_OLLAMA_MODEL": "   "},
+        json={"NEWS_LLM_MODEL": "   "},
     )
 
     assert response.status_code == 200
     payload = response.json()["data"]
-    assert payload["NEWS_OLLAMA_MODEL"]["new"] == "DEFAULT"
+    assert payload["NEWS_LLM_MODEL"]["new"] == "DEFAULT"
 
     settings_response = await client.get("/api/v1/admin/settings")
 
     assert settings_response.status_code == 200
-    assert settings_response.json()["data"]["NEWS_OLLAMA_MODEL"] == "DEFAULT"
+    assert settings_response.json()["data"]["NEWS_LLM_MODEL"] == "DEFAULT"
 
 
 @pytest.mark.asyncio
@@ -149,3 +149,21 @@ async def test_admin_settings_rejects_invalid_integer_value_with_clear_400(clien
 
     assert settings_response.status_code == 200
     assert settings_response.json()["data"]["RECOMMENDATION_EXPIRE_MIN"] == 60
+
+
+@pytest.mark.asyncio
+async def test_admin_settings_rejects_invalid_news_concurrency_range(client, monkeypatch):
+    monkeypatch.setattr("api.routes.admin.settings.NEWS_FETCH_CONCURRENCY", 4)
+
+    response = await client.put(
+        "/api/v1/admin/settings",
+        json={"NEWS_FETCH_CONCURRENCY": 0},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "NEWS_FETCH_CONCURRENCY must be between 1 and 8"
+
+    settings_response = await client.get("/api/v1/admin/settings")
+
+    assert settings_response.status_code == 200
+    assert settings_response.json()["data"]["NEWS_FETCH_CONCURRENCY"] == 4

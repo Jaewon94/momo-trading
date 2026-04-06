@@ -150,7 +150,7 @@ export function buildReportNewsStripModel(
         : "월간 집계 대기",
     ].join(" · "),
     settingSummary: [
-      String(settings.llm_provider || "AUTOMATIC"),
+      String(settings.llm_provider || "CLAUDE_CODE"),
       settings.gate_enabled ? "게이트 ON" : "게이트 OFF",
       settings.domestic_media_enabled ? "국내 미디어 ON" : "국내 미디어 OFF",
       settings.nasdaq_enabled ? "Nasdaq ON" : "Nasdaq OFF",
@@ -214,7 +214,7 @@ export function buildNewsOverviewSourcePills(overview) {
   );
 
   return [
-    `<div class="news-source-pill"><strong>${String(settings.llm_provider || "AUTOMATIC")}</strong><span>${settings.llm_enabled ? "뉴스 AI ON" : "규칙 기반만"}</span></div>`,
+    `<div class="news-source-pill"><strong>${String(settings.llm_provider || "CLAUDE_CODE")}</strong><span>${settings.llm_enabled ? "뉴스 AI ON" : "규칙 기반만"}</span></div>`,
     `<div class="news-source-pill"><strong>${settings.include_foreign ? "해외 포함" : "국내 중심"}</strong><span>${String(sources.enabled_count || 0)}개 소스 · 실구현 ${String(sources.implemented_count || 0)}개</span></div>`,
     `<div class="news-source-pill"><strong>${storage.ready ? "저장소 준비" : "저장소 미준비"}</strong><span>${storage.ready ? "집계 가능" : "마이그레이션 필요"}</span></div>`,
     ...catalog.slice(0, 6).map((item) => {

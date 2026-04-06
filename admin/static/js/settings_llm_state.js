@@ -47,13 +47,19 @@ export function resolveTierModelState({ runtimeSettings, tier, mode = 'primary',
   };
 }
 
-export function getManualModelSelectorState(runtimeSettings, provider) {
+export function getStandaloneModelSelectorState(kind, runtimeSettings, provider, mode = 'primary') {
+  const isNews = kind === 'news';
+  const providerSuffix = isNews ? 'news' : 'manual';
+  const prefix = isNews ? 'NEWS_LLM' : 'MANUAL_LLM';
+  const isFallback = mode === 'fallback';
+
   return {
-    provider: provider || 'AUTOMATIC',
-    currentValue: runtimeSettings?.MANUAL_LLM_MODEL || 'DEFAULT',
-    selectId: 'set-manual-llm-model',
-    sourceId: 'llm-manual-model-source',
-    customId: 'set-manual-llm-model-custom',
-    automatic: !provider || provider === 'AUTOMATIC',
+    key: isFallback ? `${prefix}_FALLBACK_MODEL` : `${prefix}_MODEL`,
+    provider: provider || '',
+    currentValue: runtimeSettings?.[isFallback ? `${prefix}_FALLBACK_MODEL` : `${prefix}_MODEL`] || 'DEFAULT',
+    hasProvider: Boolean(provider),
+    selectId: isFallback ? `set-${providerSuffix}-llm-fallback-model` : `set-${providerSuffix}-llm-model`,
+    sourceId: isFallback ? `llm-${providerSuffix}-fallback-model-source` : `llm-${providerSuffix}-model-source`,
+    customId: isFallback ? `set-${providerSuffix}-llm-fallback-model-custom` : `set-${providerSuffix}-llm-model-custom`,
   };
 }

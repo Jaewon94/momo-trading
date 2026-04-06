@@ -18,6 +18,8 @@ class TierSelection:
 class ManualSelection:
     provider: str
     model: str
+    fallback_provider: str
+    fallback_model: str
     provider_chain: tuple[LLMProvider, ...]
     provider_model_overrides: dict[LLMProvider, str] | None
 
@@ -26,7 +28,11 @@ class ManualSelection:
 class NewsSelection:
     enabled: bool
     provider: str
-    model: str | None
+    model: str
+    fallback_provider: str
+    fallback_model: str
+    provider_chain: tuple[LLMProvider, ...]
+    provider_model_overrides: dict[LLMProvider, str] | None
 
 
 def provider_from_name(value: str | None, default: LLMProvider = LLMProvider.CLAUDE_CODE) -> LLMProvider:
@@ -66,40 +72,51 @@ def resolve_manual_selection(
     provider_override: str | None = None,
     model_override: str | None = None,
 ) -> ManualSelection:
-    selection = (provider_override or settings.MANUAL_LLM_PROVIDER or "AUTOMATIC").upper()
-    if selection == "AUTOMATIC":
-        tier_selection = resolve_tier_selection(default_tier)
-        return ManualSelection(
-            provider="AUTOMATIC",
-            model=normalize_llm_model_value(model_override or settings.MANUAL_LLM_MODEL),
-            provider_chain=(tier_selection.provider,)
-            if not tier_selection.fallback_provider
-            else (tier_selection.provider, provider_from_name(tier_selection.fallback_provider)),
-            provider_model_overrides=None,
-        )
+    primary_name = (provider_override or settings.MANUAL_LLM_PROVIDER or "CLAUDE_CODE").upper()
+    fallback_name = settings.MANUAL_LLM_FALLBACK_PROVIDER
+    fallback_model = settings.MANUAL_LLM_FALLBACK_MODEL
 
-    provider = provider_from_name(selection)
-    normalized_model = normalize_llm_model_value(model_override or settings.MANUAL_LLM_MODEL)
-    overrides = None
-    if normalized_model != DEFAULT_LLM_MODEL:
-        overrides = {provider: normalized_model}
-    return ManualSelection(
-        provider=selection,
-        model=normalized_model,
-        provider_chain=(provider,),
-        provider_model_overrides=overrides,
+    if primary_name == "AUTOMATIC":
+        tier_selection = resolve_tier_selection(default_tier)
+        primary_name = tier_selection.provider.value
+        if not fallback_name:
+            fallback_name = tier_selection.fallback_provider
+            fallback_model = tier_selection.fallback_model
+
+    return _build_explicit_selection(
+        primary_name=primary_name,
+        primary_model=model_override or settings.MANUAL_LLM_MODEL,
+        fallback_name=fallback_name,
+        fallback_model=fallback_model,
+        selection_type=ManualSelection,
     )
 
 
 def resolve_news_selection() -> NewsSelection:
-    provider = (settings.NEWS_LLM_PROVIDER or "AUTOMATIC").upper()
-    model = None
-    if provider == LLMProvider.OLLAMA.value:
-        model = normalize_llm_model_value(settings.NEWS_OLLAMA_MODEL)
+    primary_name = (settings.NEWS_LLM_PROVIDER or "CLAUDE_CODE").upper()
+    fallback_name = settings.NEWS_LLM_FALLBACK_PROVIDER
+    fallback_model = settings.NEWS_LLM_FALLBACK_MODEL
+    if primary_name == "AUTOMATIC":
+        tier_selection = resolve_tier_selection(LLMTier.TIER1)
+        primary_name = tier_selection.provider.value
+        if not fallback_name:
+            fallback_name = tier_selection.fallback_provider
+            fallback_model = tier_selection.fallback_model
+
+    base_selection = _build_explicit_selection(
+        primary_name=primary_name,
+        primary_model=settings.NEWS_LLM_MODEL,
+        fallback_name=fallback_name,
+        fallback_model=fallback_model,
+    )
     return NewsSelection(
         enabled=bool(settings.NEWS_LLM_ENABLED),
-        provider=provider,
-        model=model,
+        provider=base_selection.provider,
+        model=base_selection.model,
+        fallback_provider=base_selection.fallback_provider,
+        fallback_model=base_selection.fallback_model,
+        provider_chain=base_selection.provider_chain,
+        provider_model_overrides=base_selection.provider_model_overrides,
     )
 
 
@@ -116,3 +133,40 @@ def _model_for_provider(provider: LLMProvider, *, tier: LLMTier) -> str:
         return normalize_llm_model_value(value or settings.OLLAMA_MODEL)
     value = settings.CLAUDE_CODE_MODEL_TIER1 if tier == LLMTier.TIER1 else settings.CLAUDE_CODE_MODEL_TIER2
     return normalize_llm_model_value(value or settings.CLAUDE_CODE_MODEL)
+
+
+def _build_explicit_selection(
+    *,
+    primary_name: str,
+    primary_model: str | None,
+    fallback_name: str | None,
+    fallback_model: str | None,
+    selection_type=ManualSelection,
+):
+    provider = provider_from_name(primary_name)
+    normalized_model = normalize_llm_model_value(primary_model)
+    normalized_fallback_provider = str(fallback_name or "").upper()
+    normalized_fallback_model = normalize_llm_model_value(fallback_model)
+
+    chain: list[LLMProvider] = [provider]
+    overrides: dict[LLMProvider, str] = {}
+    if normalized_model != DEFAULT_LLM_MODEL:
+        overrides[provider] = normalized_model
+
+    if normalized_fallback_provider:
+        fallback_provider = provider_from_name(normalized_fallback_provider)
+        if fallback_provider != provider:
+            chain.append(fallback_provider)
+            if normalized_fallback_model != DEFAULT_LLM_MODEL:
+                overrides[fallback_provider] = normalized_fallback_model
+        else:
+            normalized_fallback_provider = ""
+
+    return selection_type(
+        provider=provider.value,
+        model=normalized_model,
+        fallback_provider=normalized_fallback_provider,
+        fallback_model=normalized_fallback_model if normalized_fallback_provider else DEFAULT_LLM_MODEL,
+        provider_chain=tuple(chain),
+        provider_model_overrides=overrides or None,
+    )

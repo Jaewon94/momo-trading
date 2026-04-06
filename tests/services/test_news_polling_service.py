@@ -1,4 +1,5 @@
 import pytest
+import asyncio
 
 
 @pytest.mark.asyncio
@@ -684,3 +685,170 @@ async def test_news_polling_service_skips_nasdaq_when_source_disabled(monkeypatc
 
     assert snapshot["sources"]["NASDAQ"]["status"] == "SKIPPED"
     assert snapshot["sources"]["NASDAQ"]["message"] == "NEWS_NASDAQ_ENABLED disabled"
+
+
+@pytest.mark.asyncio
+async def test_news_polling_service_fetches_multiple_sources_in_parallel(monkeypatch):
+    from services.news_polling_service import NewsPollingService
+
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_POLL_ENABLED", True)
+    monkeypatch.setattr("services.news_polling_service.settings.OPEN_DART_API_KEY", "")
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_DOMESTIC_MEDIA_ENABLED", True)
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_INCLUDE_FOREIGN", True)
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_NASDAQ_ENABLED", False)
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_FETCH_CONCURRENCY", 6)
+
+    started: list[str] = []
+    release = asyncio.Event()
+
+    async def fake_fetch_recent_krx_disclosures(*, page_count):
+        assert page_count == 25
+        started.append("KRX")
+        await release.wait()
+        return []
+
+    async def fake_fetch_recent_yonhap_news(_session, *, limit):
+        assert limit == 25
+        started.append("YONHAP")
+        await release.wait()
+        return []
+
+    def make_media_fetcher(source_code):
+        async def _fetch(*, limit):
+            assert limit == 25
+            started.append(source_code)
+            await release.wait()
+            return []
+        return _fetch
+
+    async def fake_ingest_items_detailed(_session, items):
+        assert items == []
+        return {
+            "summary": {"received": 0, "created": 0, "duplicates": 0, "skipped": 0},
+            "created_items": [],
+        }
+
+    monkeypatch.setattr(
+        "services.news_polling_service.krx_kind_disclosure_service.fetch_recent_disclosures",
+        fake_fetch_recent_krx_disclosures,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.yonhap_news_service.fetch_recent_news",
+        fake_fetch_recent_yonhap_news,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.bloomberg_news_service.fetch_recent_news",
+        make_media_fetcher("BLOOMBERG"),
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.cnbc_news_service.fetch_recent_news",
+        make_media_fetcher("CNBC"),
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.investing_news_service.fetch_recent_news",
+        make_media_fetcher("INVESTING"),
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.seeking_alpha_news_service.fetch_recent_news",
+        make_media_fetcher("SEEKING_ALPHA"),
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.news_ingest_service.ingest_items_detailed",
+        fake_ingest_items_detailed,
+    )
+
+    service = NewsPollingService()
+    poll_task = asyncio.create_task(service.poll_sources(object(), market_hours=False))
+
+    async def wait_for_parallel_starts():
+        while len(started) < 6:
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(wait_for_parallel_starts(), timeout=0.2)
+    assert set(started) == {"KRX", "YONHAP", "BLOOMBERG", "CNBC", "INVESTING", "SEEKING_ALPHA"}
+
+    release.set()
+    summary = await poll_task
+
+    assert summary["received"] == 0
+
+
+@pytest.mark.asyncio
+async def test_news_polling_service_respects_fetch_concurrency_limit(monkeypatch):
+    from services.news_polling_service import NewsPollingService
+
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_POLL_ENABLED", True)
+    monkeypatch.setattr("services.news_polling_service.settings.OPEN_DART_API_KEY", "")
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_DOMESTIC_MEDIA_ENABLED", True)
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_INCLUDE_FOREIGN", True)
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_NASDAQ_ENABLED", False)
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_FETCH_CONCURRENCY", 2)
+
+    release = asyncio.Event()
+    active = {"count": 0, "max": 0}
+
+    async def track_fetch():
+        active["count"] += 1
+        active["max"] = max(active["max"], active["count"])
+        await release.wait()
+        active["count"] -= 1
+        return []
+
+    async def fake_fetch_recent_krx_disclosures(*, page_count):
+        assert page_count == 25
+        return await track_fetch()
+
+    async def fake_fetch_recent_yonhap_news(_session, *, limit):
+        assert limit == 25
+        return await track_fetch()
+
+    def make_media_fetcher():
+        async def _fetch(*, limit):
+            assert limit == 25
+            return await track_fetch()
+        return _fetch
+
+    async def fake_ingest_items_detailed(_session, items):
+        assert items == []
+        return {
+            "summary": {"received": 0, "created": 0, "duplicates": 0, "skipped": 0},
+            "created_items": [],
+        }
+
+    monkeypatch.setattr(
+        "services.news_polling_service.krx_kind_disclosure_service.fetch_recent_disclosures",
+        fake_fetch_recent_krx_disclosures,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.yonhap_news_service.fetch_recent_news",
+        fake_fetch_recent_yonhap_news,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.bloomberg_news_service.fetch_recent_news",
+        make_media_fetcher(),
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.cnbc_news_service.fetch_recent_news",
+        make_media_fetcher(),
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.investing_news_service.fetch_recent_news",
+        make_media_fetcher(),
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.seeking_alpha_news_service.fetch_recent_news",
+        make_media_fetcher(),
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.news_ingest_service.ingest_items_detailed",
+        fake_ingest_items_detailed,
+    )
+
+    task = asyncio.create_task(NewsPollingService().poll_sources(object(), market_hours=False))
+    await asyncio.sleep(0.05)
+    assert active["max"] == 2
+
+    release.set()
+    summary = await task
+
+    assert summary["received"] == 0

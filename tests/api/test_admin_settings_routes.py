@@ -19,7 +19,11 @@ async def test_admin_settings_exposes_manual_llm_provider(client):
     assert "CODEX_MODEL_TIER2" in payload["data"]
     assert "NEWS_LLM_ENABLED" in payload["data"]
     assert "NEWS_LLM_PROVIDER" in payload["data"]
-    assert "NEWS_OLLAMA_MODEL" in payload["data"]
+    assert "MANUAL_LLM_FALLBACK_PROVIDER" in payload["data"]
+    assert "MANUAL_LLM_FALLBACK_MODEL" in payload["data"]
+    assert "NEWS_LLM_MODEL" in payload["data"]
+    assert "NEWS_LLM_FALLBACK_PROVIDER" in payload["data"]
+    assert "NEWS_LLM_FALLBACK_MODEL" in payload["data"]
     assert "NEWS_DOMESTIC_MEDIA_ENABLED" in payload["data"]
     assert "NEWS_INCLUDE_FOREIGN" in payload["data"]
     assert "NEWS_NASDAQ_ENABLED" in payload["data"]
@@ -28,6 +32,9 @@ async def test_admin_settings_exposes_manual_llm_provider(client):
     assert "NEWS_NEGATIVE_BLOCK_THRESHOLD" in payload["data"]
     assert "NEWS_POLL_ENABLED" in payload["data"]
     assert "NEWS_POLL_INTERVAL_MIN_TRADING" in payload["data"]
+    assert "NEWS_FETCH_CONCURRENCY" in payload["data"]
+    assert "NEWS_TRANSLATION_CONCURRENCY" in payload["data"]
+    assert "NEWS_CLAUDE_SHARE_SESSION" in payload["data"]
     assert "NEWS_SHADOW_ENABLED" in payload["data"]
     assert "NEWS_ROLLOUT_MIN_SAMPLE_SIZE" in payload["data"]
     assert "NEWS_ROLLOUT_MIN_PROFIT_FACTOR" in payload["data"]
@@ -43,7 +50,12 @@ async def test_admin_settings_exposes_manual_llm_provider(client):
 async def test_admin_settings_updates_manual_llm_provider(client):
     response = await client.put(
         "/api/v1/admin/settings",
-        json={"MANUAL_LLM_PROVIDER": "CODEX", "MANUAL_LLM_MODEL": "gpt-5.4"},
+        json={
+            "MANUAL_LLM_PROVIDER": "CODEX",
+            "MANUAL_LLM_MODEL": "gpt-5.4",
+            "MANUAL_LLM_FALLBACK_PROVIDER": "CLAUDE_CODE",
+            "MANUAL_LLM_FALLBACK_MODEL": "claude-sonnet-4-6",
+        },
     )
 
     assert response.status_code == 200
@@ -53,6 +65,8 @@ async def test_admin_settings_updates_manual_llm_provider(client):
     assert settings_response.status_code == 200
     assert settings_response.json()["data"]["MANUAL_LLM_PROVIDER"] == "CODEX"
     assert settings_response.json()["data"]["MANUAL_LLM_MODEL"] == "gpt-5.4"
+    assert settings_response.json()["data"]["MANUAL_LLM_FALLBACK_PROVIDER"] == "CLAUDE_CODE"
+    assert settings_response.json()["data"]["MANUAL_LLM_FALLBACK_MODEL"] == "claude-sonnet-4-6"
 
 
 async def test_admin_settings_updates_news_llm_provider(client):
@@ -60,7 +74,9 @@ async def test_admin_settings_updates_news_llm_provider(client):
         "/api/v1/admin/settings",
         json={
             "NEWS_LLM_PROVIDER": "OLLAMA",
-            "NEWS_OLLAMA_MODEL": "qwen2.5:14b",
+            "NEWS_LLM_MODEL": "qwen2.5:14b",
+            "NEWS_LLM_FALLBACK_PROVIDER": "CODEX",
+            "NEWS_LLM_FALLBACK_MODEL": "gpt-5.4",
             "NEWS_LLM_ENABLED": False,
             "NEWS_DOMESTIC_MEDIA_ENABLED": True,
             "NEWS_INCLUDE_FOREIGN": False,
@@ -68,6 +84,9 @@ async def test_admin_settings_updates_news_llm_provider(client):
             "NEWS_GATE_ENABLED": False,
             "NEWS_POLL_ENABLED": False,
             "NEWS_POLL_INTERVAL_MIN_TRADING": 7,
+            "NEWS_FETCH_CONCURRENCY": 5,
+            "NEWS_TRANSLATION_CONCURRENCY": 2,
+            "NEWS_CLAUDE_SHARE_SESSION": False,
             "NEWS_SHADOW_ENABLED": False,
             "NEWS_ROLLOUT_MIN_SAMPLE_SIZE": 18,
             "NEWS_ROLLOUT_MIN_PROFIT_FACTOR": 1.25,
@@ -84,7 +103,9 @@ async def test_admin_settings_updates_news_llm_provider(client):
 
     assert settings_response.status_code == 200
     assert settings_response.json()["data"]["NEWS_LLM_PROVIDER"] == "OLLAMA"
-    assert settings_response.json()["data"]["NEWS_OLLAMA_MODEL"] == "qwen2.5:14b"
+    assert settings_response.json()["data"]["NEWS_LLM_MODEL"] == "qwen2.5:14b"
+    assert settings_response.json()["data"]["NEWS_LLM_FALLBACK_PROVIDER"] == "CODEX"
+    assert settings_response.json()["data"]["NEWS_LLM_FALLBACK_MODEL"] == "gpt-5.4"
     assert settings_response.json()["data"]["NEWS_LLM_ENABLED"] is False
     assert settings_response.json()["data"]["NEWS_DOMESTIC_MEDIA_ENABLED"] is True
     assert settings_response.json()["data"]["NEWS_INCLUDE_FOREIGN"] is False
@@ -92,6 +113,9 @@ async def test_admin_settings_updates_news_llm_provider(client):
     assert settings_response.json()["data"]["NEWS_GATE_ENABLED"] is False
     assert settings_response.json()["data"]["NEWS_POLL_ENABLED"] is False
     assert settings_response.json()["data"]["NEWS_POLL_INTERVAL_MIN_TRADING"] == 7
+    assert settings_response.json()["data"]["NEWS_FETCH_CONCURRENCY"] == 5
+    assert settings_response.json()["data"]["NEWS_TRANSLATION_CONCURRENCY"] == 2
+    assert settings_response.json()["data"]["NEWS_CLAUDE_SHARE_SESSION"] is False
     assert settings_response.json()["data"]["NEWS_SHADOW_ENABLED"] is False
     assert settings_response.json()["data"]["NEWS_ROLLOUT_MIN_SAMPLE_SIZE"] == 18
     assert settings_response.json()["data"]["NEWS_ROLLOUT_MIN_PROFIT_FACTOR"] == 1.25
@@ -236,7 +260,7 @@ async def test_llm_status_exposes_provider_runtime_visibility(client, monkeypatc
                     },
                 }
             ],
-            "manual_selection": {"provider": "AUTOMATIC"},
+            "manual_selection": {"provider": "CODEX", "fallback_provider": "CLAUDE_CODE"},
         },
         raising=False,
     )

@@ -112,7 +112,7 @@ class NewsReportingService:
     def _build_settings_snapshot() -> dict:
         return {
             "llm_enabled": bool(settings.NEWS_LLM_ENABLED),
-            "llm_provider": str(settings.NEWS_LLM_PROVIDER or "AUTOMATIC"),
+            "llm_provider": str(settings.NEWS_LLM_PROVIDER or "CLAUDE_CODE"),
             "domestic_media_enabled": bool(settings.NEWS_DOMESTIC_MEDIA_ENABLED),
             "include_foreign": bool(settings.NEWS_INCLUDE_FOREIGN),
             "nasdaq_enabled": bool(settings.NEWS_NASDAQ_ENABLED),

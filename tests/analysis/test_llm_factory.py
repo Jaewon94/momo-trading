@@ -150,13 +150,14 @@ def test_llm_factory_includes_provider_runtime_status(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_llm_factory_manual_generate_uses_tier_defaults_when_automatic(monkeypatch) -> None:
-    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_PROVIDER_TIER1", "CODEX")
-    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_FALLBACK_PROVIDER_TIER1", "")
-    monkeypatch.setattr("analysis.llm.llm_factory.settings.MANUAL_LLM_PROVIDER", "AUTOMATIC")
+async def test_llm_factory_manual_generate_uses_configured_primary_and_fallback(monkeypatch) -> None:
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.MANUAL_LLM_PROVIDER", "CODEX")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.MANUAL_LLM_MODEL", "gpt-5.4")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.MANUAL_LLM_FALLBACK_PROVIDER", "CLAUDE_CODE")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.MANUAL_LLM_FALLBACK_MODEL", "DEFAULT")
 
     factory = LLMFactory()
-    codex = FakeProvider(LLMProvider.CODEX, available=True, result="codex-result")
+    codex = FakeProvider(LLMProvider.CODEX, available=False, result="codex-result")
     claude = FakeProvider(LLMProvider.CLAUDE_CODE, available=True, result="claude-result")
     factory._providers[LLMTier.TIER1] = {
         LLMProvider.CODEX: codex,
@@ -165,13 +166,14 @@ async def test_llm_factory_manual_generate_uses_tier_defaults_when_automatic(mon
 
     result, provider = await factory.generate_manual("hello", default_tier=LLMTier.TIER1)
 
-    assert result == "codex-result"
-    assert provider == "CODEX"
+    assert result == "claude-result"
+    assert provider == "CLAUDE_CODE"
 
 
 @pytest.mark.asyncio
 async def test_llm_factory_manual_generate_forces_claude(monkeypatch) -> None:
     monkeypatch.setattr("analysis.llm.llm_factory.settings.MANUAL_LLM_PROVIDER", "CLAUDE_CODE")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.MANUAL_LLM_FALLBACK_PROVIDER", "")
 
     factory = LLMFactory()
     codex = FakeProvider(LLMProvider.CODEX, available=True, result="codex-result")
@@ -192,6 +194,7 @@ async def test_llm_factory_manual_generate_forces_claude(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_llm_factory_manual_generate_forces_codex(monkeypatch) -> None:
     monkeypatch.setattr("analysis.llm.llm_factory.settings.MANUAL_LLM_PROVIDER", "CODEX")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.MANUAL_LLM_FALLBACK_PROVIDER", "")
 
     factory = LLMFactory()
     codex = FakeProvider(LLMProvider.CODEX, available=True, result="codex-result")
@@ -212,6 +215,7 @@ async def test_llm_factory_manual_generate_forces_codex(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_llm_factory_manual_generate_forces_ollama(monkeypatch) -> None:
     monkeypatch.setattr("analysis.llm.llm_factory.settings.MANUAL_LLM_PROVIDER", "OLLAMA")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.MANUAL_LLM_FALLBACK_PROVIDER", "")
 
     factory = LLMFactory()
     codex = FakeProvider(LLMProvider.CODEX, available=True, result="codex-result")
