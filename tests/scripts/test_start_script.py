@@ -263,3 +263,21 @@ exit 0
     assert "stale PID" in result.stdout
     assert "PID: 3131" in result.stdout
     assert pid_file.read_text(encoding="utf-8").strip() == "3131"
+
+
+def test_start_script_backup_db_calls_backup_helper_without_starting_server(tmp_path: Path) -> None:
+    env, docker_log, python_log = _build_test_env(tmp_path, "KIWOOM")
+
+    result = subprocess.run(
+        ["bash", str(START_SCRIPT), "backup-db"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "운영 DB 백업 생성" in result.stdout
+    assert docker_log.exists() is False
+    assert _read_lines(python_log) == ["scripts/dev/backup_runtime_db.py"]
