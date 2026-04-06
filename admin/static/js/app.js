@@ -20,6 +20,8 @@ import {
   getMcpBadgeState,
 } from './runtime_state.js';
 import { SETTINGS_TABS, normalizeSettingsTab } from './settings_modal_state.js';
+import { resolveDirectSettingChange } from './settings_action_state.js';
+import { applySettingsToForm } from './settings_form_state.js';
 import {
   buildClaudeUsageCopy,
   buildCodexAuthLabel,
@@ -1163,6 +1165,12 @@ document.addEventListener('input', (event) => {
 });
 
 document.addEventListener('change', (event) => {
+  const directSettingChange = resolveDirectSettingChange(event.target);
+  if (directSettingChange) {
+    updateSetting(directSettingChange.key, directSettingChange.value);
+    return;
+  }
+
   const select = event.target.closest('#trade-center-sort');
   if (!select) return;
   activeTradeCenterSort = select.value || 'latest';
@@ -3852,60 +3860,7 @@ async function loadSettings() {
     const s = json.data;
     if (!s) return;
     runtimeSettings = s;
-    document.getElementById('set-trading').checked = s.TRADING_ENABLED;
-    document.getElementById('set-mode').value = s.AUTONOMY_MODE;
-    const riskEl = document.getElementById('set-risk-appetite');
-    if (riskEl && s.RISK_APPETITE) riskEl.value = s.RISK_APPETITE;
-    const tier1ProviderEl = document.getElementById('set-llm-tier1-provider');
-    if (tier1ProviderEl) tier1ProviderEl.value = s.LLM_PROVIDER_TIER1 || s.LLM_PROVIDER || 'CLAUDE_CODE';
-    const tier2ProviderEl = document.getElementById('set-llm-tier2-provider');
-    if (tier2ProviderEl) tier2ProviderEl.value = s.LLM_PROVIDER_TIER2 || s.LLM_PROVIDER || 'CLAUDE_CODE';
-    const tier1FallbackEl = document.getElementById('set-llm-tier1-fallback');
-    if (tier1FallbackEl) tier1FallbackEl.value = s.LLM_FALLBACK_PROVIDER_TIER1 || '';
-    const tier2FallbackEl = document.getElementById('set-llm-tier2-fallback');
-    if (tier2FallbackEl) tier2FallbackEl.value = s.LLM_FALLBACK_PROVIDER_TIER2 || '';
-    const manualLlmEl = document.getElementById('set-manual-llm-provider');
-    if (manualLlmEl && s.MANUAL_LLM_PROVIDER) manualLlmEl.value = s.MANUAL_LLM_PROVIDER;
-    const manualModelEl = document.getElementById('set-manual-llm-model');
-    if (manualModelEl) manualModelEl.value = s.MANUAL_LLM_MODEL || 'DEFAULT';
-    const newsLlmEnabledEl = document.getElementById('set-news-llm-enabled');
-    if (newsLlmEnabledEl) newsLlmEnabledEl.checked = Boolean(s.NEWS_LLM_ENABLED);
-    const newsLlmProviderEl = document.getElementById('set-news-llm-provider');
-    if (newsLlmProviderEl) newsLlmProviderEl.value = s.NEWS_LLM_PROVIDER || 'AUTOMATIC';
-    const newsOllamaModelEl = document.getElementById('set-news-ollama-model');
-    if (newsOllamaModelEl) newsOllamaModelEl.value = s.NEWS_OLLAMA_MODEL || 'DEFAULT';
-    const newsIncludeForeignEl = document.getElementById('set-news-include-foreign');
-    if (newsIncludeForeignEl) newsIncludeForeignEl.checked = Boolean(s.NEWS_INCLUDE_FOREIGN);
-    const newsNasdaqEnabledEl = document.getElementById('set-news-nasdaq-enabled');
-    if (newsNasdaqEnabledEl) newsNasdaqEnabledEl.checked = Boolean(s.NEWS_NASDAQ_ENABLED);
-    const newsDomesticMediaEl = document.getElementById('set-news-domestic-media-enabled');
-    if (newsDomesticMediaEl) newsDomesticMediaEl.checked = Boolean(s.NEWS_DOMESTIC_MEDIA_ENABLED);
-    const newsGateEnabledEl = document.getElementById('set-news-gate-enabled');
-    if (newsGateEnabledEl) newsGateEnabledEl.checked = Boolean(s.NEWS_GATE_ENABLED);
-    const newsPollEnabledEl = document.getElementById('set-news-poll-enabled');
-    if (newsPollEnabledEl) newsPollEnabledEl.checked = Boolean(s.NEWS_POLL_ENABLED);
-    const newsNegativeThresholdEl = document.getElementById('set-news-negative-threshold');
-    if (newsNegativeThresholdEl) newsNegativeThresholdEl.value = String(s.NEWS_NEGATIVE_BLOCK_THRESHOLD ?? '');
-    const newsLookbackHoursEl = document.getElementById('set-news-lookback-hours');
-    if (newsLookbackHoursEl) newsLookbackHoursEl.value = String(s.NEWS_LOOKBACK_HOURS ?? '');
-    const newsPollTradingEl = document.getElementById('set-news-poll-interval-trading');
-    if (newsPollTradingEl) newsPollTradingEl.value = String(s.NEWS_POLL_INTERVAL_MIN_TRADING ?? '');
-    const newsPollOffEl = document.getElementById('set-news-poll-interval-off');
-    if (newsPollOffEl) newsPollOffEl.value = String(s.NEWS_POLL_INTERVAL_MIN_OFF_HOURS ?? '');
-    const newsShadowEnabledEl = document.getElementById('set-news-shadow-enabled');
-    if (newsShadowEnabledEl) newsShadowEnabledEl.checked = Boolean(s.NEWS_SHADOW_ENABLED);
-    const newsRolloutSampleEl = document.getElementById('set-news-rollout-min-sample');
-    if (newsRolloutSampleEl) newsRolloutSampleEl.value = String(s.NEWS_ROLLOUT_MIN_SAMPLE_SIZE ?? '');
-    const newsRolloutPfEl = document.getElementById('set-news-rollout-min-pf');
-    if (newsRolloutPfEl) newsRolloutPfEl.value = String(s.NEWS_ROLLOUT_MIN_PROFIT_FACTOR ?? '');
-    const newsRolloutExpectancyEl = document.getElementById('set-news-rollout-min-expectancy');
-    if (newsRolloutExpectancyEl) newsRolloutExpectancyEl.value = String(s.NEWS_ROLLOUT_MIN_EXPECTANCY ?? '');
-    const newsRolloutMddEl = document.getElementById('set-news-rollout-max-drawdown');
-    if (newsRolloutMddEl) newsRolloutMddEl.value = String(s.NEWS_ROLLOUT_MAX_DRAWDOWN_KRW ?? '');
-    const ollamaBaseUrlEl = document.getElementById('set-ollama-base-url');
-    if (ollamaBaseUrlEl) ollamaBaseUrlEl.value = s.OLLAMA_BASE_URL || '';
-    const ollamaModelEl = document.getElementById('set-ollama-model');
-    if (ollamaModelEl) ollamaModelEl.value = s.OLLAMA_MODEL || '';
+    applySettingsToForm(s);
     renderTierModelSelectors();
     renderManualModelSelector();
     updateBadge('badge-trading', s.TRADING_ENABLED ? '매매:ON' : '매매:OFF', s.TRADING_ENABLED ? 'green' : 'red');
