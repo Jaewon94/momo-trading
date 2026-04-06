@@ -5,6 +5,7 @@ from core.config import settings
 from core.events import Event, EventType, event_bus
 from services.bloomberg_news_service import bloomberg_news_service
 from services.cnbc_news_service import cnbc_news_service
+from services.investing_news_service import investing_news_service
 from services.nasdaq_news_service import nasdaq_news_service
 from services.news_ingest_service import news_ingest_service
 from services.krx_kind_disclosure_service import krx_kind_disclosure_service
@@ -54,6 +55,13 @@ class NewsPollingService:
             )
             news_runtime_service.record_source_result(
                 "NASDAQ",
+                status="SKIPPED",
+                mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                message=summary["reason"],
+                counts=summary,
+            )
+            news_runtime_service.record_source_result(
+                "INVESTING",
                 status="SKIPPED",
                 mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
                 message=summary["reason"],
@@ -208,6 +216,25 @@ class NewsPollingService:
                     message="NEWS_NASDAQ_ENABLED disabled",
                     counts={"skipped": 1},
                 )
+            try:
+                investing_items = await investing_news_service.fetch_recent_news(
+                    limit=page_count,
+                )
+                news_runtime_service.record_source_result(
+                    "INVESTING",
+                    status="SUCCESS" if investing_items else "EMPTY",
+                    mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                    message="신규 뉴스 반영 완료" if investing_items else "조회된 데이터 없음",
+                    counts={"received": len(investing_items), "created": 0, "duplicates": 0, "skipped": 0},
+                )
+                all_items.extend(investing_items)
+            except Exception as exc:
+                news_runtime_service.record_source_result(
+                    "INVESTING",
+                    status="ERROR",
+                    mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                    message=str(exc),
+                )
         else:
             news_runtime_service.record_source_result(
                 "BLOOMBERG",
@@ -225,6 +252,13 @@ class NewsPollingService:
             )
             news_runtime_service.record_source_result(
                 "NASDAQ",
+                status="SKIPPED",
+                mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                message="NEWS_INCLUDE_FOREIGN disabled",
+                counts={"skipped": 1},
+            )
+            news_runtime_service.record_source_result(
+                "INVESTING",
                 status="SKIPPED",
                 mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
                 message="NEWS_INCLUDE_FOREIGN disabled",

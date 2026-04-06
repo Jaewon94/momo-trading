@@ -344,6 +344,18 @@ async function fetchNasdaqNews() {
   }
 }
 
+async function fetchInvestingNews() {
+  try {
+    setStatus('runtime', 'Investing.com 해외 뉴스 수집 중...');
+    const json = await fetchJson(`${API}/news/fetch/investing?limit=30`, { method: 'POST' });
+    await loadNewsOverview(true);
+    setStatus('runtime', describeManualNewsFetchResult('Investing.com', json?.data || {}));
+  } catch (err) {
+    console.error('Investing fetch error:', err);
+    setStatus('error', `Investing.com 수집 실패: ${err.message || '알 수 없는 오류'}`);
+  }
+}
+
 async function fetchKrxNews() {
   try {
     setStatus('runtime', 'KIND 오늘의공시 수집 중...');
@@ -3101,6 +3113,7 @@ function createReportCard(report, context = {}) {
             <button type="button" onclick="fetchBloombergNews()" class="rounded-full border border-gray-600 px-3 py-1 text-[11px] text-gray-200 hover:border-blue-400 hover:text-white transition">Bloomberg 수동 수집</button>
             <button type="button" onclick="fetchCnbcNews()" class="rounded-full border border-gray-600 px-3 py-1 text-[11px] text-gray-200 hover:border-blue-400 hover:text-white transition">CNBC 수동 수집</button>
             <button type="button" onclick="fetchNasdaqNews()" class="rounded-full border border-gray-600 px-3 py-1 text-[11px] text-gray-200 hover:border-blue-400 hover:text-white transition">Nasdaq 수동 수집</button>
+            <button type="button" onclick="fetchInvestingNews()" class="rounded-full border border-gray-600 px-3 py-1 text-[11px] text-gray-200 hover:border-blue-400 hover:text-white transition">Investing 수동 수집</button>
             <button type="button" onclick="fetchYonhapNews()" class="rounded-full border border-gray-600 px-3 py-1 text-[11px] text-gray-200 hover:border-blue-400 hover:text-white transition">연합뉴스TV 수동 수집</button>
             <button type="button" onclick="fetchKrxNews()" class="rounded-full border border-gray-600 px-3 py-1 text-[11px] text-gray-200 hover:border-blue-400 hover:text-white transition">KIND 수동 수집</button>
             <button type="button" onclick="fetchDartNews()" class="rounded-full border border-gray-600 px-3 py-1 text-[11px] text-gray-200 hover:border-blue-400 hover:text-white transition">DART 수동 수집</button>
@@ -4638,6 +4651,7 @@ Object.assign(window, {
   clearChat,
   fetchBloombergNews,
   fetchCnbcNews,
+  fetchInvestingNews,
   fetchNasdaqNews,
   fetchDartNews,
   fetchYonhapNews,

@@ -102,6 +102,16 @@ class NewsIngestService:
             domains=("nasdaq.com",),
             language="en",
         ),
+        "INVESTING": NewsSourceDefinition(
+            code="INVESTING",
+            name="Investing.com Stock Market News",
+            tier="B",
+            region="GLOBAL",
+            official=False,
+            trust_score=0.83,
+            domains=("investing.com",),
+            language="en",
+        ),
     }
 
     def get_source_catalog(self, *, include_foreign: bool = True) -> list[dict[str, Any]]:

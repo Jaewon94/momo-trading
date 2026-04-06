@@ -42,6 +42,7 @@
 - `NEWS_INCLUDE_FOREIGN`이 켜져 있으면 `CNBC`도 자동 폴링 대상으로 포함
 - 해외 뉴스는 DB에 원문을 보존하고, 화면은 `display_title`/`display_summary`로 한글 우선 표시
 - Reuters 공식 경로는 anti-bot 응답이 강해 1차 소스로는 Bloomberg sitemap을 우선 채택
+- Reuters 대체 후보로 Investing.com 공식 RSS(`Stock Market News`) 추가
 - `news_signal_service` 1차 정교화 적용
   - `SHORT/MID/LONG`별 임계치/신선도 차등
   - `회계 조사`, `investigation`, `공급 차질`, `profit warning` 등 위험 키워드 severity 반영

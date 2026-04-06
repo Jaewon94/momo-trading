@@ -13,6 +13,7 @@ async def test_admin_news_sources_route_returns_catalog(client, monkeypatch):
     codes = {item["code"] for item in payload["sources"]}
     assert "DART" in codes
     assert "KRX" in codes
+    assert "INVESTING" in codes
     assert payload["llm"]["provider"]
     assert payload["include_foreign"] is True
 
@@ -133,6 +134,23 @@ async def test_admin_news_fetch_nasdaq_route_returns_summary(client, monkeypatch
 
     assert response.status_code == 200
     assert response.json()["data"]["created"] == 2
+
+
+@pytest.mark.asyncio
+async def test_admin_news_fetch_investing_route_returns_summary(client, monkeypatch):
+    async def fake_fetch_and_ingest(*, db, limit):
+        assert limit == 12
+        return {"received": 4, "created": 3, "duplicates": 1, "skipped": 0}
+
+    monkeypatch.setattr(
+        "api.routes.admin.investing_news_service.fetch_and_ingest",
+        fake_fetch_and_ingest,
+    )
+
+    response = await client.post("/api/v1/admin/news/fetch/investing?limit=12")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["created"] == 3
 
 
 @pytest.mark.asyncio

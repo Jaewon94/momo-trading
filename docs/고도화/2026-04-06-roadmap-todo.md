@@ -45,6 +45,7 @@
 - [ ] 해외 소스 확대 여부 판단
   - Reuters 대체 가능 소스 검토
   - 이용 조건/안정성 정리
+  - 1차 반영: `Investing.com Stock Market News` RSS 수집기 추가
 - [ ] 종목 연관도/섹터 영향도/장중 반응 가중치 2차 고도화
   - 메타데이터 기반 `symbol_relevance` / `sector_relevance` 가중치 반영 완료
   - 다음 단계: 수집기에서 실제 연관 심볼/섹터 메타데이터를 채우는 경로 확장

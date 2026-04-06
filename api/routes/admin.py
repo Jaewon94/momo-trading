@@ -32,6 +32,7 @@ from scheduler.jobs import portfolio_sync_job
 from services.activity_logger import activity_logger
 from services.bloomberg_news_service import bloomberg_news_service
 from services.cnbc_news_service import cnbc_news_service
+from services.investing_news_service import investing_news_service
 from services.krx_kind_disclosure_service import krx_kind_disclosure_service
 from services.llm_usage_service import llm_usage_service
 from services.manual_trade_service import manual_trade_service
@@ -986,6 +987,36 @@ async def fetch_nasdaq_news(
         counts=summary,
     )
     return SuccessResponse(data=summary, message="Nasdaq 뉴스 수집 완료")
+
+
+@router.post("/news/fetch/investing")
+async def fetch_investing_news(
+    limit: int = Query(30, ge=1, le=100),
+    db: AsyncSession = Depends(get_async_db_with_transaction),
+):
+    """Investing.com Stock Market News RSS를 수집해 news_items에 적재"""
+    try:
+        summary = await investing_news_service.fetch_and_ingest(
+            db=db,
+            limit=limit,
+        )
+    except Exception as exc:
+        news_runtime_service.record_source_result(
+            "INVESTING",
+            status="ERROR",
+            mode="MANUAL",
+            message=str(exc),
+        )
+        raise
+
+    news_runtime_service.record_source_result(
+        "INVESTING",
+        status="SUCCESS" if summary.get("received") else "EMPTY",
+        mode="MANUAL",
+        message="Investing.com 해외 뉴스 적재 완료" if summary.get("created") else "조회된 데이터 없음",
+        counts=summary,
+    )
+    return SuccessResponse(data=summary, message="Investing.com 뉴스 수집 완료")
 
 
 @router.get("/positions/{symbol}")
