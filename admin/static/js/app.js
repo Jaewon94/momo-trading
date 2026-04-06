@@ -119,6 +119,10 @@ let activePaneResize = null;
 
 // Stock card tracking: key = "cycleId:symbol" → { element, headerEl, bodyEl, stepsEl, activities[], outcome }
 let stockCards = {};
+let taskCards = {};
+let taskCardSequence = {};
+let latestTaskCardKeyByDescriptor = {};
+let lastActivityGroupKey = null;
 
 // Sidebar section state
 const sidebarState = {
@@ -2291,10 +2295,10 @@ function appendActivity(data) {
   const symbol = activity.symbol;
   const isCycleActivity = activity.activity_type === 'CYCLE';
   const isDailyPlan = activity.activity_type === 'DAILY_PLAN';
-  const isLLMCall = activity.activity_type === 'LLM_CALL';
+  const isTaskActivity = !symbol && !isCycleActivity;
 
   // Non-symbol activities → inline (cycle dividers, daily plan, events without symbol)
-  if (!symbol || isCycleActivity || isDailyPlan) {
+  if (isCycleActivity) {
     if (isCycleActivity && activity.phase === 'START') {
       const divider = createCycleDivider(activity, true);
       container.appendChild(divider);
@@ -2308,12 +2312,28 @@ function appendActivity(data) {
         existing.querySelector('.cycle-text').textContent += ' → 완료';
       }
       container.appendChild(createCycleDivider(activity, false));
-    } else if (isLLMCall && !symbol) {
-      // LLM calls without symbol → inline
-      container.appendChild(createBubble(activity));
     } else {
       container.appendChild(createBubble(activity));
     }
+    lastActivityGroupKey = `cycle:${activity.cycle_id || activity.phase || 'global'}`;
+  } else if (isTaskActivity || isDailyPlan) {
+    const descriptor = buildTaskCardDescriptor(activity);
+    const groupKey = `task:${descriptor.key}`;
+    let cardKey = latestTaskCardKeyByDescriptor[descriptor.key];
+    if (lastActivityGroupKey !== groupKey || !cardKey || !taskCards[cardKey]) {
+      const nextIndex = (taskCardSequence[descriptor.key] || 0) + 1;
+      taskCardSequence[descriptor.key] = nextIndex;
+      cardKey = `${descriptor.key}:${nextIndex}`;
+    }
+    let card = taskCards[cardKey];
+    if (!card) {
+      card = createTaskCard(activity);
+      taskCards[cardKey] = card;
+      latestTaskCardKeyByDescriptor[descriptor.key] = cardKey;
+      container.appendChild(card.element);
+    }
+    addStepToTaskCard(card, activity);
+    lastActivityGroupKey = groupKey;
   } else {
     // Symbol-specific → route to stock card
     const cardKey = `${activity.cycle_id || 'ev'}:${symbol}`;
@@ -2337,6 +2357,7 @@ function appendActivity(data) {
     }
     addStepToCard(card, activity);
     updateCardHeader(card);
+    lastActivityGroupKey = `symbol:${cardKey}`;
   }
 
   activityCount++;
@@ -2573,7 +2594,7 @@ function addStepToCard(card, data) {
 
   // COMPLETE/ERROR → remove matching START spinner
   if (data.phase === 'COMPLETE' || data.phase === 'ERROR') {
-    const existing = card.stepsEl.querySelector(`[data-progress-key="${progressKey}"]`);
+    const existing = findProgressStep(card.stepsEl, progressKey);
     if (existing) existing.remove();
   }
 
@@ -2634,6 +2655,7 @@ function addStepToCard(card, data) {
  */
 function updateCardHeader(card) {
   const acts = card.activities;
+  const latestActivity = acts[acts.length - 1];
   let outcome = 'progress';
   let outcomeText = '<span class="progress-spinner" style="width:10px;height:10px;border-width:1.5px;margin-right:4px"></span>분석 중';
   let outcomeBg = 'bg-purple-900/40 text-purple-300';
@@ -2755,7 +2777,7 @@ function updateCardHeader(card) {
   }
 
   // Update card border color
-  card.element.className = `stock-card outcome-${outcome}`;
+  card.element.className = `stock-card outcome-${outcome} tone-${resolveActivityTone(latestActivity?.activity_type, latestActivity?.summary)}`;
   updateCardManualActions(card);
 }
 
@@ -2938,6 +2960,306 @@ function cleanupStockCards() {
     if (card.liveTimer) clearInterval(card.liveTimer);
   }
   stockCards = {};
+  taskCards = {};
+  taskCardSequence = {};
+  latestTaskCardKeyByDescriptor = {};
+  lastActivityGroupKey = null;
+}
+
+function buildTaskCardDescriptor(data) {
+  const summary = String(data?.summary || '');
+  const type = String(data?.activity_type || '').toUpperCase();
+
+  if (type === 'REPORT') {
+    return { key: 'report', title: '일일 리포트 작업', icon: '📝' };
+  }
+  if (/뉴스|공시|수집|poll/i.test(summary)) {
+    return { key: 'news', title: '뉴스 수집/해석', icon: '🛰️' };
+  }
+  if (type === 'QA') {
+    return { key: 'qa', title: 'Q&A 작업', icon: '💬' };
+  }
+  if (type === 'DAILY_PLAN') {
+    return { key: 'daily-plan', title: '일일 계획 작업', icon: '📅' };
+  }
+  if (type === 'LLM_CALL') {
+    return { key: 'llm', title: '공용 LLM 작업', icon: '🤖' };
+  }
+  if (type === 'EVENT') {
+    return { key: 'event', title: '운영 이벤트', icon: '📣' };
+  }
+  if (type === 'SCHEDULE' || type === 'TRADING_RULE' || type === 'HOLDINGS_CHECK') {
+    return { key: 'operations', title: '운영 스케줄 작업', icon: '⚙️' };
+  }
+  return { key: `task-${type || 'misc'}`, title: type || '기타 작업', icon: '📌' };
+}
+
+function parseActivityDetailObject(detail) {
+  if (!detail) return null;
+  if (typeof detail === 'object') return detail;
+  try {
+    return JSON.parse(detail);
+  } catch {
+    return null;
+  }
+}
+
+function getTaskProgressKey(data) {
+  const detail = parseActivityDetailObject(data?.detail);
+  const detailKey = detail?.task_key || detail?.source_code || detail?.report_date || detail?.mode;
+  const normalizedSummary = String(data?.summary || '')
+    .replace(/시작$/, '')
+    .replace(/완료.*$/, '완료')
+    .trim();
+  return `${String(data?.activity_type || 'TASK').toUpperCase()}:${detailKey || normalizedSummary || 'global'}`;
+}
+
+function findProgressStep(container, progressKey) {
+  if (!container || !progressKey) return null;
+  return Array.from(container.querySelectorAll('[data-progress-key]')).find(
+    (element) => element.getAttribute('data-progress-key') === progressKey,
+  ) || null;
+}
+
+function resolveActivityTone(activityType, summary = '') {
+  const type = String(activityType || '').toUpperCase();
+  const text = String(summary || '');
+
+  if (type === 'TIER1_ANALYSIS' || type === 'MARKET_SCAN' || /스캔|1차 분석|실시간 이벤트/.test(text)) return 'scan';
+  if (type === 'TIER2_REVIEW') return 'review';
+  if (type === 'STRATEGY_EVAL') return 'strategy';
+  if (type === 'ORDER' || type === 'DECISION' || /주문|체결|매수|매도/.test(text)) return 'order';
+  if (type === 'LLM_CALL') return 'llm';
+  if (type === 'REPORT') return 'report';
+  if (type === 'DAILY_PLAN') return 'plan';
+  if (type === 'EVENT') return 'event';
+  if (type === 'SCHEDULE' || type === 'TRADING_RULE' || type === 'HOLDINGS_CHECK') return 'operations';
+  if (/뉴스|공시|수집|poll/i.test(text)) return 'news';
+  return 'operations';
+}
+
+function resolveTaskDescriptorTone(descriptorKey) {
+  if (descriptorKey === 'news') return 'news';
+  if (descriptorKey === 'report') return 'report';
+  if (descriptorKey === 'daily-plan') return 'plan';
+  if (descriptorKey === 'llm') return 'llm';
+  if (descriptorKey === 'event') return 'event';
+  return 'operations';
+}
+
+function buildTaskHeaderMeta(card, latest, detail) {
+  if (!latest) return '';
+
+  if (card.descriptor?.key === 'news') {
+    const summary = detail?.summary;
+    if (summary && (summary.created != null || summary.duplicates != null || summary.skipped != null)) {
+      return `최근 실행 · 신규 ${summary.created || 0}건 · 중복 ${summary.duplicates || 0}건 · 스킵 ${summary.skipped || 0}건`;
+    }
+  }
+
+  if (card.descriptor?.key === 'report' && detail?.report_date) {
+    return `${detail.report_date} · ${latest.summary || '리포트 갱신'}`;
+  }
+
+  if (card.descriptor?.key === 'operations' && detail?.mode) {
+    return `${detail.mode} · ${latest.summary || '운영 상태 갱신'}`;
+  }
+
+  return latest.summary || '';
+}
+
+function buildTaskStepHeadline(card, data, detail) {
+  if (card.descriptor?.key === 'news') {
+    const summary = detail?.summary;
+    if (summary && (summary.created != null || summary.duplicates != null || summary.skipped != null)) {
+      return `뉴스 자동 수집 완료 · 신규 ${summary.created || 0}건 · 중복 ${summary.duplicates || 0}건 · 스킵 ${summary.skipped || 0}건`;
+    }
+  }
+
+  if (card.descriptor?.key === 'report' && detail?.report_date) {
+    return `${detail.report_date} 리포트 · ${data.summary || '리포트 작업'}`;
+  }
+
+  return data.summary || data.activity_type || '작업';
+}
+
+function createTaskCard(firstActivity) {
+  const descriptor = buildTaskCardDescriptor(firstActivity);
+  const el = document.createElement('div');
+  el.className = 'stock-card task-card outcome-progress';
+
+  const header = document.createElement('div');
+  header.className = 'stock-card-header';
+  header.innerHTML = `
+    <span class="task-icon-badge">${descriptor.icon}</span>
+    <span class="flex-1 min-w-0">
+      <span class="flex items-center gap-2 min-w-0">
+        <span class="text-sm font-medium text-white block truncate">${escapeHtml(descriptor.title)}</span>
+        <span class="task-count task-meta-chip hidden"></span>
+      </span>
+      <span class="task-meta text-[11px] text-gray-500 block truncate mt-1 hidden"></span>
+    </span>
+    <span class="stock-outcome text-xs px-2 py-0.5 rounded bg-purple-900/40 text-purple-300">
+      <span class="progress-spinner" style="width:10px;height:10px;border-width:1.5px;margin-right:4px"></span>진행 중
+    </span>
+    <span class="stock-elapsed text-xs text-gray-600"></span>
+    <span class="stock-expand text-gray-500 text-xs transition-transform" style="transform:rotate(-90deg)">▼</span>
+  `;
+
+  const body = document.createElement('div');
+  body.className = 'stock-card-body';
+
+  const steps = document.createElement('div');
+  steps.className = 'stock-card-steps';
+  body.appendChild(steps);
+
+  el.appendChild(header);
+  el.appendChild(body);
+
+  const card = {
+    element: el,
+    headerEl: header,
+    bodyEl: body,
+    stepsEl: steps,
+    activities: [],
+    descriptor,
+    outcome: 'progress',
+    isOpen: false,
+    totalElapsed: 0,
+    startTime: Date.now(),
+    liveTimer: null,
+  };
+
+  header.onclick = () => toggleCardBody(card);
+  card.liveTimer = setInterval(() => {
+    if (card.outcome && card.outcome !== 'progress') {
+      clearInterval(card.liveTimer);
+      card.liveTimer = null;
+      return;
+    }
+    const elapsed = ((Date.now() - card.startTime) / 1000).toFixed(0);
+    const elapsedEl = card.headerEl.querySelector('.stock-elapsed');
+    if (elapsedEl) elapsedEl.textContent = `${elapsed}초`;
+  }, 1000);
+  return card;
+}
+
+function addStepToTaskCard(card, data) {
+  card.activities.push(data);
+  const progressKey = getTaskProgressKey(data);
+  const detail = parseActivityDetailObject(data.detail);
+
+  if (data.phase === 'START') {
+    const step = document.createElement('div');
+    step.className = 'stock-step';
+    step.setAttribute('data-progress-key', progressKey);
+    step.innerHTML = `
+      <span class="text-xs text-gray-600 shrink-0 w-14">${formatTime(data.created_at)}</span>
+      <span class="progress-spinner" style="width:10px;height:10px;border-width:1.5px"></span>
+      <span class="text-xs text-gray-400">${escapeHtml(buildTaskStepHeadline(card, data, detail))}...</span>
+    `;
+    card.stepsEl.appendChild(step);
+    updateTaskCardHeader(card);
+    return;
+  }
+
+  if (data.phase === 'COMPLETE' || data.phase === 'ERROR') {
+    const existing = findProgressStep(card.stepsEl, progressKey);
+    if (existing) existing.remove();
+  }
+
+  const step = document.createElement('div');
+  step.className = 'stock-step';
+  const dotColor = getTypeDotColor(data.activity_type);
+  let html = `
+    <span class="text-xs text-gray-600 shrink-0 w-14">${formatTime(data.created_at)}</span>
+    <span class="shrink-0 w-2 h-2 rounded-full bg-${dotColor}-400 mt-1.5"></span>
+    <div class="flex-1 min-w-0">
+      <div class="text-xs text-gray-500 mb-0.5">${escapeHtml(data.activity_type || 'TASK')}</div>
+      <div class="text-xs text-gray-200 whitespace-pre-wrap">${escapeHtml(buildTaskStepHeadline(card, data, detail))}</div>
+  `;
+  const metaParts = [];
+  if (data.llm_provider) metaParts.push(data.llm_provider);
+  if (data.execution_time_ms) metaParts.push(`${(data.execution_time_ms / 1000).toFixed(1)}초`);
+  if (metaParts.length) {
+    html += `<div class="text-xs text-gray-600 mt-0.5">${escapeHtml(metaParts.join(' · '))}</div>`;
+  }
+  if (data.detail) {
+    const detailId = 'task-detail-' + (data.id || Math.random().toString(36).slice(2, 8));
+    const isLLMCall = data.activity_type === 'LLM_CALL';
+    html += `
+      ${buildDetailToggleMarkup({ detailId, isLLMCall })}
+      <div id="${detailId}" class="detail-content mt-1 text-xs bg-dark-900/50 rounded p-2 text-gray-400">
+        <div class="detail-content-inner">
+          ${isLLMCall ? formatLLMConversation(data.detail) : `<pre class="whitespace-pre-wrap break-all max-h-96 overflow-y-auto">${formatDetail(data.detail)}</pre>`}
+        </div>
+      </div>`;
+  }
+  if (data.error_message) {
+    html += `<div class="text-xs text-red-400 mt-0.5">${escapeHtml(data.error_message)}</div>`;
+  }
+  html += '</div>';
+  step.innerHTML = html;
+  card.stepsEl.appendChild(step);
+  updateTaskCardHeader(card);
+}
+
+function updateTaskCardHeader(card) {
+  const latest = card.activities[card.activities.length - 1];
+  const detail = parseActivityDetailObject(latest?.detail);
+  const metaEl = card.headerEl.querySelector('.task-meta');
+  if (metaEl) {
+    const metaText = buildTaskHeaderMeta(card, latest, detail);
+    metaEl.textContent = metaText;
+    metaEl.classList.toggle('hidden', !metaText);
+  }
+
+  const countEl = card.headerEl.querySelector('.task-count');
+  if (countEl) {
+    const visibleSteps = card.stepsEl ? card.stepsEl.children.length : 0;
+    countEl.textContent = `${visibleSteps}개 단계`;
+    countEl.classList.toggle('hidden', visibleSteps === 0);
+  }
+
+  let outcome = 'progress';
+  let outcomeText = '<span class="progress-spinner" style="width:10px;height:10px;border-width:1.5px;margin-right:4px"></span>진행 중';
+  let outcomeBg = 'bg-purple-900/40 text-purple-300';
+  if (latest?.phase === 'ERROR' || latest?.error_message) {
+    outcome = 'error';
+    outcomeText = '❌ 오류';
+    outcomeBg = 'bg-yellow-900/40 text-yellow-300';
+  } else if (latest?.phase === 'SKIP') {
+    outcome = 'hold';
+    outcomeText = '⏭ 스킵';
+    outcomeBg = 'bg-gray-700/60 text-gray-400';
+  } else if (latest?.phase === 'COMPLETE' || latest?.phase === 'PROGRESS') {
+    outcome = 'hold';
+    if (card.descriptor?.key === 'news' && detail?.summary) {
+      outcomeText = `🛰 신규 ${detail.summary.created || 0}건`;
+    } else if (card.descriptor?.key === 'report') {
+      outcomeText = '📝 리포트 갱신';
+    } else {
+      outcomeText = '✓ 업데이트';
+    }
+    outcomeBg = 'bg-blue-900/40 text-blue-200';
+  }
+
+  card.outcome = outcome;
+  card.totalElapsed = card.activities.reduce((sum, activity) => sum + (activity.execution_time_ms || 0), 0);
+  const outcomeEl = card.headerEl.querySelector('.stock-outcome');
+  if (outcomeEl) {
+    outcomeEl.className = `stock-outcome text-xs px-2 py-0.5 rounded ${outcomeBg}`;
+    outcomeEl.innerHTML = outcomeText;
+  }
+  if (outcome !== 'progress' && card.liveTimer) {
+    clearInterval(card.liveTimer);
+    card.liveTimer = null;
+  }
+  const elapsedEl = card.headerEl.querySelector('.stock-elapsed');
+  if (elapsedEl && outcome !== 'progress' && card.totalElapsed > 0) {
+    elapsedEl.textContent = `${(card.totalElapsed / 1000).toFixed(1)}초`;
+  }
+  card.element.className = `stock-card task-card outcome-${outcome}`;
 }
 
 // ── Q&A ──

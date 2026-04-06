@@ -294,9 +294,15 @@
       border-left: 4px solid #60a5fa;
       background: linear-gradient(90deg, rgba(96,165,250,0.06) 0%, transparent 30%);
     }
-    .stock-card.outcome-hold { border-left: 3px solid #6b7280; }
+    .stock-card.outcome-hold {
+      border-left: 3px solid #cbd5e1;
+      background: linear-gradient(180deg, rgba(255,255,255,0.018), rgba(15,23,42,0.04));
+    }
     .stock-card.outcome-error { border-left: 3px solid #fbbf24; }
-    .stock-card.outcome-progress { border-left: 3px solid #a78bfa; }
+    .stock-card.outcome-progress {
+      border-left: 3px solid #cbd5e1;
+      background: linear-gradient(180deg, rgba(255,255,255,0.018), rgba(15,23,42,0.04));
+    }
     .stock-card-header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; cursor: pointer; user-select: none; transition: background 0.15s; }
     .stock-card-header:hover { background: rgba(255,255,255,0.03); }
     .stock-card-body { max-height: 0; overflow: hidden; transition: max-height 0.3s ease-out; }
@@ -304,6 +310,56 @@
     .stock-card-steps { padding: 0 12px 8px 12px; }
     .stock-step { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0; border-top: 1px solid #1f2937; }
     .stock-step:first-child { border-top: none; }
+    .task-card {
+      border-left: 3px solid #475569;
+      background: linear-gradient(180deg, rgba(15,23,42,0.72), rgba(15,23,42,0.38));
+    }
+    .task-card.outcome-hold,
+    .task-card.outcome-progress {
+      border-left-color: #475569;
+      background: linear-gradient(180deg, rgba(15,23,42,0.72), rgba(15,23,42,0.38));
+    }
+    .task-card .stock-card-header {
+      padding-top: 10px;
+      padding-bottom: 10px;
+      background: rgba(15, 23, 42, 0.42);
+    }
+    .task-card .stock-card-header:hover {
+      background: rgba(30, 41, 59, 0.46);
+    }
+    .task-icon-badge {
+      width: 28px;
+      height: 28px;
+      border-radius: 10px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(180deg, rgba(51,65,85,0.5), rgba(30,41,59,0.7));
+      border: 1px solid rgba(100,116,139,0.3);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+    .task-meta-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.74);
+      border: 1px solid rgba(71, 85, 105, 0.75);
+      color: #94a3b8;
+      font-size: 10px;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    .task-card .stock-card-body.open {
+      background: linear-gradient(180deg, rgba(15,23,42,0.2), rgba(15,23,42,0.02));
+    }
+    .task-card .stock-step {
+      padding-top: 8px;
+      padding-bottom: 8px;
+    }
 
     .event-radar-shell {
       border-bottom: 1px solid rgba(55, 65, 81, 0.9);

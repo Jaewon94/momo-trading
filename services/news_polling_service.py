@@ -7,6 +7,7 @@ from typing import Any, Awaitable, Callable
 
 from core.config import settings
 from core.events import Event, EventType, event_bus
+from services.activity_logger import activity_logger
 from services.bloomberg_news_service import bloomberg_news_service
 from services.cnbc_news_service import cnbc_news_service
 from services.investing_news_service import investing_news_service
@@ -17,6 +18,7 @@ from services.open_dart_disclosure_service import open_dart_disclosure_service
 from services.news_runtime_service import news_runtime_service
 from services.seeking_alpha_news_service import seeking_alpha_news_service
 from services.yonhap_news_service import yonhap_news_service
+from trading.enums import ActivityPhase, ActivityType
 
 
 @dataclass(frozen=True)
@@ -50,6 +52,10 @@ class NewsPollingService:
                     message=summary["reason"],
                     counts=summary,
                 )
+            await self._log_news_activity(
+                "🛰 뉴스 자동 수집 스킵 · NEWS_POLL_ENABLED 비활성",
+                detail={"mode": runtime_mode, "reason": summary["reason"]},
+            )
             return summary
         source_results = await self._poll_enabled_sources(source_specs)
         all_items: list[dict[str, Any]] = []
@@ -84,11 +90,51 @@ class NewsPollingService:
             ))
             published_events += 1
 
+        source_briefs = []
+        for spec in source_specs:
+            result = source_results[spec.source_code]
+            counts = result.counts or {}
+            source_briefs.append({
+                "source_code": spec.source_code,
+                "status": result.status,
+                "received": int(counts.get("received") or 0),
+                "created": int(counts.get("created") or 0),
+                "duplicates": int(counts.get("duplicates") or 0),
+                "skipped": int(counts.get("skipped") or 0),
+                "message": result.message,
+            })
+
+        await self._log_news_activity(
+            "🛰 뉴스 자동 수집 완료 · "
+            f"신규 {int(summary.get('created') or 0)}건 · "
+            f"중복 {int(summary.get('duplicates') or 0)}건 · "
+            f"스킵 {int(summary.get('skipped') or 0)}건",
+            detail={
+                "mode": runtime_mode,
+                "market_hours": market_hours,
+                "summary": summary,
+                "published_events": published_events,
+                "sources": source_briefs,
+            },
+        )
+
         return {
             **summary,
             "published_events": published_events,
             "market_hours": market_hours,
         }
+
+    async def _log_news_activity(self, summary: str, *, detail: dict[str, Any] | None = None) -> None:
+        try:
+            await activity_logger.log(
+                ActivityType.SCHEDULE,
+                ActivityPhase.PROGRESS,
+                summary,
+                detail=detail,
+            )
+        except Exception:
+            # 뉴스 수집 자체를 로그 실패로 막지 않는다.
+            return
 
     def _build_source_specs(self, session, *, page_count: int) -> list[NewsSourcePollSpec]:
         return [
