@@ -243,3 +243,79 @@ async def test_news_signal_service_boosts_recent_off_hours_news(monkeypatch):
 
     assert result["contributors"][0]["session_multiplier"] > 1.0
     assert result["negative_pressure"] > result["negative_pressure_base"]
+
+
+@pytest.mark.asyncio
+async def test_news_signal_service_applies_related_symbol_relevance_from_metadata(monkeypatch):
+    from services.news_signal_service import NewsSignalService
+
+    monkeypatch.setattr("services.news_signal_service.settings.NEWS_GATE_ENABLED", True)
+    monkeypatch.setattr("services.news_signal_service.settings.NEWS_LOOKBACK_HOURS", 24)
+    monkeypatch.setattr("services.news_signal_service.settings.NEWS_NEGATIVE_BLOCK_THRESHOLD", 0.95)
+    monkeypatch.setattr("services.news_signal_service.settings.NEWS_FRESHNESS_HALFLIFE_HOURS", 8)
+
+    async with TestAsyncSessionLocal() as session:
+        session.add(NewsItem(
+            source_code="BLOOMBERG",
+            source_name="Bloomberg",
+            source_tier="B",
+            region="GLOBAL",
+            official=False,
+            language="en",
+            title="Supply chain issue hits sector peers",
+            published_at=now_kst() - timedelta(hours=1),
+            sentiment_label="NEGATIVE",
+            sentiment_score=0.24,
+            impact_score=0.7,
+            trust_score=0.88,
+            symbols_csv=",555930,665930,",
+            metadata_json='{"primary_symbol":"555930","related_symbol_weights":{"665930":0.55}}',
+            dedupe_hash="gate-related-weight-1",
+        ))
+        await session.commit()
+
+        service = NewsSignalService()
+        primary = await service.evaluate_gate(session, symbol="555930", horizon="MID")
+        related = await service.evaluate_gate(session, symbol="665930", horizon="MID")
+
+    assert primary["contributors"][0]["symbol_relevance"] == 1.0
+    assert related["contributors"][0]["symbol_relevance"] == 0.55
+    assert related["negative_pressure"] < primary["negative_pressure"]
+
+
+@pytest.mark.asyncio
+async def test_news_signal_service_applies_sector_relevance_from_metadata(monkeypatch):
+    from services.news_signal_service import NewsSignalService
+
+    monkeypatch.setattr("services.news_signal_service.settings.NEWS_GATE_ENABLED", True)
+    monkeypatch.setattr("services.news_signal_service.settings.NEWS_LOOKBACK_HOURS", 24)
+    monkeypatch.setattr("services.news_signal_service.settings.NEWS_NEGATIVE_BLOCK_THRESHOLD", 0.95)
+    monkeypatch.setattr("services.news_signal_service.settings.NEWS_FRESHNESS_HALFLIFE_HOURS", 8)
+
+    async with TestAsyncSessionLocal() as session:
+        session.add(NewsItem(
+            source_code="YONHAP",
+            source_name="연합뉴스",
+            source_tier="B",
+            region="KR",
+            official=False,
+            language="ko",
+            title="반도체 업종 전반 공급 차질 우려",
+            published_at=now_kst() - timedelta(hours=1),
+            sentiment_label="NEGATIVE",
+            sentiment_score=0.22,
+            impact_score=0.68,
+            trust_score=0.82,
+            symbols_csv=",775930,885930,",
+            metadata_json='{"sector_symbols":["775930"],"sector_relevance":1.14}',
+            dedupe_hash="gate-sector-weight-1",
+        ))
+        await session.commit()
+
+        service = NewsSignalService()
+        in_sector = await service.evaluate_gate(session, symbol="775930", horizon="MID")
+        out_sector = await service.evaluate_gate(session, symbol="885930", horizon="MID")
+
+    assert in_sector["contributors"][0]["sector_relevance"] == 1.14
+    assert out_sector["contributors"][0]["sector_relevance"] == 1.0
+    assert in_sector["negative_pressure"] > out_sector["negative_pressure"]

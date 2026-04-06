@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.config import settings
 from repositories.news_item_repository import NewsItemRepository
 from scheduler.market_calendar import market_calendar
+from trading.symbols import normalize_krx_symbol
 from util.time_util import ensure_kst, now_kst
 
 
@@ -65,6 +66,7 @@ class NewsSignalService:
         for item in items:
             contributor = self._evaluate_item_pressure(
                 item,
+                symbol=symbol,
                 cutoff=cutoff,
                 now=now,
                 halflife_hours=halflife_hours,
@@ -133,6 +135,7 @@ class NewsSignalService:
         self,
         item,
         *,
+        symbol: str,
         cutoff,
         now,
         halflife_hours: float,
@@ -150,10 +153,14 @@ class NewsSignalService:
         impact = self._impact_score(item.impact_score, bool(item.official), getattr(item, "source_tier", None))
         trust = max(float(item.trust_score or 0.0), 0.0)
         headline = self._display_headline(item)
+        metadata = self._load_metadata(item)
         severity = self._severity_multiplier(headline)
         session_multiplier = self._session_multiplier(now=now, published_at=published_at)
+        symbol_relevance = self._symbol_relevance_multiplier(metadata, symbol=symbol)
+        sector_relevance = self._sector_relevance_multiplier(metadata, symbol=symbol)
+        relevance_multiplier = symbol_relevance * sector_relevance
         pressure_base = negative_score * freshness * impact * trust * severity
-        pressure = pressure_base * session_multiplier
+        pressure = pressure_base * session_multiplier * relevance_multiplier
 
         if pressure <= 0:
             return None
@@ -169,6 +176,9 @@ class NewsSignalService:
             "negative_score": round(negative_score, 4),
             "severity": round(severity, 4),
             "session_multiplier": round(session_multiplier, 4),
+            "symbol_relevance": round(symbol_relevance, 4),
+            "sector_relevance": round(sector_relevance, 4),
+            "relevance_multiplier": round(relevance_multiplier, 4),
             "pressure_base": round(pressure_base, 4),
         }
 
@@ -207,6 +217,99 @@ class NewsSignalService:
         if market_calendar.is_krx_trading_hours():
             return 1.03 if age_hours <= 1.5 else 1.0
         return 1.08 if age_hours <= 6 else 1.02
+
+    def _symbol_relevance_multiplier(self, metadata: dict[str, Any], *, symbol: str) -> float:
+        normalized_symbol = normalize_krx_symbol(symbol)
+        if not normalized_symbol:
+            return 1.0
+
+        direct_weight = self._lookup_symbol_weight(
+            metadata.get("symbol_weights"),
+            symbol=normalized_symbol,
+        )
+        if direct_weight is not None:
+            return self._clamp_multiplier(direct_weight, low=0.35, high=1.25)
+
+        related_weight = self._lookup_symbol_weight(
+            metadata.get("related_symbol_weights"),
+            symbol=normalized_symbol,
+        )
+        if related_weight is not None:
+            return self._clamp_multiplier(related_weight, low=0.35, high=1.1)
+
+        primary_symbol = normalize_krx_symbol(metadata.get("primary_symbol"))
+        if primary_symbol and primary_symbol == normalized_symbol:
+            return 1.0
+
+        related_symbols = metadata.get("related_symbols")
+        if isinstance(related_symbols, list):
+            normalized_related = {
+                normalize_krx_symbol(item)
+                for item in related_symbols
+                if normalize_krx_symbol(item)
+            }
+            if normalized_symbol in normalized_related:
+                return 0.78
+
+        return 1.0
+
+    def _sector_relevance_multiplier(self, metadata: dict[str, Any], *, symbol: str) -> float:
+        normalized_symbol = normalize_krx_symbol(symbol)
+
+        sector_weight = self._lookup_symbol_weight(
+            metadata.get("sector_weights"),
+            symbol=normalized_symbol,
+        )
+        if sector_weight is not None:
+            return self._clamp_multiplier(sector_weight, low=0.7, high=1.2)
+
+        sector_relevance = metadata.get("sector_relevance")
+        sector_symbols = metadata.get("sector_symbols")
+        if sector_relevance is not None:
+            if not isinstance(sector_symbols, list):
+                return self._clamp_multiplier(sector_relevance, low=0.7, high=1.2)
+            normalized_sector_symbols = {
+                normalize_krx_symbol(item)
+                for item in sector_symbols
+                if normalize_krx_symbol(item)
+            }
+            if normalized_symbol in normalized_sector_symbols:
+                return self._clamp_multiplier(sector_relevance, low=0.7, high=1.2)
+
+        return 1.0
+
+    @staticmethod
+    def _lookup_symbol_weight(raw: Any, *, symbol: str) -> float | None:
+        if isinstance(raw, dict):
+            value = raw.get(symbol)
+            if value is None:
+                value = raw.get(f"A{symbol}")
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        if isinstance(raw, list):
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                item_symbol = normalize_krx_symbol(item.get("symbol"))
+                if item_symbol != symbol:
+                    continue
+                for key in ("weight", "relevance", "score"):
+                    try:
+                        return float(item.get(key))
+                    except (TypeError, ValueError):
+                        continue
+        return None
+
+    @staticmethod
+    def _clamp_multiplier(value: Any, *, low: float, high: float) -> float:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return 1.0
+        return min(max(numeric, low), high)
 
 
 news_signal_service = NewsSignalService()
