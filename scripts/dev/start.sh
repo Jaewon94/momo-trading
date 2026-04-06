@@ -7,6 +7,7 @@
 #   ./start.sh --reload — 포그라운드 실행 (자동 재시작)
 #   ./start.sh -d       — 백그라운드(데몬) 실행
 #   ./start.sh stop     — 백그라운드 프로세스 종료
+#   ./start.sh stop --backup — 종료 전에 운영 DB 백업 후 종료
 #   ./start.sh status   — 실행 상태 확인
 #   ./start.sh logs     — 실시간 로그 보기
 #   ./start.sh backup-db — 운영 DB 수동 백업
@@ -25,6 +26,7 @@ DOCKER_BIN="${MOMO_DOCKER_BIN:-docker}"
 PYTHON_BIN="${MOMO_PYTHON_BIN:-python}"
 LSOF_BIN="${MOMO_LSOF_BIN:-lsof}"
 STARTUP_WAIT_SEC="${MOMO_STARTUP_WAIT_SEC:-1}"
+AUTO_BACKUP_ON_STOP="${MOMO_AUTO_BACKUP_ON_STOP:-0}"
 
 has_command() {
     local command_name="$1"
@@ -300,6 +302,11 @@ run_db_migrations() {
     exit 1
 }
 
+run_db_backup() {
+    echo "💾 운영 DB 백업 생성"
+    "$PYTHON_BIN" scripts/dev/backup_runtime_db.py
+}
+
 if [ -f "$VENV_DIR/bin/activate" ]; then
     source "$VENV_DIR/bin/activate"
 else
@@ -317,12 +324,14 @@ mkdir -p "$APP_DIR/data"
 
 case "${1:-}" in
     stop)
+        if [ "${2:-}" = "--backup" ] || [ "$AUTO_BACKUP_ON_STOP" = "1" ] || [ "$AUTO_BACKUP_ON_STOP" = "true" ]; then
+            run_db_backup
+        fi
         stop_momo_processes
         ;;
 
     backup-db)
-        echo "💾 운영 DB 백업 생성"
-        "$PYTHON_BIN" scripts/dev/backup_runtime_db.py
+        run_db_backup
         ;;
 
     status)
@@ -422,7 +431,7 @@ case "${1:-}" in
         ;;
 
     *)
-        echo "사용법: $0 [--reload|-d|stop|status|logs|backup-db]"
+        echo "사용법: $0 [--reload|-d|stop [--backup]|status|logs|backup-db]"
         exit 1
         ;;
 esac

@@ -150,6 +150,45 @@ def test_start_script_stops_kis_mcp_when_broker_provider_is_not_kis(tmp_path: Pa
     assert python_lines[uvicorn_index - 1 : uvicorn_index + 2] == ["-m", "uvicorn", "main:app"]
 
 
+def test_start_script_stop_with_backup_runs_backup_before_stop(tmp_path: Path) -> None:
+    env, _, python_log = _build_test_env(tmp_path, "KIWOOM")
+    pid_file = Path(env["MOMO_PID_FILE"])
+    pid_file.write_text("99999\n", encoding="utf-8")
+
+    result = subprocess.run(
+        ["bash", str(START_SCRIPT), "stop", "--backup"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    python_lines = _read_lines(python_log)
+    assert python_lines[:1] == ["scripts/dev/backup_runtime_db.py"]
+    assert "운영 DB 백업 생성" in result.stdout
+
+
+def test_start_script_stop_respects_auto_backup_env(tmp_path: Path) -> None:
+    env, _, python_log = _build_test_env(tmp_path, "KIWOOM")
+    env["MOMO_AUTO_BACKUP_ON_STOP"] = "1"
+    pid_file = Path(env["MOMO_PID_FILE"])
+    pid_file.write_text("99999\n", encoding="utf-8")
+
+    result = subprocess.run(
+        ["bash", str(START_SCRIPT), "stop"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert _read_lines(python_log)[:1] == ["scripts/dev/backup_runtime_db.py"]
+
+
 def test_start_script_default_foreground_does_not_enable_reload(tmp_path: Path) -> None:
     env, _, python_log = _build_test_env(tmp_path, "KIWOOM")
 

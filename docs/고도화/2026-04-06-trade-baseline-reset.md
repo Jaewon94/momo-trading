@@ -51,4 +51,7 @@
   - API: `POST /api/v1/admin/system/backup-operational-db`
   - `DB 초기화` 실행 전 현재 DB 백업 파일을 자동 생성
 - [ ] 다른 컴퓨터 이동 전/후 DB 백업 복원 절차 문서화
-- [ ] 최소 일 1회 자동 백업 또는 종료 전 자동 백업 여부 검토
+- [x] 종료 전 자동 백업 경로 추가
+  - `bash start.sh stop --backup`
+  - 또는 `MOMO_AUTO_BACKUP_ON_STOP=1 bash start.sh stop`
+- [ ] 최소 일 1회 자동 백업 여부 검토
