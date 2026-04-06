@@ -281,14 +281,14 @@ describe("position_detail_state", () => {
           fill_type: "PARTIAL_EXIT",
           remaining_open_quantity: 2,
         }),
-        trade_state_kind_label: "부분 매도",
+        trade_state_kind_label: "부분 매도 후 정리",
         trade_state_badge: "PARTIAL_EXIT",
         trade_state_tone: "sell",
         trade_state_icon: "부분",
       },
     });
 
-    expect(entry.kindLabel).toBe("부분 매도");
+    expect(entry.kindLabel).toBe("부분 매도 후 정리");
     expect(entry.badge).toBe("PARTIAL_EXIT");
     expect(entry.tone).toBe("sell");
   });

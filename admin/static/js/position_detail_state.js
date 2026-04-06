@@ -132,11 +132,15 @@ function classifyTimelineEntry(entry) {
       hasExit: Boolean(detail.exit_price || entry.title?.includes("매도")),
     });
 
-    if (executionState.code.startsWith("SELL")) {
+    if (executionState.code.startsWith("SELL") || executionState.code.startsWith("BUY_")) {
       return {
         filterKey: "trade",
         tone: executionState.tone,
-        icon: executionState.code === "SELL_PARTIAL" ? "부분" : "매도",
+        icon: executionState.code === "SELL_PARTIAL" || executionState.code === "BUY_PARTIALLY_CLOSED"
+          ? "부분"
+          : executionState.code === "BUY_CLOSED"
+            ? "청산"
+            : "매도",
         badge: executionState.badge,
         kindLabel: executionState.shortLabel,
       };

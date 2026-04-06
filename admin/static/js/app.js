@@ -3821,6 +3821,29 @@ async function resetOperationalBaseline(triggerButton = null) {
   }
 }
 
+async function backupOperationalDatabase(triggerButton = null) {
+  const button = triggerButton || document.getElementById('backup-operational-db-button');
+  const originalText = button?.textContent || 'DB 백업';
+
+  try {
+    if (button) {
+      button.disabled = true;
+      button.textContent = '백업 중...';
+    }
+    const json = await fetchJson(`${API}/system/backup-operational-db`, { method: 'POST' }, 30000);
+    const relativePath = json?.data?.relative_path || json?.data?.filename || 'runtime/backups/db';
+    setStatus('runtime', json?.message || `운영 DB 백업 완료 · ${relativePath}`);
+  } catch (err) {
+    console.error('Operational DB backup error:', err);
+    setStatus('error', err.message || '운영 DB 백업 실패');
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+  }
+}
+
 // ── Settings ──
 async function loadSettings() {
   try {
@@ -4833,6 +4856,7 @@ Object.assign(window, {
   fetchDartNews,
   fetchYonhapNews,
   fetchKrxNews,
+  backupOperationalDatabase,
   generateReport,
   loadLLMUsage,
   loadNewsOverview,

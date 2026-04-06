@@ -10,14 +10,14 @@ export function buildTradeCardViewModel(trade = {}, type = "opened") {
     notes,
     hasExit: type === "completed",
   });
-  const isPartialExit = executionState.code === "SELL_PARTIAL";
+  const isPartialExit = executionState.code === "SELL_PARTIAL" || executionState.code === "BUY_PARTIALLY_CLOSED";
   const remainingOpenQuantity = executionState.remainingOpenQuantity || 0;
 
   return {
     isPartialExit,
     executionStateLabel: executionState.label,
     fillStatusLabel: isPartialExit
-      ? `부분 매도${remainingOpenQuantity > 0 ? ` · 잔량 ${remainingOpenQuantity}주` : ""}`
-      : "",
+      ? `${executionState.label}${remainingOpenQuantity > 0 ? ` · 잔량 ${remainingOpenQuantity}주` : ""}`
+      : (executionState.detailLabel || ""),
   };
 }

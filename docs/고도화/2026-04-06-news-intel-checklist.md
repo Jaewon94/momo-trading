@@ -53,6 +53,10 @@
 - [x] 운영 DB 초기화 및 기준선 재생성 지원
   - 시스템 설정 탭의 `DB 초기화` 버튼
   - `POST /api/v1/admin/system/reset-operational-baseline`
+- [x] 운영 DB 백업 지원
+  - 시스템 설정 탭의 `DB 백업` 버튼
+  - `POST /api/v1/admin/system/backup-operational-db`
+  - `DB 초기화` 실행 전 자동 백업
 - [x] 뉴스 감성/영향도 점수 정교화
   - 장중/장외 세션 가중치 반영
   - `pressure_base`와 세션/다중소스 보정 후 최종 압력 분리 집계

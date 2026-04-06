@@ -150,6 +150,13 @@ async def test_admin_reset_operational_baseline_route_returns_summary(client, mo
 
     monkeypatch.setattr("api.routes.admin.AsyncSessionLocal", lambda: FakeSession())
     monkeypatch.setattr(
+        "api.routes.admin.runtime_backup_service.create_database_backup",
+        lambda reason="manual": {
+            "filename": f"app-{reason}-20260406-160000.db",
+            "relative_path": f"runtime/backups/db/app-{reason}-20260406-160000.db",
+        },
+    )
+    monkeypatch.setattr(
         "scheduler.jobs.portfolio_sync_job._backfill_missing_open_buys_from_holdings",
         fake_backfill,
     )
@@ -166,6 +173,7 @@ async def test_admin_reset_operational_baseline_route_returns_summary(client, mo
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["data"]["backup"]["filename"] == "app-before-reset-20260406-160000.db"
     assert payload["data"]["deleted"]["trade_results"] == 4
     assert payload["data"]["deleted"]["news_items"] == 7
     assert payload["data"]["backfill"]["backfilled"] == 2
@@ -173,3 +181,29 @@ async def test_admin_reset_operational_baseline_route_returns_summary(client, mo
     assert observed["reset"] == 1
     assert observed["account_cache"] is True
     assert observed["broker_cache"] is True
+
+
+@pytest.mark.asyncio
+async def test_admin_backup_operational_db_route_returns_backup_metadata(client, monkeypatch):
+    observed = {}
+
+    monkeypatch.setattr(
+        "api.routes.admin.runtime_backup_service.create_database_backup",
+        lambda reason="manual": observed.setdefault("backup", {
+            "filename": f"app-{reason}-20260406-161500.db",
+            "relative_path": f"runtime/backups/db/app-{reason}-20260406-161500.db",
+        }),
+    )
+
+    async def fake_log(*args, **kwargs):
+        observed["logged"] = True
+
+    monkeypatch.setattr("api.routes.admin.activity_logger.log", fake_log)
+
+    response = await client.post("/api/v1/admin/system/backup-operational-db")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["data"]["filename"] == "app-manual-20260406-161500.db"
+    assert payload["data"]["relative_path"] == "runtime/backups/db/app-manual-20260406-161500.db"
+    assert observed["logged"] is True

@@ -11,7 +11,7 @@ describe("trade_status_state", () => {
     expect(parseTradeNotes("not-json")).toEqual({});
   });
 
-  test("resolves completed buy with partial exit as sell-partial state", () => {
+  test("resolves completed buy with partial exit as archived partial-close state", () => {
     const state = resolveTradeExecutionState({
       side: "BUY",
       status: "CONFIRMED",
@@ -19,9 +19,10 @@ describe("trade_status_state", () => {
       hasExit: true,
     });
 
-    expect(state.code).toBe("SELL_PARTIAL");
-    expect(state.label).toBe("부분 매도");
+    expect(state.code).toBe("BUY_PARTIALLY_CLOSED");
+    expect(state.label).toBe("부분 매도 후 정리");
     expect(state.badge).toBe("PARTIAL_EXIT");
+    expect(state.detailLabel).toBe("잔량 2주 보유 중");
   });
 
   test("resolves pending sell as sell-pending state", () => {
@@ -61,5 +62,17 @@ describe("trade_status_state", () => {
 
     expect(state.code).toBe("BUY_HOLDING");
     expect(state.label).toBe("보유 중");
+  });
+
+  test("resolves closed buy lot without remaining quantity as final-close state", () => {
+    const state = resolveTradeExecutionState({
+      side: "BUY",
+      status: "CONFIRMED",
+      hasExit: true,
+    });
+
+    expect(state.code).toBe("BUY_CLOSED");
+    expect(state.label).toBe("최종 청산 lot");
+    expect(state.badge).toBe("FINAL_EXIT");
   });
 });

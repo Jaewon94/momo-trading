@@ -116,6 +116,6 @@ describe("event_radar_state", () => {
           notes: JSON.stringify({ fill_type: "PARTIAL_EXIT", remaining_open_quantity: 3 }),
         }],
       },
-    }, "005930")).toBe("부분 매도");
+    }, "005930")).toBe("부분 매도 후 정리");
   });
 });

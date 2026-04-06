@@ -51,6 +51,7 @@ from services.news_reporting_service import news_reporting_service
 from services.news_runtime_service import news_runtime_service
 from services.performance_reporting_service import performance_reporting_service
 from services.runtime_settings_service import runtime_settings_service
+from services.runtime_backup_service import runtime_backup_service
 from services.seeking_alpha_news_service import seeking_alpha_news_service
 from services.yonhap_news_service import yonhap_news_service
 from strategy.risk_appetite_insights import build_strategy_insights
@@ -267,8 +268,8 @@ def _build_position_timeline(trades, activities):
                 tone = "pending"
                 icon = "대기"
             elif has_exit and (fill_type == "PARTIAL_EXIT" or remaining_open_quantity > 0):
-                title = "부분 매도"
-                kind_label = "부분 매도"
+                title = "부분 매도 후 정리"
+                kind_label = "부분 매도 후 정리"
                 badge = fill_type or "PARTIAL_EXIT"
                 tone = "sell"
                 icon = "부분"
@@ -672,6 +673,7 @@ async def reconcile_holdings_trades():
 @router.post("/system/reset-operational-baseline")
 async def reset_operational_baseline():
     """설정은 유지하고 운영 이력 DB를 초기화한 뒤 현재 보유 기준선으로 재구성"""
+    backup = runtime_backup_service.create_database_backup(reason="before-reset")
     deleted: dict[str, int] = {}
     models_to_clear = [
         ("recommendations", Recommendation),
@@ -700,6 +702,7 @@ async def reset_operational_baseline():
     repair = await portfolio_sync_job._repair_confirmed_zero_entry_prices()
 
     summary = {
+        "backup": backup,
         "deleted": deleted,
         "backfill": backfill,
         "repair": repair,
@@ -716,11 +719,27 @@ async def reset_operational_baseline():
         detail=summary,
     )
     message = (
-        f"운영 DB 초기화 완료 · 거래 {deleted.get('trade_results', 0)}건 / "
+        f"운영 DB 초기화 완료 · 백업 {backup.get('filename')} / 거래 {deleted.get('trade_results', 0)}건 / "
         f"뉴스 {deleted.get('news_items', 0)}건 삭제, "
         f"보유 백필 {backfill.get('backfilled', 0)}건"
     )
     return SuccessResponse(data=summary, message=message)
+
+
+@router.post("/system/backup-operational-db")
+async def backup_operational_db():
+    """운영 DB 스냅샷을 runtime/backups 아래에 저장"""
+    backup = runtime_backup_service.create_database_backup(reason="manual")
+    await activity_logger.log(
+        ActivityType.EVENT,
+        ActivityPhase.COMPLETE,
+        "💾 운영 DB 수동 백업 생성",
+        detail=backup,
+    )
+    return SuccessResponse(
+        data=backup,
+        message=f"운영 DB 백업 완료 · {backup.get('filename')}",
+    )
 
 
 # ── 계좌 정보 ──

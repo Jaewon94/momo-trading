@@ -81,21 +81,23 @@ export function resolveTradeExecutionState({
   if (hasExit) {
     if (fillType === "PARTIAL_EXIT" || remainingOpenQuantity > 0) {
       return {
-        code: "SELL_PARTIAL",
-        label: "부분 매도",
-        shortLabel: "부분 매도",
+        code: normalizedSide === "SELL" ? "SELL_PARTIAL" : "BUY_PARTIALLY_CLOSED",
+        label: normalizedSide === "SELL" ? "부분 매도" : "부분 매도 후 정리",
+        shortLabel: normalizedSide === "SELL" ? "부분 매도" : "부분 정리 lot",
         badge: fillType || "PARTIAL_EXIT",
         tone: "sell",
         remainingOpenQuantity,
+        detailLabel: remainingOpenQuantity > 0 ? `잔량 ${remainingOpenQuantity}주 보유 중` : "",
       };
     }
     return {
-      code: "SELL_FILLED",
-      label: "매도 완료",
-      shortLabel: "매도 완료",
-      badge: normalizedStatus || "SELL",
+      code: normalizedSide === "SELL" ? "SELL_FILLED" : "BUY_CLOSED",
+      label: normalizedSide === "SELL" ? "매도 완료" : "최종 청산 lot",
+      shortLabel: normalizedSide === "SELL" ? "매도 완료" : "청산 lot",
+      badge: normalizedSide === "SELL" ? (normalizedStatus || "SELL") : "FINAL_EXIT",
       tone: "sell",
       remainingOpenQuantity,
+      detailLabel: "",
     };
   }
 
@@ -107,6 +109,7 @@ export function resolveTradeExecutionState({
       badge: normalizedStatus || "BUY",
       tone: "buy",
       remainingOpenQuantity,
+      detailLabel: "",
     };
   }
 
@@ -117,5 +120,6 @@ export function resolveTradeExecutionState({
     badge: normalizedStatus || "BUY",
     tone: "buy",
     remainingOpenQuantity,
+    detailLabel: "",
   };
 }
