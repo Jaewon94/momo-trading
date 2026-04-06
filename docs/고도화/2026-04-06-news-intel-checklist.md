@@ -67,6 +67,8 @@
   - `Stock.category`를 이용해 `sector_label`, `sector_symbols`, `sector_relevance` 자동 채움
 - [x] 업종 키워드만 있는 기사도 섹터 종목군으로 추론
   - 직접 종목명이 없어도 기사 제목/요약에 `반도체`, `인터넷` 같은 카테고리명이 있으면 `matched_sector_labels`, `sector_symbols`를 자동 보강
+- [x] 복수 업종 기사에 대한 섹터 가중치 분리
+  - `AI반도체와 플랫폼인터넷`처럼 여러 업종이 같이 나오면 `matched_sector_labels`, `sector_weights`를 함께 저장해 게이트가 업종별로 다른 가중치를 쓸 수 있게 정리
 - [x] 뉴스 게이트 정교화 1차
   - 호라이즌별 임계치/신선도 민감도 차등
   - 헤드라인 위험 키워드 severity boost

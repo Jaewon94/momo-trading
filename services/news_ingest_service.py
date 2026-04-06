@@ -252,6 +252,7 @@ class NewsIngestService:
                     metadata,
                     symbols=existing_symbols,
                     matched_names=[],
+                    matched_categories=[],
                     stock_by_symbol=stock_by_symbol,
                     category_to_symbols=category_to_symbols,
                 )
@@ -289,17 +290,32 @@ class NewsIngestService:
                 if len(matched_symbols) >= 5:
                     break
 
-            matched_categories: list[str] = []
-            seen_categories: set[str] = set()
+            matched_category_candidates: list[tuple[int, int, str]] = []
             for category in category_rows:
                 if len(category) < 2:
                     continue
-                if haystack.find(category) < 0:
+                position = haystack.find(category)
+                if position < 0:
                     continue
+                matched_category_candidates.append((position, -len(category), category))
+            matched_category_candidates.sort(key=lambda item: (item[0], item[1]))
+
+            matched_categories: list[str] = []
+            seen_categories: set[str] = set()
+            occupied_ranges: list[tuple[int, int]] = []
+            for position, _, category in matched_category_candidates:
                 if category in seen_categories:
+                    continue
+                end_position = position + len(category)
+                overlaps_existing = any(
+                    not (end_position <= start or position >= end)
+                    for start, end in occupied_ranges
+                )
+                if overlaps_existing:
                     continue
                 matched_categories.append(category)
                 seen_categories.add(category)
+                occupied_ranges.append((position, end_position))
                 if len(matched_categories) >= 3:
                     break
 
@@ -312,6 +328,7 @@ class NewsIngestService:
                 metadata,
                 symbols=inferred_symbols,
                 matched_names=matched_names,
+                matched_categories=matched_categories,
                 stock_by_symbol=stock_by_symbol,
                 category_to_symbols=category_to_symbols,
             )
@@ -328,6 +345,7 @@ class NewsIngestService:
         *,
         symbols: list[str],
         matched_names: list[str],
+        matched_categories: list[str],
         stock_by_symbol: dict[str, dict[str, str]],
         category_to_symbols: dict[str, list[str]],
     ) -> dict[str, Any]:
@@ -338,6 +356,8 @@ class NewsIngestService:
 
         if matched_names:
             enriched["matched_stock_names"] = matched_names
+        if matched_categories:
+            enriched["matched_sector_labels"] = matched_categories
 
         enriched["related_symbols"] = normalized_symbols
         primary_symbol = normalized_symbols[0]
@@ -374,6 +394,57 @@ class NewsIngestService:
             enriched.setdefault("sector_symbols", sector_symbols[:8])
             if len(sector_symbols) > 1:
                 enriched.setdefault("sector_relevance", 1.08)
+                enriched.setdefault(
+                    "sector_weights",
+                    {symbol: 1.08 for symbol in sector_symbols[:8]},
+                )
+
+        if matched_categories:
+            merged_sector_symbols: list[str] = []
+            merged_sector_weights: dict[str, float] = {}
+            seen_symbols: set[str] = set()
+            for index, matched_category in enumerate(matched_categories):
+                category_symbols = category_to_symbols.get(matched_category) or []
+                weight = 1.08 if index == 0 else 1.04
+                for symbol in category_symbols:
+                    if symbol not in seen_symbols:
+                        merged_sector_symbols.append(symbol)
+                        seen_symbols.add(symbol)
+                    merged_sector_weights.setdefault(symbol, weight)
+                if len(merged_sector_symbols) >= 8:
+                    break
+
+            if merged_sector_symbols:
+                existing_sector_symbols = self._normalize_symbols(enriched.get("sector_symbols"))
+                combined_sector_symbols: list[str] = []
+                combined_seen: set[str] = set()
+                for symbol in [*existing_sector_symbols, *merged_sector_symbols]:
+                    if symbol in combined_seen:
+                        continue
+                    combined_sector_symbols.append(symbol)
+                    combined_seen.add(symbol)
+                    if len(combined_sector_symbols) >= 8:
+                        break
+
+                existing_sector_weights = enriched.get("sector_weights")
+                combined_sector_weights = (
+                    dict(existing_sector_weights)
+                    if isinstance(existing_sector_weights, dict)
+                    else {}
+                )
+                for symbol in combined_sector_symbols:
+                    if symbol in merged_sector_weights:
+                        combined_sector_weights[symbol] = merged_sector_weights[symbol]
+                    elif symbol in existing_sector_symbols:
+                        combined_sector_weights.setdefault(symbol, 1.08)
+
+                enriched["sector_label"] = enriched.get("sector_label") or matched_categories[0]
+                enriched["sector_symbols"] = combined_sector_symbols
+                enriched["sector_relevance"] = max(
+                    float(enriched.get("sector_relevance") or 1.0),
+                    1.08 if len(matched_categories) == 1 else 1.06,
+                )
+                enriched["sector_weights"] = combined_sector_weights
 
         return enriched
 

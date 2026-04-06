@@ -319,3 +319,41 @@ async def test_news_signal_service_applies_sector_relevance_from_metadata(monkey
     assert in_sector["contributors"][0]["sector_relevance"] == 1.14
     assert out_sector["contributors"][0]["sector_relevance"] == 1.0
     assert in_sector["negative_pressure"] > out_sector["negative_pressure"]
+
+
+@pytest.mark.asyncio
+async def test_news_signal_service_prefers_sector_weights_over_shared_sector_relevance(monkeypatch):
+    from services.news_signal_service import NewsSignalService
+
+    monkeypatch.setattr("services.news_signal_service.settings.NEWS_GATE_ENABLED", True)
+    monkeypatch.setattr("services.news_signal_service.settings.NEWS_LOOKBACK_HOURS", 24)
+    monkeypatch.setattr("services.news_signal_service.settings.NEWS_NEGATIVE_BLOCK_THRESHOLD", 0.95)
+    monkeypatch.setattr("services.news_signal_service.settings.NEWS_FRESHNESS_HALFLIFE_HOURS", 8)
+
+    async with TestAsyncSessionLocal() as session:
+        session.add(NewsItem(
+            source_code="BLOOMBERG",
+            source_name="Bloomberg",
+            source_tier="B",
+            region="GLOBAL",
+            official=False,
+            language="en",
+            title="섹터 전반 리밸류에이션",
+            published_at=now_kst() - timedelta(hours=1),
+            sentiment_label="NEGATIVE",
+            sentiment_score=0.24,
+            impact_score=0.72,
+            trust_score=0.88,
+            symbols_csv=",715930,735420,",
+            metadata_json='{"sector_symbols":["715930","735420"],"sector_relevance":1.06,"sector_weights":{"715930":1.08,"735420":1.04}}',
+            dedupe_hash="gate-sector-weights-1",
+        ))
+        await session.commit()
+
+        service = NewsSignalService()
+        semiconductor = await service.evaluate_gate(session, symbol="715930", horizon="MID")
+        internet = await service.evaluate_gate(session, symbol="735420", horizon="MID")
+
+    assert semiconductor["contributors"][0]["sector_relevance"] == 1.08
+    assert internet["contributors"][0]["sector_relevance"] == 1.04
+    assert semiconductor["negative_pressure"] > internet["negative_pressure"]

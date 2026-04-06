@@ -234,3 +234,44 @@ async def test_news_ingest_service_infers_sector_symbols_from_category_keyword_w
     assert metadata["sector_label"] == "반도체"
     assert {"905930", "900660", "942700"}.issubset(set(metadata["sector_symbols"]))
     assert "935420" not in metadata["sector_symbols"]
+
+
+@pytest.mark.asyncio
+async def test_news_ingest_service_builds_sector_weights_for_multi_sector_articles():
+    from repositories.news_item_repository import NewsItemRepository
+    from services.news_ingest_service import NewsIngestService
+
+    service = NewsIngestService()
+
+    async with TestAsyncSessionLocal() as session:
+        session.add_all([
+            Stock(symbol="715930", name="삼성전자", market="KOSPI", category="AI반도체", is_active=True),
+            Stock(symbol="710660", name="SK하이닉스", market="KOSPI", category="AI반도체", is_active=True),
+            Stock(symbol="735420", name="NAVER", market="KOSPI", category="플랫폼인터넷", is_active=True),
+            Stock(symbol="703500", name="카카오", market="KOSPI", category="플랫폼인터넷", is_active=True),
+        ])
+        await session.commit()
+
+        await service.ingest_items(session, [
+            {
+                "source_code": "BLOOMBERG",
+                "title": "AI반도체와 플랫폼인터넷 업종 전반 밸류에이션 재평가",
+                "summary": "개별 종목 언급 없이 두 업종 전반 기대가 커졌다.",
+                "published_at": "2026-04-05T09:01:00+09:00",
+                "url": "https://www.bloomberg.com/news/articles/example-multi-sector",
+            },
+        ])
+        await session.commit()
+        candidates = await NewsItemRepository(session).get_recent(limit=10, source_code="BLOOMBERG")
+        item = next(
+            candidate for candidate in candidates
+            if candidate.url == "https://www.bloomberg.com/news/articles/example-multi-sector"
+        )
+
+    payload = service.serialize_item(item)
+    metadata = payload["metadata"]
+
+    assert metadata["matched_sector_labels"] == ["AI반도체", "플랫폼인터넷"]
+    assert {"715930", "710660", "735420", "703500"}.issubset(set(metadata["sector_symbols"]))
+    assert metadata["sector_weights"]["715930"] == pytest.approx(1.08)
+    assert metadata["sector_weights"]["735420"] == pytest.approx(1.04)
