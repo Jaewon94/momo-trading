@@ -23,6 +23,13 @@ import { SETTINGS_TABS, normalizeSettingsTab } from './settings_modal_state.js';
 import { resolveDirectSettingChange } from './settings_action_state.js';
 import { applySettingsToForm } from './settings_form_state.js';
 import {
+  getManualModelSelectorState,
+  getTierProviderElementId,
+  getTierModelElementIds,
+  resolveTierModelState,
+  getTierModelSettingKey,
+} from './settings_llm_state.js';
+import {
   buildClaudeUsageCopy,
   buildCodexAuthLabel,
   buildCodexUsageCopy,
@@ -4230,28 +4237,11 @@ async function applyRuntimePreset(preset) {
 }
 
 function getTierProvider(tier, mode = 'primary') {
-  const providerEl = document.getElementById(
-    mode === 'fallback'
-      ? (tier === 'tier1' ? 'set-llm-tier1-fallback' : 'set-llm-tier2-fallback')
-      : (tier === 'tier1' ? 'set-llm-tier1-provider' : 'set-llm-tier2-provider')
-  );
+  const providerEl = document.getElementById(getTierProviderElementId(tier, mode));
   if (mode === 'fallback') {
     return providerEl?.value || '';
   }
   return providerEl?.value || 'CLAUDE_CODE';
-}
-
-function getTierModelSettingKey(provider, tier, mode = 'primary') {
-  if (mode === 'fallback') {
-    return tier === 'tier1' ? 'LLM_FALLBACK_MODEL_TIER1' : 'LLM_FALLBACK_MODEL_TIER2';
-  }
-  if (provider === 'CODEX') {
-    return tier === 'tier1' ? 'CODEX_MODEL_TIER1' : 'CODEX_MODEL_TIER2';
-  }
-  if (provider === 'OLLAMA') {
-    return tier === 'tier1' ? 'OLLAMA_MODEL_TIER1' : 'OLLAMA_MODEL_TIER2';
-  }
-  return tier === 'tier1' ? 'CLAUDE_CODE_MODEL_TIER1' : 'CLAUDE_CODE_MODEL_TIER2';
 }
 
 function getCatalogProvider(provider) {
@@ -4332,29 +4322,18 @@ function renderTierModelSelectors() {
 
 function renderTierModelSelector(tier, mode = 'primary') {
   if (!runtimeSettings) return;
-  const provider = getTierProvider(tier, mode);
-  const key = getTierModelSettingKey(provider, tier, mode);
-  const currentValue = runtimeSettings[key] || 'DEFAULT';
-  const isFallback = mode === 'fallback';
-  const hasFallbackProvider = !isFallback || !!provider;
-  const selectEl = document.getElementById(
-    isFallback
-      ? (tier === 'tier1' ? 'set-llm-tier1-fallback-model' : 'set-llm-tier2-fallback-model')
-      : (tier === 'tier1' ? 'set-llm-tier1-model' : 'set-llm-tier2-model')
-  );
-  const sourceEl = document.getElementById(
-    isFallback
-      ? (tier === 'tier1' ? 'llm-tier1-fallback-model-source' : 'llm-tier2-fallback-model-source')
-      : (tier === 'tier1' ? 'llm-tier1-model-source' : 'llm-tier2-model-source')
-  );
-  const customEl = document.getElementById(
-    isFallback
-      ? (tier === 'tier1' ? 'set-llm-tier1-fallback-model-custom' : 'set-llm-tier2-fallback-model-custom')
-      : (tier === 'tier1' ? 'set-llm-tier1-model-custom' : 'set-llm-tier2-model-custom')
-  );
+  const state = resolveTierModelState({
+    runtimeSettings,
+    tier,
+    mode,
+    provider: getTierProvider(tier, mode),
+  });
+  const selectEl = document.getElementById(state.selectId);
+  const sourceEl = document.getElementById(state.sourceId);
+  const customEl = document.getElementById(state.customId);
   if (!selectEl) return;
 
-  if (!hasFallbackProvider) {
+  if (!state.hasProvider) {
     renderProviderModelSelector({
       provider: '',
       currentValue: 'DEFAULT',
@@ -4367,8 +4346,8 @@ function renderTierModelSelector(tier, mode = 'primary') {
   }
 
   renderProviderModelSelector({
-    provider,
-    currentValue,
+    provider: state.provider,
+    currentValue: state.currentValue,
     selectEl,
     sourceEl,
     customEl,
@@ -4421,11 +4400,8 @@ async function updateTierModelSetting(tier, value, mode = 'primary') {
 }
 
 async function applyCustomTierModel(tier, mode = 'primary') {
-  const inputEl = document.getElementById(
-    mode === 'fallback'
-      ? (tier === 'tier1' ? 'set-llm-tier1-fallback-model-custom' : 'set-llm-tier2-fallback-model-custom')
-      : (tier === 'tier1' ? 'set-llm-tier1-model-custom' : 'set-llm-tier2-model-custom')
-  );
+  const { customId } = getTierModelElementIds(tier, mode);
+  const inputEl = document.getElementById(customId);
   if (!inputEl) return;
   const value = inputEl.value.trim();
   if (!value) return;
@@ -4434,14 +4410,16 @@ async function applyCustomTierModel(tier, mode = 'primary') {
 
 function renderManualModelSelector() {
   if (!runtimeSettings) return;
-  const provider = document.getElementById('set-manual-llm-provider')?.value || 'AUTOMATIC';
-  const currentValue = runtimeSettings.MANUAL_LLM_MODEL || 'DEFAULT';
-  const selectEl = document.getElementById('set-manual-llm-model');
-  const sourceEl = document.getElementById('llm-manual-model-source');
-  const customEl = document.getElementById('set-manual-llm-model-custom');
+  const state = getManualModelSelectorState(
+    runtimeSettings,
+    document.getElementById('set-manual-llm-provider')?.value || 'AUTOMATIC',
+  );
+  const selectEl = document.getElementById(state.selectId);
+  const sourceEl = document.getElementById(state.sourceId);
+  const customEl = document.getElementById(state.customId);
   if (!selectEl) return;
 
-  if (provider === 'AUTOMATIC') {
+  if (state.automatic) {
     renderProviderModelSelector({
       provider: '',
       currentValue: 'DEFAULT',
@@ -4454,8 +4432,8 @@ function renderManualModelSelector() {
   }
 
   renderProviderModelSelector({
-    provider,
-    currentValue,
+    provider: state.provider,
+    currentValue: state.currentValue,
     selectEl,
     sourceEl,
     customEl,
