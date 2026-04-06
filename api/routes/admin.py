@@ -248,18 +248,21 @@ def _build_position_timeline(trades, activities):
                 badge = status or "SELL"
                 tone = "pending"
                 icon = "대기"
+                detail_label = "체결 확인 대기"
             elif fill_type == "PARTIAL_EXIT" or remaining_open_quantity > 0:
                 title = "부분 매도"
                 kind_label = "부분 매도"
                 badge = fill_type or "PARTIAL_EXIT"
                 tone = "sell"
                 icon = "부분"
+                detail_label = f"잔량 {remaining_open_quantity}주 보유 중" if remaining_open_quantity > 0 else "일부 수량 청산"
             else:
                 title = "매도 완료"
                 kind_label = "매도 완료"
                 badge = status or "SELL"
                 tone = "sell"
                 icon = "매도"
+                detail_label = "전체 수량 청산 완료"
         else:
             if status == "PENDING_CONFIRM":
                 title = "매수 대기중"
@@ -267,24 +270,28 @@ def _build_position_timeline(trades, activities):
                 badge = status or "BUY"
                 tone = "pending"
                 icon = "대기"
+                detail_label = "체결 확인 대기"
             elif has_exit and (fill_type == "PARTIAL_EXIT" or remaining_open_quantity > 0):
                 title = "부분 매도 후 정리"
                 kind_label = "부분 매도 후 정리"
                 badge = fill_type or "PARTIAL_EXIT"
                 tone = "sell"
                 icon = "부분"
+                detail_label = f"잔량 {remaining_open_quantity}주 보유 중" if remaining_open_quantity > 0 else ""
             elif has_exit:
                 title = "최종 청산 lot"
                 kind_label = "최종 청산 lot"
                 badge = "FINAL_EXIT"
                 tone = "sell"
                 icon = "청산"
+                detail_label = "전체 수량 청산 완료"
             else:
                 title = "매수 완료"
                 kind_label = "매수 완료"
                 badge = status or "BUY"
                 tone = "buy"
                 icon = "매수"
+                detail_label = ""
 
         summary = f"{getattr(trade, 'stock_name', getattr(trade, 'stock_symbol', ''))} · {getattr(trade, 'quantity', 0)}주"
         timeline.append({
@@ -308,6 +315,7 @@ def _build_position_timeline(trades, activities):
                 "trade_state_badge": badge,
                 "trade_state_tone": tone,
                 "trade_state_icon": icon,
+                "trade_state_detail_label": detail_label,
             },
         })
 

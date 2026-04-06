@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  buildTradeExecutionCopy,
   parseTradeNotes,
   resolveTradeExecutionState,
 } from "../../admin/static/js/trade_status_state.js";
@@ -21,6 +22,7 @@ describe("trade_status_state", () => {
 
     expect(state.code).toBe("BUY_PARTIALLY_CLOSED");
     expect(state.label).toBe("부분 매도 후 정리");
+    expect(state.shortLabel).toBe("부분 매도");
     expect(state.badge).toBe("PARTIAL_EXIT");
     expect(state.detailLabel).toBe("잔량 2주 보유 중");
   });
@@ -73,6 +75,22 @@ describe("trade_status_state", () => {
 
     expect(state.code).toBe("BUY_CLOSED");
     expect(state.label).toBe("최종 청산 lot");
+    expect(state.shortLabel).toBe("매도 완료");
     expect(state.badge).toBe("FINAL_EXIT");
+    expect(state.detailLabel).toBe("전체 수량 청산 완료");
+  });
+
+  test("builds compact and supporting copy from execution state", () => {
+    const state = resolveTradeExecutionState({
+      side: "BUY",
+      status: "CONFIRMED",
+      notes: { fill_type: "PARTIAL_EXIT", remaining_open_quantity: 2 },
+      hasExit: true,
+    });
+
+    expect(buildTradeExecutionCopy(state)).toEqual({
+      primaryLabel: "부분 매도",
+      supportingLabel: "부분 매도 후 정리 · 잔량 2주 보유 중",
+    });
   });
 });

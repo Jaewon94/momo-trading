@@ -3746,7 +3746,7 @@ function renderTradeCard(t, type) {
         <span>${t.quantity}주 · ${t.entry_price.toLocaleString()} → ${t.exit_price.toLocaleString()}원</span>
         <span>${time} · ${t.exit_reason || 'SIGNAL'}${t.hold_days > 0 ? ` · ${t.hold_days}일 보유` : ''}</span>
       </div>
-      <div class="text-[11px] text-gray-400 mt-1">${escapeHtml(executionState.label)}</div>
+      <div class="text-[11px] text-gray-400 mt-1">${escapeHtml(tradeCardState.executionStateLabel)}</div>
       ${tradeCardState.fillStatusLabel ? `<div class="text-[11px] text-amber-300 mt-1">${escapeHtml(tradeCardState.fillStatusLabel)}</div>` : ''}
       ${t.ai_confidence ? `<div class="text-xs text-gray-600 mt-1">신뢰도 ${(t.ai_confidence*100).toFixed(0)}% · ${t.strategy_type || ''}</div>` : ''}
     </div>`;
@@ -3757,10 +3757,10 @@ function renderTradeCard(t, type) {
     return `<div class="bg-dark-900 rounded-lg p-3 mb-2 border-l-2 border-yellow-500">
       <div class="flex justify-between items-center">
         <span class="text-sm text-white font-medium">${t.stock_name}<span class="text-gray-500 text-xs ml-1">${t.stock_symbol}</span></span>
-        <span class="text-xs text-yellow-400">${escapeHtml(executionState.label)} · ${t.quantity}주 @${t.entry_price.toLocaleString()}원</span>
+        <span class="text-xs text-yellow-400">${escapeHtml(tradeCardState.executionStateLabel)} · ${t.quantity}주 @${t.entry_price.toLocaleString()}원</span>
       </div>
       <div class="flex justify-between text-xs text-gray-500 mt-1">
-        <span>${time} · 체결 확인 대기</span>
+        <span>${time}${tradeCardState.fillStatusLabel ? ` · ${escapeHtml(tradeCardState.fillStatusLabel)}` : ''}</span>
         <span>${conf}</span>
       </div>
     </div>`;
@@ -3771,7 +3771,7 @@ function renderTradeCard(t, type) {
   return `<div class="bg-dark-900 rounded-lg p-3 mb-2 border-l-2 border-red-500">
     <div class="flex justify-between items-center">
       <span class="text-sm text-white font-medium">${t.stock_name}<span class="text-gray-500 text-xs ml-1">${t.stock_symbol}</span></span>
-      <span class="text-xs text-red-400">${escapeHtml(executionState.label)} · ${t.quantity}주 @${t.entry_price.toLocaleString()}원</span>
+      <span class="text-xs text-red-400">${escapeHtml(tradeCardState.executionStateLabel)} · ${t.quantity}주 @${t.entry_price.toLocaleString()}원</span>
     </div>
     <div class="flex justify-between text-xs text-gray-500 mt-1">
       <span>${time} · ${t.strategy_type || ''}</span>

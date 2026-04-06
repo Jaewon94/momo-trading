@@ -20,15 +20,15 @@ describe("trade_history_state", () => {
     }, "completed");
 
     expect(viewModel.isPartialExit).toBe(true);
-    expect(viewModel.executionStateLabel).toBe("부분 매도 후 정리");
-    expect(viewModel.fillStatusLabel).toBe("부분 매도 후 정리 · 잔량 2주");
+    expect(viewModel.executionStateLabel).toBe("부분 매도");
+    expect(viewModel.fillStatusLabel).toBe("부분 매도 후 정리 · 잔량 2주 보유 중");
   });
 
   test("keeps regular completed trades clean when no partial note exists", () => {
     const viewModel = buildTradeCardViewModel({ notes: null }, "completed");
 
     expect(viewModel.isPartialExit).toBe(false);
-    expect(viewModel.executionStateLabel).toBe("최종 청산 lot");
-    expect(viewModel.fillStatusLabel).toBe("");
+    expect(viewModel.executionStateLabel).toBe("매도 완료");
+    expect(viewModel.fillStatusLabel).toBe("최종 청산 lot · 전체 수량 청산 완료");
   });
 });

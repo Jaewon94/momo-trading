@@ -291,6 +291,7 @@ describe("position_detail_state", () => {
     expect(entry.kindLabel).toBe("부분 매도 후 정리");
     expect(entry.badge).toBe("PARTIAL_EXIT");
     expect(entry.tone).toBe("sell");
+    expect(entry.detailLines[0]).toBe("잔량 2주 보유 중");
   });
 
   test("renders closed buy lots as final-close lots instead of buy-filled labels", () => {
@@ -313,6 +314,7 @@ describe("position_detail_state", () => {
     expect(entry.kindLabel).toBe("최종 청산 lot");
     expect(entry.badge).toBe("FINAL_EXIT");
     expect(entry.tone).toBe("sell");
+    expect(entry.detailLines[0]).toBe("전체 수량 청산 완료");
   });
 
   test("builds recent event chips for the summary header", () => {

@@ -45,6 +45,7 @@ export function resolveTradeExecutionState({
         badge: normalizedStatus || "SELL",
         tone: "pending",
         remainingOpenQuantity,
+        detailLabel: normalizedSource === "ORDER" ? "주문 접수 후 체결 대기" : "체결 확인 대기",
       };
     }
     if (fillType === "PARTIAL_EXIT" || remainingOpenQuantity > 0) {
@@ -55,6 +56,7 @@ export function resolveTradeExecutionState({
         badge: fillType || "PARTIAL_EXIT",
         tone: "sell",
         remainingOpenQuantity,
+        detailLabel: remainingOpenQuantity > 0 ? `잔량 ${remainingOpenQuantity}주 보유 중` : "일부 수량 청산",
       };
     }
     return {
@@ -64,6 +66,7 @@ export function resolveTradeExecutionState({
       badge: normalizedStatus || "SELL",
       tone: "sell",
       remainingOpenQuantity,
+      detailLabel: "전체 수량 청산 완료",
     };
   }
 
@@ -75,6 +78,7 @@ export function resolveTradeExecutionState({
       badge: normalizedStatus || "BUY",
       tone: "pending",
       remainingOpenQuantity,
+      detailLabel: normalizedSource === "ORDER" ? "주문 접수 후 체결 대기" : "체결 확인 대기",
     };
   }
 
@@ -83,7 +87,7 @@ export function resolveTradeExecutionState({
       return {
         code: normalizedSide === "SELL" ? "SELL_PARTIAL" : "BUY_PARTIALLY_CLOSED",
         label: normalizedSide === "SELL" ? "부분 매도" : "부분 매도 후 정리",
-        shortLabel: normalizedSide === "SELL" ? "부분 매도" : "부분 정리 lot",
+        shortLabel: normalizedSide === "SELL" ? "부분 매도" : "부분 매도",
         badge: fillType || "PARTIAL_EXIT",
         tone: "sell",
         remainingOpenQuantity,
@@ -93,11 +97,11 @@ export function resolveTradeExecutionState({
     return {
       code: normalizedSide === "SELL" ? "SELL_FILLED" : "BUY_CLOSED",
       label: normalizedSide === "SELL" ? "매도 완료" : "최종 청산 lot",
-      shortLabel: normalizedSide === "SELL" ? "매도 완료" : "청산 lot",
+      shortLabel: normalizedSide === "SELL" ? "매도 완료" : "매도 완료",
       badge: normalizedSide === "SELL" ? (normalizedStatus || "SELL") : "FINAL_EXIT",
       tone: "sell",
       remainingOpenQuantity,
-      detailLabel: "",
+      detailLabel: "전체 수량 청산 완료",
     };
   }
 
@@ -121,5 +125,20 @@ export function resolveTradeExecutionState({
     tone: "buy",
     remainingOpenQuantity,
     detailLabel: "",
+  };
+}
+
+export function buildTradeExecutionCopy(state = {}) {
+  const primaryLabel = state.shortLabel || state.label || "";
+  const supportingParts = [];
+  if (state.label && state.label !== primaryLabel) {
+    supportingParts.push(state.label);
+  }
+  if (state.detailLabel) {
+    supportingParts.push(state.detailLabel);
+  }
+  return {
+    primaryLabel,
+    supportingLabel: supportingParts.join(" · "),
   };
 }

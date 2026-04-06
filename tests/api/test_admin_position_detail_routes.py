@@ -157,6 +157,7 @@ async def test_admin_position_detail_route_returns_summary_and_timeline(client, 
     assert payload["timeline"][2]["title"] == "삼성전자 시설투자 공시"
     assert payload["timeline"][2]["detail"]["source_code"] == "DART"
     assert payload["timeline"][2]["detail"]["impact_score"] == 0.88
+    assert payload["timeline"][0]["detail"]["trade_state_detail_label"] == ""
     assert payload["timeline_page"]["limit"] == 20
     assert payload["timeline_page"]["offset"] == 0
     assert payload["timeline_page"]["has_more"] is False

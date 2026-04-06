@@ -1,4 +1,4 @@
-import { resolveTradeExecutionState } from "./trade_status_state.js";
+import { buildTradeExecutionCopy, resolveTradeExecutionState } from "./trade_status_state.js";
 
 function formatScore(value) {
   return `${Number(value || 0)}점`;
@@ -104,41 +104,49 @@ export function buildTradeStageLabel(snapshot = {}, symbol = "") {
 
   const pendingSell = pendingOrders.find((item) => sameTradeSymbol(item?.symbol) && String(item?.side || "") === "매도");
   if (pendingSell) {
-    return resolveTradeExecutionState({ side: "SELL", status: "PENDING_CONFIRM", source: "order" }).label;
+    return buildTradeExecutionCopy(
+      resolveTradeExecutionState({ side: "SELL", status: "PENDING_CONFIRM", source: "order" }),
+    ).primaryLabel;
   }
 
   const pendingBuy = pendingOrders.find((item) => sameTradeSymbol(item?.symbol) && String(item?.side || "") === "매수");
   if (pendingBuy) {
-    return resolveTradeExecutionState({ side: "BUY", status: "PENDING_CONFIRM", source: "order" }).label;
+    return buildTradeExecutionCopy(
+      resolveTradeExecutionState({ side: "BUY", status: "PENDING_CONFIRM", source: "order" }),
+    ).primaryLabel;
   }
 
   const pendingConfirm = pendingConfirms.find((item) => sameTradeSymbol(item?.stock_symbol));
   if (pendingConfirm) {
-    return resolveTradeExecutionState({ side: pendingConfirm?.side || "BUY", status: pendingConfirm?.status || "PENDING_CONFIRM" }).label;
+    return buildTradeExecutionCopy(
+      resolveTradeExecutionState({ side: pendingConfirm?.side || "BUY", status: pendingConfirm?.status || "PENDING_CONFIRM" }),
+    ).primaryLabel;
   }
 
   const openPosition = openPositions.find((item) => sameTradeSymbol(item?.stock_symbol));
   if (openPosition) {
-    return resolveTradeExecutionState({
+    return buildTradeExecutionCopy(resolveTradeExecutionState({
       side: openPosition?.side || "BUY",
       status: openPosition?.status || "CONFIRMED",
       isHolding: true,
-    }).label;
+    })).primaryLabel;
   }
 
   const openedTrade = opened.find((item) => sameTradeSymbol(item?.stock_symbol));
   if (openedTrade) {
-    return resolveTradeExecutionState({ side: openedTrade?.side || "BUY", status: openedTrade?.status || "CONFIRMED" }).label;
+    return buildTradeExecutionCopy(
+      resolveTradeExecutionState({ side: openedTrade?.side || "BUY", status: openedTrade?.status || "CONFIRMED" }),
+    ).primaryLabel;
   }
 
   const completedTrade = completed.find((item) => sameTradeSymbol(item?.stock_symbol));
   if (completedTrade) {
-    return resolveTradeExecutionState({
+    return buildTradeExecutionCopy(resolveTradeExecutionState({
       side: completedTrade?.side || "BUY",
       status: completedTrade?.status || "CONFIRMED",
       notes: completedTrade?.notes,
       hasExit: true,
-    }).label;
+    })).primaryLabel;
   }
 
   return "미진입";

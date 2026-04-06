@@ -1,4 +1,7 @@
-import { parseTradeNotes, resolveTradeExecutionState } from "./trade_status_state.js";
+import {
+  parseTradeNotes,
+  resolveTradeExecutionState,
+} from "./trade_status_state.js";
 
 function formatInt(value) {
   return Number(value || 0).toLocaleString("ko-KR");
@@ -209,6 +212,14 @@ function buildTimelineDetailLines(entry) {
   const lines = [];
 
   if (entry.type === "trade") {
+    const executionState = resolveTradeExecutionState({
+      side: entry.side,
+      status: entry.status,
+      notes: parseTradeNotes(detail.notes),
+      hasExit: Boolean(detail.exit_price || detail.trade_state_badge === "FINAL_EXIT" || detail.trade_state_badge === "PARTIAL_EXIT"),
+    });
+    const timelineDetailLabel = detail.trade_state_detail_label || executionState.detailLabel || "";
+    if (timelineDetailLabel) lines.push(timelineDetailLabel);
     if (detail.strategy_type) lines.push(`전략 ${detail.strategy_type}`);
     if (detail.entry_price) lines.push(`진입가 ${formatInt(detail.entry_price)}원`);
     if (detail.exit_price) lines.push(`청산가 ${formatInt(detail.exit_price)}원`);
