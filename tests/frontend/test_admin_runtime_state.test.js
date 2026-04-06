@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import {
   buildRuntimeControlState,
+  buildMarketSessionViewModel,
   buildRuntimeSettingCopy,
   formatAutonomyModeLabel,
   formatRiskAppetiteLabel,
@@ -100,5 +101,22 @@ describe("runtime_state", () => {
     expect(formatRiskAppetiteLabel("CONSERVATIVE")).toBe("보수적");
     expect(formatRiskAppetiteLabel("MODERATE")).toBe("중립");
     expect(formatRiskAppetiteLabel("AGGRESSIVE")).toBe("공격적");
+  });
+
+  test("builds market session view model for non-regular domestic sessions", () => {
+    const model = buildMarketSessionViewModel({
+      market_open: false,
+      domestic_market_open: true,
+      market_session: "NXT_AFTER",
+      market_session_label: "NXT 애프터마켓",
+      market_session_note: "15:30~20:00 대체거래소 애프터마켓",
+      market_session_auto_trading: false,
+      next_market_session: "04/08 08:00",
+    });
+
+    expect(model.badgeLabel).toBe("장:NXT 애프터마켓");
+    expect(model.tone).toBe("blue");
+    expect(model.detailLabel).toBe("NXT 애프터마켓");
+    expect(model.note).toContain("15:30~20:00");
   });
 });

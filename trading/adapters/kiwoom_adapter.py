@@ -8,7 +8,7 @@ from trading.adapters.base import (
     MarketDataClientProtocol,
     OrderExecutorProtocol,
 )
-from trading.enums import BrokerProvider, Market
+from trading.enums import BrokerProvider, Market, OrderSession
 from trading.models import (
     AccountBalance,
     BrokerCapabilities,
@@ -34,6 +34,10 @@ class KiwoomBrokerAdapter(BrokerAdapter):
         supports_live_trading=True,
         supports_realtime_quotes=True,
         supports_order_cancellation=False,
+        supports_nxt_quotes=False,
+        supports_after_hours_orders=False,
+        supports_after_hours_automation=False,
+        supported_order_sessions=[OrderSession.REGULAR],
     )
 
     def __init__(

@@ -4,9 +4,10 @@ from agent.decision_maker import decision_maker
 from core.config import settings
 from exceptions.common import ServiceException
 from services.activity_logger import activity_logger
+from scheduler.market_calendar import market_calendar
 from trading.adapters.base import BrokerAdapter
 from trading.broker_factory import get_broker_adapter
-from trading.enums import ActivityPhase, ActivityType, Market, OrderSide, OrderType
+from trading.enums import ActivityPhase, ActivityType, Market, OrderSession, OrderSide, OrderType
 from trading.models import HoldingInfo, OrderRequest, OrderResult, PendingOrderInfo
 from trading.symbols import normalize_krx_symbol
 
@@ -28,6 +29,18 @@ class ManualTradeService:
     async def _ensure_trading_enabled(self) -> None:
         if not settings.TRADING_ENABLED:
             raise ServiceException.bad_request("실주문이 비활성화되어 있습니다 (TRADING_ENABLED=false)")
+
+    async def _ensure_regular_session_sell_supported(self) -> None:
+        session_info = market_calendar.get_market_session_info()
+        if not bool(session_info.get("is_regular_open")):
+            session_label = str(session_info.get("label") or "장외")
+            raise ServiceException.bad_request(
+                f"현재 세션({session_label})에서는 즉시 매도를 지원하지 않습니다. 정규장에 다시 시도해 주세요."
+            )
+
+        supported_sessions = list(getattr(self.broker_adapter.capabilities, "supported_order_sessions", []) or [])
+        if OrderSession.REGULAR not in supported_sessions:
+            raise ServiceException.bad_request("현재 브로커 설정은 정규장 즉시 매도를 지원하지 않습니다.")
 
     async def _get_holdings(self) -> list[HoldingInfo]:
         return list(await self.broker_adapter.get_holdings())
@@ -66,6 +79,7 @@ class ManualTradeService:
 
     async def sell_position(self, symbol: str) -> dict:
         await self._ensure_trading_enabled()
+        await self._ensure_regular_session_sell_supported()
         normalized_symbol = self._normalize_symbol(symbol)
         holding = await self._find_holding(normalized_symbol)
         pending_orders = await self._get_pending_orders()
@@ -168,6 +182,7 @@ class ManualTradeService:
 
     async def replace_pending_sell_with_market_order(self, order_id: str) -> dict:
         await self._ensure_trading_enabled()
+        await self._ensure_regular_session_sell_supported()
         order = await self._find_pending_order(order_id)
         if str(getattr(order, "side", "")) != "매도":
             raise ServiceException.bad_request("미체결 매도 주문만 재매도할 수 있습니다")

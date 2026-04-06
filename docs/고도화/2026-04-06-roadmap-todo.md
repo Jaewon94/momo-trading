@@ -30,6 +30,19 @@
   - 부분 매도 정합성 및 복구 로직
   - 성과 분석 화면, 뉴스 반영 거래 vs 일반 거래 비교
 
+## 신규 고도화 축
+- 장외/시간외/NXT 세션 지원 검토
+  - 현재 자동매매는 정규장 데이트레이딩 기준 유지
+  - [x] 1차: 세션 상태 모델/API/UI 정리
+    - `/api/v1/admin/system/status`에 세션 코드/라벨/다음 세션 정보 추가
+    - 운영 시그널과 상단 뱃지가 `정규장/장외/NXT` 기준으로 표시되도록 정리
+  - [x] 2차: 주문 세션/브로커 capability 분리
+    - `OrderSession` 모델 추가
+    - 브로커 capability에 `supported_order_sessions`, `supports_after_hours_orders`, `supports_nxt_quotes` 추가
+    - 수동 즉시 매도는 정규장 + 브로커 지원 세션일 때만 활성화
+  - 자동 주문 확장은 세션별 주문 정책/브로커 지원 범위 검증 후 별도 진행
+  - 상세 계획은 `docs/고도화/2026-04-07-after-hours-session-plan.md` 참고
+
 ## 현재 우선순위
 1. 수익 검증 체계 마무리
 - [x] Shadow A/B를 운영 화면에서 더 명확히 추적
@@ -94,10 +107,11 @@
 - [x] `start.sh -d` 상태 표시가 실제 프로세스와 어긋날 수 있음
 
 ## 추천 실행 순서
-1. 거래 상태 배지/타임라인 라벨 정리
-2. 뉴스 인텔 잔여 소스/점수화 고도화
-3. DB 백업/복원 운영 절차 문서화
-4. 뉴스 운영 체크 명령 정리
+1. 브로커 공식 주문 문서 재검증
+2. 거래 상태 배지/타임라인 라벨 잔여 정리
+3. 뉴스 인텔 잔여 소스/점수화 고도화
+4. DB 백업/복원 운영 절차 문서화
+5. 뉴스 운영 체크 명령 정리
  - `bash start.sh check-news`로 최근 24h 적재 수, 소스별 신규/중복/스킵, 마지막 성공/실패를 점검
 
 ## 참고 문서
@@ -106,3 +120,4 @@
 - `docs/고도화/2026-04-06-news-intel-checklist.md`
 - `docs/고도화/2026-04-06-trade-baseline-reset.md`
 - `docs/고도화/2026-04-06-db-backup-restore-runbook.md`
+- `docs/고도화/2026-04-07-after-hours-session-plan.md`

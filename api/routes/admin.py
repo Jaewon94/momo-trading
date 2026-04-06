@@ -1464,6 +1464,9 @@ async def get_system_status(db: AsyncSession = Depends(get_async_db)):
     from scheduler.market_calendar import market_calendar
 
     broker_provider = settings.BROKER_PROVIDER.upper()
+    broker_adapter = get_broker_adapter()
+    broker_capabilities = broker_adapter.capabilities
+    supported_sessions = [session.value for session in broker_capabilities.supported_order_sessions]
     mcp_required = broker_provider == "KIS"
     mcp_connected = mcp_client.is_connected
     activity_repo = AgentActivityRepository(db)
@@ -1478,23 +1481,32 @@ async def get_system_status(db: AsyncSession = Depends(get_async_db)):
         if str((state or {}).get("status") or "").upper() == "ERROR"
     ]
 
+    capability_message = (
+        "정규장 주문만 지원합니다."
+        if not broker_capabilities.supports_after_hours_orders
+        else "시간외 주문 지원 범위를 확인할 수 있습니다."
+    )
+
     if not mcp_required:
         broker_ops = {
             "status": "OK",
             "label": "브로커 정상",
-            "message": f"{broker_provider}는 MCP 없이 직접 연동합니다.",
+            "message": f"{broker_provider}는 MCP 없이 직접 연동합니다. {capability_message}",
+            "supported_sessions": supported_sessions,
         }
     elif mcp_connected:
         broker_ops = {
             "status": "OK",
             "label": "브로커 정상",
-            "message": "MCP 연결이 살아 있어 브로커 호출 준비가 되어 있습니다.",
+            "message": f"MCP 연결이 살아 있어 브로커 호출 준비가 되어 있습니다. {capability_message}",
+            "supported_sessions": supported_sessions,
         }
     else:
         broker_ops = {
             "status": "ERROR",
             "label": "브로커 확인 필요",
-            "message": "KIS MCP 연결이 끊겨 있어 브로커 호출이 실패할 수 있습니다.",
+            "message": f"KIS MCP 연결이 끊겨 있어 브로커 호출이 실패할 수 있습니다. {capability_message}",
+            "supported_sessions": supported_sessions,
         }
 
     news_last_status = str(news_overall.get("last_status") or "IDLE").upper()
@@ -1582,6 +1594,8 @@ async def get_system_status(db: AsyncSession = Depends(get_async_db)):
             "base_url": settings.OLLAMA_BASE_URL,
         }
 
+    market_session = market_calendar.get_market_session_info()
+
     return SuccessResponse(data={
         "broker_provider": broker_provider,
         "mcp_required": mcp_required,
@@ -1593,9 +1607,21 @@ async def get_system_status(db: AsyncSession = Depends(get_async_db)):
         "last_cycle_time": trading_agent.last_cycle_time.isoformat() if trading_agent.last_cycle_time else None,
         "sse_clients": sse_manager.client_count,
         "environment": settings.ENVIRONMENT,
-        "market_open": market_calendar.is_krx_trading_hours(),
-        "market_holiday": market_calendar.get_holiday_name(),
+        "market_open": bool(market_session["is_regular_open"]),
+        "domestic_market_open": bool(market_session["is_domestic_open"]),
+        "market_session": market_session["code"],
+        "market_session_label": market_session["label"],
+        "market_session_note": market_session["note"],
+        "market_session_auto_trading": bool(market_session["supports_automated_trading"]),
+        "market_holiday": market_session["holiday_name"],
         "next_market_open": market_calendar.next_krx_open().strftime("%m/%d %H:%M"),
+        "next_market_session": market_session["next_session_at"].strftime("%m/%d %H:%M"),
+        "broker_capabilities": {
+            "supports_nxt_quotes": bool(broker_capabilities.supports_nxt_quotes),
+            "supports_after_hours_orders": bool(broker_capabilities.supports_after_hours_orders),
+            "supports_after_hours_automation": bool(broker_capabilities.supports_after_hours_automation),
+            "supported_order_sessions": supported_sessions,
+        },
         "operations": {
             "broker": broker_ops,
             "news_polling": news_ops,

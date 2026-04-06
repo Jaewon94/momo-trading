@@ -4,7 +4,7 @@ from typing import Optional
 
 from pydantic import BaseModel, model_validator
 
-from trading.enums import Market, OrderSide, OrderType
+from trading.enums import Market, OrderSession, OrderSide, OrderType
 
 
 class KISTokenInfo(BaseModel):
@@ -56,6 +56,10 @@ class BrokerCapabilities(BaseModel):
     supports_live_trading: bool = False
     supports_realtime_quotes: bool = False
     supports_order_cancellation: bool = False
+    supports_nxt_quotes: bool = False
+    supports_after_hours_orders: bool = False
+    supports_after_hours_automation: bool = False
+    supported_order_sessions: list[OrderSession] = []
 
 
 class OrderRequest(BaseModel):
@@ -64,6 +68,7 @@ class OrderRequest(BaseModel):
     market: Market
     side: OrderSide
     order_type: OrderType
+    order_session: OrderSession = OrderSession.REGULAR
     quantity: int
     price: Optional[float] = None  # 시장가 주문 시 None
 

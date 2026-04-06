@@ -4,6 +4,7 @@ from enum import Enum
 class Market(str, Enum):
     """주식 시장"""
     KRX = "KRX"
+    NXT = "NXT"
     KOSPI = "KOSPI"
     KOSDAQ = "KOSDAQ"
     NASDAQ = "NASDAQ"
@@ -27,6 +28,17 @@ class OrderType(str, Enum):
     """주문 유형"""
     MARKET = "MARKET"
     LIMIT = "LIMIT"
+
+
+class OrderSession(str, Enum):
+    """주문 세션"""
+    REGULAR = "REGULAR"
+    NXT_PRE = "NXT_PRE"
+    KRX_CLOSE_AUCTION = "KRX_CLOSE_AUCTION"
+    NXT_AFTER = "NXT_AFTER"
+    PRE_MARKET_CLOSE = "PRE_MARKET_CLOSE"
+    POST_MARKET_CLOSE = "POST_MARKET_CLOSE"
+    AFTER_HOURS_SINGLE = "AFTER_HOURS_SINGLE"
 
 
 class OrderStatus(str, Enum):

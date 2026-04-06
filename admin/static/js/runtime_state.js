@@ -71,6 +71,9 @@ export function buildRuntimeOperationsViewModel(systemStatus = {}) {
     if (item.symbol) metaParts.push(String(item.symbol));
     if (item.created_at) metaParts.push(String(item.created_at));
     if (item.last_run_at) metaParts.push(String(item.last_run_at));
+    if (Array.isArray(item.supported_sessions) && item.supported_sessions.length > 0) {
+      metaParts.push(`세션:${item.supported_sessions.join(', ')}`);
+    }
     return {
       key: item.key,
       title: item.title || item.key,
@@ -81,6 +84,38 @@ export function buildRuntimeOperationsViewModel(systemStatus = {}) {
       meta: metaParts.join(" · "),
     };
   });
+}
+
+export function buildMarketSessionViewModel(systemStatus = {}) {
+  const isHoliday = Boolean(systemStatus.market_holiday);
+  const sessionCode = String(systemStatus.market_session || "CLOSED");
+  const sessionLabel = String(systemStatus.market_session_label || (isHoliday ? `휴장 (${systemStatus.market_holiday})` : "장외"));
+  const regularOpen = Boolean(systemStatus.market_open);
+  const domesticOpen = Boolean(systemStatus.domestic_market_open);
+  const tone = regularOpen ? "green" : domesticOpen ? "blue" : isHoliday ? "yellow" : "gray";
+  const dotClass = regularOpen
+    ? "bg-green-400"
+    : domesticOpen
+      ? "bg-blue-400"
+      : isHoliday
+        ? "bg-yellow-400"
+        : "bg-gray-500";
+  const badgeLabel = regularOpen ? "장:정규장" : domesticOpen ? `장:${sessionLabel}` : isHoliday ? "장:휴장" : "장:장외";
+  const detailLabel = isHoliday ? `휴장 (${systemStatus.market_holiday})` : sessionLabel;
+  const extra = domesticOpen
+    ? `다음: ${String(systemStatus.next_market_session || "")}`
+    : `다음: ${String(systemStatus.next_market_session || systemStatus.next_market_open || "")}`;
+  return {
+    sessionCode,
+    sessionLabel,
+    badgeLabel,
+    detailLabel,
+    tone,
+    dotClass,
+    extra,
+    note: String(systemStatus.market_session_note || ""),
+    autoTrading: Boolean(systemStatus.market_session_auto_trading),
+  };
 }
 
 export function buildRuntimeControlState({

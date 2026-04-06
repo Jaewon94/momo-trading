@@ -2,8 +2,8 @@ import pytest
 
 from exceptions.common import ServiceException
 from services.manual_trade_service import ManualTradeService
-from trading.enums import Market, OrderSide, OrderType
-from trading.models import HoldingInfo, OrderRequest, OrderResult, PendingOrderInfo
+from trading.enums import Market, OrderSession, OrderSide, OrderType
+from trading.models import BrokerCapabilities, HoldingInfo, OrderRequest, OrderResult, PendingOrderInfo
 
 
 class FakeBrokerAdapter:
@@ -19,6 +19,7 @@ class FakeBrokerAdapter:
         self._pending_orders = list(pending_orders or [])
         self.place_result = place_result or OrderResult(success=True, order_id="ORD-1", message="ok")
         self.cancel_result = cancel_result or OrderResult(success=True, order_id="CAN-1", message="cancelled")
+        self.capabilities = BrokerCapabilities(supported_order_sessions=[OrderSession.REGULAR])
         self.placed_requests: list[OrderRequest] = []
         self.cancelled_order_ids: list[str] = []
         self.cache_invalidated = False
@@ -62,6 +63,10 @@ async def test_manual_trade_service_places_market_sell_and_confirms(monkeypatch)
     service = ManualTradeService(broker_adapter=adapter)
 
     monkeypatch.setattr("services.manual_trade_service.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr(
+        "services.manual_trade_service.market_calendar.get_market_session_info",
+        lambda: {"is_regular_open": True, "label": "정규장"},
+    )
 
     async def fake_confirm_and_record(**kwargs):
         confirmed.update(kwargs)
@@ -105,6 +110,10 @@ async def test_manual_trade_service_cancels_pending_buy(monkeypatch):
     service = ManualTradeService(broker_adapter=adapter)
     logs = []
     monkeypatch.setattr("services.manual_trade_service.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr(
+        "services.manual_trade_service.market_calendar.get_market_session_info",
+        lambda: {"is_regular_open": True, "label": "정규장"},
+    )
 
     async def fake_log(*args, **kwargs):
         logs.append((args, kwargs))
@@ -151,6 +160,10 @@ async def test_manual_trade_service_cancels_pending_sell_then_places_market_sell
     confirmed = {}
     service = ManualTradeService(broker_adapter=adapter)
     monkeypatch.setattr("services.manual_trade_service.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr(
+        "services.manual_trade_service.market_calendar.get_market_session_info",
+        lambda: {"is_regular_open": True, "label": "정규장"},
+    )
 
     async def fake_confirm_and_record(**kwargs):
         confirmed.update(kwargs)
@@ -201,8 +214,41 @@ async def test_manual_trade_service_rejects_immediate_sell_when_pending_sell_exi
     )
     service = ManualTradeService(broker_adapter=adapter)
     monkeypatch.setattr("services.manual_trade_service.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr(
+        "services.manual_trade_service.market_calendar.get_market_session_info",
+        lambda: {"is_regular_open": True, "label": "정규장"},
+    )
 
     with pytest.raises(ServiceException) as exc_info:
         await service.sell_position("005930")
 
     assert exc_info.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_manual_trade_service_rejects_immediate_sell_outside_regular_session(monkeypatch):
+    adapter = FakeBrokerAdapter(
+        holdings=[
+            HoldingInfo(
+                symbol="005930",
+                name="삼성전자",
+                quantity=5,
+                avg_buy_price=70000,
+                current_price=72000,
+                pnl=10000,
+                pnl_rate=1.5,
+            ),
+        ],
+    )
+    service = ManualTradeService(broker_adapter=adapter)
+    monkeypatch.setattr("services.manual_trade_service.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr(
+        "services.manual_trade_service.market_calendar.get_market_session_info",
+        lambda: {"is_regular_open": False, "label": "장외"},
+    )
+
+    with pytest.raises(ServiceException) as exc_info:
+        await service.sell_position("005930")
+
+    assert exc_info.value.status_code == 400
+    assert "현재 세션(장외)" in str(exc_info.value.message)

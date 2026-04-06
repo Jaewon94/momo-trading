@@ -10,6 +10,7 @@ describe("runtime_operations_state", () => {
           status: "ERROR",
           label: "브로커 확인 필요",
           message: "KIS MCP 연결이 끊겨 있습니다.",
+          supported_sessions: ["REGULAR"],
         },
         news_polling: {
           status: "WARN",
@@ -31,6 +32,7 @@ describe("runtime_operations_state", () => {
       tone: "red",
       label: "브로커 확인 필요",
     });
+    expect(items[0].meta).toContain("세션:REGULAR");
     expect(items[1].tone).toBe("yellow");
     expect(items[1].meta).toContain("2026-04-06T09:10:00+09:00");
     expect(items[2].tone).toBe("green");

@@ -47,7 +47,14 @@ async def test_system_status_marks_mcp_as_optional_for_kiwoom(client, monkeypatc
     assert payload["broker_provider"] == "KIWOOM"
     assert payload["mcp_required"] is False
     assert payload["mcp_connected"] is False
+    assert payload["market_session"] in {"CLOSED", "NXT_PRE", "KRX_NXT", "KRX_CLOSE", "NXT_AFTER"}
+    assert "market_session_label" in payload
+    assert "next_market_session" in payload
+    assert payload["broker_capabilities"]["supports_nxt_quotes"] is False
+    assert payload["broker_capabilities"]["supported_order_sessions"] == ["REGULAR"]
     assert payload["operations"]["broker"]["status"] == "OK"
+    assert payload["operations"]["broker"]["supported_sessions"] == ["REGULAR"]
+    assert "정규장 주문만 지원" in payload["operations"]["broker"]["message"]
     assert payload["operations"]["ollama"]["status"] == "OK"
     assert payload["operations"]["ollama"]["label"] == "Ollama 미사용"
 

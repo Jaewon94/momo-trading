@@ -1,7 +1,7 @@
 import pytest
 
 from trading.adapters.kiwoom_adapter import KiwoomBrokerAdapter
-from trading.enums import BrokerProvider, Market, OrderSide, OrderType
+from trading.enums import BrokerProvider, Market, OrderSession, OrderSide, OrderType
 from trading.models import (
     AccountBalance,
     CurrentPrice,
@@ -174,6 +174,9 @@ async def test_kiwoom_adapter_exposes_provider_and_capabilities() -> None:
     assert adapter.capabilities.supports_overseas_stocks is False
     assert adapter.capabilities.supports_paper_trading is True
     assert adapter.capabilities.supports_realtime_quotes is True
+    assert adapter.capabilities.supports_nxt_quotes is False
+    assert adapter.capabilities.supports_after_hours_orders is False
+    assert adapter.capabilities.supported_order_sessions == [OrderSession.REGULAR]
 
 
 @pytest.mark.asyncio

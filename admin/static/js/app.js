@@ -13,6 +13,7 @@ import {
 } from './pane_layout.js';
 import {
   buildRuntimeControlState,
+  buildMarketSessionViewModel,
   buildRuntimeOperationsViewModel,
   buildRuntimeSettingCopy,
   formatAutonomyModeLabel,
@@ -42,6 +43,7 @@ import {
 import { buildTradePanelState, buildTradeSummaryCounts } from './trade_state.js';
 import { buildTradeCenterState } from './trade_center_state.js';
 import {
+  buildManualTradeSupportViewModel,
   buildManualTradeSymbolMap,
   buildPendingOrderAction,
   getImmediateSellAction,
@@ -161,6 +163,7 @@ function getManualTradeSymbolMap() {
     holdings: latestAccountSnapshot?.holdings || [],
     pendingOrders: latestAccountSnapshot?.pendingOrders || [],
     tradingEnabled: runtimeSettings?.TRADING_ENABLED !== false,
+    runtimeSystemStatus,
   });
 }
 
@@ -825,15 +828,17 @@ function syncPositionTimelineView() {
 
 function buildPositionManualActionMarkup(symbol) {
   const action = getImmediateSellAction(symbol, getManualTradeSymbolMap());
+  const support = buildManualTradeSupportViewModel(runtimeSystemStatus);
   return `
     <section class="mb-3 rounded-2xl border border-gray-700 bg-dark-900/40 px-4 py-3">
       <div class="flex items-center justify-between gap-3">
         <div>
           <div class="text-xs uppercase tracking-[0.12em] text-gray-500">Manual Action</div>
+          <div class="mt-1 text-[11px] text-gray-500">${escapeHtml(support.summary)}</div>
           <div class="mt-1 text-sm text-gray-300">
             ${escapeHtml(action.disabled ? (action.reason || '즉시 매도 불가') : `${action.quantity || 0}주 전량 시장가 매도 가능`)}
           </div>
-          ${action.hint && !action.disabled ? `<div class="mt-1 text-[11px] text-amber-300/90">${escapeHtml(action.hint)}</div>` : ''}
+          ${action.hint && !action.disabled ? `<div class="mt-1 text-[11px] text-amber-300/90">${escapeHtml(action.hint)}</div>` : `<div class="mt-1 text-[11px] text-gray-500">${escapeHtml(support.detail)}</div>`}
         </div>
         ${renderManualActionButton(action, {
           'manual-action': action.kind,
@@ -1739,6 +1744,7 @@ function renderPendingOrders(data) {
     countEl.textContent = `${data.length}`;
   }
   const symbolMap = getManualTradeSymbolMap();
+  const support = buildManualTradeSupportViewModel(runtimeSystemStatus);
   el.innerHTML = data.map(o => {
     const sideColor = o.side === '매수' ? 'text-red-400' : 'text-blue-400';
     const borderColor = o.side === '매수' ? 'border-yellow-700/60' : 'border-yellow-700/60';
@@ -1772,6 +1778,7 @@ function renderPendingOrders(data) {
           symbol: o.symbol || '',
         })}
       </div>
+      ${action.disabled ? `<div class="text-[10px] text-gray-500 pt-1">${escapeHtml(support.summary)}</div>` : ''}
     </div>`;
   }).join('');
 }
@@ -5253,18 +5260,13 @@ async function loadSystemStatus() {
     const brokerProvider = s.broker_provider || 'KIWOOM';
     const mcpBadge = getMcpBadgeState(s);
     const brokerBadgeTone = brokerProvider === 'KIS' ? 'blue' : 'yellow';
-    const isHoliday = !!s.market_holiday;
-    const marketLabel = s.market_open ? '장:장중' : (isHoliday ? `장:휴장` : '장:장외');
-    const marketBadgeTone = s.market_open ? 'green' : (isHoliday ? 'yellow' : 'gray');
+    const marketSession = buildMarketSessionViewModel(s);
     updateBadge('badge-broker', `브로커:${brokerProvider}`, brokerBadgeTone);
-    updateBadge('badge-market', marketLabel, marketBadgeTone);
+    updateBadge('badge-market', marketSession.badgeLabel, marketSession.tone);
     updateBadge('badge-trading', s.trading_enabled ? '매매:ON' : '매매:OFF', s.trading_enabled ? 'green' : 'red');
     updateBadge('badge-mcp', mcpBadge.label, mcpBadge.tone);
     const statusEl = document.getElementById('sys-status');
     const operationItems = buildRuntimeOperationsViewModel(s);
-    const marketStatusLabel = s.market_open ? '장중' : (isHoliday ? `휴장 (${s.market_holiday})` : '장외');
-    const marketColor = s.market_open ? 'bg-green-400' : (isHoliday ? 'bg-yellow-400' : 'bg-gray-500');
-    const marketExtra = s.market_open ? '' : ` (다음: ${s.next_market_open || ''})`;
     const operationsHtml = operationItems.map((item) => `
       <div class="rounded-lg border ${item.tone === 'red' ? 'border-red-500/30 bg-red-500/10 text-red-100' : item.tone === 'yellow' ? 'border-yellow-500/30 bg-yellow-500/10 text-yellow-100' : 'border-green-500/30 bg-green-500/10 text-green-100'} px-2.5 py-2">
         <div class="flex items-center gap-1.5">
@@ -5277,9 +5279,10 @@ async function loadSystemStatus() {
     `).join('');
     statusEl.innerHTML = `
       <div class="flex items-center gap-1.5">
-        <span class="status-dot w-1.5 h-1.5 rounded-full ${marketColor}"></span>
-        <strong>${marketStatusLabel}</strong>${marketExtra}
+        <span class="status-dot w-1.5 h-1.5 rounded-full ${marketSession.dotClass}"></span>
+        <strong>${escapeHtml(marketSession.detailLabel)}</strong> (${escapeHtml(marketSession.extra)})
       </div>
+      <div class="text-[11px] text-gray-400">${escapeHtml(marketSession.note)}</div>
       <div class="flex items-center gap-1.5">
         <span class="status-dot w-1.5 h-1.5 rounded-full ${mcpBadge.dotClass}"></span>
         MCP: ${escapeHtml(mcpBadge.detailLabel)}
@@ -5287,7 +5290,11 @@ async function loadSystemStatus() {
       ${operationsHtml}`;
     renderRuntimeControls();
     document.querySelectorAll('[data-cycle-trigger="true"]').forEach((btn) => {
-      btn.textContent = s.market_open ? '▶ 매매 사이클 실행' : '▶ 장마감 리뷰 실행';
+      btn.textContent = marketSession.sessionCode === 'KRX_NXT'
+        ? '▶ 매매 사이클 실행'
+        : marketSession.sessionCode !== 'CLOSED'
+          ? '▶ 장외 세션 점검 실행'
+          : '▶ 장마감 리뷰 실행';
     });
   } catch (err) {
     console.error('Status load error:', err);

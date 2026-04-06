@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from trading.enums import BrokerProvider, Market, OrderSide, OrderType
+from trading.enums import BrokerProvider, Market, OrderSession, OrderSide, OrderType
 from trading.models import (
     AccountBalance,
     CurrentPrice,
@@ -152,6 +152,19 @@ def test_market_order_allows_empty_price() -> None:
     assert order.price is None
 
 
+def test_order_request_defaults_to_regular_session() -> None:
+    order = OrderRequest(
+        symbol="005930",
+        market=Market.KOSPI,
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        quantity=1,
+        price=71_000,
+    )
+
+    assert order.order_session == OrderSession.REGULAR
+
+
 @pytest.mark.asyncio
 async def test_kis_adapter_exposes_provider_and_capabilities() -> None:
     adapter, _ = build_adapter()
@@ -161,6 +174,9 @@ async def test_kis_adapter_exposes_provider_and_capabilities() -> None:
     assert adapter.capabilities.supports_overseas_stocks is True
     assert adapter.capabilities.supports_paper_trading is True
     assert adapter.capabilities.supports_realtime_quotes is True
+    assert adapter.capabilities.supports_nxt_quotes is True
+    assert adapter.capabilities.supports_after_hours_orders is False
+    assert adapter.capabilities.supported_order_sessions == [OrderSession.REGULAR]
 
 
 @pytest.mark.asyncio
