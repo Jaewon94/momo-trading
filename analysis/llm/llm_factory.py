@@ -7,6 +7,13 @@ from loguru import logger
 from analysis.llm.claude_code_provider import ClaudeCodeProvider
 from analysis.llm.codex_provider import CodexProvider
 from analysis.llm.ollama_provider import OllamaProvider
+from analysis.llm.selection_policy import (
+    model_for_status,
+    provider_from_name,
+    resolve_manual_selection,
+    resolve_news_selection,
+    resolve_tier_selection,
+)
 from core.config import DEFAULT_LLM_MODEL, normalize_llm_model_value, settings
 from trading.enums import ActivityPhase, ActivityType, LLMProvider, LLMTier
 
@@ -32,24 +39,11 @@ class LLMFactory:
             },
         }
 
-    @staticmethod
-    def _provider_from_name(value: str | None, default: LLMProvider = LLMProvider.CLAUDE_CODE) -> LLMProvider:
-        if not value:
-            return default
-        return LLMProvider(value.upper())
-
     def _provider_chain(self, tier: LLMTier) -> list[LLMProvider]:
-        primary_default = settings.LLM_PROVIDER or LLMProvider.CLAUDE_CODE.value
-        primary_name = (
-            settings.LLM_PROVIDER_TIER1 if tier == LLMTier.TIER1 else settings.LLM_PROVIDER_TIER2
-        ) or primary_default
-        fallback_name = (
-            settings.LLM_FALLBACK_PROVIDER_TIER1 if tier == LLMTier.TIER1 else settings.LLM_FALLBACK_PROVIDER_TIER2
-        )
-
-        chain = [self._provider_from_name(primary_name)]
-        if fallback_name:
-            fallback = self._provider_from_name(fallback_name)
+        selection = resolve_tier_selection(tier)
+        chain = [selection.provider]
+        if selection.fallback_provider:
+            fallback = provider_from_name(selection.fallback_provider)
             if fallback not in chain:
                 chain.append(fallback)
         return chain
@@ -59,10 +53,7 @@ class LLMFactory:
         default_tier: LLMTier,
         manual_provider_override: str | None = None,
     ) -> list[LLMProvider]:
-        selection = (manual_provider_override or settings.MANUAL_LLM_PROVIDER or "AUTOMATIC").upper()
-        if selection == "AUTOMATIC":
-            return self._provider_chain(default_tier)
-        return [self._provider_from_name(selection)]
+        return list(resolve_manual_selection(default_tier, provider_override=manual_provider_override).provider_chain)
 
     @staticmethod
     def _fallback_model_for_tier(tier: LLMTier) -> str:
@@ -267,68 +258,57 @@ class LLMFactory:
         `AUTOMATIC`이면 기존 tier 설정을 사용하고,
         명시적 provider가 주어지면 해당 provider만 사용한다.
         """
-        provider_chain = self._manual_provider_chain(default_tier, manual_provider_override)
-        provider_model_overrides: dict[LLMProvider, str] | None = None
-        if manual_model_override and len(provider_chain) == 1:
-            provider_model_overrides = {provider_chain[0]: manual_model_override}
+        selection = resolve_manual_selection(
+            default_tier,
+            provider_override=manual_provider_override,
+            model_override=manual_model_override,
+        )
         return await self.generate(
             prompt,
             default_tier,
             system_prompt,
             symbol=symbol,
             cycle_id=cycle_id,
-            provider_chain=provider_chain,
-            provider_model_overrides=provider_model_overrides,
+            provider_chain=list(selection.provider_chain),
+            provider_model_overrides=selection.provider_model_overrides,
         )
 
     def get_llm_status(self) -> dict:
         """현재 LLM 설정 상태 반환 (Admin API용)"""
-        tier1_model = normalize_llm_model_value(settings.CLAUDE_CODE_MODEL_TIER1 or settings.CLAUDE_CODE_MODEL)
-        tier2_model = normalize_llm_model_value(settings.CLAUDE_CODE_MODEL_TIER2 or settings.CLAUDE_CODE_MODEL)
-        codex_tier1_model = normalize_llm_model_value(settings.CODEX_MODEL_TIER1 or settings.CODEX_MODEL)
-        codex_tier2_model = normalize_llm_model_value(settings.CODEX_MODEL_TIER2 or settings.CODEX_MODEL)
-        ollama_tier1_model = normalize_llm_model_value(settings.OLLAMA_MODEL_TIER1 or settings.OLLAMA_MODEL)
-        ollama_tier2_model = normalize_llm_model_value(settings.OLLAMA_MODEL_TIER2 or settings.OLLAMA_MODEL)
-        tier1_provider = (settings.LLM_PROVIDER_TIER1 or settings.LLM_PROVIDER or "CLAUDE_CODE").upper()
-        tier2_provider = (settings.LLM_PROVIDER_TIER2 or settings.LLM_PROVIDER or "CLAUDE_CODE").upper()
-        tier1_fallback_provider = (settings.LLM_FALLBACK_PROVIDER_TIER1 or "").upper()
-        tier2_fallback_provider = (settings.LLM_FALLBACK_PROVIDER_TIER2 or "").upper()
-        tier1_fallback_model = self._fallback_model_for_tier(LLMTier.TIER1)
-        tier2_fallback_model = self._fallback_model_for_tier(LLMTier.TIER2)
-        tier1_selected_model = (
-            codex_tier1_model if tier1_provider == "CODEX"
-            else ollama_tier1_model if tier1_provider == "OLLAMA"
-            else tier1_model
-        )
-        tier2_selected_model = (
-            codex_tier2_model if tier2_provider == "CODEX"
-            else ollama_tier2_model if tier2_provider == "OLLAMA"
-            else tier2_model
-        )
+        tier1_selection = resolve_tier_selection(LLMTier.TIER1)
+        tier2_selection = resolve_tier_selection(LLMTier.TIER2)
+        manual_selection = resolve_manual_selection(LLMTier.TIER1)
+        news_selection = resolve_news_selection()
+        tier1_model = model_for_status("CLAUDE_CODE", LLMTier.TIER1)
+        tier2_model = model_for_status("CLAUDE_CODE", LLMTier.TIER2)
+        codex_tier1_model = model_for_status("CODEX", LLMTier.TIER1)
+        codex_tier2_model = model_for_status("CODEX", LLMTier.TIER2)
+        ollama_tier1_model = model_for_status("OLLAMA", LLMTier.TIER1)
+        ollama_tier2_model = model_for_status("OLLAMA", LLMTier.TIER2)
         return {
             "tier1": {
-                "provider": tier1_provider,
-                "fallback_provider": tier1_fallback_provider,
-                "fallback_model": tier1_fallback_model if tier1_fallback_provider else "",
+                "provider": tier1_selection.provider.value,
+                "fallback_provider": tier1_selection.fallback_provider,
+                "fallback_model": tier1_selection.fallback_model if tier1_selection.fallback_provider else "",
                 "fallback_model_mode": (
-                    "default" if tier1_fallback_provider and tier1_fallback_model == DEFAULT_LLM_MODEL
-                    else "explicit" if tier1_fallback_provider
+                    "default" if tier1_selection.fallback_provider and tier1_selection.fallback_model == DEFAULT_LLM_MODEL
+                    else "explicit" if tier1_selection.fallback_provider
                     else ""
                 ),
-                "model": tier1_selected_model,
-                "model_mode": "default" if tier1_selected_model == DEFAULT_LLM_MODEL else "explicit",
+                "model": tier1_selection.model,
+                "model_mode": "default" if tier1_selection.model == DEFAULT_LLM_MODEL else "explicit",
             },
             "tier2": {
-                "provider": tier2_provider,
-                "fallback_provider": tier2_fallback_provider,
-                "fallback_model": tier2_fallback_model if tier2_fallback_provider else "",
+                "provider": tier2_selection.provider.value,
+                "fallback_provider": tier2_selection.fallback_provider,
+                "fallback_model": tier2_selection.fallback_model if tier2_selection.fallback_provider else "",
                 "fallback_model_mode": (
-                    "default" if tier2_fallback_provider and tier2_fallback_model == DEFAULT_LLM_MODEL
-                    else "explicit" if tier2_fallback_provider
+                    "default" if tier2_selection.fallback_provider and tier2_selection.fallback_model == DEFAULT_LLM_MODEL
+                    else "explicit" if tier2_selection.fallback_provider
                     else ""
                 ),
-                "model": tier2_selected_model,
-                "model_mode": "default" if tier2_selected_model == DEFAULT_LLM_MODEL else "explicit",
+                "model": tier2_selection.model,
+                "model_mode": "default" if tier2_selection.model == DEFAULT_LLM_MODEL else "explicit",
             },
             "available_providers": [
                 {
@@ -354,14 +334,14 @@ class LLMFactory:
                 },
             ],
             "manual_selection": {
-                "provider": (settings.MANUAL_LLM_PROVIDER or "AUTOMATIC").upper(),
-                "model": normalize_llm_model_value(settings.MANUAL_LLM_MODEL),
+                "provider": manual_selection.provider,
+                "model": manual_selection.model,
                 "options": ["AUTOMATIC", "CLAUDE_CODE", "CODEX", "OLLAMA"],
             },
             "news_selection": {
-                "enabled": bool(settings.NEWS_LLM_ENABLED),
-                "provider": (settings.NEWS_LLM_PROVIDER or "AUTOMATIC").upper(),
-                "model": normalize_llm_model_value(settings.NEWS_OLLAMA_MODEL),
+                "enabled": news_selection.enabled,
+                "provider": news_selection.provider,
+                "model": news_selection.model,
                 "options": ["AUTOMATIC", "CLAUDE_CODE", "CODEX", "OLLAMA"],
             },
         }

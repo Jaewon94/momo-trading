@@ -4303,6 +4303,71 @@ function getCatalogProvider(provider) {
   return llmCatalog?.providers?.find((item) => item.id === provider) || null;
 }
 
+function renderProviderModelSelector({
+  provider,
+  currentValue = 'DEFAULT',
+  selectEl,
+  sourceEl,
+  customEl,
+  disabledMessage = '',
+  defaultSuffix = '[기본값]',
+}) {
+  if (!selectEl) return;
+
+  if (!provider) {
+    selectEl.innerHTML = '<option value="DEFAULT">없음</option>';
+    selectEl.value = 'DEFAULT';
+    selectEl.disabled = true;
+    if (customEl) {
+      customEl.value = '';
+      customEl.disabled = true;
+    }
+    if (sourceEl) sourceEl.textContent = disabledMessage;
+    return;
+  }
+
+  const providerCatalog = getCatalogProvider(provider);
+  const entries = providerCatalog?.entries ? [...providerCatalog.entries] : [{ value: 'DEFAULT', label: '기본값 사용' }];
+  if (currentValue && !entries.some((item) => item.value === currentValue)) {
+    entries.push({
+      value: currentValue,
+      label: `${currentValue} (custom)`,
+      kind: 'custom',
+      stability: 'custom',
+      source_scope: 'manual',
+      source_url: '',
+    });
+  }
+
+  selectEl.innerHTML = entries.map((item) => {
+    const suffix = item.kind === 'snapshot'
+      ? ' [고정]'
+      : (item.value === 'DEFAULT' ? ` ${defaultSuffix}` : '');
+    return `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label || item.value)}${suffix}</option>`;
+  }).join('');
+  selectEl.value = currentValue;
+  selectEl.disabled = false;
+
+  if (customEl) {
+    customEl.placeholder = provider === 'CODEX'
+      ? '예: gpt-5-codex / gpt-5.4'
+      : provider === 'OLLAMA'
+        ? '예: llama3.1:8b / qwen2.5:14b'
+        : '예: sonnet / claude-sonnet-4-6';
+    customEl.value = '';
+    customEl.disabled = false;
+  }
+
+  if (sourceEl) {
+    const selected = entries.find((item) => item.value === currentValue);
+    const sourceBits = [];
+    if (selected?.source_scope) sourceBits.push(`출처: ${selected.source_scope}`);
+    if (selected?.stability) sourceBits.push(`성격: ${selected.stability}`);
+    if (providerCatalog?.cli_version) sourceBits.push(`CLI ${providerCatalog.cli_version}`);
+    sourceEl.textContent = sourceBits.join(' · ');
+  }
+}
+
 function renderTierModelSelectors() {
   renderTierModelSelector('tier1', 'primary');
   renderTierModelSelector('tier1', 'fallback');
@@ -4335,57 +4400,25 @@ function renderTierModelSelector(tier, mode = 'primary') {
   if (!selectEl) return;
 
   if (!hasFallbackProvider) {
-    selectEl.innerHTML = '<option value="DEFAULT">없음</option>';
-    selectEl.value = 'DEFAULT';
-    selectEl.disabled = true;
-    if (customEl) {
-      customEl.value = '';
-      customEl.disabled = true;
-    }
-    if (sourceEl) sourceEl.textContent = 'fallback provider를 먼저 선택하세요';
+    renderProviderModelSelector({
+      provider: '',
+      currentValue: 'DEFAULT',
+      selectEl,
+      sourceEl,
+      customEl,
+      disabledMessage: 'fallback provider를 먼저 선택하세요',
+    });
     return;
   }
 
-  const providerCatalog = getCatalogProvider(provider);
-  const entries = providerCatalog?.entries ? [...providerCatalog.entries] : [{ value: 'DEFAULT', label: '기본값 사용' }];
-  if (currentValue && !entries.some((item) => item.value === currentValue)) {
-    entries.push({
-      value: currentValue,
-      label: `${currentValue} (custom)`,
-      kind: 'custom',
-      stability: 'custom',
-      source_scope: 'manual',
-      source_url: '',
-    });
-  }
-
-  selectEl.innerHTML = entries.map((item) => {
-    const suffix = item.kind === 'snapshot'
-      ? ' [고정]'
-      : (item.value === 'DEFAULT' ? ' [CLI 기본값]' : '');
-    return `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label || item.value)}${suffix}</option>`;
-  }).join('');
-  selectEl.value = currentValue;
-  selectEl.disabled = false;
-
-  if (customEl) {
-    customEl.placeholder = provider === 'CODEX'
-      ? '예: gpt-5-codex / gpt-5.4'
-      : provider === 'OLLAMA'
-        ? '예: llama3.1:8b / qwen2.5:7b'
-        : '예: sonnet / claude-sonnet-4-6';
-    customEl.value = '';
-    customEl.disabled = false;
-  }
-
-  if (sourceEl) {
-    const selected = entries.find((item) => item.value === currentValue);
-    const sourceBits = [];
-    if (selected?.source_scope) sourceBits.push(`출처: ${selected.source_scope}`);
-    if (selected?.stability) sourceBits.push(`성격: ${selected.stability}`);
-    if (providerCatalog?.cli_version) sourceBits.push(`CLI ${providerCatalog.cli_version}`);
-    sourceEl.textContent = sourceBits.join(' · ');
-  }
+  renderProviderModelSelector({
+    provider,
+    currentValue,
+    selectEl,
+    sourceEl,
+    customEl,
+    defaultSuffix: '[CLI 기본값]',
+  });
 }
 
 async function loadLLMCatalog(forceRefresh = false) {
@@ -4454,56 +4487,25 @@ function renderManualModelSelector() {
   if (!selectEl) return;
 
   if (provider === 'AUTOMATIC') {
-    selectEl.innerHTML = '<option value="DEFAULT">자동</option>';
-    selectEl.value = 'DEFAULT';
-    selectEl.disabled = true;
-    if (customEl) {
-      customEl.value = '';
-      customEl.disabled = true;
-    }
-    if (sourceEl) sourceEl.textContent = '자동 선택 시 각 tier 기본 모델을 사용합니다';
+    renderProviderModelSelector({
+      provider: '',
+      currentValue: 'DEFAULT',
+      selectEl,
+      sourceEl,
+      customEl,
+      disabledMessage: '자동 선택 시 각 tier 기본 모델을 사용합니다',
+    });
     return;
   }
 
-  const providerCatalog = getCatalogProvider(provider);
-  const entries = providerCatalog?.entries ? [...providerCatalog.entries] : [{ value: 'DEFAULT', label: '기본값 사용' }];
-  if (currentValue && !entries.some((item) => item.value === currentValue)) {
-    entries.push({
-      value: currentValue,
-      label: `${currentValue} (custom)`,
-      kind: 'custom',
-      stability: 'custom',
-      source_scope: 'manual',
-      source_url: '',
-    });
-  }
-
-  selectEl.innerHTML = entries.map((item) => {
-    const suffix = item.kind === 'snapshot'
-      ? ' [고정]'
-      : (item.value === 'DEFAULT' ? ' [provider 기본값]' : '');
-    return `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label || item.value)}${suffix}</option>`;
-  }).join('');
-  selectEl.value = currentValue;
-  selectEl.disabled = false;
-
-  if (customEl) {
-    customEl.placeholder = provider === 'CODEX'
-      ? '예: gpt-5-codex / gpt-5.4'
-      : provider === 'OLLAMA'
-        ? '예: llama3.1:8b / qwen2.5:14b'
-        : '예: sonnet / claude-sonnet-4-6';
-    customEl.value = '';
-    customEl.disabled = false;
-  }
-
-  if (sourceEl) {
-    const selected = entries.find((item) => item.value === currentValue);
-    const sourceBits = [];
-    if (selected?.source_scope) sourceBits.push(`출처: ${selected.source_scope}`);
-    if (selected?.stability) sourceBits.push(`성격: ${selected.stability}`);
-    sourceEl.textContent = sourceBits.join(' · ');
-  }
+  renderProviderModelSelector({
+    provider,
+    currentValue,
+    selectEl,
+    sourceEl,
+    customEl,
+    defaultSuffix: '[provider 기본값]',
+  });
 }
 
 async function applyCustomManualModel() {

@@ -7,20 +7,12 @@ from typing import Any
 from loguru import logger
 
 from analysis.llm.llm_factory import llm_factory
-from core.config import DEFAULT_LLM_MODEL, normalize_llm_model_value, settings
+from analysis.llm.selection_policy import resolve_news_selection
+from core.config import settings
 from trading.enums import LLMTier
 
 
 class NewsTranslationService:
-    @staticmethod
-    def _news_ollama_model_override() -> str | None:
-        if (settings.NEWS_LLM_PROVIDER or "AUTOMATIC").upper() != "OLLAMA":
-            return None
-        normalized = normalize_llm_model_value(settings.NEWS_OLLAMA_MODEL)
-        if normalized == DEFAULT_LLM_MODEL:
-            return None
-        return normalized
-
     async def translate_items(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         translated: list[dict[str, Any]] = []
         for item in items:
@@ -60,12 +52,13 @@ Summary: {summary}
 
         copied = dict(item)
         metadata = dict(item.get("metadata") or {})
+        news_selection = resolve_news_selection()
         try:
             result, provider = await llm_factory.generate_manual(
                 prompt,
                 default_tier=LLMTier.TIER1,
-                manual_provider_override=(settings.NEWS_LLM_PROVIDER or "AUTOMATIC"),
-                manual_model_override=self._news_ollama_model_override(),
+                manual_provider_override=news_selection.provider,
+                manual_model_override=news_selection.model,
             )
             start = result.find("{")
             end = result.rfind("}") + 1
