@@ -40,7 +40,7 @@
 - [x] 해외 뉴스 실수집기 추가 확대 1차 (`Investing.com Stock Market News` RSS 추가)
 - [x] 해외 뉴스 실수집기 추가 확대 2차 (`Seeking Alpha All News` RSS 추가)
 - [ ] 해외 뉴스 실수집기 추가 확대(`Reuters` 대체 가능 소스 포함)
-- [ ] 거래 상태 표현 정리
+- [x] 거래 상태 표현 정리
   - 3단 UI 배지를 `매수/매도` 단일 문구에서 `접수중/대기중/부분 매도/완료`까지 드러나는 상태 체계로 개편
   - 이벤트 레이더/3단 카드/종목 상세가 동일 상태 모델을 재사용하도록 정리
   - 종목 상세 타임라인에서 부분 매도 후 닫힌 BUY lot가 보유처럼 보이지 않게 라벨 수정
@@ -65,6 +65,8 @@
 - [x] 수집기 단계의 연관 심볼/섹터 메타데이터 자동 보강
   - 종목명 매칭 결과를 `matched_stock_names`, `related_symbols`, `primary_symbol`로 저장
   - `Stock.category`를 이용해 `sector_label`, `sector_symbols`, `sector_relevance` 자동 채움
+- [x] 업종 키워드만 있는 기사도 섹터 종목군으로 추론
+  - 직접 종목명이 없어도 기사 제목/요약에 `반도체`, `인터넷` 같은 카테고리명이 있으면 `matched_sector_labels`, `sector_symbols`를 자동 보강
 - [x] 뉴스 게이트 정교화 1차
   - 호라이즌별 임계치/신선도 민감도 차등
   - 헤드라인 위험 키워드 severity boost

@@ -161,10 +161,10 @@ async def test_news_ingest_service_enriches_sector_metadata_from_stock_category(
 
     async with TestAsyncSessionLocal() as session:
         session.add_all([
-            Stock(symbol="905930", name="삼성전자", market="KOSPI", category="반도체", is_active=True),
-            Stock(symbol="900660", name="SK하이닉스", market="KOSPI", category="반도체", is_active=True),
-            Stock(symbol="942700", name="한미반도체", market="KOSPI", category="반도체", is_active=True),
-            Stock(symbol="935420", name="NAVER", market="KOSPI", category="인터넷", is_active=True),
+            Stock(symbol="815930", name="삼성전자", market="KOSPI", category="반도체", is_active=True),
+            Stock(symbol="810660", name="SK하이닉스", market="KOSPI", category="반도체", is_active=True),
+            Stock(symbol="852700", name="한미반도체", market="KOSPI", category="반도체", is_active=True),
+            Stock(symbol="845420", name="NAVER", market="KOSPI", category="인터넷", is_active=True),
         ])
         await session.commit()
 
@@ -189,4 +189,48 @@ async def test_news_ingest_service_enriches_sector_metadata_from_stock_category(
 
     assert metadata["sector_label"] == "반도체"
     assert metadata["sector_relevance"] > 1.0
-    assert metadata["sector_symbols"] == ["905930", "900660", "942700"]
+    assert {"815930", "810660", "852700"}.issubset(set(metadata["sector_symbols"]))
+    assert "845420" not in metadata["sector_symbols"]
+
+
+@pytest.mark.asyncio
+async def test_news_ingest_service_infers_sector_symbols_from_category_keyword_without_direct_stock_match():
+    from repositories.news_item_repository import NewsItemRepository
+    from services.news_ingest_service import NewsIngestService
+
+    service = NewsIngestService()
+
+    async with TestAsyncSessionLocal() as session:
+        session.add_all([
+            Stock(symbol="905930", name="삼성전자", market="KOSPI", category="반도체", is_active=True),
+            Stock(symbol="900660", name="SK하이닉스", market="KOSPI", category="반도체", is_active=True),
+            Stock(symbol="942700", name="한미반도체", market="KOSPI", category="반도체", is_active=True),
+            Stock(symbol="935420", name="NAVER", market="KOSPI", category="인터넷", is_active=True),
+        ])
+        await session.commit()
+
+        await service.ingest_items(session, [
+            {
+                "source_code": "REUTERS",
+                "title": "반도체 업종 전반 공급 차질 우려",
+                "summary": "개별 종목 언급 없이 섹터 전반 리스크를 설명",
+                "published_at": "2026-04-05T09:01:00+09:00",
+                "url": "https://www.reuters.com/world/example-sector-only",
+            },
+        ])
+        await session.commit()
+        candidates = await NewsItemRepository(session).get_recent(limit=10, source_code="REUTERS")
+        item = next(
+            candidate for candidate in candidates
+            if candidate.url == "https://www.reuters.com/world/example-sector-only"
+        )
+
+    payload = service.serialize_item(item)
+    metadata = payload["metadata"]
+
+    assert {"905930", "900660", "942700"}.issubset(set(payload["symbols"]))
+    assert "935420" not in payload["symbols"]
+    assert metadata["matched_sector_labels"] == ["반도체"]
+    assert metadata["sector_label"] == "반도체"
+    assert {"905930", "900660", "942700"}.issubset(set(metadata["sector_symbols"]))
+    assert "935420" not in metadata["sector_symbols"]

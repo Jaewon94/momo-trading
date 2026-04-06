@@ -235,6 +235,11 @@ class NewsIngestService:
             category_to_symbols.setdefault(category, [])
             if symbol not in category_to_symbols[category]:
                 category_to_symbols[category].append(symbol)
+        category_rows = sorted(
+            [category for category in category_to_symbols.keys() if category],
+            key=len,
+            reverse=True,
+        )
 
         enriched: list[dict[str, Any]] = []
         for item in items:
@@ -284,14 +289,35 @@ class NewsIngestService:
                 if len(matched_symbols) >= 5:
                     break
 
-            copied["symbols"] = matched_symbols
-            copied["metadata"] = self._enrich_symbol_metadata(
+            matched_categories: list[str] = []
+            seen_categories: set[str] = set()
+            for category in category_rows:
+                if len(category) < 2:
+                    continue
+                if haystack.find(category) < 0:
+                    continue
+                if category in seen_categories:
+                    continue
+                matched_categories.append(category)
+                seen_categories.add(category)
+                if len(matched_categories) >= 3:
+                    break
+
+            inferred_symbols = matched_symbols
+            if not inferred_symbols and matched_categories:
+                inferred_symbols = list(category_to_symbols.get(matched_categories[0]) or [])[:8]
+
+            copied["symbols"] = inferred_symbols
+            enriched_metadata = self._enrich_symbol_metadata(
                 metadata,
-                symbols=matched_symbols,
+                symbols=inferred_symbols,
                 matched_names=matched_names,
                 stock_by_symbol=stock_by_symbol,
                 category_to_symbols=category_to_symbols,
             )
+            if matched_categories:
+                enriched_metadata.setdefault("matched_sector_labels", matched_categories)
+            copied["metadata"] = enriched_metadata
             enriched.append(copied)
 
         return enriched
