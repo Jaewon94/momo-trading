@@ -861,6 +861,9 @@
           <button onclick="switchView('performance')" id="nav-performance" class="nav-btn w-full text-left px-3 py-2 rounded-lg text-sm text-gray-400 hover:bg-dark-700">
             &#x1f4c8; &#xc131;&#xacfc; &#xbd84;&#xc11d;
           </button>
+          <button onclick="switchView('news-archive')" id="nav-news-archive" class="nav-btn w-full text-left px-3 py-2 rounded-lg text-sm text-gray-400 hover:bg-dark-700">
+            &#x1f5de;&#xfe0f; &#xb274;&#xc2a4; &#xc544;&#xce74;&#xc774;&#xbe0c;
+          </button>
           <button onclick="switchView('trades-center')" id="nav-trades-center" class="nav-btn w-full text-left px-3 py-2 rounded-lg text-sm text-gray-400 hover:bg-dark-700">
             &#x1f4bc; &#xac70;&#xb798; &#xc13c;&#xd130;
           </button>
@@ -1331,6 +1334,7 @@
               <div id="news-overview-summary" class="news-overview-grid mt-3">
                 <div class="news-overview-card"><div class="news-overview-label">최근 24시간</div><div class="news-overview-value">-</div></div>
               </div>
+              <div id="news-manual-fetch-result" class="mt-3"></div>
               <div id="news-source-pills" class="news-source-pill-row mt-3"></div>
             </div>
 
@@ -1749,6 +1753,26 @@
     </div>
   </div>
 
-  <script type="module" src="/admin/static/js/app.js?v=20260405-2358"></script>
+  <div id="news-archive-detail-overlay" class="settings-modal-overlay" onclick="closeNewsArchiveDetailOnBackdrop(event)">
+    <div class="settings-modal">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-gray-700">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.2em] text-gray-500">News Detail</div>
+          <div id="news-archive-detail-title" class="text-lg font-semibold text-white">뉴스 상세</div>
+        </div>
+        <button onclick="closeNewsArchiveDetailModal()"
+          class="rounded-md border border-gray-600 bg-dark-800 px-3 py-1.5 text-xs font-medium text-gray-200 transition hover:border-gray-400 hover:text-white">
+          닫기
+        </button>
+      </div>
+      <div class="flex-1 overflow-y-auto px-6 py-5">
+        <div id="news-archive-detail-body" class="space-y-4 text-sm text-gray-300">
+          <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4 text-sm text-gray-400">뉴스 상세를 불러오는 중...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/admin/static/js/app.js?v=20260406-1718"></script>
 </body>
 </html>

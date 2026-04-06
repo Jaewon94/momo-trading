@@ -5,6 +5,7 @@ import {
   buildTradeBaselineNotice,
   buildReportNewsStripModel,
   buildNewsOverviewSourcePills,
+  buildManualNewsFetchState,
   describeManualNewsFetchResult,
   pickNewsDisplayFields,
 } from "../../admin/static/js/news_overview_state.js";
@@ -241,5 +242,25 @@ describe("news_overview_state", () => {
       duplicates: 6,
       skipped: 0,
     })).toBe("KIND 수집 완료 · 모두 기존 기사라 중복 처리됐습니다. (6건)");
+  });
+
+  test("builds manual fetch panel state with counts", () => {
+    const state = buildManualNewsFetchState("Seeking Alpha", {
+      received: 4,
+      created: 1,
+      duplicates: 3,
+      skipped: 0,
+    }, "04/06 17:20");
+
+    expect(state.tone).toBe("success");
+    expect(state.title).toContain("신규 적재 1건");
+    expect(state.summary).toContain("신규 1건 / 중복 3건");
+    expect(state.fetchedAtLabel).toBe("04/06 17:20");
+    expect(state.stats).toEqual([
+      { label: "조회", value: 4 },
+      { label: "신규", value: 1 },
+      { label: "중복", value: 3 },
+      { label: "스킵", value: 0 },
+    ]);
   });
 });

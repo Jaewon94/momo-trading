@@ -2,7 +2,7 @@
 import asyncio
 import json as _json
 import time as _time
-from datetime import date, datetime
+from datetime import date, datetime, time
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
@@ -865,17 +865,35 @@ async def get_news_sources():
 async def get_news_items(
     symbol: str | None = Query(None),
     source_code: str | None = Query(None),
+    published_from: date | None = Query(None),
+    published_to: date | None = Query(None),
+    sentiment_label: str | None = Query(None),
+    query: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_async_db),
 ):
     """저장된 뉴스 아이템 조회"""
+    published_from_dt = (
+        datetime.combine(published_from, time.min)
+        if published_from
+        else None
+    )
+    published_to_dt = (
+        datetime.combine(published_to, time.max)
+        if published_to
+        else None
+    )
     items = await news_ingest_service.list_items(
         db,
         limit=limit,
         offset=offset,
         symbol=symbol,
         source_code=source_code,
+        published_from=published_from_dt,
+        published_to=published_to_dt,
+        sentiment_label=sentiment_label,
+        query=query,
     )
     return SuccessResponse(data=[news_ingest_service.serialize_item(item) for item in items])
 

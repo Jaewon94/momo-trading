@@ -225,6 +225,63 @@ async def test_admin_news_ingest_and_items_routes(client):
 
 
 @pytest.mark.asyncio
+async def test_admin_news_items_route_supports_archive_filters(client):
+    response = await client.post(
+        "/api/v1/admin/news/ingest",
+        json={
+            "items": [
+                {
+                    "source_code": "DART",
+                    "title": "삼성전자 시설투자 공시",
+                    "summary": "설비 투자 확대",
+                    "published_at": "2026-04-04T08:00:00+09:00",
+                    "symbols": ["005930"],
+                    "sentiment_label": "POSITIVE",
+                    "url": "https://dart.fss.or.kr/example/21",
+                },
+                {
+                    "source_code": "INVESTING",
+                    "title": "Chip demand cools on macro caution",
+                    "summary": "Samsung suppliers face weaker demand",
+                    "published_at": "2026-04-05T10:00:00+09:00",
+                    "symbols": ["005930"],
+                    "sentiment_label": "NEGATIVE",
+                    "url": "https://www.investing.com/news/example-31",
+                },
+                {
+                    "source_code": "CNBC",
+                    "title": "US markets rebound into close",
+                    "summary": "Risk appetite improved late session",
+                    "published_at": "2026-04-06T22:00:00+09:00",
+                    "symbols": ["000660"],
+                    "sentiment_label": "POSITIVE",
+                    "url": "https://www.cnbc.com/example-41",
+                },
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+
+    filtered = await client.get(
+        "/api/v1/admin/news/items"
+        "?published_from=2026-04-05"
+        "&published_to=2026-04-05"
+        "&source_code=INVESTING"
+        "&sentiment_label=NEGATIVE"
+        "&query=macro"
+        "&limit=10"
+    )
+
+    assert filtered.status_code == 200
+    items = filtered.json()["data"]
+    assert len(items) == 1
+    assert items[0]["source_code"] == "INVESTING"
+    assert items[0]["sentiment_label"] == "NEGATIVE"
+    assert items[0]["symbols"] == ["005930"]
+
+
+@pytest.mark.asyncio
 async def test_admin_news_overview_route_returns_ingestion_and_performance_summary(client, monkeypatch):
     async def fake_build_summary(_db, *, days: int):
         assert days == 30

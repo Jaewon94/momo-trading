@@ -62,6 +62,7 @@ async def test_news_reporting_service_returns_empty_storage_snapshot_when_table_
     assert overview["baseline"]["active"] is True
     assert overview["baseline"]["effective_date"] == "2026-04-06"
     assert overview["recent_items"] == []
+    assert overview["ingestion"]["total_count"] == 0
     assert overview["ingestion"]["recent_24h_count"] == 0
     assert overview["runtime"]["overall"]["last_status"] == "IDLE"
     assert "news_items" in overview["storage"]["message"]

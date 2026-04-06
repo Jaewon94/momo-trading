@@ -175,6 +175,30 @@ export function describeManualNewsFetchResult(sourceLabel, summary = {}) {
   return `${label} 조회 완료 · 현재 조회 구간에 새 데이터가 없습니다.`;
 }
 
+export function buildManualNewsFetchState(sourceLabel, summary = {}, fetchedAtLabel = "") {
+  const label = String(sourceLabel || "뉴스");
+  const received = Number(summary.received || 0);
+  const created = Number(summary.created || 0);
+  const duplicates = Number(summary.duplicates || 0);
+  const skipped = Number(summary.skipped || 0);
+  const hasNew = created > 0;
+  const onlyDuplicates = received > 0 && created === 0 && duplicates >= received;
+
+  return {
+    sourceLabel: label,
+    title: hasNew ? `${label} 신규 적재 ${created}건` : `${label} 수동 수집 결과`,
+    tone: hasNew ? "success" : (onlyDuplicates ? "muted" : "idle"),
+    summary: describeManualNewsFetchResult(label, summary),
+    fetchedAtLabel: String(fetchedAtLabel || ""),
+    stats: [
+      { label: "조회", value: received },
+      { label: "신규", value: created },
+      { label: "중복", value: duplicates },
+      { label: "스킵", value: skipped },
+    ],
+  };
+}
+
 export function buildNewsOverviewSourcePills(overview) {
   const settings = overview?.settings || {};
   const storage = overview?.storage || {};

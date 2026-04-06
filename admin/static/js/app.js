@@ -66,9 +66,11 @@ import {
   buildNewsOverviewSourcePills,
   buildTradeBaselineNotice,
   buildReportNewsStripModel,
+  buildManualNewsFetchState,
   describeManualNewsFetchResult,
   pickNewsDisplayFields,
 } from './news_overview_state.js';
+import { buildNewsArchiveCountSummary, buildNewsArchiveState } from './news_archive_state.js';
 import { buildNewsPerformanceCards, buildNewsRolloutPolicy } from './news_performance_state.js';
 import { buildPerformanceDashboardState } from './performance_page_state.js';
 import { buildReportNewsRationale } from './report_news_state.js';
@@ -101,6 +103,9 @@ let activeTradeCenterQuery = '';
 let tradeCenterVisibleCount = 20;
 let latestAccountSnapshot = null;
 let latestEventRadarState = null;
+let newsArchiveFilters = null;
+let activeNewsArchiveItem = null;
+let lastManualNewsFetchState = null;
 const TRADE_CENTER_PAGE_SIZE = 20;
 const EVENT_RADAR_PANEL_KEY = 'momo:event-radar:expanded';
 const knownStockNames = {};
@@ -229,6 +234,7 @@ function renderNewsItemCards(items = [], { emptyLabel = '최근 적재 뉴스가
 
 function renderNewsOverviewPanels(error = null) {
   const summaryEl = document.getElementById('news-overview-summary');
+  const manualFetchEl = document.getElementById('news-manual-fetch-result');
   const performanceEl = document.getElementById('news-performance-cards');
   const rolloutEl = document.getElementById('news-rollout-policy');
   const sourcePillsEl = document.getElementById('news-source-pills');
@@ -238,6 +244,7 @@ function renderNewsOverviewPanels(error = null) {
   if (error) {
     const message = error?.message || '알 수 없는 오류';
     summaryEl.innerHTML = `<div class="news-overview-card"><div class="news-overview-label">로드 실패</div><div class="news-overview-value text-red-300">ERR</div><div class="news-overview-help">${escapeHtml(message)}</div></div>`;
+    if (manualFetchEl) manualFetchEl.innerHTML = '';
     if (performanceEl) performanceEl.innerHTML = '';
     if (rolloutEl) rolloutEl.innerHTML = `<div class="text-xs text-red-300">${escapeHtml(message)}</div>`;
     sourcePillsEl.innerHTML = '';
@@ -248,11 +255,44 @@ function renderNewsOverviewPanels(error = null) {
   const overview = newsOverviewSnapshot;
   if (!overview) {
     summaryEl.innerHTML = '<div class="news-overview-card"><div class="news-overview-label">뉴스 인텔</div><div class="news-overview-value">-</div><div class="news-overview-help">데이터를 불러오는 중...</div></div>';
+    if (manualFetchEl) manualFetchEl.innerHTML = '';
     if (performanceEl) performanceEl.innerHTML = '';
     if (rolloutEl) rolloutEl.innerHTML = '<div class="text-xs text-gray-500">롤아웃 정책을 불러오는 중...</div>';
     sourcePillsEl.innerHTML = '';
     listEl.innerHTML = '<div class="text-xs text-gray-500">뉴스 인텔 데이터를 불러오는 중...</div>';
     return;
+  }
+
+  if (manualFetchEl) {
+    if (!lastManualNewsFetchState) {
+      manualFetchEl.innerHTML = '';
+    } else {
+      const toneClass = lastManualNewsFetchState.tone === 'success'
+        ? 'border-emerald-700/50 bg-emerald-950/20'
+        : (lastManualNewsFetchState.tone === 'muted'
+          ? 'border-gray-700 bg-dark-900/50'
+          : 'border-amber-700/50 bg-amber-950/20');
+      manualFetchEl.innerHTML = `
+        <div class="rounded-xl border ${toneClass} p-3">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <div class="text-[11px] uppercase tracking-[0.12em] text-gray-500">마지막 수동 수집 결과</div>
+              <div class="mt-1 text-sm font-medium text-white">${escapeHtml(lastManualNewsFetchState.title)}</div>
+              <div class="mt-1 text-xs text-gray-300">${escapeHtml(lastManualNewsFetchState.summary)}</div>
+            </div>
+            <div class="text-[11px] text-gray-500">${escapeHtml(lastManualNewsFetchState.fetchedAtLabel || '')}</div>
+          </div>
+          <div class="mt-3 grid grid-cols-4 gap-2 text-center text-[11px]">
+            ${lastManualNewsFetchState.stats.map((item) => `
+              <div class="rounded-lg border border-gray-700 bg-dark-900/55 px-2 py-2">
+                <div class="text-gray-500">${escapeHtml(item.label)}</div>
+                <div class="mt-1 text-white font-semibold">${escapeHtml(String(item.value))}</div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
   }
 
   const baselineNotice = buildTradeBaselineNotice(overview);
@@ -347,6 +387,7 @@ async function fetchDartNews() {
   try {
     setStatus('runtime', 'OpenDART 공시 수집 중...');
     const json = await fetchJson(`${API}/news/fetch/dart?days=1&page_count=50`, { method: 'POST' });
+    lastManualNewsFetchState = buildManualNewsFetchState('OpenDART', json?.data || {}, formatDateTime(new Date().toISOString()));
     await loadNewsOverview(true);
     setStatus('runtime', describeManualNewsFetchResult('OpenDART', json?.data || {}));
   } catch (err) {
@@ -359,6 +400,7 @@ async function fetchYonhapNews() {
   try {
     setStatus('runtime', '연합뉴스TV 경제 뉴스 수집 중...');
     const json = await fetchJson(`${API}/news/fetch/yonhap?limit=30`, { method: 'POST' });
+    lastManualNewsFetchState = buildManualNewsFetchState('연합뉴스TV', json?.data || {}, formatDateTime(new Date().toISOString()));
     await loadNewsOverview(true);
     setStatus('runtime', describeManualNewsFetchResult('연합뉴스TV', json?.data || {}));
   } catch (err) {
@@ -371,6 +413,7 @@ async function fetchBloombergNews() {
   try {
     setStatus('runtime', 'Bloomberg 해외 뉴스 수집 중...');
     const json = await fetchJson(`${API}/news/fetch/bloomberg?limit=30`, { method: 'POST' });
+    lastManualNewsFetchState = buildManualNewsFetchState('Bloomberg', json?.data || {}, formatDateTime(new Date().toISOString()));
     await loadNewsOverview(true);
     setStatus('runtime', describeManualNewsFetchResult('Bloomberg', json?.data || {}));
   } catch (err) {
@@ -383,6 +426,7 @@ async function fetchCnbcNews() {
   try {
     setStatus('runtime', 'CNBC 해외 뉴스 수집 중...');
     const json = await fetchJson(`${API}/news/fetch/cnbc?limit=30`, { method: 'POST' });
+    lastManualNewsFetchState = buildManualNewsFetchState('CNBC', json?.data || {}, formatDateTime(new Date().toISOString()));
     await loadNewsOverview(true);
     setStatus('runtime', describeManualNewsFetchResult('CNBC', json?.data || {}));
   } catch (err) {
@@ -395,6 +439,7 @@ async function fetchNasdaqNews() {
   try {
     setStatus('runtime', 'Nasdaq 해외 뉴스 수집 중...');
     const json = await fetchJson(`${API}/news/fetch/nasdaq?limit=30`, { method: 'POST' });
+    lastManualNewsFetchState = buildManualNewsFetchState('Nasdaq', json?.data || {}, formatDateTime(new Date().toISOString()));
     await loadNewsOverview(true);
     setStatus('runtime', describeManualNewsFetchResult('Nasdaq', json?.data || {}));
   } catch (err) {
@@ -407,6 +452,7 @@ async function fetchInvestingNews() {
   try {
     setStatus('runtime', 'Investing.com 해외 뉴스 수집 중...');
     const json = await fetchJson(`${API}/news/fetch/investing?limit=30`, { method: 'POST' });
+    lastManualNewsFetchState = buildManualNewsFetchState('Investing.com', json?.data || {}, formatDateTime(new Date().toISOString()));
     await loadNewsOverview(true);
     setStatus('runtime', describeManualNewsFetchResult('Investing.com', json?.data || {}));
   } catch (err) {
@@ -419,6 +465,7 @@ async function fetchSeekingAlphaNews() {
   try {
     setStatus('runtime', 'Seeking Alpha 해외 뉴스 수집 중...');
     const json = await fetchJson(`${API}/news/fetch/seeking-alpha?limit=30`, { method: 'POST' });
+    lastManualNewsFetchState = buildManualNewsFetchState('Seeking Alpha', json?.data || {}, formatDateTime(new Date().toISOString()));
     await loadNewsOverview(true);
     setStatus('runtime', describeManualNewsFetchResult('Seeking Alpha', json?.data || {}));
   } catch (err) {
@@ -431,6 +478,7 @@ async function fetchKrxNews() {
   try {
     setStatus('runtime', 'KIND 오늘의공시 수집 중...');
     const json = await fetchJson(`${API}/news/fetch/krx?page_count=50`, { method: 'POST' });
+    lastManualNewsFetchState = buildManualNewsFetchState('KIND', json?.data || {}, formatDateTime(new Date().toISOString()));
     await loadNewsOverview(true);
     setStatus('runtime', describeManualNewsFetchResult('KIND', json?.data || {}));
   } catch (err) {
@@ -562,6 +610,11 @@ function renderSettingsModal() {
 
 function handleSettingsModalKeydown(event) {
   if (event.key === 'Escape') {
+    const newsArchiveOverlay = document.getElementById('news-archive-detail-overlay');
+    if (newsArchiveOverlay?.classList.contains('open')) {
+      closeNewsArchiveDetailModal();
+      return;
+    }
     const positionOverlay = document.getElementById('position-detail-overlay');
     if (positionOverlay?.classList.contains('open')) {
       closePositionDetailModal();
@@ -591,6 +644,27 @@ function closePositionDetailModal() {
 function closePositionDetailModalOnBackdrop(event) {
   if (event.target?.id === 'position-detail-overlay') {
     closePositionDetailModal();
+  }
+}
+
+function openNewsArchiveDetailModal() {
+  const overlay = document.getElementById('news-archive-detail-overlay');
+  if (!overlay) return;
+  overlay.classList.add('open');
+  document.body.classList.add('overflow-hidden');
+}
+
+function closeNewsArchiveDetailModal() {
+  const overlay = document.getElementById('news-archive-detail-overlay');
+  if (!overlay) return;
+  overlay.classList.remove('open');
+  activeNewsArchiveItem = null;
+  document.body.classList.remove('overflow-hidden');
+}
+
+function closeNewsArchiveDetailOnBackdrop(event) {
+  if (event.target?.id === 'news-archive-detail-overlay') {
+    closeNewsArchiveDetailModal();
   }
 }
 
@@ -2736,6 +2810,8 @@ function switchView(view) {
     loadReportsArchive();
   } else if (view === 'performance') {
     loadPerformanceView();
+  } else if (view === 'news-archive') {
+    loadNewsArchiveView();
   } else if (view === 'trades-center') {
     loadTradesCenterView();
   }
@@ -3647,6 +3723,278 @@ async function loadReportsArchive() {
     });
   } catch (err) {
     container.innerHTML = `<div class="text-center text-red-400 text-sm py-8">리포트 아카이브 로드 실패: ${escapeHtml(err.message || '알 수 없는 오류')}</div>`;
+  }
+}
+
+function formatDateInputValue(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
+function createDefaultNewsArchiveFilters() {
+  const today = new Date();
+  const from = new Date(today);
+  from.setDate(from.getDate() - 6);
+  return {
+    published_from: formatDateInputValue(from),
+    published_to: formatDateInputValue(today),
+    source_code: '',
+    symbol: '',
+    sentiment_label: '',
+    query: '',
+  };
+}
+
+function getNewsArchiveFilters() {
+  if (!newsArchiveFilters) {
+    newsArchiveFilters = createDefaultNewsArchiveFilters();
+  }
+  return { ...newsArchiveFilters };
+}
+
+function buildNewsArchiveQuery(filters) {
+  const params = new URLSearchParams();
+  Object.entries(filters || {}).forEach(([key, value]) => {
+    if (value != null && String(value).trim()) {
+      params.set(key, String(value).trim());
+    }
+  });
+  params.set('limit', '200');
+  return params.toString();
+}
+
+function renderNewsArchiveView(state) {
+  const countSummary = buildNewsArchiveCountSummary({
+    filteredCount: state.totalCount,
+    overallCount: state.overallCount,
+  });
+  const sourceOptions = [
+    '<option value="">전체 소스</option>',
+    ...state.sourceOptions.map((item) => (
+      `<option value="${escapeHtml(item.code)}" ${state.filters.source_code === item.code ? 'selected' : ''}>${escapeHtml(item.code)} · ${escapeHtml(item.name)}</option>`
+    )),
+  ].join('');
+  const sentimentOptions = state.sentimentOptions.map((item) => (
+    `<option value="${escapeHtml(item.value)}" ${state.filters.sentiment_label === item.value ? 'selected' : ''}>${escapeHtml(item.label)}</option>`
+  )).join('');
+
+  const groupMarkup = state.groups.map((group) => {
+    const itemsMarkup = group.items.map((item) => `
+      <article class="rounded-xl border border-gray-700 bg-dark-900/55 p-4">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-center gap-2 text-[11px] text-gray-500">
+              <span>${escapeHtml(item.timeLabel)}</span>
+              <span>${escapeHtml(item.sourceCode)}</span>
+              <span>${escapeHtml(item.regionLabel)}</span>
+              <span class="rounded-full border px-2 py-0.5 ${item.sentimentToneClass}">${escapeHtml(item.sentimentLabel)}</span>
+            </div>
+            <div class="mt-2 text-sm font-semibold text-white leading-6">${escapeHtml(item.title)}</div>
+            ${item.summary ? `<div class="mt-2 text-xs leading-5 text-gray-300">${escapeHtml(item.summary)}</div>` : ''}
+            ${item.hasTranslation && item.originalTitle ? `<div class="mt-2 text-[11px] text-gray-500">원문: ${escapeHtml(item.originalTitle)}</div>` : ''}
+          </div>
+          ${item.url ? `<a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" class="shrink-0 rounded-lg border border-gray-700 px-3 py-1.5 text-[11px] text-gray-300 hover:border-blue-500/50 hover:text-white">원문</a>` : ''}
+        </div>
+        <div class="mt-3 flex flex-wrap gap-2 text-[11px] text-gray-400">
+          <span class="rounded-full border border-gray-700 px-2 py-1">심볼 ${escapeHtml(item.symbolLabel)}</span>
+          ${item.sectorLabel ? `<span class="rounded-full border border-gray-700 px-2 py-1">섹터 ${escapeHtml(item.sectorLabel)}</span>` : ''}
+          <span class="rounded-full border border-gray-700 px-2 py-1">${escapeHtml(item.impactLabel)}</span>
+          <span class="rounded-full border border-gray-700 px-2 py-1">${escapeHtml(item.trustLabel)}</span>
+        </div>
+        <div class="mt-3 flex justify-end">
+          <button type="button" data-news-archive-detail-id="${escapeHtml(item.id)}" class="rounded-lg border border-gray-700 px-3 py-1.5 text-[11px] text-gray-300 hover:border-blue-500/50 hover:text-white">상세 보기</button>
+        </div>
+      </article>
+    `).join('');
+
+    return `
+      <section class="mx-2 mt-4 rounded-2xl border border-gray-700 bg-dark-800/70 p-4 chat-bubble">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <div class="text-base font-semibold text-white">${escapeHtml(group.dateLabel)}</div>
+            <div class="text-[11px] text-gray-500">${escapeHtml(group.dateKey)} · ${group.count}건</div>
+          </div>
+        </div>
+        <div class="mt-3 grid gap-3">${itemsMarkup}</div>
+      </section>
+    `;
+  }).join('');
+
+  return `
+    <section class="mx-2 rounded-2xl border border-gray-700 bg-dark-700/80 p-5 chat-bubble">
+      <div class="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+        <div>
+          <div class="text-lg font-bold text-white">🗞 뉴스 아카이브</div>
+          <div class="mt-1 text-xs text-gray-400">날짜별로 적재된 뉴스를 모아서 보고, 소스/종목/감성 기준으로 바로 좁혀볼 수 있습니다.</div>
+        </div>
+        <div class="grid grid-cols-3 gap-2 text-center text-xs">
+          <div class="rounded-xl border border-gray-700 bg-dark-900/60 px-3 py-2">
+            <div class="text-gray-500">현재 결과</div>
+            <div class="mt-1 text-sm font-semibold text-white">${countSummary.filteredLabel}</div>
+          </div>
+          <div class="rounded-xl border border-gray-700 bg-dark-900/60 px-3 py-2">
+            <div class="text-gray-500">전체 적재</div>
+            <div class="mt-1 text-sm font-semibold text-white">${countSummary.overallLabel}</div>
+          </div>
+          <div class="rounded-xl border border-gray-700 bg-dark-900/60 px-3 py-2">
+            <div class="text-gray-500">날짜 그룹</div>
+            <div class="mt-1 text-sm font-semibold text-white">${state.groupCount}</div>
+          </div>
+        </div>
+      </div>
+      <div class="mt-3 text-xs text-gray-500">${escapeHtml(countSummary.helper)}</div>
+      <form id="news-archive-filter-form" class="mt-4 grid gap-3 xl:grid-cols-6">
+        <label class="text-xs text-gray-400">
+          시작일
+          <input type="date" name="published_from" value="${escapeHtml(state.filters.published_from)}" class="mt-1 w-full rounded-lg border border-gray-700 bg-dark-900 px-3 py-2 text-sm text-gray-200" />
+        </label>
+        <label class="text-xs text-gray-400">
+          종료일
+          <input type="date" name="published_to" value="${escapeHtml(state.filters.published_to)}" class="mt-1 w-full rounded-lg border border-gray-700 bg-dark-900 px-3 py-2 text-sm text-gray-200" />
+        </label>
+        <label class="text-xs text-gray-400">
+          소스
+          <select name="source_code" class="mt-1 w-full rounded-lg border border-gray-700 bg-dark-900 px-3 py-2 text-sm text-gray-200">${sourceOptions}</select>
+        </label>
+        <label class="text-xs text-gray-400">
+          심볼
+          <input type="text" name="symbol" value="${escapeHtml(state.filters.symbol)}" placeholder="005930" class="mt-1 w-full rounded-lg border border-gray-700 bg-dark-900 px-3 py-2 text-sm text-gray-200" />
+        </label>
+        <label class="text-xs text-gray-400">
+          감성
+          <select name="sentiment_label" class="mt-1 w-full rounded-lg border border-gray-700 bg-dark-900 px-3 py-2 text-sm text-gray-200">${sentimentOptions}</select>
+        </label>
+        <label class="text-xs text-gray-400">
+          검색
+          <input type="text" name="query" value="${escapeHtml(state.filters.query)}" placeholder="제목/요약 검색" class="mt-1 w-full rounded-lg border border-gray-700 bg-dark-900 px-3 py-2 text-sm text-gray-200" />
+        </label>
+        <div class="xl:col-span-6 flex flex-wrap gap-2">
+          <button type="submit" class="rounded-lg border border-blue-500/50 bg-blue-500/10 px-4 py-2 text-sm text-blue-200 hover:bg-blue-500/15">필터 적용</button>
+          <button type="button" id="news-archive-reset" class="rounded-lg border border-gray-700 px-4 py-2 text-sm text-gray-300 hover:border-gray-500">최근 7일로 초기화</button>
+        </div>
+      </form>
+      ${state.sourceSummary.length ? `
+        <div class="mt-4">
+          <div class="text-[11px] uppercase tracking-[0.12em] text-gray-500">소스별 건수</div>
+          <div class="mt-2 flex flex-wrap gap-2">
+            ${state.sourceSummary.map((item) => `
+              <div class="rounded-full border border-gray-700 bg-dark-900/60 px-3 py-1.5 text-[11px] text-gray-300">
+                <strong class="text-white">${escapeHtml(item.code)}</strong>
+                <span class="ml-1 text-gray-500">${item.count}건</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+    </section>
+    ${state.emptyMessage
+      ? `<div class="mx-2 mt-4 rounded-xl border border-gray-700 bg-dark-800/70 px-4 py-8 text-center text-sm text-gray-400 chat-bubble">${escapeHtml(state.emptyMessage)}</div>`
+      : groupMarkup}
+  `;
+}
+
+function renderNewsArchiveDetailModal(item) {
+  const titleEl = document.getElementById('news-archive-detail-title');
+  const bodyEl = document.getElementById('news-archive-detail-body');
+  if (!titleEl || !bodyEl) return;
+  if (!item) {
+    titleEl.textContent = '뉴스 상세';
+    bodyEl.innerHTML = '<div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4 text-sm text-gray-400">표시할 뉴스가 없습니다.</div>';
+    return;
+  }
+  const sectorLabels = Array.isArray(item.metadata?.matched_sector_labels)
+    ? item.metadata.matched_sector_labels.filter(Boolean).join(', ')
+    : '';
+  const matchedNames = Array.isArray(item.metadata?.matched_stock_names)
+    ? item.metadata.matched_stock_names.filter(Boolean).join(', ')
+    : '';
+  titleEl.textContent = item.title || '뉴스 상세';
+  bodyEl.innerHTML = `
+    <section class="rounded-xl border border-gray-700 bg-dark-900/60 p-4">
+      <div class="flex flex-wrap items-center gap-2 text-[11px] text-gray-500">
+        <span>${escapeHtml(item.timeLabel)}</span>
+        <span>${escapeHtml(item.sourceCode)}</span>
+        <span>${escapeHtml(item.regionLabel)}</span>
+        <span class="rounded-full border px-2 py-0.5 ${item.sentimentToneClass}">${escapeHtml(item.sentimentLabel)}</span>
+      </div>
+      <div class="mt-3 text-base font-semibold text-white leading-7">${escapeHtml(item.title)}</div>
+      ${item.summary ? `<div class="mt-3 text-sm leading-6 text-gray-300">${escapeHtml(item.summary)}</div>` : ''}
+      ${item.hasTranslation && item.originalTitle ? `<div class="mt-4 rounded-xl border border-gray-700 bg-dark-800/70 p-3 text-xs text-gray-400"><div class="text-[11px] uppercase tracking-[0.12em] text-gray-500">원문 제목</div><div class="mt-1 text-gray-300">${escapeHtml(item.originalTitle)}</div>${item.originalSummary ? `<div class="mt-2 text-gray-500">${escapeHtml(item.originalSummary)}</div>` : ''}</div>` : ''}
+      <div class="mt-4 grid gap-2 md:grid-cols-2 text-xs text-gray-300">
+        <div class="rounded-xl border border-gray-700 bg-dark-800/60 p-3">심볼: ${escapeHtml(item.symbolLabel)}</div>
+        <div class="rounded-xl border border-gray-700 bg-dark-800/60 p-3">섹터: ${escapeHtml(item.sectorLabel || sectorLabels || '-')}</div>
+        <div class="rounded-xl border border-gray-700 bg-dark-800/60 p-3">${escapeHtml(item.impactLabel)}</div>
+        <div class="rounded-xl border border-gray-700 bg-dark-800/60 p-3">${escapeHtml(item.trustLabel)}</div>
+      </div>
+      ${(matchedNames || sectorLabels) ? `
+        <div class="mt-4 rounded-xl border border-gray-700 bg-dark-800/60 p-3 text-xs text-gray-400">
+          ${matchedNames ? `<div>매칭 종목명: <span class="text-gray-200">${escapeHtml(matchedNames)}</span></div>` : ''}
+          ${sectorLabels ? `<div class="${matchedNames ? 'mt-2' : ''}">매칭 업종: <span class="text-gray-200">${escapeHtml(sectorLabels)}</span></div>` : ''}
+        </div>
+      ` : ''}
+      ${item.url ? `<div class="mt-4"><a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" class="inline-flex rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 py-2 text-xs text-blue-200 hover:bg-blue-500/15">원문 링크 열기</a></div>` : ''}
+    </section>
+  `;
+}
+
+async function loadNewsArchiveView(nextFilters = null) {
+  const container = document.getElementById('chat-container');
+  container.innerHTML = '<div class="text-center text-gray-500 text-sm py-4">뉴스 아카이브 불러오는 중...</div>';
+  cleanupStockCards();
+  newsArchiveFilters = {
+    ...getNewsArchiveFilters(),
+    ...(nextFilters || {}),
+  };
+
+  try {
+    const query = buildNewsArchiveQuery(newsArchiveFilters);
+    const [itemsJson, sourcesJson, overviewJson] = await Promise.all([
+      fetchJson(`${API}/news/items?${query}`),
+      fetchJson(`${API}/news/sources`),
+      fetchJson(`${API}/news/overview?recent_limit=1&performance_days=30`),
+    ]);
+    const state = buildNewsArchiveState(itemsJson?.data || [], {
+      filters: newsArchiveFilters,
+      catalog: sourcesJson?.data?.sources || [],
+    });
+    state.overallCount = Number(overviewJson?.data?.ingestion?.total_count || 0);
+    container.innerHTML = renderNewsArchiveView(state);
+
+    const form = document.getElementById('news-archive-filter-form');
+    if (form) {
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const formData = new FormData(form);
+        loadNewsArchiveView(Object.fromEntries(formData.entries()));
+      });
+    }
+    const resetButton = document.getElementById('news-archive-reset');
+    if (resetButton) {
+      resetButton.addEventListener('click', () => {
+        loadNewsArchiveView(createDefaultNewsArchiveFilters());
+      });
+    }
+    const itemMap = new Map();
+    state.groups.forEach((group) => {
+      group.items.forEach((item) => {
+        itemMap.set(String(item.id), item);
+      });
+    });
+    container.querySelectorAll('[data-news-archive-detail-id]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const itemId = String(button.dataset.newsArchiveDetailId || '');
+        activeNewsArchiveItem = itemMap.get(itemId) || null;
+        renderNewsArchiveDetailModal(activeNewsArchiveItem);
+        openNewsArchiveDetailModal();
+      });
+    });
+  } catch (err) {
+    container.innerHTML = `<div class="text-center text-red-400 text-sm py-8">뉴스 아카이브 로드 실패: ${escapeHtml(err.message || '알 수 없는 오류')}</div>`;
   }
 }
 

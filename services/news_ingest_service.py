@@ -191,6 +191,10 @@ class NewsIngestService:
         offset: int = 0,
         symbol: str | None = None,
         source_code: str | None = None,
+        published_from: datetime | None = None,
+        published_to: datetime | None = None,
+        sentiment_label: str | None = None,
+        query: str | None = None,
     ) -> list[NewsItem]:
         repo = NewsItemRepository(session)
         return await repo.get_recent(
@@ -198,6 +202,10 @@ class NewsIngestService:
             offset=offset,
             symbol=symbol,
             source_code=source_code,
+            published_from=published_from,
+            published_to=published_to,
+            sentiment_label=sentiment_label,
+            query=query,
         )
 
     async def _attach_symbols(

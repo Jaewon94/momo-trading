@@ -43,6 +43,7 @@ class NewsReportingService:
         }
         recent_items: list[NewsItem] = []
         ingestion = {
+            "total_count": 0,
             "recent_24h_count": 0,
             "recent_7d_count": 0,
             "latest_published_at": None,
@@ -153,6 +154,7 @@ class NewsReportingService:
     ) -> dict:
         if not allowed_codes:
             return {
+                "total_count": 0,
                 "recent_24h_count": 0,
                 "recent_7d_count": 0,
                 "latest_published_at": None,
@@ -163,6 +165,9 @@ class NewsReportingService:
         since_24h = now - timedelta(hours=24)
         since_7d = now - timedelta(days=7)
 
+        total_stmt = select(func.count(NewsItem.id)).where(
+            NewsItem.source_code.in_(sorted(allowed_codes))
+        )
         recent_24h_stmt = select(func.count(NewsItem.id)).where(
             NewsItem.source_code.in_(sorted(allowed_codes)),
             NewsItem.published_at >= since_24h,
@@ -184,12 +189,14 @@ class NewsReportingService:
             .order_by(func.count(NewsItem.id).desc(), NewsItem.source_code.asc())
         )
 
+        total_count = int((await session.execute(total_stmt)).scalar() or 0)
         recent_24h = int((await session.execute(recent_24h_stmt)).scalar() or 0)
         recent_7d = int((await session.execute(recent_7d_stmt)).scalar() or 0)
         latest_published_at = (await session.execute(latest_stmt)).scalar()
         by_source_rows = (await session.execute(by_source_stmt)).all()
 
         return {
+            "total_count": total_count,
             "recent_24h_count": recent_24h,
             "recent_7d_count": recent_7d,
             "latest_published_at": ensure_kst(latest_published_at).isoformat() if latest_published_at else None,
