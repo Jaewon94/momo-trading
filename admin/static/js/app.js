@@ -3549,6 +3549,39 @@ function createPerformanceDashboard(state) {
         ` : ''}
       </section>
     ` : ''}
+    <section class="rounded-2xl border border-sky-800/50 bg-sky-950/20 px-4 py-4 mb-4">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <div class="text-xs uppercase tracking-[0.12em] text-sky-300">Current Account</div>
+          <div class="mt-1 text-sm text-gray-300">닫힌 거래 성과와 별개로 현재 계좌 기준 상태를 함께 봅니다.</div>
+          ${state.helperLabel ? `<div class="mt-2 text-[11px] text-sky-200">${escapeHtml(state.helperLabel)}</div>` : ''}
+          ${state.currentAccount.warning ? `<div class="mt-2 text-[11px] text-amber-300">${escapeHtml(state.currentAccount.warning)}</div>` : ''}
+        </div>
+        <div class="text-[11px] text-sky-200">${state.currentAccount.synced ? '브로커 동기화 완료' : '브로커 동기화 실패'}</div>
+      </div>
+      <div class="news-overview-grid mt-4">
+        <div class="news-overview-card">
+          <div class="news-overview-label">현재 미실현 손익</div>
+          <div class="news-overview-value">${escapeHtml(state.currentAccount.unrealizedPnl)}</div>
+          <div class="news-overview-help">${escapeHtml(state.currentAccount.unrealizedPnlRate)}</div>
+        </div>
+        <div class="news-overview-card">
+          <div class="news-overview-label">현재 보유</div>
+          <div class="news-overview-value">${escapeHtml(state.currentAccount.holdingCount)}</div>
+          <div class="news-overview-help">브로커 보유 종목 수</div>
+        </div>
+        <div class="news-overview-card">
+          <div class="news-overview-label">미체결 주문</div>
+          <div class="news-overview-value">${escapeHtml(state.currentAccount.pendingOrderCount)}</div>
+          <div class="news-overview-help">현재 남아 있는 주문</div>
+        </div>
+        <div class="news-overview-card">
+          <div class="news-overview-label">총자산</div>
+          <div class="news-overview-value">${escapeHtml(state.currentAccount.totalAsset)}</div>
+          <div class="news-overview-help">현재 계좌 스냅샷</div>
+        </div>
+      </div>
+    </section>
     <div class="news-overview-grid mb-4">
       ${state.summaryCards.map((card) => `
         <div class="news-overview-card">

@@ -41,6 +41,7 @@ export function buildPerformanceDashboardState({
 } = {}) {
   const baseline = summary?.baseline || newsOverview?.baseline || {};
   const overall = summary?.overall || {};
+  const currentAccount = summary?.current_account || {};
   const shadow = summary?.shadow || {};
   const rollout = summary?.rollout || {};
   const comparisons = summary?.comparisons || {};
@@ -59,6 +60,19 @@ export function buildPerformanceDashboardState({
         ? baseline.details.map((item) => String(item || "")).filter(Boolean)
         : [],
     },
+    currentAccount: {
+      synced: Boolean(currentAccount?.synced),
+      unrealizedPnl: formatSignedKrW(currentAccount?.unrealized_pnl || 0),
+      unrealizedPnlRate: `${formatFixed(currentAccount?.unrealized_pnl_rate || 0)}%`,
+      holdingCount: `${formatInteger(currentAccount?.holding_count || 0)}종목`,
+      pendingOrderCount: `${formatInteger(currentAccount?.pending_order_count || 0)}건`,
+      totalAsset: formatSignedKrW(currentAccount?.total_asset || 0),
+      warning: String(currentAccount?.warning || ""),
+    },
+    helperLabel:
+      Number(overall.trade_count || 0) === 0
+        ? "닫힌 거래 표본이 없어 현재 계좌 기준 상태를 함께 표시 중"
+        : "",
     summaryCards: [
       { label: "총 거래", value: `${formatInteger(overall.trade_count || 0)}건` },
       { label: "기대값", value: formatSignedKrW(overall.expectancy || 0) },

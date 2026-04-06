@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.config import settings
 from models.agent_activity import AgentActivityLog
 from models.trade_result import TradeResult
+from trading.broker_factory import get_broker_adapter
 
 _TRADE_BASELINE_RESET = {
     "active": True,
@@ -80,6 +81,7 @@ class PerformanceReportingService:
             "comparisons": self._calc_trade_comparisons(trades),
             "risk_controls": risk_counts,
             "news_context": self._calc_news_context(trades),
+            "current_account": await self._build_live_account_snapshot(),
             "shadow": shadow,
             "rollout": self._build_rollout_status(
                 overall=overall,
@@ -118,6 +120,38 @@ class PerformanceReportingService:
             "baseline": self._build_baseline_snapshot(),
             "buckets": list(reversed(buckets)),
         }
+
+    @staticmethod
+    async def _build_live_account_snapshot() -> dict:
+        try:
+            adapter = get_broker_adapter()
+            balance, holdings, pending_orders = await __import__("asyncio").gather(
+                adapter.get_balance(),
+                adapter.get_holdings(),
+                adapter.get_pending_orders(),
+            )
+            return {
+                "synced": True,
+                "total_asset": float(getattr(balance, "total_asset", 0.0) or 0.0),
+                "cash": float(getattr(balance, "cash", 0.0) or 0.0),
+                "stock_value": float(getattr(balance, "stock_value", 0.0) or 0.0),
+                "unrealized_pnl": float(getattr(balance, "total_pnl", 0.0) or 0.0),
+                "unrealized_pnl_rate": float(getattr(balance, "total_pnl_rate", 0.0) or 0.0),
+                "holding_count": len(holdings or []),
+                "pending_order_count": len(pending_orders or []),
+            }
+        except Exception as exc:
+            return {
+                "synced": False,
+                "total_asset": 0.0,
+                "cash": 0.0,
+                "stock_value": 0.0,
+                "unrealized_pnl": 0.0,
+                "unrealized_pnl_rate": 0.0,
+                "holding_count": 0,
+                "pending_order_count": 0,
+                "warning": str(exc)[:160],
+            }
 
     def build_trade_comparison_from_results(self, trades: list[TradeResult]) -> dict:
         points = [self._trade_point_from_result(row) for row in trades if getattr(row, "exit_at", None) is not None]

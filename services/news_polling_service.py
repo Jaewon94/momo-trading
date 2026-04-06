@@ -16,62 +16,63 @@ from services.yonhap_news_service import yonhap_news_service
 
 
 class NewsPollingService:
-    async def poll_sources(self, session, *, market_hours: bool) -> dict:
+    async def poll_sources(self, session, *, market_hours: bool, mode: str | None = None) -> dict:
+        runtime_mode = mode or ("AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS")
         if not settings.NEWS_POLL_ENABLED:
             summary = {"skipped": True, "reason": "NEWS_POLL_ENABLED disabled"}
             news_runtime_service.record_source_result(
                 "DART",
                 status="SKIPPED",
-                mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                mode=runtime_mode,
                 message=summary["reason"],
                 counts=summary,
             )
             news_runtime_service.record_source_result(
                 "KRX",
                 status="SKIPPED",
-                mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                mode=runtime_mode,
                 message=summary["reason"],
                 counts=summary,
             )
             news_runtime_service.record_source_result(
                 "YONHAP",
                 status="SKIPPED",
-                mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                mode=runtime_mode,
                 message=summary["reason"],
                 counts=summary,
             )
             news_runtime_service.record_source_result(
                 "BLOOMBERG",
                 status="SKIPPED",
-                mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                mode=runtime_mode,
                 message=summary["reason"],
                 counts=summary,
             )
             news_runtime_service.record_source_result(
                 "CNBC",
                 status="SKIPPED",
-                mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                mode=runtime_mode,
                 message=summary["reason"],
                 counts=summary,
             )
             news_runtime_service.record_source_result(
                 "NASDAQ",
                 status="SKIPPED",
-                mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                mode=runtime_mode,
                 message=summary["reason"],
                 counts=summary,
             )
             news_runtime_service.record_source_result(
                 "INVESTING",
                 status="SKIPPED",
-                mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                mode=runtime_mode,
                 message=summary["reason"],
                 counts=summary,
             )
             news_runtime_service.record_source_result(
                 "SEEKING_ALPHA",
                 status="SKIPPED",
-                mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                mode=runtime_mode,
                 message=summary["reason"],
                 counts=summary,
             )
@@ -88,7 +89,7 @@ class NewsPollingService:
                 news_runtime_service.record_source_result(
                     "DART",
                     status="SUCCESS" if dart_items else "EMPTY",
-                    mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                    mode=runtime_mode,
                     message="신규 뉴스 반영 완료" if dart_items else "조회된 데이터 없음",
                     counts={"received": len(dart_items), "created": 0, "duplicates": 0, "skipped": 0},
                 )
@@ -97,14 +98,14 @@ class NewsPollingService:
                 news_runtime_service.record_source_result(
                     "DART",
                     status="ERROR",
-                    mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                    mode=runtime_mode,
                     message=str(exc),
                 )
         else:
             news_runtime_service.record_source_result(
                 "DART",
                 status="SKIPPED",
-                mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                mode=runtime_mode,
                 message="OPEN_DART_API_KEY missing",
                 counts={"skipped": 1},
             )
@@ -114,7 +115,7 @@ class NewsPollingService:
             news_runtime_service.record_source_result(
                 "KRX",
                 status="SUCCESS" if krx_items else "EMPTY",
-                mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                mode=runtime_mode,
                 message="신규 뉴스 반영 완료" if krx_items else "조회된 데이터 없음",
                 counts={"received": len(krx_items), "created": 0, "duplicates": 0, "skipped": 0},
             )
@@ -123,7 +124,7 @@ class NewsPollingService:
             news_runtime_service.record_source_result(
                 "KRX",
                 status="ERROR",
-                mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                mode=runtime_mode,
                 message=str(exc),
             )
 
@@ -136,7 +137,7 @@ class NewsPollingService:
                 news_runtime_service.record_source_result(
                     "YONHAP",
                     status="SUCCESS" if yonhap_items else "EMPTY",
-                    mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                    mode=runtime_mode,
                     message="신규 뉴스 반영 완료" if yonhap_items else "조회된 데이터 없음",
                     counts={"received": len(yonhap_items), "created": 0, "duplicates": 0, "skipped": 0},
                 )
@@ -145,14 +146,14 @@ class NewsPollingService:
                 news_runtime_service.record_source_result(
                     "YONHAP",
                     status="ERROR",
-                    mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                    mode=runtime_mode,
                     message=str(exc),
                 )
         else:
             news_runtime_service.record_source_result(
                 "YONHAP",
                 status="SKIPPED",
-                mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                mode=runtime_mode,
                 message="NEWS_DOMESTIC_MEDIA_ENABLED disabled",
                 counts={"skipped": 1},
             )
@@ -165,7 +166,7 @@ class NewsPollingService:
                 news_runtime_service.record_source_result(
                     "BLOOMBERG",
                     status="SUCCESS" if bloomberg_items else "EMPTY",
-                    mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                    mode=runtime_mode,
                     message="신규 뉴스 반영 완료" if bloomberg_items else "조회된 데이터 없음",
                     counts={"received": len(bloomberg_items), "created": 0, "duplicates": 0, "skipped": 0},
                 )
@@ -174,7 +175,7 @@ class NewsPollingService:
                 news_runtime_service.record_source_result(
                     "BLOOMBERG",
                     status="ERROR",
-                    mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                    mode=runtime_mode,
                     message=str(exc),
                 )
             try:
@@ -184,7 +185,7 @@ class NewsPollingService:
                 news_runtime_service.record_source_result(
                     "CNBC",
                     status="SUCCESS" if cnbc_items else "EMPTY",
-                    mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                    mode=runtime_mode,
                     message="신규 뉴스 반영 완료" if cnbc_items else "조회된 데이터 없음",
                     counts={"received": len(cnbc_items), "created": 0, "duplicates": 0, "skipped": 0},
                 )
@@ -193,7 +194,7 @@ class NewsPollingService:
                 news_runtime_service.record_source_result(
                     "CNBC",
                     status="ERROR",
-                    mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                    mode=runtime_mode,
                     message=str(exc),
                 )
             if settings.NEWS_NASDAQ_ENABLED:
@@ -204,7 +205,7 @@ class NewsPollingService:
                     news_runtime_service.record_source_result(
                         "NASDAQ",
                         status="SUCCESS" if nasdaq_items else "EMPTY",
-                        mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                        mode=runtime_mode,
                         message="신규 뉴스 반영 완료" if nasdaq_items else "조회된 데이터 없음",
                         counts={"received": len(nasdaq_items), "created": 0, "duplicates": 0, "skipped": 0},
                     )
@@ -213,14 +214,14 @@ class NewsPollingService:
                     news_runtime_service.record_source_result(
                         "NASDAQ",
                         status="ERROR",
-                        mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                        mode=runtime_mode,
                         message=str(exc),
                     )
             else:
                 news_runtime_service.record_source_result(
                     "NASDAQ",
                     status="SKIPPED",
-                    mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                    mode=runtime_mode,
                     message="NEWS_NASDAQ_ENABLED disabled",
                     counts={"skipped": 1},
                 )
@@ -231,7 +232,7 @@ class NewsPollingService:
                 news_runtime_service.record_source_result(
                     "INVESTING",
                     status="SUCCESS" if investing_items else "EMPTY",
-                    mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                    mode=runtime_mode,
                     message="신규 뉴스 반영 완료" if investing_items else "조회된 데이터 없음",
                     counts={"received": len(investing_items), "created": 0, "duplicates": 0, "skipped": 0},
                 )
@@ -240,7 +241,7 @@ class NewsPollingService:
                 news_runtime_service.record_source_result(
                     "INVESTING",
                     status="ERROR",
-                    mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                    mode=runtime_mode,
                     message=str(exc),
                 )
             try:
@@ -250,7 +251,7 @@ class NewsPollingService:
                 news_runtime_service.record_source_result(
                     "SEEKING_ALPHA",
                     status="SUCCESS" if seeking_alpha_items else "EMPTY",
-                    mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                    mode=runtime_mode,
                     message="신규 뉴스 반영 완료" if seeking_alpha_items else "조회된 데이터 없음",
                     counts={"received": len(seeking_alpha_items), "created": 0, "duplicates": 0, "skipped": 0},
                 )
@@ -259,42 +260,42 @@ class NewsPollingService:
                 news_runtime_service.record_source_result(
                     "SEEKING_ALPHA",
                     status="ERROR",
-                    mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                    mode=runtime_mode,
                     message=str(exc),
                 )
         else:
             news_runtime_service.record_source_result(
                 "BLOOMBERG",
                 status="SKIPPED",
-                mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                mode=runtime_mode,
                 message="NEWS_INCLUDE_FOREIGN disabled",
                 counts={"skipped": 1},
             )
             news_runtime_service.record_source_result(
                 "CNBC",
                 status="SKIPPED",
-                mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                mode=runtime_mode,
                 message="NEWS_INCLUDE_FOREIGN disabled",
                 counts={"skipped": 1},
             )
             news_runtime_service.record_source_result(
                 "NASDAQ",
                 status="SKIPPED",
-                mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                mode=runtime_mode,
                 message="NEWS_INCLUDE_FOREIGN disabled",
                 counts={"skipped": 1},
             )
             news_runtime_service.record_source_result(
                 "INVESTING",
                 status="SKIPPED",
-                mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                mode=runtime_mode,
                 message="NEWS_INCLUDE_FOREIGN disabled",
                 counts={"skipped": 1},
             )
             news_runtime_service.record_source_result(
                 "SEEKING_ALPHA",
                 status="SKIPPED",
-                mode="AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS",
+                mode=runtime_mode,
                 message="NEWS_INCLUDE_FOREIGN disabled",
                 counts={"skipped": 1},
             )

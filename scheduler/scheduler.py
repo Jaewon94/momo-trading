@@ -17,10 +17,14 @@
 ※ DAY_TRADING_ONLY=true: 당일 매수→당일 청산 필수 (오버나이트 없음)
 ※ DAY_TRADING_ONLY=false: 스윙 모드 — 유망 종목 오버나이트 보유 (스마트 청산)
 """
+import asyncio
+import time as _time
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
 
 from core.config import settings
+from core.events import Event, EventType, event_bus
 from trading.broker_factory import get_broker_adapter
 from trading.enums import ActivityPhase, ActivityType, Market, OrderSide, OrderType
 from trading.models import OrderRequest
@@ -32,10 +36,51 @@ class TradingScheduler:
     def __init__(self):
         self.scheduler = self._build_scheduler()
         self._running = False
+        self._news_poll_lock = asyncio.Lock()
+        self._last_event_news_poll_at = 0.0
+        self._last_event_news_poll_by_symbol: dict[str, float] = {}
+        self._event_handlers_registered = False
+        self._register_news_event_handlers()
 
     @staticmethod
     def _build_scheduler() -> AsyncIOScheduler:
         return AsyncIOScheduler(timezone="Asia/Seoul")
+
+    def _register_news_event_handlers(self) -> None:
+        if self._event_handlers_registered:
+            return
+        event_bus.subscribe(EventType.VOLUME_SPIKE, self._on_news_trigger_event)
+        event_bus.subscribe(EventType.PRICE_SURGE, self._on_news_trigger_event)
+        event_bus.subscribe(EventType.PRICE_DROP, self._on_news_trigger_event)
+        event_bus.subscribe(EventType.ORDER_EXECUTED, self._on_news_trigger_event)
+        event_bus.subscribe(EventType.RECOMMENDATION_CREATED, self._on_news_trigger_event)
+        event_bus.subscribe(EventType.MARKET_OPEN, self._on_news_trigger_event)
+        self._event_handlers_registered = True
+
+    async def _on_news_trigger_event(self, event: Event) -> None:
+        if not settings.NEWS_POLL_ENABLED:
+            return
+
+        now_mono = _time.monotonic()
+        symbol = str((event.data or {}).get("symbol") or "").strip()
+        global_cooldown_sec = 90.0
+        symbol_cooldown_sec = 300.0
+
+        if (now_mono - self._last_event_news_poll_at) < global_cooldown_sec:
+            return
+        if symbol:
+            last_symbol_at = float(self._last_event_news_poll_by_symbol.get(symbol) or 0.0)
+            if (now_mono - last_symbol_at) < symbol_cooldown_sec:
+                return
+            self._last_event_news_poll_by_symbol[symbol] = now_mono
+
+        self._last_event_news_poll_at = now_mono
+        asyncio.create_task(
+            self._news_poll(
+                trigger_mode="AUTO_EVENT",
+                trigger_reason=event.type.value,
+            )
+        )
 
     async def _fetch_current_price(self, symbol: str, market: Market = Market.KRX) -> float:
         """브로커 어댑터 기준 현재가를 조회한다."""
@@ -108,7 +153,7 @@ class TradingScheduler:
         # 서버 기동 시 현재 상태에 맞는 초기 작업 실행
         if trading_jobs_enabled:
             await self._on_startup()
-        elif news_jobs_enabled:
+        if news_jobs_enabled:
             await self._news_poll()
 
     async def stop(self) -> None:
@@ -481,7 +526,13 @@ class TradingScheduler:
         except Exception as e:
             logger.warning("WebSocket 구독 갱신 실패: {}", str(e))
 
-    async def _news_poll(self, market_hours: bool | None = None) -> None:
+    async def _news_poll(
+        self,
+        market_hours: bool | None = None,
+        *,
+        trigger_mode: str | None = None,
+        trigger_reason: str | None = None,
+    ) -> None:
         """뉴스 자동 폴링 + 신규 뉴스 이벤트 발행"""
         if not settings.NEWS_POLL_ENABLED:
             return
@@ -494,12 +545,16 @@ class TradingScheduler:
         if market_hours is not None and actual_market_hours != market_hours:
             return
 
+        runtime_mode = trigger_mode or ("AUTO_TRADING" if actual_market_hours else "AUTO_OFF_HOURS")
+
         try:
-            async with AsyncSessionLocal() as session:
-                summary = await news_polling_service.poll_sources(
-                    session,
-                    market_hours=actual_market_hours,
-                )
+            async with self._news_poll_lock:
+                async with AsyncSessionLocal() as session:
+                    summary = await news_polling_service.poll_sources(
+                        session,
+                        market_hours=actual_market_hours,
+                        mode=runtime_mode,
+                    )
             if summary.get("skipped"):
                 logger.debug("뉴스 폴링 스킵: {}", summary.get("reason", "unknown"))
             if summary.get("created"):
@@ -508,6 +563,8 @@ class TradingScheduler:
                     summary.get("created", 0),
                     summary.get("published_events", 0),
                 )
+            elif trigger_reason:
+                logger.debug("이벤트 기반 뉴스 폴링 완료: {} ({})", runtime_mode, trigger_reason)
         except Exception as e:
             logger.warning("뉴스 폴링 오류: {}", str(e))
 

@@ -20,6 +20,14 @@ describe("performance_page_state", () => {
           max_drawdown: -320000,
           net_pnl_after_cost: 210000,
         },
+        current_account: {
+          synced: true,
+          unrealized_pnl: -2704805,
+          unrealized_pnl_rate: -1.32,
+          holding_count: 4,
+          pending_order_count: 1,
+          total_asset: 527064565,
+        },
         by_horizon: {
           SHORT: { trade_count: 7, expectancy: 500, profit_factor: 1.1, total_pnl: 60000 },
           MID: { trade_count: 8, expectancy: 1800, profit_factor: 1.7, total_pnl: 120000 },
@@ -68,6 +76,9 @@ describe("performance_page_state", () => {
     });
 
     expect(state.summaryCards).toHaveLength(6);
+    expect(state.currentAccount.synced).toBe(true);
+    expect(state.currentAccount.unrealizedPnl).toBe("-2,704,805원");
+    expect(state.currentAccount.holdingCount).toBe("4종목");
     expect(state.baseline.active).toBe(true);
     expect(state.baseline.effectiveDate).toBe("2026-04-06");
     expect(state.summaryCards[0]).toMatchObject({ label: "총 거래", value: "18건" });
@@ -90,6 +101,8 @@ describe("performance_page_state", () => {
     const state = buildPerformanceDashboardState({});
 
     expect(state.summaryCards[0]).toMatchObject({ value: "0건" });
+    expect(state.currentAccount.synced).toBe(false);
+    expect(state.helperLabel).toContain("닫힌 거래 표본");
     expect(state.comparisonRows).toHaveLength(2);
     expect(state.byHorizonRows).toEqual([]);
     expect(state.weeklyRows).toEqual([]);

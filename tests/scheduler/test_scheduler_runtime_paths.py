@@ -1,6 +1,7 @@
 import pytest
 from types import SimpleNamespace
 
+from core.events import Event, EventType
 from scheduler.scheduler import TradingScheduler
 from trading.enums import Market, OrderSide, OrderType
 from trading.models import CurrentPrice, OrderResult
@@ -71,6 +72,43 @@ async def test_scheduler_start_runs_news_jobs_when_trading_disabled(monkeypatch)
     assert startup_called is False
     assert news_poll_called is True
     assert set(job_ids) == {"news_poll_trading", "news_poll_off_hours"}
+
+
+@pytest.mark.asyncio
+async def test_scheduler_start_runs_news_poll_once_on_startup_when_trading_enabled(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    startup_called = False
+    news_poll_called = False
+    job_ids: list[str] = []
+
+    async def fake_on_startup() -> None:
+        nonlocal startup_called
+        startup_called = True
+
+    async def fake_news_poll(*args, **kwargs) -> None:
+        nonlocal news_poll_called
+        news_poll_called = True
+
+    class FakeScheduler:
+        def start(self) -> None:
+            return None
+
+        def add_job(self, _func, _trigger, **kwargs) -> None:
+            job_ids.append(kwargs["id"])
+
+    monkeypatch.setattr("scheduler.scheduler.settings.SCHEDULER_ENABLED", True)
+    monkeypatch.setattr("scheduler.scheduler.settings.NEWS_POLL_ENABLED", True)
+    monkeypatch.setattr(scheduler, "_on_startup", fake_on_startup)
+    monkeypatch.setattr(scheduler, "_news_poll", fake_news_poll)
+    monkeypatch.setattr(scheduler, "_build_scheduler", lambda: FakeScheduler())
+
+    await scheduler.start()
+
+    assert scheduler.is_running is True
+    assert startup_called is True
+    assert news_poll_called is True
+    assert "news_poll_trading" in job_ids
+    assert "news_poll_off_hours" in job_ids
 
 
 @pytest.mark.asyncio
@@ -197,8 +235,9 @@ async def test_scheduler_news_poll_calls_service_with_market_hours(monkeypatch) 
     scheduler = TradingScheduler()
     observed = {}
 
-    async def fake_poll_sources(_session, *, market_hours: bool):
+    async def fake_poll_sources(_session, *, market_hours: bool, mode: str | None = None):
         observed["market_hours"] = market_hours
+        observed["mode"] = mode
         return {"created": 1}
 
     class FakeSession:
@@ -216,6 +255,67 @@ async def test_scheduler_news_poll_calls_service_with_market_hours(monkeypatch) 
     await scheduler._news_poll()
 
     assert observed["market_hours"] is True
+    assert observed["mode"] == "AUTO_TRADING"
+
+
+@pytest.mark.asyncio
+async def test_scheduler_event_trigger_runs_news_poll_in_auto_event_mode(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    observed = {}
+
+    async def fake_news_poll(*args, **kwargs) -> None:
+        observed["mode"] = kwargs.get("trigger_mode")
+        observed["reason"] = kwargs.get("trigger_reason")
+
+    class DummyTask:
+        pass
+
+    def fake_create_task(coro):
+        observed["task_created"] = True
+        loop = __import__("asyncio").get_event_loop()
+        return loop.create_task(coro)
+
+    monkeypatch.setattr("scheduler.scheduler.settings.NEWS_POLL_ENABLED", True)
+    monkeypatch.setattr(scheduler, "_news_poll", fake_news_poll)
+    monkeypatch.setattr("asyncio.create_task", fake_create_task)
+
+    await scheduler._on_news_trigger_event(Event(
+        type=EventType.PRICE_SURGE,
+        data={"symbol": "005930"},
+        source="test",
+    ))
+    await __import__("asyncio").sleep(0)
+
+    assert observed["task_created"] is True
+    assert observed["mode"] == "AUTO_EVENT"
+    assert observed["reason"] == "PRICE_SURGE"
+
+
+@pytest.mark.asyncio
+async def test_scheduler_event_trigger_respects_global_cooldown(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    calls: list[str] = []
+
+    async def fake_news_poll(*args, **kwargs) -> None:
+        calls.append(kwargs.get("trigger_reason") or "")
+
+    monkeypatch.setattr("scheduler.scheduler.settings.NEWS_POLL_ENABLED", True)
+    monkeypatch.setattr(scheduler, "_news_poll", fake_news_poll)
+
+    await scheduler._on_news_trigger_event(Event(
+        type=EventType.PRICE_SURGE,
+        data={"symbol": "005930"},
+        source="test",
+    ))
+    await __import__("asyncio").sleep(0)
+    await scheduler._on_news_trigger_event(Event(
+        type=EventType.PRICE_DROP,
+        data={"symbol": "005930"},
+        source="test",
+    ))
+    await __import__("asyncio").sleep(0)
+
+    assert calls == ["PRICE_SURGE"]
 
 
 @pytest.mark.asyncio
