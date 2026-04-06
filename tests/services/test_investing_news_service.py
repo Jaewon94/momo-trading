@@ -26,6 +26,22 @@ INVESTING_RSS = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
+INVESTING_RSS_NONSTANDARD_DATE = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Investing.com Stock Market News</title>
+    <item>
+      <title>Chip stocks steady after overnight gain</title>
+      <link>https://www.investing.com/news/stock-market-news/chip-stocks-steady-400003</link>
+      <description>Morning update.</description>
+      <pubDate>2026-04-06 05:08:24</pubDate>
+      <guid>investing-3</guid>
+    </item>
+  </channel>
+</rss>
+"""
+
+
 @pytest.mark.asyncio
 async def test_investing_news_service_fetches_rss_items():
     import httpx
@@ -93,3 +109,24 @@ async def test_investing_news_service_fetch_and_ingest_translates_items(monkeypa
     assert summary["created"] == 2
     assert len(items) == 2
     assert "translated_title" in (items[0].metadata_json or "")
+
+
+@pytest.mark.asyncio
+async def test_investing_news_service_accepts_nonstandard_datetime_format():
+    import httpx
+
+    from services.investing_news_service import InvestingNewsService
+
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            text=INVESTING_RSS_NONSTANDARD_DATE,
+            headers={"Content-Type": "application/rss+xml; charset=UTF-8"},
+        )
+    )
+
+    service = InvestingNewsService(transport=transport)
+    items = await service.fetch_recent_news(limit=5)
+
+    assert len(items) == 1
+    assert items[0]["published_at"].startswith("2026-04-06T")

@@ -60,7 +60,8 @@
   - 1차 반영: `Investing.com Stock Market News` RSS 수집기 추가
 - [ ] 종목 연관도/섹터 영향도/장중 반응 가중치 2차 고도화
   - 메타데이터 기반 `symbol_relevance` / `sector_relevance` 가중치 반영 완료
-  - 다음 단계: 수집기에서 실제 연관 심볼/섹터 메타데이터를 채우는 경로 확장
+  - 수집기 단계에서 `matched_stock_names`, `related_symbols`, `sector_label`, `sector_symbols`, `sector_relevance` 자동 채움
+  - 다음 단계: 해외 소스별 섹터/테마 추출 정교화
 - [ ] 소스별 마지막 성공/실패 원인과 적재 추이를 운영 UI에 강화
   - 1차 반영: 소스 pill에 마지막 상태/메시지와 `24h 적재 건수` 노출
   - 2차 반영: 소스 pill에 `마지막 성공 시각`, `연속 실패 횟수` 노출

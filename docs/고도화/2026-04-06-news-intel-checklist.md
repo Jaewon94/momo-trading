@@ -57,6 +57,9 @@
   - `pressure_base`와 세션/다중소스 보정 후 최종 압력 분리 집계
 - [x] 메타데이터 기반 종목/섹터 연관도 가중치 반영
   - `symbol_relevance`, `sector_relevance`가 있으면 뉴스 게이트 압력 계산에 반영
+- [x] 수집기 단계의 연관 심볼/섹터 메타데이터 자동 보강
+  - 종목명 매칭 결과를 `matched_stock_names`, `related_symbols`, `primary_symbol`로 저장
+  - `Stock.category`를 이용해 `sector_label`, `sector_symbols`, `sector_relevance` 자동 채움
 - [x] 뉴스 게이트 정교화 1차
   - 호라이즌별 임계치/신선도 민감도 차등
   - 헤드라인 위험 키워드 severity boost

@@ -70,7 +70,18 @@ class InvestingNewsService:
         text = str(value or "").strip()
         if not text:
             return now_kst()
-        parsed = parsedate_to_datetime(text)
+        try:
+            parsed = parsedate_to_datetime(text)
+        except (TypeError, ValueError, IndexError):
+            parsed = None
+        if parsed is None:
+            try:
+                parsed = datetime.fromisoformat(text)
+            except ValueError:
+                try:
+                    parsed = datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    return now_kst()
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=KST)
         return parsed.astimezone(KST)

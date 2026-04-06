@@ -195,20 +195,36 @@ class NewsIngestService:
         session: AsyncSession,
         items: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        result = await session.execute(
-            select(Stock.symbol, Stock.name)
-            .where(Stock.is_active == True)  # noqa: E712
-            .order_by(Stock.name.desc(), Stock.created_at.desc())
-        )
         stock_rows = [
             {
                 "symbol": normalize_krx_symbol(symbol),
                 "name": str(name or "").strip(),
+                "category": str(category or "").strip(),
             }
-            for symbol, name in result.all()
+            for symbol, name, category in (
+                await session.execute(
+                    select(Stock.symbol, Stock.name, Stock.category)
+                    .where(Stock.is_active == True)  # noqa: E712
+                    .order_by(Stock.name.desc(), Stock.created_at.desc())
+                )
+            ).all()
             if str(name or "").strip()
         ]
         stock_rows.sort(key=lambda item: len(item["name"]), reverse=True)
+        stock_by_symbol = {
+            item["symbol"]: item
+            for item in stock_rows
+            if item["symbol"]
+        }
+        category_to_symbols: dict[str, list[str]] = {}
+        for item in stock_rows:
+            category = item["category"]
+            symbol = item["symbol"]
+            if not category or not symbol:
+                continue
+            category_to_symbols.setdefault(category, [])
+            if symbol not in category_to_symbols[category]:
+                category_to_symbols[category].append(symbol)
 
         enriched: list[dict[str, Any]] = []
         for item in items:
@@ -217,6 +233,13 @@ class NewsIngestService:
             metadata = dict(copied.get("metadata") or {})
             if existing_symbols:
                 copied["symbols"] = existing_symbols
+                metadata = self._enrich_symbol_metadata(
+                    metadata,
+                    symbols=existing_symbols,
+                    matched_names=[],
+                    stock_by_symbol=stock_by_symbol,
+                    category_to_symbols=category_to_symbols,
+                )
                 copied["metadata"] = metadata
                 enriched.append(copied)
                 continue
@@ -227,15 +250,22 @@ class NewsIngestService:
                 str(metadata.get("translated_title") or ""),
                 str(metadata.get("translated_summary") or ""),
             ])
-            matched_symbols: list[str] = []
-            matched_names: list[str] = []
-            seen_names: set[str] = set()
+            matching_stocks = []
             for stock in stock_rows:
                 name = stock["name"]
                 if len(name) < 2:
                     continue
-                if name not in haystack:
+                position = haystack.find(name)
+                if position < 0:
                     continue
+                matching_stocks.append((position, -len(name), stock))
+            matching_stocks.sort(key=lambda item: (item[0], item[1]))
+
+            matched_symbols: list[str] = []
+            matched_names: list[str] = []
+            seen_names: set[str] = set()
+            for _, _, stock in matching_stocks:
+                name = stock["name"]
                 if name in seen_names:
                     continue
                 matched_symbols.append(stock["symbol"])
@@ -245,19 +275,69 @@ class NewsIngestService:
                     break
 
             copied["symbols"] = matched_symbols
-            if matched_names:
-                metadata["matched_stock_names"] = matched_names
-                metadata["related_symbols"] = matched_symbols
-                primary_symbol = matched_symbols[0]
-                metadata.setdefault("primary_symbol", primary_symbol)
-                metadata.setdefault("symbol_weights", {primary_symbol: 1.0})
-                if len(matched_symbols) > 1:
-                    metadata.setdefault(
-                        "related_symbol_weights",
-                        {symbol: 0.72 for symbol in matched_symbols[1:]},
-                    )
-            copied["metadata"] = metadata
+            copied["metadata"] = self._enrich_symbol_metadata(
+                metadata,
+                symbols=matched_symbols,
+                matched_names=matched_names,
+                stock_by_symbol=stock_by_symbol,
+                category_to_symbols=category_to_symbols,
+            )
             enriched.append(copied)
+
+        return enriched
+
+    def _enrich_symbol_metadata(
+        self,
+        metadata: dict[str, Any],
+        *,
+        symbols: list[str],
+        matched_names: list[str],
+        stock_by_symbol: dict[str, dict[str, str]],
+        category_to_symbols: dict[str, list[str]],
+    ) -> dict[str, Any]:
+        enriched = dict(metadata or {})
+        normalized_symbols = self._normalize_symbols(symbols)
+        if not normalized_symbols:
+            return enriched
+
+        if matched_names:
+            enriched["matched_stock_names"] = matched_names
+
+        enriched["related_symbols"] = normalized_symbols
+        primary_symbol = normalized_symbols[0]
+        enriched.setdefault("primary_symbol", primary_symbol)
+        enriched.setdefault("symbol_weights", {primary_symbol: 1.0})
+        if len(normalized_symbols) > 1:
+            enriched.setdefault(
+                "related_symbol_weights",
+                {symbol: 0.72 for symbol in normalized_symbols[1:]},
+            )
+
+        primary_stock = stock_by_symbol.get(primary_symbol) or {}
+        category = str(primary_stock.get("category") or "").strip()
+        if not category:
+            return enriched
+
+        sector_symbols = []
+        seen_sector_symbols: set[str] = set()
+        for symbol in normalized_symbols:
+            stock = stock_by_symbol.get(symbol) or {}
+            if str(stock.get("category") or "").strip() != category:
+                continue
+            if symbol in seen_sector_symbols:
+                continue
+            sector_symbols.append(symbol)
+            seen_sector_symbols.add(symbol)
+        for symbol in category_to_symbols.get(category) or []:
+            if symbol in seen_sector_symbols:
+                continue
+            sector_symbols.append(symbol)
+            seen_sector_symbols.add(symbol)
+        if sector_symbols:
+            enriched.setdefault("sector_label", category)
+            enriched.setdefault("sector_symbols", sector_symbols[:8])
+            if len(sector_symbols) > 1:
+                enriched.setdefault("sector_relevance", 1.08)
 
         return enriched
 

@@ -44,6 +44,7 @@ import { buildStrategyInsightsViewModel } from './strategy_insights_state.js';
 import { buildCatalogErrorCopy, buildCatalogMetaText } from './llm_catalog_state.js';
 import { buildPositionDetailState, groupPositionTimeline } from './position_detail_state.js';
 import { buildReportActivityInsights } from './report_activity_state.js';
+import { buildReportArchiveCardState } from './report_archive_state.js';
 import { buildReportPerformanceState } from './report_performance_state.js';
 import {
   buildNewsOverviewCards,
@@ -3573,20 +3574,24 @@ async function loadReportsArchive() {
 
     const listMarkup = reports.map((rawReport) => {
       const report = normalizeReportSummaryMetrics(rawReport);
+      const archiveState = buildReportArchiveCardState(report);
       return `
       <button
         type="button"
         class="w-full rounded-xl border border-gray-700 bg-dark-900/50 p-4 text-left hover:border-blue-500/60 hover:bg-dark-900 transition"
-        data-archive-report-date="${escapeHtml(report.report_date)}"
+        data-archive-report-date="${escapeHtml(archiveState.dateLabel)}"
       >
         <div class="flex items-center justify-between gap-3">
-          <div class="text-sm font-medium text-white">${escapeHtml(report.report_date)}</div>
+          <div class="text-sm font-medium text-white">${escapeHtml(archiveState.dateLabel)}</div>
           <div class="text-xs text-gray-500">상세 보기</div>
         </div>
         <div class="mt-2 text-xs text-gray-400">
-          실현손익 ${toNumber(report.total_pnl).toLocaleString()}원 ·
-          매수 ${toNumber(report.buy_count)}건 / 매도 ${toNumber(report.sell_count)}건 ·
-          보유 ${toNumber(report.open_position_count)}종목
+          ${escapeHtml(archiveState.summaryLabel)}
+        </div>
+        <div class="mt-3 rounded-xl border border-gray-700/70 bg-dark-800/70 px-3 py-2">
+          <div class="text-[11px] uppercase tracking-[0.12em] text-gray-500">뉴스 비교</div>
+          <div class="mt-1 text-xs text-gray-300">${escapeHtml(archiveState.comparison.headline)}</div>
+          <div class="mt-1 text-[11px] ${archiveState.comparison.ready ? 'text-emerald-300' : 'text-gray-500'}">${escapeHtml(archiveState.comparison.deltaLabel)}</div>
         </div>
       </button>
     `;
