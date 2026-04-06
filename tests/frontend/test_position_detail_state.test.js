@@ -27,6 +27,38 @@ describe("position_detail_state", () => {
           stop_loss_price: 69000,
           reason: "추세 유지",
         },
+        decision_insight: {
+          recommendation: "BUY",
+          confidence: 0.82,
+          reason: "추세 유지",
+          target_price: 76000,
+          stop_loss_price: 69000,
+          horizon: "MID",
+          chart: {
+            market_regime: "BULL",
+            rsi: 54.2,
+            macd_hist: 1.24,
+            pattern: "상승 추세 지속",
+            direction: "BULLISH",
+            signal_confidence: 0.74,
+          },
+          cost: {
+            edge_bps: 182.4,
+            cost_bps: 61,
+            ratio: 2.99,
+            min_ratio: 1.3,
+          },
+          news: {
+            negative_pressure: 0.22,
+            negative_count: 2,
+            source_count: 2,
+            threshold: 0.75,
+            contributors: [
+              { headline: "한글 번역 제목", pressure: 0.11 },
+              { headline: "공급 차질 우려", pressure: 0.07 },
+            ],
+          },
+        },
         trade_stats: {
           total_trades: 1,
           open_buy_count: 1,
@@ -43,6 +75,9 @@ describe("position_detail_state", () => {
     expect(state.summaryCards[0].hero).toContain("2주");
     expect(state.summaryCards[1].hero).toBe("BUY");
     expect(state.summaryCards[2].metrics[2].value).toContain("0원");
+    expect(state.decisionInsight.hero).toBe("BUY · MID");
+    expect(state.decisionInsight.cards[1].hero).toBe("2.99x");
+    expect(state.decisionInsight.cards[2].body[0]).toContain("한글 번역 제목");
     expect(state.emptyMessage).toBe("표시할 이벤트가 없습니다.");
   });
 
@@ -183,16 +218,54 @@ describe("position_detail_state", () => {
           phase: "ERROR",
           summary: "응답 파싱 실패",
         },
+        {
+          type: "news",
+          at: "2026-04-03T07:55:00+09:00",
+          title: "삼성전자 시설투자 공시",
+          summary: "대규모 설비투자 계획 공시",
+          detail: {
+            source_code: "DART",
+            source_tier: "A",
+            impact_score: 0.88,
+            trust_score: 1.0,
+            sentiment_label: "POSITIVE",
+            sentiment_score: 0.76,
+          },
+        },
       ],
     });
 
     expect(state.timelineFilters).toEqual([
-      { key: "all", label: "전체", count: 2 },
+      { key: "all", label: "전체", count: 3 },
       { key: "trade", label: "거래", count: 1 },
       { key: "ai", label: "AI", count: 0 },
+      { key: "news", label: "뉴스", count: 1 },
       { key: "error", label: "오류", count: 1 },
     ]);
     expect(state.timelinePage.hasMore).toBe(false);
+  });
+
+  test("formats news timeline entries with source and impact labels", () => {
+    const entry = buildPositionTimelineEntry({
+      type: "news",
+      at: "2026-04-03T07:55:00+09:00",
+      title: "삼성전자 시설투자 공시",
+      summary: "대규모 설비투자 계획 공시",
+      detail: {
+        source_code: "DART",
+        source_tier: "A",
+        impact_score: 0.88,
+        trust_score: 1.0,
+        sentiment_label: "POSITIVE",
+        sentiment_score: 0.76,
+      },
+    });
+
+    expect(entry.filterKey).toBe("news");
+    expect(entry.kindLabel).toBe("뉴스");
+    expect(entry.badge).toBe("DART");
+    expect(entry.meta).toContain("DART");
+    expect(entry.detailLines[0]).toContain("영향도");
   });
 
   test("builds recent event chips for the summary header", () => {

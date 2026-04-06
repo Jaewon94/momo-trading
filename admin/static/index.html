@@ -69,6 +69,165 @@
       background: rgba(15,16,33,0.74); padding: 10px 12px; transition: 0.15s ease;
     }
     .settings-jump-btn:hover { border-color: #60a5fa; background: rgba(30, 41, 59, 0.92); }
+    .news-overview-grid {
+      display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px;
+    }
+    .news-overview-card {
+      border: 1px solid rgba(51,65,85,0.92); border-radius: 14px;
+      background: rgba(15,23,42,0.68); padding: 12px 14px;
+    }
+    .news-overview-label { color: #94a3b8; font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; }
+    .news-overview-value { color: #f8fafc; font-size: 20px; font-weight: 700; margin-top: 6px; }
+    .news-overview-help { color: #64748b; font-size: 11px; margin-top: 6px; line-height: 1.5; }
+    .news-source-pill-row { display: flex; flex-wrap: wrap; gap: 8px; }
+    .news-source-pill {
+      display: inline-flex; align-items: center; gap: 8px; padding: 7px 10px;
+      border: 1px solid rgba(71,85,105,0.92); border-radius: 999px;
+      background: rgba(15,16,33,0.54); color: #cbd5e1; font-size: 12px;
+    }
+    .news-source-pill strong { color: #f8fafc; font-weight: 600; }
+    .news-item-list { display: grid; gap: 10px; }
+    .news-item-card {
+      border: 1px solid rgba(51,65,85,0.92); border-radius: 16px;
+      background:
+        linear-gradient(180deg, rgba(15,16,33,0.88), rgba(15,23,42,0.78)),
+        radial-gradient(circle at top left, rgba(96,165,250,0.10), transparent 36%);
+      padding: 12px 14px;
+    }
+    .news-item-meta { color: #94a3b8; font-size: 11px; }
+    .news-item-title { color: #f8fafc; font-size: 14px; font-weight: 600; margin-top: 6px; line-height: 1.5; }
+    .news-item-subtitle { color: #cbd5e1; font-size: 12px; line-height: 1.5; margin-top: 6px; }
+    .news-item-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .news-item-badge {
+      display: inline-flex; align-items: center; border-radius: 999px; padding: 4px 8px;
+      font-size: 11px; color: #dbeafe; background: rgba(30,58,138,0.22); border: 1px solid rgba(71,85,105,0.82);
+    }
+    .report-news-strip {
+      border: 1px solid rgba(51,65,85,0.92);
+      border-radius: 18px;
+      background:
+        linear-gradient(180deg, rgba(15,16,33,0.92), rgba(15,23,42,0.72)),
+        radial-gradient(circle at top left, rgba(96,165,250,0.08), transparent 38%);
+      overflow: hidden;
+    }
+    .report-news-strip.tone-success {
+      border-color: rgba(16,185,129,0.35);
+      background:
+        linear-gradient(180deg, rgba(8,34,30,0.95), rgba(15,16,33,0.76)),
+        radial-gradient(circle at top left, rgba(16,185,129,0.14), transparent 40%);
+    }
+    .report-news-strip.tone-empty {
+      border-color: rgba(245,158,11,0.28);
+      background:
+        linear-gradient(180deg, rgba(41,26,8,0.95), rgba(15,16,33,0.76)),
+        radial-gradient(circle at top left, rgba(245,158,11,0.12), transparent 40%);
+    }
+    .report-news-strip.tone-error {
+      border-color: rgba(248,113,113,0.35);
+      background:
+        linear-gradient(180deg, rgba(49,18,18,0.95), rgba(15,16,33,0.76)),
+        radial-gradient(circle at top left, rgba(248,113,113,0.14), transparent 40%);
+    }
+    .report-news-strip.tone-idle {
+      border-color: rgba(71,85,105,0.9);
+    }
+    .report-news-strip-summary {
+      list-style: none;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: start;
+      cursor: pointer;
+      padding: 14px 16px;
+    }
+    .report-news-strip-summary::-webkit-details-marker { display: none; }
+    .report-news-strip-eyebrow {
+      color: #94a3b8;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+    }
+    .report-news-strip-title {
+      color: #f8fafc;
+      font-size: 15px;
+      font-weight: 700;
+      margin-top: 6px;
+    }
+    .report-news-strip-meta {
+      color: #94a3b8;
+      font-size: 12px;
+      margin-top: 6px;
+      line-height: 1.5;
+    }
+    .report-news-strip-stat-row {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .report-news-strip-stat {
+      min-width: 118px;
+      border: 1px solid rgba(71,85,105,0.9);
+      border-radius: 14px;
+      background: rgba(15,16,33,0.52);
+      padding: 10px 12px;
+    }
+    .report-news-strip-stat-label {
+      display: block;
+      color: #94a3b8;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+    }
+    .report-news-strip-stat strong {
+      display: block;
+      color: #f8fafc;
+      font-size: 13px;
+      font-weight: 700;
+      margin-top: 6px;
+    }
+    .report-news-strip-body {
+      border-top: 1px solid rgba(51,65,85,0.82);
+      padding: 14px 16px 16px;
+    }
+    .news-settings-grid {
+      display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .news-settings-field {
+      border: 1px solid #374151; border-radius: 14px; background: rgba(15,16,33,0.58); padding: 12px;
+    }
+    .news-settings-field.full-span { grid-column: 1 / -1; }
+    .news-settings-field label { display: block; color: #e5e7eb; font-size: 13px; margin-bottom: 6px; }
+    .news-settings-field .help { color: #64748b; font-size: 11px; margin-top: 6px; line-height: 1.5; }
+    .performance-table { display: grid; gap: 8px; }
+    .performance-table-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) repeat(4, minmax(0, 0.8fr));
+      gap: 8px;
+      align-items: center;
+      border: 1px solid rgba(51,65,85,0.82);
+      border-radius: 14px;
+      background: rgba(15,16,33,0.55);
+      padding: 10px 12px;
+    }
+    .performance-table-row.compact {
+      grid-template-columns: minmax(0, 1.2fr) repeat(3, minmax(0, 0.8fr));
+    }
+    .performance-table-cell { color: #dbe4f0; font-size: 12px; }
+    .performance-table-cell.metric-name { color: #f8fafc; font-weight: 600; }
+    .performance-table-head {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      color: #64748b;
+      font-size: 11px;
+      min-width: 240px;
+      text-align: right;
+    }
+    .performance-table-head.compact {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      min-width: 180px;
+    }
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: #1a1b2e; }
     ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
@@ -227,6 +386,9 @@
       .event-radar-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .event-radar-card { grid-template-columns: 1fr; }
       .event-radar-side { justify-items: start; }
+      .report-news-strip-summary { grid-template-columns: 1fr; }
+      .report-news-strip-stat-row { justify-content: stretch; }
+      .report-news-strip-stat { flex: 1 1 140px; }
     }
 
     /* Position detail timeline */
@@ -314,6 +476,25 @@
       color: #cbd5e1; font-size: 12px; line-height: 1.55; display: grid; gap: 6px;
     }
     .position-summary-card-caption { margin-top: 10px; color: #64748b; font-size: 11px; }
+    .position-decision-shell {
+      border: 1px solid rgba(51,65,85,0.92);
+      border-radius: 22px;
+      padding: 16px;
+      background:
+        linear-gradient(180deg, rgba(15,16,33,0.92), rgba(15,23,42,0.76)),
+        radial-gradient(circle at top right, rgba(96,165,250,0.10), transparent 36%);
+    }
+    .position-decision-header {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+    }
+    .position-decision-verdict { text-align: right; }
+    .position-decision-hero {
+      color: #f8fafc; font-size: 20px; font-weight: 700; letter-spacing: -0.03em;
+    }
+    .position-decision-meta { color: #cbd5e1; font-size: 12px; margin-top: 6px; max-width: 380px; }
+    .position-decision-grid {
+      display: grid; gap: 12px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 14px;
+    }
     .position-timeline-group {
       display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 14px;
       align-items: flex-start;
@@ -413,6 +594,15 @@
         linear-gradient(180deg, rgba(28,16,48,0.9), rgba(15,16,33,0.72)),
         radial-gradient(circle at top left, rgba(167,139,250,0.11), transparent 44%);
     }
+    .position-timeline-item.tone-news .position-timeline-dot {
+      background: rgba(6,78,59,0.78); color: #99f6e4; border-color: rgba(45,212,191,0.38);
+    }
+    .position-timeline-item.tone-news .position-timeline-card {
+      border-color: rgba(45,212,191,0.24);
+      background:
+        linear-gradient(180deg, rgba(7,32,30,0.92), rgba(15,16,33,0.72)),
+        radial-gradient(circle at top left, rgba(45,212,191,0.11), transparent 44%);
+    }
     .position-timeline-item.tone-pending .position-timeline-dot {
       background: rgba(120,53,15,0.72); color: #fde68a; border-color: rgba(251,191,36,0.35);
     }
@@ -437,6 +627,9 @@
     .position-timeline-load-more:disabled { opacity: 0.72; cursor: wait; }
     @media (max-width: 768px) {
       .position-summary-card-metrics { grid-template-columns: 1fr; }
+      .position-decision-header { display: grid; grid-template-columns: 1fr; }
+      .position-decision-verdict { text-align: left; }
+      .position-decision-grid { grid-template-columns: 1fr; }
       .position-timeline-group { grid-template-columns: 1fr; gap: 8px; }
       .position-timeline-date { position: static; }
       .position-timeline-date-label { font-size: 15px; }
@@ -665,6 +858,9 @@
           <button onclick="switchView('reports')" id="nav-reports" class="nav-btn w-full text-left px-3 py-2 rounded-lg text-sm text-gray-400 hover:bg-dark-700">
             &#x1f5c3;&#xfe0f; &#xacfc;&#xac70; &#xb9ac;&#xd3ec;&#xd2b8; &#xc544;&#xce74;&#xc774;&#xbe0c; <span id="report-archive-count" class="ml-1 text-[11px] text-gray-500">(0)</span>
           </button>
+          <button onclick="switchView('performance')" id="nav-performance" class="nav-btn w-full text-left px-3 py-2 rounded-lg text-sm text-gray-400 hover:bg-dark-700">
+            &#x1f4c8; &#xc131;&#xacfc; &#xbd84;&#xc11d;
+          </button>
           <button onclick="switchView('trades-center')" id="nav-trades-center" class="nav-btn w-full text-left px-3 py-2 rounded-lg text-sm text-gray-400 hover:bg-dark-700">
             &#x1f4bc; &#xac70;&#xb798; &#xc13c;&#xd130;
           </button>
@@ -768,6 +964,16 @@
                       <div id="left-llm-summary" class="text-xs text-gray-500 mt-1">현재값 불러오는 중...</div>
                     </div>
                     <span class="text-xs text-blue-300">LLM 설정</span>
+                  </div>
+                </button>
+
+                <button onclick="openSettingsModal('news')" class="settings-jump-btn">
+                  <div class="flex items-center justify-between gap-3">
+                    <div>
+                      <div class="text-sm text-gray-200">뉴스 인텔</div>
+                      <div id="left-news-summary" class="text-xs text-gray-500 mt-1">현재값 불러오는 중...</div>
+                    </div>
+                    <span class="text-xs text-blue-300">뉴스 설정</span>
                   </div>
                 </button>
 
@@ -1013,6 +1219,10 @@
               class="settings-tab-btn rounded-lg border border-gray-700 px-3 py-2 text-left text-sm text-gray-300 transition hover:border-blue-400 hover:text-white">
               전략
             </button>
+            <button id="settings-tab-news" onclick="switchSettingsTab('news')"
+              class="settings-tab-btn rounded-lg border border-gray-700 px-3 py-2 text-left text-sm text-gray-300 transition hover:border-blue-400 hover:text-white">
+              뉴스
+            </button>
             <button id="settings-tab-llm" onclick="switchSettingsTab('llm')"
               class="settings-tab-btn rounded-lg border border-gray-700 px-3 py-2 text-left text-sm text-gray-300 transition hover:border-blue-400 hover:text-white">
               LLM
@@ -1073,6 +1283,238 @@
             </div>
           </section>
 
+          <section id="settings-panel-news" class="settings-tab-panel space-y-4">
+            <div>
+              <div class="text-sm font-medium text-white">뉴스 인텔 설정</div>
+              <div class="mt-1 text-xs text-gray-500">수집, 게이트, 재검증, 뉴스 전용 LLM을 한 곳에서 관리합니다.</div>
+            </div>
+
+            <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4">
+              <div class="flex items-center justify-between gap-3">
+                <div>
+                  <div class="text-xs font-medium text-gray-300">뉴스 인텔 개요</div>
+                  <div class="mt-1 text-[11px] text-gray-500">최근 적재, 차단, 재검증, 수익 검증 수치를 같이 봅니다.</div>
+                </div>
+                <div class="flex items-center gap-2">
+                  <button onclick="loadNewsOverview(true)"
+                    class="text-[11px] text-gray-400 hover:text-gray-200 transition">새로고침</button>
+                  <button onclick="fetchBloombergNews()"
+                    class="rounded-md border border-sky-700/60 bg-sky-900/20 px-2 py-1 text-[11px] text-sky-200 transition hover:border-sky-600 hover:bg-sky-900/30">
+                    Bloomberg 수동 수집
+                  </button>
+                  <button onclick="fetchCnbcNews()"
+                    class="rounded-md border border-cyan-700/60 bg-cyan-900/20 px-2 py-1 text-[11px] text-cyan-200 transition hover:border-cyan-600 hover:bg-cyan-900/30">
+                    CNBC 수동 수집
+                  </button>
+                  <button onclick="fetchNasdaqNews()"
+                    class="rounded-md border border-indigo-700/60 bg-indigo-900/20 px-2 py-1 text-[11px] text-indigo-200 transition hover:border-indigo-600 hover:bg-indigo-900/30">
+                    Nasdaq 수동 수집
+                  </button>
+                  <button onclick="fetchYonhapNews()"
+                    class="rounded-md border border-amber-700/60 bg-amber-900/20 px-2 py-1 text-[11px] text-amber-200 transition hover:border-amber-600 hover:bg-amber-900/30">
+                    연합뉴스TV 수동 수집
+                  </button>
+                  <button onclick="fetchKrxNews()"
+                    class="rounded-md border border-emerald-700/60 bg-emerald-900/20 px-2 py-1 text-[11px] text-emerald-200 transition hover:border-emerald-600 hover:bg-emerald-900/30">
+                    KIND 수동 수집
+                  </button>
+                  <button onclick="fetchDartNews()"
+                    class="rounded-md border border-blue-700/60 bg-blue-900/20 px-2 py-1 text-[11px] text-blue-200 transition hover:border-blue-600 hover:bg-blue-900/30">
+                    DART 수동 수집
+                  </button>
+                </div>
+              </div>
+              <div id="news-overview-summary" class="news-overview-grid mt-3">
+                <div class="news-overview-card"><div class="news-overview-label">최근 24시간</div><div class="news-overview-value">-</div></div>
+              </div>
+              <div id="news-source-pills" class="news-source-pill-row mt-3"></div>
+            </div>
+
+            <div class="grid gap-4 xl:grid-cols-[1.45fr,1fr]">
+              <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4">
+                <div class="text-xs font-medium text-gray-300">뉴스 성과 KPI</div>
+                <div class="mt-1 text-[11px] text-gray-500">Expectancy, PF, MDD, 비용 차감 손익, Shadow 차단율을 같이 봅니다.</div>
+                <div id="news-performance-cards" class="news-overview-grid mt-3"></div>
+              </div>
+              <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4">
+                <div class="text-xs font-medium text-gray-300">Shadow / Rollout 정책</div>
+                <div class="mt-1 text-[11px] text-gray-500">뉴스 전략 승급/유지/롤백 기준과 현재 판정을 확인합니다.</div>
+                <div id="news-rollout-policy" class="mt-3 text-sm text-gray-400">불러오는 중...</div>
+              </div>
+            </div>
+
+            <div class="news-settings-grid">
+              <div class="news-settings-field">
+                <label class="flex items-center justify-between gap-3">
+                  <span>뉴스 AI 분석 사용</span>
+                  <input type="checkbox" id="set-news-llm-enabled" onchange="updateSetting('NEWS_LLM_ENABLED', this.checked)"
+                    class="w-9 h-5 rounded-full appearance-none bg-gray-600 checked:bg-green-500 relative cursor-pointer after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:transition-transform checked:after:translate-x-4">
+                </label>
+                <div class="help">끄면 규칙 기반 적재만 하고, 뉴스 요약/감성 추론은 생략합니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label>뉴스 전용 Provider</label>
+                <select id="set-news-llm-provider" onchange="updateSetting('NEWS_LLM_PROVIDER', this.value)"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                  <option value="AUTOMATIC">자동</option>
+                  <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CODEX">Codex</option>
+                  <option value="OLLAMA">Ollama</option>
+                </select>
+                <div class="help">뉴스 감성/요약에만 적용합니다. 로컬 모델은 Ollama로 선택합니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label class="flex items-center justify-between gap-3">
+                  <span>해외 뉴스 포함</span>
+                  <input type="checkbox" id="set-news-include-foreign" onchange="updateSetting('NEWS_INCLUDE_FOREIGN', this.checked)"
+                    class="w-9 h-5 rounded-full appearance-none bg-gray-600 checked:bg-green-500 relative cursor-pointer after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:transition-transform checked:after:translate-x-4">
+                </label>
+                <div class="help">Reuters/Bloomberg 같은 해외 소스를 켜고 끕니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label class="flex items-center justify-between gap-3">
+                  <span>Nasdaq 소스 사용</span>
+                  <input type="checkbox" id="set-news-nasdaq-enabled" onchange="updateSetting('NEWS_NASDAQ_ENABLED', this.checked)"
+                    class="w-9 h-5 rounded-full appearance-none bg-gray-600 checked:bg-green-500 relative cursor-pointer after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:transition-transform checked:after:translate-x-4">
+                </label>
+                <div class="help">현재 업스트림 응답이 불안정해 기본 OFF입니다. 필요할 때만 켜는 실험 소스입니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label class="flex items-center justify-between gap-3">
+                  <span>국내 미디어 뉴스 포함</span>
+                  <input type="checkbox" id="set-news-domestic-media-enabled" onchange="updateSetting('NEWS_DOMESTIC_MEDIA_ENABLED', this.checked)"
+                    class="w-9 h-5 rounded-full appearance-none bg-gray-600 checked:bg-green-500 relative cursor-pointer after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:transition-transform checked:after:translate-x-4">
+                </label>
+                <div class="help">연합뉴스TV 경제 RSS를 자동 폴링에 포함합니다. 이용조건은 별도 확인이 필요합니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label class="flex items-center justify-between gap-3">
+                  <span>뉴스 게이트 활성화</span>
+                  <input type="checkbox" id="set-news-gate-enabled" onchange="updateSetting('NEWS_GATE_ENABLED', this.checked)"
+                    class="w-9 h-5 rounded-full appearance-none bg-gray-600 checked:bg-green-500 relative cursor-pointer after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:transition-transform checked:after:translate-x-4">
+                </label>
+                <div class="help">부정 강도가 임계치를 넘으면 진입 차단 또는 재검증으로 보냅니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label class="flex items-center justify-between gap-3">
+                  <span>자동 폴링 활성화</span>
+                  <input type="checkbox" id="set-news-poll-enabled" onchange="updateSetting('NEWS_POLL_ENABLED', this.checked)"
+                    class="w-9 h-5 rounded-full appearance-none bg-gray-600 checked:bg-green-500 relative cursor-pointer after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:transition-transform checked:after:translate-x-4">
+                </label>
+                <div class="help">장중/장외 주기를 나눠 자동 수집하고 신규 뉴스는 증분 재검증을 트리거합니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label class="flex items-center justify-between gap-3">
+                  <span>Shadow A/B 기록</span>
+                  <input type="checkbox" id="set-news-shadow-enabled" onchange="updateSetting('NEWS_SHADOW_ENABLED', this.checked)"
+                    class="w-9 h-5 rounded-full appearance-none bg-gray-600 checked:bg-green-500 relative cursor-pointer after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:transition-transform checked:after:translate-x-4">
+                </label>
+                <div class="help">뉴스 ON/OFF 기준 결정을 같이 저장해 승급/롤백 판단의 표본으로 사용합니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label>부정 압력 차단 임계치</label>
+                <input id="set-news-negative-threshold" type="number" min="0" max="1" step="0.05"
+                  onchange="updateSetting('NEWS_NEGATIVE_BLOCK_THRESHOLD', this.value)"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
+                <div class="help">높을수록 더 강한 악재일 때만 막습니다. 기본 권장값은 0.65~0.75입니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label>뉴스 룩백 시간</label>
+                <input id="set-news-lookback-hours" type="number" min="1" max="168" step="1"
+                  onchange="updateSetting('NEWS_LOOKBACK_HOURS', this.value)"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
+                <div class="help">매수 전에 참고하는 최근 뉴스 범위입니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label>장중 폴링 간격(분)</label>
+                <input id="set-news-poll-interval-trading" type="number" min="1" max="60" step="1"
+                  onchange="updateSetting('NEWS_POLL_INTERVAL_MIN_TRADING', this.value)"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
+                <div class="help">장중 신규 뉴스 감시 주기입니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label>장외 폴링 간격(분)</label>
+                <input id="set-news-poll-interval-off" type="number" min="1" max="240" step="1"
+                  onchange="updateSetting('NEWS_POLL_INTERVAL_MIN_OFF_HOURS', this.value)"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
+                <div class="help">장외에는 더 낮은 빈도로 감시해 개장 전 리스크를 준비합니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label>롤아웃 최소 표본 수</label>
+                <input id="set-news-rollout-min-sample" type="number" min="1" max="200" step="1"
+                  onchange="updateSetting('NEWS_ROLLOUT_MIN_SAMPLE_SIZE', this.value)"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
+                <div class="help">실거래/Shadow 둘 다 이 표본 수 이상이어야 승급 또는 롤백을 판단합니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label>롤아웃 최소 PF</label>
+                <input id="set-news-rollout-min-pf" type="number" min="0" max="10" step="0.05"
+                  onchange="updateSetting('NEWS_ROLLOUT_MIN_PROFIT_FACTOR', this.value)"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
+                <div class="help">이 값보다 낮으면 뉴스 전략은 롤백 권장 상태가 됩니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label>롤아웃 최소 기대값(원)</label>
+                <input id="set-news-rollout-min-expectancy" type="number" min="-1000000" max="1000000" step="100"
+                  onchange="updateSetting('NEWS_ROLLOUT_MIN_EXPECTANCY', this.value)"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
+                <div class="help">거래당 기대 원화 손익 기준입니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label>롤아웃 최대 허용 MDD(원)</label>
+                <input id="set-news-rollout-max-drawdown" type="number" min="0" max="100000000" step="10000"
+                  onchange="updateSetting('NEWS_ROLLOUT_MAX_DRAWDOWN_KRW', this.value)"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
+                <div class="help">누적 손익 기준 이 값을 넘게 무너지면 롤백 권장으로 전환합니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label>Ollama Base URL</label>
+                <input id="set-ollama-base-url" type="text"
+                  onchange="updateSetting('OLLAMA_BASE_URL', this.value)"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200"
+                  placeholder="http://127.0.0.1:11434">
+                <div class="help">로컬 Ollama 서버 주소입니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label>Ollama 기본 모델</label>
+                <input id="set-ollama-model" type="text"
+                  onchange="updateSetting('OLLAMA_MODEL', this.value)"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200"
+                  placeholder="llama3.1:8b">
+                <div class="help">뉴스/수동 작업 공용 기본값입니다. tier 전용 설정이 있으면 그 값이 우선합니다.</div>
+              </div>
+
+              <div class="news-settings-field full-span">
+                <div class="flex items-center justify-between gap-3">
+                  <div>
+                    <div class="text-sm text-white">최근 적재 뉴스</div>
+                    <div class="mt-1 text-[11px] text-gray-500">현재 활성 소스 기준으로 최근 기사만 노출합니다.</div>
+                  </div>
+                </div>
+                <div id="news-overview-list" class="news-item-list mt-3">
+                  <div class="text-xs text-gray-500">뉴스 인텔 데이터를 불러오는 중...</div>
+                </div>
+              </div>
+            </div>
+          </section>
+
           <section id="settings-panel-llm" class="settings-tab-panel space-y-4">
             <div>
               <div class="text-sm font-medium text-white">LLM 설정</div>
@@ -1095,6 +1537,7 @@
                 class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
                 <option value="CLAUDE_CODE">Claude Code</option>
                 <option value="CODEX">Codex</option>
+                <option value="OLLAMA">Ollama</option>
               </select>
               <label class="text-xs block mt-2 mb-1 text-gray-500">모델 / 버전</label>
               <select id="set-llm-tier1-model" onchange="updateTierModelSetting('tier1', this.value)"
@@ -1114,6 +1557,7 @@
                 <option value="">없음</option>
                 <option value="CLAUDE_CODE">Claude Code</option>
                 <option value="CODEX">Codex</option>
+                <option value="OLLAMA">Ollama</option>
               </select>
               <label class="text-xs block mt-2 mb-1 text-gray-500">Fallback 모델 / 버전</label>
               <select id="set-llm-tier1-fallback-model" onchange="updateTierModelSetting('tier1', this.value, 'fallback')"
@@ -1135,6 +1579,7 @@
                 class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
                 <option value="CLAUDE_CODE">Claude Code</option>
                 <option value="CODEX">Codex</option>
+                <option value="OLLAMA">Ollama</option>
               </select>
               <label class="text-xs block mt-2 mb-1 text-gray-500">모델 / 버전</label>
               <select id="set-llm-tier2-model" onchange="updateTierModelSetting('tier2', this.value)"
@@ -1154,6 +1599,7 @@
                 <option value="">없음</option>
                 <option value="CLAUDE_CODE">Claude Code</option>
                 <option value="CODEX">Codex</option>
+                <option value="OLLAMA">Ollama</option>
               </select>
               <label class="text-xs block mt-2 mb-1 text-gray-500">Fallback 모델 / 버전</label>
               <select id="set-llm-tier2-fallback-model" onchange="updateTierModelSetting('tier2', this.value, 'fallback')"
@@ -1176,6 +1622,7 @@
                 <option value="AUTOMATIC">자동</option>
                 <option value="CLAUDE_CODE">Claude Code</option>
                 <option value="CODEX">Codex</option>
+                <option value="OLLAMA">Ollama</option>
               </select>
               <div class="text-[11px] text-gray-500 mt-1">
                 Q&amp;A / 수동 사이클 / 리포트 생성에만 적용, 모델은 각 tier 설정 사용
@@ -1230,6 +1677,13 @@
           <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4 text-sm text-gray-400">종목 요약을 불러오는 중...</div>
         </div>
         <div>
+          <div class="text-sm font-medium text-white">의사결정 카드</div>
+          <div class="mt-1 text-xs text-gray-500">진입 당시 차트, 비용, 뉴스 판단 근거를 한 번에 확인합니다.</div>
+          <div id="position-detail-decision" class="mt-3">
+            <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4 text-sm text-gray-400">의사결정 카드 정보를 불러오는 중...</div>
+          </div>
+        </div>
+        <div>
           <div class="text-sm font-medium text-white">최근 이벤트</div>
           <div class="mt-1 text-xs text-gray-500">최근 감지된 우선 이벤트를 요약해서 보여줍니다.</div>
           <div id="position-detail-recent-events" class="position-recent-event-strip mt-3"></div>
@@ -1246,6 +1700,6 @@
     </div>
   </div>
 
-  <script type="module" src="/admin/static/js/app.js?v=20260403-2254"></script>
+  <script type="module" src="/admin/static/js/app.js?v=20260405-2358"></script>
 </body>
 </html>

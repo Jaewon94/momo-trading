@@ -17,6 +17,13 @@ function formatPercent(value) {
   return `${sign}${numeric.toFixed(2)}%`;
 }
 
+function formatBp(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+    return "-";
+  }
+  return `${Number(value).toFixed(1)}bp`;
+}
+
 function formatTimelineDate(value) {
   if (!value) return "";
   try {
@@ -103,6 +110,7 @@ function classifyTimelineEntry(entry) {
   const phase = String(entry.phase || "").toUpperCase();
   const side = String(entry.side || "").toUpperCase();
   const status = String(entry.status || "").toUpperCase();
+  const detail = entry.detail && typeof entry.detail === "object" ? entry.detail : {};
 
   if (type === "trade") {
     if (side === "SELL") {
@@ -120,6 +128,17 @@ function classifyTimelineEntry(entry) {
       icon: status === "PENDING_CONFIRM" ? "대기" : "매수",
       badge: status || "BUY",
       kindLabel: status === "PENDING_CONFIRM" ? "매수 대기" : "매수",
+    };
+  }
+
+  if (type === "news") {
+    const sourceCode = String(detail.source_code || "").toUpperCase();
+    return {
+      filterKey: "news",
+      tone: "news",
+      icon: "뉴스",
+      badge: sourceCode || "NEWS",
+      kindLabel: "뉴스",
     };
   }
 
@@ -178,6 +197,19 @@ function buildTimelineDetailLines(entry) {
     if (detail.target_price) lines.push(`목표가 ${formatInt(detail.target_price)}원`);
     if (detail.stop_loss_price) lines.push(`손절가 ${formatInt(detail.stop_loss_price)}원`);
     if (detail.reason) lines.push(`근거 ${detail.reason}`);
+  } else if (entry.type === "news" && detail && typeof detail === "object") {
+    if (detail.impact_score !== null && detail.impact_score !== undefined) {
+      lines.push(`영향도 ${Number(detail.impact_score).toFixed(2)}`);
+    }
+    if (detail.trust_score !== null && detail.trust_score !== undefined) {
+      lines.push(`신뢰도 ${Number(detail.trust_score).toFixed(2)}`);
+    }
+    if (detail.sentiment_label || detail.sentiment_score !== null && detail.sentiment_score !== undefined) {
+      const sentimentLabel = detail.sentiment_label ? `${detail.sentiment_label} ` : "";
+      lines.push(`감성 ${sentimentLabel}${Number(detail.sentiment_score || 0).toFixed(2)}`.trim());
+    }
+    if (detail.source_name) lines.push(`출처 ${detail.source_name}`);
+    if (detail.source_tier) lines.push(`소스 등급 ${detail.source_tier}`);
   }
 
   return lines;
@@ -190,6 +222,10 @@ export function buildPositionTimelineEntry(entry) {
   if (entry.at) meta.push(formatTimelineDate(entry.at));
   if (entry.confidence !== null && entry.confidence !== undefined) {
     meta.push(`${Math.round(Number(entry.confidence) * 100)}%`);
+  }
+  if (entry.type === "news" && entry.detail && typeof entry.detail === "object") {
+    if (entry.detail.source_code) meta.push(String(entry.detail.source_code).toUpperCase());
+    if (entry.detail.source_tier) meta.push(`Tier ${entry.detail.source_tier}`);
   }
   if (entry.side) meta.push(entry.side);
   if (entry.status) meta.push(entry.status);
@@ -215,6 +251,7 @@ function buildTimelineFilters(entries) {
     all: entries.length,
     trade: entries.filter((entry) => entry.filterKey === "trade").length,
     ai: entries.filter((entry) => entry.filterKey === "ai").length,
+    news: entries.filter((entry) => entry.filterKey === "news").length,
     error: entries.filter((entry) => entry.filterKey === "error").length,
   };
 
@@ -222,6 +259,7 @@ function buildTimelineFilters(entries) {
     { key: "all", label: "전체", count: counts.all },
     { key: "trade", label: "거래", count: counts.trade },
     { key: "ai", label: "AI", count: counts.ai },
+    { key: "news", label: "뉴스", count: counts.news },
     { key: "error", label: "오류", count: counts.error },
   ];
 }
@@ -233,6 +271,106 @@ function buildRecentEventChips(summary = {}) {
     tone: String(event.direction || "").toUpperCase() === "SELL" ? "sell" : "buy",
     meta: `${Number(event.score || 0)}점 · ${String(event.state || "").toUpperCase() || "TRIGGERED"}`,
   }));
+}
+
+function buildDecisionInsight(summary = {}) {
+  const insight = summary.decision_insight;
+  if (!insight || typeof insight !== "object") return null;
+
+  const chart = insight.chart || {};
+  const cost = insight.cost || {};
+  const news = insight.news || {};
+  const ratio = Number(cost.ratio || 0);
+  const minRatio = Number(cost.min_ratio || 0);
+  const pressure = Number(news.negative_pressure || 0);
+  const threshold = Number(news.threshold || 0);
+
+  const chartTone = String(chart.direction || "").toUpperCase() === "BULLISH"
+    || String(chart.market_regime || "").toUpperCase() === "BULL"
+    ? "buy"
+    : String(chart.direction || "").toUpperCase() === "BEARISH"
+      || String(chart.market_regime || "").toUpperCase() === "BEAR"
+      ? "sell"
+      : "analysis";
+  const costTone = ratio >= Math.max(minRatio, 1.8)
+    ? "buy"
+    : ratio >= Math.max(minRatio, 1.0)
+      ? "analysis"
+      : "sell";
+  const newsTone = threshold > 0 && pressure >= threshold * 0.85
+    ? "sell"
+    : threshold > 0 && pressure >= threshold * 0.4
+      ? "analysis"
+      : "buy";
+
+  return {
+    hero: `${insight.recommendation || "대기"} · ${insight.horizon || "MID"}`,
+    heroMeta: insight.reason || "최근 진입 판단 근거 없음",
+    metrics: [
+      {
+        label: "신뢰도",
+        value: insight.confidence !== null && insight.confidence !== undefined
+          ? `${Math.round(Number(insight.confidence) * 100)}%`
+          : "-",
+      },
+      { label: "목표가", value: insight.target_price ? `${formatInt(insight.target_price)}원` : "-" },
+      { label: "손절가", value: insight.stop_loss_price ? `${formatInt(insight.stop_loss_price)}원` : "-" },
+    ],
+    cards: [
+      {
+        title: "차트",
+        accent: chartTone,
+        hero: chart.direction || chart.market_regime || "중립",
+        heroMeta: chart.pattern || "차트 컨텍스트 없음",
+        metrics: [
+          { label: "국면", value: chart.market_regime || "-" },
+          { label: "RSI", value: chart.rsi !== null && chart.rsi !== undefined ? Number(chart.rsi).toFixed(1) : "-" },
+          { label: "MACD", value: chart.macd_hist !== null && chart.macd_hist !== undefined ? Number(chart.macd_hist).toFixed(2) : "-" },
+        ],
+        body: [
+          chart.signal_confidence !== null && chart.signal_confidence !== undefined
+            ? `차트 신호 신뢰도 ${Math.round(Number(chart.signal_confidence) * 100)}%`
+            : "차트 신호 신뢰도 정보 없음",
+        ],
+      },
+      {
+        title: "비용",
+        accent: costTone,
+        hero: ratio > 0 ? `${ratio.toFixed(2)}x` : "-",
+        heroMeta: ratio > 0
+          ? `엣지/비용 비율 · 기준 ${minRatio > 0 ? `${minRatio.toFixed(2)}x` : "-"}`
+          : "비용 계산 정보 없음",
+        metrics: [
+          { label: "엣지", value: formatBp(cost.edge_bps) },
+          { label: "비용", value: formatBp(cost.cost_bps) },
+          { label: "기준", value: minRatio > 0 ? `${minRatio.toFixed(2)}x` : "-" },
+        ],
+        body: [
+          ratio > 0
+            ? (ratio >= minRatio ? "비용 대비 기대수익 여유가 있습니다." : "비용 대비 기대수익 여유가 좁습니다.")
+            : "비용 게이트 계산 정보 없음",
+        ],
+      },
+      {
+        title: "뉴스",
+        accent: newsTone,
+        hero: news.negative_pressure !== null && news.negative_pressure !== undefined
+          ? Number(news.negative_pressure).toFixed(2)
+          : "-",
+        heroMeta: threshold > 0
+          ? `부정 압력 · 차단 기준 ${threshold.toFixed(2)}`
+          : "뉴스 압력 정보 없음",
+        metrics: [
+          { label: "기사", value: `${Number(news.negative_count || 0)}건` },
+          { label: "소스", value: `${Number(news.source_count || 0)}개` },
+          { label: "임계", value: threshold > 0 ? threshold.toFixed(2) : "-" },
+        ],
+        body: Array.isArray(news.contributors) && news.contributors.length
+          ? news.contributors.slice(0, 3).map((item) => item.headline || "뉴스")
+          : ["최근 부정 뉴스 기여 항목 없음"],
+      },
+    ],
+  };
 }
 
 export function groupPositionTimeline(entries, filterKey = "all") {
@@ -348,6 +486,7 @@ export function buildPositionDetailState(payload) {
     symbol: payload?.symbol || "",
     settingsShortcutTab: summary.settings_shortcut_tab || "strategy",
     summaryCards,
+    decisionInsight: buildDecisionInsight(summary),
     recentEventChips: buildRecentEventChips(summary),
     timelineEntries,
     timelineFilters: buildTimelineFilters(timelineEntries),

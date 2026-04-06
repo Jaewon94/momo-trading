@@ -513,7 +513,23 @@ async def test_decision_maker_record_trade_result_creates_buy_entry(monkeypatch)
         order_id="ORD-BUY",
         filled_qty=2,
         filled_price=70_500,
-        analysis_context={"stock_name": "삼성전자", "strategy_type": "STABLE_SHORT"},
+        analysis_context={
+            "stock_name": "삼성전자",
+            "strategy_type": "STABLE_SHORT",
+            "entry_pattern": "상승 추세 지속",
+            "chart_signal_direction": "BULLISH",
+            "chart_signal_confidence": 0.74,
+            "trade_horizon": "MID",
+            "estimated_edge_bps": 182.4,
+            "estimated_cost_bps": 61,
+            "edge_to_cost_ratio": 2.99,
+            "cost_gate_ratio": 1.3,
+            "news_negative_pressure": 0.22,
+            "news_negative_count": 2,
+            "news_source_count": 2,
+            "news_threshold": 0.75,
+            "news_top_contributors": [{"headline": "한글 번역 제목", "pressure": 0.11}],
+        },
         cycle_id="cycle-buy",
     )
 
@@ -523,6 +539,34 @@ async def test_decision_maker_record_trade_result_creates_buy_entry(monkeypatch)
     assert added.side == "BUY"
     assert added.entry_price == 70_500
     assert added.quantity == 2
+    assert added.entry_pattern == "상승 추세 지속"
+    assert "news_top_contributors" in (added.notes or "")
+    assert "edge_to_cost_ratio" in (added.notes or "")
+
+
+def test_decision_maker_build_trade_notes_includes_news_metrics():
+    notes = DecisionMaker._build_trade_notes({
+        "trade_horizon": "MID",
+        "estimated_edge_bps": 120.5,
+        "estimated_cost_bps": 44.1,
+        "edge_to_cost_ratio": 2.73,
+        "cost_gate_ratio": 1.3,
+        "news_negative_pressure": 0.35,
+        "news_negative_count": 2,
+        "news_source_count": 3,
+        "news_threshold": 0.75,
+        "news_top_contributors": [{"headline": "공급 차질 우려", "pressure": 0.12}],
+        "chart_signal_direction": "BULLISH",
+        "chart_signal_confidence": 0.81,
+        "entry_pattern": "상승 추세 지속",
+    })
+
+    assert "news_negative_pressure" in notes
+    assert "news_negative_count" in notes
+    assert "edge_to_cost_ratio" in notes
+    assert "news_top_contributors" in notes
+    assert "chart_signal_direction" in notes
+    assert "entry_pattern" in notes
 
 
 @pytest.mark.asyncio
@@ -591,6 +635,200 @@ async def test_decision_maker_record_trade_result_closes_open_buys_on_sell(monke
     assert open_buy_2.exit_price == 73_000
     assert open_buy_2.pnl == 2_000
     assert open_buy_2.exit_reason == "SIGNAL"
+
+
+@pytest.mark.asyncio
+async def test_decision_maker_record_trade_result_partially_closes_open_buy_lots(monkeypatch) -> None:
+    decision_maker = DecisionMaker(
+        broker_adapter=FakeBrokerAdapter(OrderResult(success=True, order_id="ORD-SELL-PART", message="ok"))
+    )
+    session = FakeSession()
+    closed_at = __import__("datetime").datetime(2026, 4, 6, 12, 10, 0)
+
+    open_buy_1 = FakeTradeResultRecord(
+        id="buy-1",
+        stock_symbol="005930",
+        stock_name="삼성전자",
+        side="BUY",
+        strategy_type="SWING",
+        entry_price=100.0,
+        quantity=5,
+        entry_at=__import__("datetime").datetime(2026, 4, 6, 9, 0, 0),
+        exit_price=0.0,
+        pnl=0.0,
+        return_pct=0.0,
+        is_win=False,
+        hold_days=0,
+        exit_reason="",
+        exit_at=None,
+        status="CONFIRMED",
+        notes=None,
+    )
+    open_buy_2 = FakeTradeResultRecord(
+        id="buy-2",
+        stock_symbol="005930",
+        stock_name="삼성전자",
+        side="BUY",
+        strategy_type="SWING",
+        entry_price=110.0,
+        quantity=3,
+        entry_at=__import__("datetime").datetime(2026, 4, 6, 9, 5, 0),
+        exit_price=0.0,
+        pnl=0.0,
+        return_pct=0.0,
+        is_win=False,
+        hold_days=0,
+        exit_reason="",
+        exit_at=None,
+        status="CONFIRMED",
+        notes=None,
+    )
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_by_order_id(self, _order_id: str):
+            return None
+
+        async def get_all_open_buys(self, _symbol: str):
+            return [open_buy_1, open_buy_2]
+
+    async def fake_log(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("agent.decision_maker.AsyncSessionLocal", lambda: session)
+    monkeypatch.setattr("agent.decision_maker.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("agent.decision_maker.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.decision_maker.now_kst", lambda: closed_at)
+
+    await decision_maker._record_trade_result(
+        symbol="005930",
+        side="SELL",
+        order_id="ORD-SELL-PART",
+        filled_qty=6,
+        filled_price=120.0,
+        exit_reason="SIGNAL",
+        cycle_id="cycle-sell-partial",
+    )
+
+    assert open_buy_1.exit_price == 120.0
+    assert open_buy_1.exit_at == closed_at
+    assert open_buy_1.pnl == 100.0
+    assert open_buy_2.quantity == 2
+    assert open_buy_2.exit_at is None
+    assert len(session.added) == 1
+    partial_close = session.added[0]
+    assert partial_close.quantity == 1
+    assert partial_close.entry_price == 110.0
+    assert partial_close.exit_price == 120.0
+    assert partial_close.exit_at == closed_at
+    assert partial_close.pnl == 10.0
+    assert partial_close.return_pct == pytest.approx(9.09, abs=0.01)
+
+
+@pytest.mark.asyncio
+async def test_decision_maker_confirm_pending_record_marks_partial_exit(monkeypatch) -> None:
+    decision_maker = DecisionMaker(
+        broker_adapter=FakeBrokerAdapter(OrderResult(success=True, order_id="ORD-PSELL", message="ok"))
+    )
+    session = FakeSession()
+    closed_at = __import__("datetime").datetime(2026, 4, 6, 12, 20, 0)
+    pending_sell = FakeTradeResultRecord(
+        id="pending-sell",
+        stock_symbol="005930",
+        stock_name="삼성전자",
+        side="SELL",
+        strategy_type="SWING",
+        quantity=8,
+        entry_price=0.0,
+        exit_price=119.0,
+        pnl=0.0,
+        return_pct=0.0,
+        is_win=False,
+        hold_days=0,
+        exit_reason="",
+        exit_at=None,
+        status=OrderConfirmStatus.PENDING_CONFIRM.value,
+        notes="PENDING_CONFIRM: 체결 확인 대기 중",
+    )
+    open_buy_1 = FakeTradeResultRecord(
+        id="buy-1",
+        stock_symbol="005930",
+        stock_name="삼성전자",
+        side="BUY",
+        strategy_type="SWING",
+        entry_price=100.0,
+        quantity=5,
+        entry_at=__import__("datetime").datetime(2026, 4, 6, 9, 0, 0),
+        exit_price=0.0,
+        pnl=0.0,
+        return_pct=0.0,
+        is_win=False,
+        hold_days=0,
+        exit_reason="",
+        exit_at=None,
+        status="CONFIRMED",
+        notes=None,
+    )
+    open_buy_2 = FakeTradeResultRecord(
+        id="buy-2",
+        stock_symbol="005930",
+        stock_name="삼성전자",
+        side="BUY",
+        strategy_type="SWING",
+        entry_price=110.0,
+        quantity=3,
+        entry_at=__import__("datetime").datetime(2026, 4, 6, 9, 5, 0),
+        exit_price=0.0,
+        pnl=0.0,
+        return_pct=0.0,
+        is_win=False,
+        hold_days=0,
+        exit_reason="",
+        exit_at=None,
+        status="CONFIRMED",
+        notes=None,
+    )
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def filter_by_one(self, id):
+            assert id == "pending-sell"
+            return pending_sell
+
+        async def get_all_open_buys(self, symbol):
+            assert symbol == "005930"
+            return [open_buy_1, open_buy_2]
+
+    async def fake_log(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("agent.decision_maker.AsyncSessionLocal", lambda: session)
+    monkeypatch.setattr("agent.decision_maker.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("agent.decision_maker.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.decision_maker.now_kst", lambda: closed_at)
+
+    await decision_maker._confirm_pending_record(
+        pending_record_id="pending-sell",
+        symbol="005930",
+        side="SELL",
+        filled_qty=6,
+        filled_price=120.0,
+        exit_reason="SIGNAL",
+    )
+
+    assert pending_sell.status == OrderConfirmStatus.CONFIRMED.value
+    assert pending_sell.quantity == 6
+    assert pending_sell.exit_at == closed_at
+    assert "PARTIAL_EXIT" in (pending_sell.notes or "")
+    assert "remaining_open_quantity" in (pending_sell.notes or "")
+    assert open_buy_1.exit_at == closed_at
+    assert open_buy_2.quantity == 2
+    assert open_buy_2.exit_at is None
+    assert len(session.added) == 1
 
 
 @pytest.mark.asyncio

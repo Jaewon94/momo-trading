@@ -27,6 +27,11 @@ import {
 import { buildTradePanelState, buildTradeSummaryCounts } from './trade_state.js';
 import { buildTradeCenterState } from './trade_center_state.js';
 import {
+  buildManualTradeSymbolMap,
+  buildPendingOrderAction,
+  getImmediateSellAction,
+} from './manual_trade_action_state.js';
+import {
   buildActivityIdentityLabel,
   formatActivityHeadline,
   normalizeActivitySymbol,
@@ -37,6 +42,18 @@ import { bindDetailToggleHandlers, buildDetailToggleMarkup } from './detail_togg
 import { buildStrategyInsightsViewModel } from './strategy_insights_state.js';
 import { buildCatalogErrorCopy, buildCatalogMetaText } from './llm_catalog_state.js';
 import { buildPositionDetailState, groupPositionTimeline } from './position_detail_state.js';
+import { buildReportActivityInsights } from './report_activity_state.js';
+import {
+  buildNewsOverviewCards,
+  buildNewsOverviewSourcePills,
+  buildReportNewsStripModel,
+  describeManualNewsFetchResult,
+  pickNewsDisplayFields,
+} from './news_overview_state.js';
+import { buildNewsPerformanceCards, buildNewsRolloutPolicy } from './news_performance_state.js';
+import { buildPerformanceDashboardState } from './performance_page_state.js';
+import { buildReportNewsRationale } from './report_news_state.js';
+import { buildTradeCardViewModel } from './trade_history_state.js';
 
 const API = '/api/v1/admin';
 let currentView = 'live';
@@ -45,12 +62,14 @@ let autoScroll = true;
 let accountPollTimer = null;
 let runtimeSettings = null;
 let runtimeSystemStatus = null;
+let newsOverviewSnapshot = null;
 let llmUsageSnapshot = null;
 let llmCatalog = null;
 let runtimeControlPending = false;
 let activeSettingsTab = 'operating';
 let activePositionSymbol = null;
 let activePositionDetailState = null;
+let activePositionDetailPayload = null;
 let activePositionTimelineFilter = 'all';
 let positionTimelineLoadingMore = false;
 let activeEventRadarFilter = 'all';
@@ -109,12 +128,239 @@ async function fetchJson(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) {
   }
 }
 
+function getManualTradeSymbolMap() {
+  return buildManualTradeSymbolMap({
+    holdings: latestAccountSnapshot?.holdings || [],
+    pendingOrders: latestAccountSnapshot?.pendingOrders || [],
+    tradingEnabled: runtimeSettings?.TRADING_ENABLED !== false,
+  });
+}
+
+function renderManualActionButton(action, attrs = {}) {
+  if (!action) return '';
+  const dataAttrs = Object.entries(attrs)
+    .map(([key, value]) => `data-${key}="${escapeHtml(String(value ?? ''))}"`)
+    .join(' ');
+  const titleText = action.reason || action.hint || '';
+  const titleAttr = titleText ? `title="${escapeHtml(titleText)}"` : '';
+  return `
+    <button
+      type="button"
+      class="rounded-md border px-2 py-1 text-[11px] transition ${action.disabled
+        ? 'border-gray-700 bg-dark-800 text-gray-500 cursor-not-allowed'
+        : 'border-blue-500/50 bg-blue-500/10 text-blue-200 hover:border-blue-400 hover:text-white'}"
+      ${dataAttrs}
+      ${titleAttr}
+      ${action.disabled ? 'disabled' : ''}
+    >
+      ${escapeHtml(action.label)}
+    </button>
+  `;
+}
+
+async function loadNewsOverview(force = false) {
+  try {
+    const json = await fetchJson(`${API}/news/overview?recent_limit=6&performance_days=30`);
+    newsOverviewSnapshot = json?.data || null;
+    renderSidebarSettingSummaries();
+    renderNewsOverviewPanels();
+    return newsOverviewSnapshot;
+  } catch (err) {
+    console.error('News overview load error:', err);
+    if (force) {
+      setStatus('error', `뉴스 인텔 로드 실패: ${err.message || '알 수 없는 오류'}`);
+    }
+    renderNewsOverviewPanels(err);
+    return null;
+  }
+}
+
+function renderNewsItemCards(items = [], { emptyLabel = '최근 적재 뉴스가 없습니다.', compact = false } = {}) {
+  if (!Array.isArray(items) || !items.length) {
+    return `<div class="text-xs text-gray-500">${escapeHtml(emptyLabel)}</div>`;
+  }
+  return items.map((item) => {
+    const display = pickNewsDisplayFields(item);
+    const symbols = Array.isArray(item.symbols) ? item.symbols.filter(Boolean) : [];
+    const meta = [
+      item.source_name || item.source_code || 'SOURCE',
+      item.published_at ? formatDateTime(item.published_at) : '',
+      symbols.length ? symbols.join(', ') : '',
+    ].filter(Boolean).join(' · ');
+    const subtitle = display.summary || '';
+    const sentiment = item.sentiment_label
+      ? `${item.sentiment_label} ${Number(item.sentiment_score || 0).toFixed(2)}`
+      : `impact ${Number(item.impact_score || 0).toFixed(2)}`;
+    return `
+      <article class="news-item-card ${compact ? 'compact' : ''}">
+        <div class="news-item-meta">${escapeHtml(meta)}</div>
+        <div class="news-item-title">${escapeHtml(display.title || '-')}</div>
+        ${subtitle ? `<div class="news-item-subtitle">${escapeHtml(subtitle)}</div>` : ''}
+        ${display.hasTranslation && !compact ? `<div class="mt-2 text-[11px] text-slate-500">원문: ${escapeHtml(display.originalTitle)}</div>` : ''}
+        <div class="news-item-badges">
+          <span class="news-item-badge">${escapeHtml(item.source_tier || 'TIER')}</span>
+          <span class="news-item-badge">${escapeHtml(sentiment)}</span>
+          <span class="news-item-badge">신뢰 ${Number(item.trust_score || 0).toFixed(2)}</span>
+        </div>
+      </article>
+    `;
+  }).join('');
+}
+
+function renderNewsOverviewPanels(error = null) {
+  const summaryEl = document.getElementById('news-overview-summary');
+  const performanceEl = document.getElementById('news-performance-cards');
+  const rolloutEl = document.getElementById('news-rollout-policy');
+  const sourcePillsEl = document.getElementById('news-source-pills');
+  const listEl = document.getElementById('news-overview-list');
+  if (!summaryEl || !sourcePillsEl || !listEl) return;
+
+  if (error) {
+    const message = error?.message || '알 수 없는 오류';
+    summaryEl.innerHTML = `<div class="news-overview-card"><div class="news-overview-label">로드 실패</div><div class="news-overview-value text-red-300">ERR</div><div class="news-overview-help">${escapeHtml(message)}</div></div>`;
+    if (performanceEl) performanceEl.innerHTML = '';
+    if (rolloutEl) rolloutEl.innerHTML = `<div class="text-xs text-red-300">${escapeHtml(message)}</div>`;
+    sourcePillsEl.innerHTML = '';
+    listEl.innerHTML = `<div class="text-xs text-red-300">${escapeHtml(message)}</div>`;
+    return;
+  }
+
+  const overview = newsOverviewSnapshot;
+  if (!overview) {
+    summaryEl.innerHTML = '<div class="news-overview-card"><div class="news-overview-label">뉴스 인텔</div><div class="news-overview-value">-</div><div class="news-overview-help">데이터를 불러오는 중...</div></div>';
+    if (performanceEl) performanceEl.innerHTML = '';
+    if (rolloutEl) rolloutEl.innerHTML = '<div class="text-xs text-gray-500">롤아웃 정책을 불러오는 중...</div>';
+    sourcePillsEl.innerHTML = '';
+    listEl.innerHTML = '<div class="text-xs text-gray-500">뉴스 인텔 데이터를 불러오는 중...</div>';
+    return;
+  }
+
+  summaryEl.innerHTML = buildNewsOverviewCards(overview, {
+    formatInteger,
+    formatDateTime,
+  }).map((card) => `
+    <div class="news-overview-card">
+      <div class="news-overview-label">${escapeHtml(card.label)}</div>
+      <div class="news-overview-value">${escapeHtml(card.value)}</div>
+      <div class="news-overview-help">${escapeHtml(card.help || '')}</div>
+    </div>
+  `).join('');
+
+  sourcePillsEl.innerHTML = buildNewsOverviewSourcePills(overview)
+    .map((pill) => pill.replaceAll(/>([^<]*)</g, (_match, text) => `>${escapeHtml(text)}<`))
+    .join('');
+
+  if (performanceEl) {
+    performanceEl.innerHTML = buildNewsPerformanceCards(overview).map((card) => `
+      <div class="news-overview-card">
+        <div class="news-overview-label">${escapeHtml(card.label)}</div>
+        <div class="news-overview-value">${escapeHtml(card.value)}</div>
+        <div class="news-overview-help">${escapeHtml(card.help || '')}</div>
+      </div>
+    `).join('');
+  }
+
+  if (rolloutEl) {
+    const rollout = buildNewsRolloutPolicy(overview);
+    rolloutEl.innerHTML = `
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <div class="text-xs uppercase tracking-[0.12em] text-gray-500">Rollout</div>
+          <div class="mt-1 text-sm font-medium text-white">${escapeHtml(rollout.status)}</div>
+        </div>
+        <div class="rounded-full border border-gray-700 bg-dark-800/80 px-2.5 py-1 text-[11px] text-gray-300">${escapeHtml(rollout.status)}</div>
+      </div>
+      <div class="mt-2 text-sm text-gray-300">${escapeHtml(rollout.reason)}</div>
+      <div class="mt-3 space-y-1 text-[11px] leading-5 text-gray-400">
+        ${rollout.lines.map((line) => `<div>${escapeHtml(line)}</div>`).join('')}
+      </div>
+    `;
+  }
+
+  listEl.innerHTML = renderNewsItemCards(overview.recent_items || [], {
+    emptyLabel: '최근 적재 뉴스가 없습니다.',
+  });
+}
+
+async function fetchDartNews() {
+  try {
+    setStatus('runtime', 'OpenDART 공시 수집 중...');
+    const json = await fetchJson(`${API}/news/fetch/dart?days=1&page_count=50`, { method: 'POST' });
+    await loadNewsOverview(true);
+    setStatus('runtime', describeManualNewsFetchResult('OpenDART', json?.data || {}));
+  } catch (err) {
+    console.error('DART fetch error:', err);
+    setStatus('error', `OpenDART 수집 실패: ${err.message || '알 수 없는 오류'}`);
+  }
+}
+
+async function fetchYonhapNews() {
+  try {
+    setStatus('runtime', '연합뉴스TV 경제 뉴스 수집 중...');
+    const json = await fetchJson(`${API}/news/fetch/yonhap?limit=30`, { method: 'POST' });
+    await loadNewsOverview(true);
+    setStatus('runtime', describeManualNewsFetchResult('연합뉴스TV', json?.data || {}));
+  } catch (err) {
+    console.error('YONHAP fetch error:', err);
+    setStatus('error', `연합뉴스TV 수집 실패: ${err.message || '알 수 없는 오류'}`);
+  }
+}
+
+async function fetchBloombergNews() {
+  try {
+    setStatus('runtime', 'Bloomberg 해외 뉴스 수집 중...');
+    const json = await fetchJson(`${API}/news/fetch/bloomberg?limit=30`, { method: 'POST' });
+    await loadNewsOverview(true);
+    setStatus('runtime', describeManualNewsFetchResult('Bloomberg', json?.data || {}));
+  } catch (err) {
+    console.error('Bloomberg fetch error:', err);
+    setStatus('error', `Bloomberg 수집 실패: ${err.message || '알 수 없는 오류'}`);
+  }
+}
+
+async function fetchCnbcNews() {
+  try {
+    setStatus('runtime', 'CNBC 해외 뉴스 수집 중...');
+    const json = await fetchJson(`${API}/news/fetch/cnbc?limit=30`, { method: 'POST' });
+    await loadNewsOverview(true);
+    setStatus('runtime', describeManualNewsFetchResult('CNBC', json?.data || {}));
+  } catch (err) {
+    console.error('CNBC fetch error:', err);
+    setStatus('error', `CNBC 수집 실패: ${err.message || '알 수 없는 오류'}`);
+  }
+}
+
+async function fetchNasdaqNews() {
+  try {
+    setStatus('runtime', 'Nasdaq 해외 뉴스 수집 중...');
+    const json = await fetchJson(`${API}/news/fetch/nasdaq?limit=30`, { method: 'POST' });
+    await loadNewsOverview(true);
+    setStatus('runtime', describeManualNewsFetchResult('Nasdaq', json?.data || {}));
+  } catch (err) {
+    console.error('Nasdaq fetch error:', err);
+    setStatus('error', `Nasdaq 수집 실패: ${err.message || '알 수 없는 오류'}`);
+  }
+}
+
+async function fetchKrxNews() {
+  try {
+    setStatus('runtime', 'KIND 오늘의공시 수집 중...');
+    const json = await fetchJson(`${API}/news/fetch/krx?page_count=50`, { method: 'POST' });
+    await loadNewsOverview(true);
+    setStatus('runtime', describeManualNewsFetchResult('KIND', json?.data || {}));
+  } catch (err) {
+    console.error('KRX fetch error:', err);
+    setStatus('error', `KIND 수집 실패: ${err.message || '알 수 없는 오류'}`);
+  }
+}
+
 // ── Init ──
 document.addEventListener('DOMContentLoaded', () => {
   bindDetailToggleHandlers(document);
   renderSettingsModal();
   loadPaneLayout();
   loadSettings();
+  loadNewsOverview();
   loadLLMCatalog();
   loadSystemStatus();
   loadLLMUsage();
@@ -253,6 +499,7 @@ function closePositionDetailModal() {
   overlay.classList.remove('open');
   activePositionSymbol = null;
   activePositionDetailState = null;
+  activePositionDetailPayload = null;
   document.body.classList.remove('overflow-hidden');
 }
 
@@ -305,6 +552,8 @@ function getPositionTimelineToneClass(entry) {
       return 'position-timeline-item tone-analysis';
     case 'progress':
       return 'position-timeline-item tone-progress';
+    case 'news':
+      return 'position-timeline-item tone-news';
     case 'pending':
       return 'position-timeline-item tone-pending';
     case 'error':
@@ -412,13 +661,36 @@ function syncPositionTimelineView() {
   renderPositionTimelineGroups(activePositionDetailState);
 }
 
+function buildPositionManualActionMarkup(symbol) {
+  const action = getImmediateSellAction(symbol, getManualTradeSymbolMap());
+  return `
+    <section class="mb-3 rounded-2xl border border-gray-700 bg-dark-900/40 px-4 py-3">
+      <div class="flex items-center justify-between gap-3">
+        <div>
+          <div class="text-xs uppercase tracking-[0.12em] text-gray-500">Manual Action</div>
+          <div class="mt-1 text-sm text-gray-300">
+            ${escapeHtml(action.disabled ? (action.reason || '즉시 매도 불가') : `${action.quantity || 0}주 전량 시장가 매도 가능`)}
+          </div>
+          ${action.hint && !action.disabled ? `<div class="mt-1 text-[11px] text-amber-300/90">${escapeHtml(action.hint)}</div>` : ''}
+        </div>
+        ${renderManualActionButton(action, {
+          'manual-action': action.kind,
+          symbol,
+        })}
+      </div>
+    </section>
+  `;
+}
+
 function renderPositionDetailModal(payload) {
   const state = buildPositionDetailState(payload);
+  activePositionDetailPayload = payload;
   activePositionDetailState = state;
   activePositionTimelineFilter = 'all';
   positionTimelineLoadingMore = false;
   const titleEl = document.getElementById('position-detail-title');
   const summaryEl = document.getElementById('position-detail-summary');
+  const decisionEl = document.getElementById('position-detail-decision');
   const recentEventsEl = document.getElementById('position-detail-recent-events');
   const shortcutEl = document.getElementById('position-detail-settings-shortcut');
   if (titleEl) titleEl.textContent = state.title;
@@ -427,7 +699,9 @@ function renderPositionDetailModal(payload) {
     shortcutEl.onclick = () => openSettingsFromPositionDetail(state.settingsShortcutTab);
   }
   if (summaryEl) {
-    summaryEl.innerHTML = state.summaryCards.map((card) => `
+    summaryEl.innerHTML = `
+      ${buildPositionManualActionMarkup(state.symbol)}
+      ${state.summaryCards.map((card) => `
       <section class="position-summary-card tone-${escapeHtml(card.accent || 'neutral')}">
         <div class="position-summary-card-topline">
           <div>
@@ -450,7 +724,52 @@ function renderPositionDetailModal(payload) {
         </div>
         ${card.caption ? `<div class="position-summary-card-caption">${escapeHtml(card.caption)}</div>` : ''}
       </section>
-    `).join('');
+    `).join('')}
+    `;
+  }
+  if (decisionEl) {
+    decisionEl.innerHTML = state.decisionInsight ? `
+      <section class="position-decision-shell">
+        <div class="position-decision-header">
+          <div>
+            <div class="position-summary-card-eyebrow">Decision Matrix</div>
+            <div class="position-summary-card-title">차트 · 비용 · 뉴스 판단 근거</div>
+          </div>
+          <div class="position-decision-verdict">
+            <div class="position-decision-hero">${escapeHtml(state.decisionInsight.hero)}</div>
+            <div class="position-decision-meta">${escapeHtml(state.decisionInsight.heroMeta)}</div>
+          </div>
+        </div>
+        <div class="position-summary-card-metrics mt-0">
+          ${state.decisionInsight.metrics.map((metric) => `
+            <div class="position-summary-metric">
+              <div class="position-summary-metric-label">${escapeHtml(metric.label)}</div>
+              <div class="position-summary-metric-value">${escapeHtml(metric.value)}</div>
+            </div>
+          `).join('')}
+        </div>
+        <div class="position-decision-grid">
+          ${state.decisionInsight.cards.map((card) => `
+            <section class="position-summary-card tone-${escapeHtml(card.accent || 'neutral')}">
+              <div class="position-summary-card-eyebrow">${escapeHtml(card.title)}</div>
+              <div class="position-summary-card-hero">${escapeHtml(card.hero || '-')}</div>
+              <div class="position-summary-card-hero-meta">${escapeHtml(card.heroMeta || '')}</div>
+              <div class="position-summary-card-metrics">
+                ${card.metrics.map((metric) => `
+                  <div class="position-summary-metric">
+                    <div class="position-summary-metric-label">${escapeHtml(metric.label)}</div>
+                    <div class="position-summary-metric-value">${escapeHtml(metric.value)}</div>
+                  </div>
+                `).join('')}
+              </div>
+              <div class="position-summary-card-body">
+                ${card.body.map((item) => `<div>${escapeHtml(item)}</div>`).join('')}
+              </div>
+            </section>
+          `).join('')}
+        </div>
+      </section>
+    ` : '<div class="text-xs text-gray-500">의사결정 카드 데이터가 아직 없습니다.</div>';
   }
   if (recentEventsEl) {
     recentEventsEl.innerHTML = state.recentEventChips?.length
@@ -494,6 +813,7 @@ async function fetchPositionDetail(symbol, offset = 0, limit = 20) {
 async function openPositionDetailModal(symbol) {
   activePositionSymbol = symbol;
   activePositionDetailState = null;
+  activePositionDetailPayload = null;
   activePositionTimelineFilter = 'all';
   openPositionDetailModalShell();
   renderPositionDetailLoading(symbol);
@@ -505,6 +825,21 @@ async function openPositionDetailModal(symbol) {
     if (activePositionSymbol !== symbol) return;
     console.error('position detail error:', err);
     renderPositionDetailError(symbol, err.message || '종목 상세 조회 실패');
+  }
+}
+
+async function refreshPositionDetailModalIfOpen(symbol = '') {
+  if (!activePositionSymbol) return;
+  const normalizedActive = String(activePositionSymbol || '').replace(/^A/i, '');
+  const normalizedTarget = String(symbol || '').replace(/^A/i, '');
+  if (normalizedTarget && normalizedTarget !== normalizedActive) return;
+  try {
+    const data = await fetchPositionDetail(activePositionSymbol);
+    if (data?.symbol === activePositionSymbol) {
+      renderPositionDetailModal(data);
+    }
+  } catch (err) {
+    console.error('position detail refresh error:', err);
   }
 }
 
@@ -682,6 +1017,57 @@ document.addEventListener('click', async (event) => {
   await loadAccountInfo();
   if (currentView === 'trades-center') {
     loadTradesCenterView();
+  }
+});
+
+async function executeManualTradeAction(actionKind, { symbol = '', orderId = '' } = {}) {
+  let url = '';
+  let pendingMessage = '';
+  let confirmMessage = '';
+
+  if (actionKind === 'sell-now') {
+    url = `${API}/account/holdings/${encodeURIComponent(symbol)}/sell`;
+    pendingMessage = `${symbol} 즉시 매도 주문 접수 중...`;
+    confirmMessage = `${symbol} 보유분을 전량 시장가로 매도합니다.\n\n시장가 주문도 일부 체결 후 잔량이 잠시 대기할 수 있습니다. 계속할까요?`;
+  } else if (actionKind === 'cancel-buy') {
+    url = `${API}/account/pending-orders/${encodeURIComponent(orderId)}/cancel-buy`;
+    pendingMessage = `미체결 매수 주문 ${orderId} 취소 중...`;
+    confirmMessage = `미체결 매수 주문 ${orderId}를 취소할까요?`;
+  } else if (actionKind === 'cancel-and-sell') {
+    url = `${API}/account/pending-orders/${encodeURIComponent(orderId)}/cancel-and-sell`;
+    pendingMessage = `미체결 매도 주문 ${orderId} 취소 후 즉시 매도 접수 중...`;
+    confirmMessage = `기존 매도 주문 ${orderId}를 취소하고 보유 수량을 시장가로 다시 매도할까요?\n\n시장가 재매도도 일부 체결 후 잔량이 잠시 대기할 수 있습니다.`;
+  } else {
+    return;
+  }
+
+  if (!window.confirm(confirmMessage)) {
+    return;
+  }
+
+  setStatus('runtime', pendingMessage);
+  const json = await fetchJson(url, { method: 'POST' });
+  setStatus('runtime', json?.message || '주문 요청 완료');
+  await loadAccountInfo();
+  await refreshPositionDetailModalIfOpen(symbol || json?.data?.symbol || '');
+}
+
+document.addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-manual-action]');
+  if (!button) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  if (button.disabled) return;
+
+  const actionKind = button.dataset.manualAction || '';
+  const symbol = button.dataset.symbol || '';
+  const orderId = button.dataset.orderId || '';
+
+  try {
+    await executeManualTradeAction(actionKind, { symbol, orderId });
+  } catch (err) {
+    console.error('manual trade action error:', err);
+    setStatus('error', err.message || '수동 거래 액션 실패');
   }
 });
 
@@ -1021,6 +1407,7 @@ async function loadAccountInfo() {
     renderPendingOrders(pendJson.data);
     renderTodayTrades(tradeJson.data);
     renderPortfolioQuickStats(balJson.data, holdJson.data, pendJson.data, tradeJson.data);
+    refreshStockCardActions();
     if (currentView === 'trades-center') {
       loadTradesCenterView(latestAccountSnapshot);
     }
@@ -1190,11 +1577,13 @@ function renderPendingOrders(data) {
   if (countEl) {
     countEl.textContent = `${data.length}`;
   }
+  const symbolMap = getManualTradeSymbolMap();
   el.innerHTML = data.map(o => {
     const sideColor = o.side === '매수' ? 'text-red-400' : 'text-blue-400';
     const borderColor = o.side === '매수' ? 'border-yellow-700/60' : 'border-yellow-700/60';
     const orderAmt = o.order_price * o.remaining_qty;
     const timeStr = o.order_time ? o.order_time.slice(0,2) + ':' + o.order_time.slice(2,4) + ':' + o.order_time.slice(4,6) : '';
+    const action = buildPendingOrderAction(o, symbolMap);
     return `<div class="border ${borderColor} bg-yellow-900/10 rounded p-1.5 space-y-0.5">
       <div class="flex justify-between items-center">
         <span class="text-gray-200 font-medium truncate" title="${o.symbol}">${o.name}</span>
@@ -1207,6 +1596,20 @@ function renderPendingOrders(data) {
       <div class="flex justify-between text-gray-500">
         <span>${formatKRW(orderAmt)}</span>
         <span>${timeStr}</span>
+      </div>
+      <div class="flex items-center justify-between gap-2 pt-1">
+        <button
+          type="button"
+          class="text-[11px] text-gray-400 hover:text-gray-200 transition"
+          data-trade-center-open-symbol="${escapeHtml(o.symbol || '')}"
+        >
+          상세 보기
+        </button>
+        ${renderManualActionButton(action, {
+          'manual-action': action.kind,
+          'order-id': o.order_id || '',
+          symbol: o.symbol || '',
+        })}
       </div>
     </div>`;
   }).join('');
@@ -1323,15 +1726,25 @@ function renderTradeCenterCard(item, kind, radarEvent = null) {
   }
 
   if (kind === 'pending-order') {
+    const action = buildPendingOrderAction(item, getManualTradeSymbolMap());
     return `
-      <button type="button" class="trade-center-card tone-pending" data-trade-center-open-symbol="${escapeHtml(item.symbol || '')}">
-        <div class="flex items-center justify-between gap-2">
-          <div class="text-sm font-medium text-white truncate">${escapeHtml(item.name || item.symbol || '-')}</div>
-          <div class="text-xs text-yellow-300">${escapeHtml(item.side || '-')}</div>
+      <div class="trade-center-card tone-pending">
+        <button type="button" class="w-full text-left" data-trade-center-open-symbol="${escapeHtml(item.symbol || '')}">
+          <div class="flex items-center justify-between gap-2">
+            <div class="text-sm font-medium text-white truncate">${escapeHtml(item.name || item.symbol || '-')}</div>
+            <div class="text-xs text-yellow-300">${escapeHtml(item.side || '-')}</div>
+          </div>
+          <div class="trade-center-card-meta">${escapeHtml(item.symbol || '-')} · 미체결 ${escapeHtml(String(item.remaining_qty || 0))}주 / ${escapeHtml(String(item.order_qty || 0))}주</div>
+          ${radarMeta}
+        </button>
+        <div class="mt-3 flex items-center justify-end">
+          ${renderManualActionButton(action, {
+            'manual-action': action.kind,
+            'order-id': item.order_id || '',
+            symbol: item.symbol || '',
+          })}
         </div>
-        <div class="trade-center-card-meta">${escapeHtml(item.symbol || '-')} · 미체결 ${escapeHtml(String(item.remaining_qty || 0))}주 / ${escapeHtml(String(item.order_qty || 0))}주</div>
-        ${radarMeta}
-      </button>
+      </div>
     `;
   }
 
@@ -1796,6 +2209,38 @@ function renderCardIdentity(card) {
   metaEl.classList.toggle('hidden', !card.summaryText);
 }
 
+function updateCardManualActions(card) {
+  if (!card?.actionsEl) return;
+  if (card.outcome !== 'sell') {
+    card.actionsEl.innerHTML = '';
+    card.actionsEl.classList.add('hidden');
+    return;
+  }
+
+  const action = getImmediateSellAction(card.symbol, getManualTradeSymbolMap());
+  card.actionsEl.innerHTML = `
+    <div class="flex items-center justify-between gap-2 rounded-lg border border-blue-500/20 bg-blue-500/5 px-2 py-2">
+      <div class="space-y-1">
+        <div class="text-[11px] text-gray-400">
+          ${escapeHtml(action.disabled ? (action.reason || '즉시 매도 불가') : `${action.quantity || 0}주 전량 시장가 매도`)}
+        </div>
+        ${action.hint && !action.disabled ? `<div class="text-[10px] text-amber-300/80">${escapeHtml(action.hint)}</div>` : ''}
+      </div>
+      ${renderManualActionButton(action, {
+        'manual-action': action.kind,
+        symbol: card.symbol || '',
+      })}
+    </div>
+  `;
+  card.actionsEl.classList.remove('hidden');
+}
+
+function refreshStockCardActions() {
+  Object.values(stockCards || {}).forEach((card) => {
+    updateCardManualActions(card);
+  });
+}
+
 /**
  * 종목 카드 생성
  */
@@ -1838,8 +2283,12 @@ function createStockCard(symbol, firstActivity) {
   const body = document.createElement('div');
   body.className = 'stock-card-body'; // default: collapsed
 
+  const actions = document.createElement('div');
+  actions.className = 'hidden mb-2';
+
   const steps = document.createElement('div');
   steps.className = 'stock-card-steps';
+  body.appendChild(actions);
   body.appendChild(steps);
 
   el.appendChild(header);
@@ -1849,6 +2298,7 @@ function createStockCard(symbol, firstActivity) {
     element: el,
     headerEl: header,
     bodyEl: body,
+    actionsEl: actions,
     stepsEl: steps,
     activities: [],
     symbol: normalizedSymbol,
@@ -2105,6 +2555,7 @@ function updateCardHeader(card) {
 
   // Update card border color
   card.element.className = `stock-card outcome-${outcome}`;
+  updateCardManualActions(card);
 }
 
 /**
@@ -2193,6 +2644,8 @@ function switchView(view) {
     loadReport('today');
   } else if (view === 'reports') {
     loadReportsArchive();
+  } else if (view === 'performance') {
+    loadPerformanceView();
   } else if (view === 'trades-center') {
     loadTradesCenterView();
   }
@@ -2369,47 +2822,85 @@ async function loadReport(dateStr) {
       }
     }
 
+    let newsOverview = newsOverviewSnapshot;
+    try {
+      const overviewJson = await fetchJson(`${API}/news/overview?recent_limit=4&performance_days=30`);
+      newsOverview = overviewJson?.data || newsOverview;
+      if (newsOverview) {
+        newsOverviewSnapshot = newsOverview;
+        renderSidebarSettingSummaries();
+        renderNewsOverviewPanels();
+      }
+    } catch (error) {
+      console.warn('News overview load failed:', error);
+    }
+
+    let dateActivities = [];
+    if (report.report_date) {
+      dateActivities = await fetchDateActivities(report.report_date);
+    }
+
     const reportView = applyReportMetricsFallback(report, tradeSnapshot);
+    const activityInsights = buildReportActivityInsights(dateActivities);
     container.innerHTML = '';
     container.appendChild(
       createReportCard(reportView, {
         requestedDate: dateStr,
         resolvedDate: reportDate,
         usingTradeFallback: Boolean(reportView?._fallback_metrics),
+        newsOverview,
+        activityInsights,
+        tradeSnapshot,
       })
     );
     if (report.report_date) {
       await loadTradeHistory(report.report_date, container, tradeSnapshot);
-      await loadDateActivities(report.report_date, container);
+      renderDateActivities(report.report_date, container, dateActivities);
     }
   } catch (err) {
     container.innerHTML = `<div class="text-center text-red-400 text-sm py-8">리포트 로드 실패: ${escapeHtml(err.message || '알 수 없는 오류')}</div>`;
   }
 }
 
-async function loadDateActivities(dateStr, container) {
+async function fetchDateActivities(dateStr) {
   try {
     const json = await fetchJson(`${API}/activities?target_date=${dateStr}&limit=500`);
-    if (json.data && json.data.length) {
-      const section = document.createElement('div');
-      section.className = 'mt-4 border-t border-gray-800';
-      const toggleBtn = document.createElement('button');
-      toggleBtn.className = 'w-full text-center text-gray-500 hover:text-gray-300 text-xs py-3 flex items-center justify-center gap-2 transition';
-      toggleBtn.innerHTML = `<span class="activity-toggle-icon">▶</span> ${dateStr} 활동 로그 (${json.data.length}건)`;
-      const logContainer = document.createElement('div');
-      logContainer.className = 'hidden';
-      logContainer.style.maxHeight = '600px';
-      logContainer.style.overflowY = 'auto';
-      json.data.forEach(a => logContainer.appendChild(createBubble(a)));
-      toggleBtn.onclick = () => {
-        const isHidden = logContainer.classList.contains('hidden');
-        logContainer.classList.toggle('hidden');
-        toggleBtn.querySelector('.activity-toggle-icon').innerHTML = isHidden ? '▼' : '▶';
-      };
-      section.appendChild(toggleBtn);
-      section.appendChild(logContainer);
-      container.appendChild(section);
-    }
+    return Array.isArray(json?.data) ? json.data : [];
+  } catch (err) {
+    console.error('Activities load error:', err);
+    return [];
+  }
+}
+
+function renderDateActivities(dateStr, container, activities = []) {
+  if (!Array.isArray(activities) || !activities.length) {
+    return;
+  }
+
+  const section = document.createElement('div');
+  section.className = 'mt-4 border-t border-gray-800';
+  const toggleBtn = document.createElement('button');
+  toggleBtn.className = 'w-full text-center text-gray-500 hover:text-gray-300 text-xs py-3 flex items-center justify-center gap-2 transition';
+  toggleBtn.innerHTML = `<span class="activity-toggle-icon">▶</span> ${dateStr} 활동 로그 (${activities.length}건)`;
+  const logContainer = document.createElement('div');
+  logContainer.className = 'hidden';
+  logContainer.style.maxHeight = '600px';
+  logContainer.style.overflowY = 'auto';
+  activities.forEach((activity) => logContainer.appendChild(createBubble(activity)));
+  toggleBtn.onclick = () => {
+    const isHidden = logContainer.classList.contains('hidden');
+    logContainer.classList.toggle('hidden');
+    toggleBtn.querySelector('.activity-toggle-icon').innerHTML = isHidden ? '▼' : '▶';
+  };
+  section.appendChild(toggleBtn);
+  section.appendChild(logContainer);
+  container.appendChild(section);
+}
+
+async function loadDateActivities(dateStr, container) {
+  try {
+    const activities = await fetchDateActivities(dateStr);
+    renderDateActivities(dateStr, container, activities);
   } catch (err) {
     console.error('Activities load error:', err);
   }
@@ -2509,6 +3000,24 @@ function createReportCard(report, context = {}) {
   const reportDate = normalizedReport.report_date || context.resolvedDate || '-';
   const requestedDate = context.requestedDate === 'today' ? getKstDateString() : (context.requestedDate || reportDate);
   const isFallbackReport = context.requestedDate === 'today' && reportDate !== requestedDate;
+  const activityInsights = context.activityInsights || null;
+  const newsOverview = context.newsOverview || null;
+  const tradeSnapshot = context.tradeSnapshot || null;
+  const newsPerformance = newsOverview?.performance || {};
+  const newsSettings = newsOverview?.settings || {};
+  const newsStorage = newsOverview?.storage || {};
+  const newsStrip = newsOverview ? buildReportNewsStripModel(newsOverview) : null;
+  const newsSourcePills = newsOverview ? buildNewsOverviewSourcePills(newsOverview).slice(0, 6) : [];
+  const newsPerformanceCards = newsOverview ? buildNewsPerformanceCards(newsOverview) : [];
+  const newsRolloutPolicy = newsOverview ? buildNewsRolloutPolicy(newsOverview) : null;
+  const newsRationale = buildReportNewsRationale({ trades: tradeSnapshot, activityInsights });
+  const newsStatusToneClass = newsStrip?.statusLabel === 'SUCCESS'
+    ? 'tone-success'
+    : newsStrip?.statusLabel === 'ERROR'
+      ? 'tone-error'
+      : newsStrip?.statusLabel === 'EMPTY'
+        ? 'tone-empty'
+        : 'tone-idle';
   const winRate = (winCount + lossCount) > 0
     ? ((winCount / (winCount + lossCount)) * 100).toFixed(1)
     : '-';
@@ -2555,6 +3064,165 @@ function createReportCard(report, context = {}) {
         <div class="text-xs text-gray-500">미실현 손익</div>
       </div>
     </div>
+    ${newsOverview && newsStrip ? `
+    <details class="report-news-strip ${newsStatusToneClass} mb-4">
+      <summary class="report-news-strip-summary">
+        <div class="min-w-0">
+          <div class="report-news-strip-eyebrow">🛰 뉴스 인텔</div>
+          <div class="report-news-strip-title">${escapeHtml(newsStrip.statusLabel)} · ${escapeHtml(newsStrip.pollLabel)}</div>
+          <div class="report-news-strip-meta">${escapeHtml(newsStrip.pollAtLabel)} · ${escapeHtml(newsStrip.message)}</div>
+        </div>
+        <div class="report-news-strip-stat-row">
+          <div class="report-news-strip-stat">
+            <span class="report-news-strip-stat-label">최근 24시간</span>
+            <strong>${escapeHtml(newsStrip.recentCountLabel)}</strong>
+          </div>
+          <div class="report-news-strip-stat">
+            <span class="report-news-strip-stat-label">소스</span>
+            <strong>${escapeHtml(newsStrip.sourceSummary)}</strong>
+          </div>
+          <div class="report-news-strip-stat">
+            <span class="report-news-strip-stat-label">설정</span>
+            <strong>${escapeHtml(newsSettings.include_foreign ? '해외 포함' : '국내 중심')}</strong>
+          </div>
+        </div>
+      </summary>
+      <div class="report-news-strip-body">
+        <div class="flex items-start justify-between gap-3 mb-3">
+          <div>
+            <div class="text-xs text-gray-400">${escapeHtml(newsStrip.settingSummary)}</div>
+            <div class="text-[11px] text-gray-500 mt-1">${escapeHtml(newsStrip.impactSummary || '뉴스 영향 집계 없음')}</div>
+            <div class="text-[11px] text-gray-500 mt-1">${escapeHtml(newsStrip.rolloutSummary || '롤아웃 판정 대기')}</div>
+            <div class="text-[11px] text-gray-500 mt-1">${escapeHtml(newsStrip.periodicSummary || '주간/월간 집계 대기')}</div>
+            ${newsStorage.ready === false ? `<div class="text-[11px] text-amber-300 mt-1">저장소 준비 필요 · ${escapeHtml(newsStorage.message || 'news_items 테이블이 아직 없습니다.')}</div>` : ''}
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button type="button" onclick="fetchBloombergNews()" class="rounded-full border border-gray-600 px-3 py-1 text-[11px] text-gray-200 hover:border-blue-400 hover:text-white transition">Bloomberg 수동 수집</button>
+            <button type="button" onclick="fetchCnbcNews()" class="rounded-full border border-gray-600 px-3 py-1 text-[11px] text-gray-200 hover:border-blue-400 hover:text-white transition">CNBC 수동 수집</button>
+            <button type="button" onclick="fetchNasdaqNews()" class="rounded-full border border-gray-600 px-3 py-1 text-[11px] text-gray-200 hover:border-blue-400 hover:text-white transition">Nasdaq 수동 수집</button>
+            <button type="button" onclick="fetchYonhapNews()" class="rounded-full border border-gray-600 px-3 py-1 text-[11px] text-gray-200 hover:border-blue-400 hover:text-white transition">연합뉴스TV 수동 수집</button>
+            <button type="button" onclick="fetchKrxNews()" class="rounded-full border border-gray-600 px-3 py-1 text-[11px] text-gray-200 hover:border-blue-400 hover:text-white transition">KIND 수동 수집</button>
+            <button type="button" onclick="fetchDartNews()" class="rounded-full border border-gray-600 px-3 py-1 text-[11px] text-gray-200 hover:border-blue-400 hover:text-white transition">DART 수동 수집</button>
+          </div>
+        </div>
+        <div class="news-source-pill-row mb-3">
+          ${newsSourcePills.join('')}
+        </div>
+        <div class="news-overview-grid mb-3">
+          ${newsPerformanceCards.map((card) => `
+            <div class="news-overview-card">
+              <div class="news-overview-label">${escapeHtml(card.label)}</div>
+              <div class="news-overview-value">${escapeHtml(card.value)}</div>
+              <div class="news-overview-help">${escapeHtml(card.help || '')}</div>
+            </div>
+          `).join('')}
+          <div class="news-overview-card">
+            <div class="news-overview-label">뉴스 게이트</div>
+            <div class="news-overview-value">${escapeHtml(String(newsPerformance.news_gate_blocks || 0))}</div>
+            <div class="news-overview-help">부정 뉴스 압력으로 진입을 막은 횟수</div>
+          </div>
+          <div class="news-overview-card">
+            <div class="news-overview-label">재검증</div>
+            <div class="news-overview-value">${escapeHtml(String(newsPerformance.news_rechecks || 0))}</div>
+            <div class="news-overview-help">신규 뉴스 도착 후 다시 본 종목 수</div>
+          </div>
+        </div>
+        ${newsRolloutPolicy ? `
+        <div class="rounded-2xl border border-gray-700/80 bg-dark-900/40 px-4 py-3 mb-3">
+          <div class="flex items-center justify-between gap-3">
+            <div>
+              <div class="text-[11px] uppercase tracking-[0.12em] text-gray-500">Shadow / Rollout</div>
+              <div class="mt-1 text-sm font-medium text-white">${escapeHtml(newsRolloutPolicy.status)}</div>
+            </div>
+            <div class="text-[11px] text-gray-400">${escapeHtml(newsRolloutPolicy.reason)}</div>
+          </div>
+          <div class="mt-2 space-y-1 text-[11px] text-gray-400">
+            ${newsRolloutPolicy.lines.map((line) => `<div>${escapeHtml(line)}</div>`).join('')}
+          </div>
+        </div>` : ''}
+        <div>
+          <div class="text-xs font-medium text-gray-400 mb-2">최근 적재 뉴스</div>
+          <div class="news-item-list">
+            ${renderNewsItemCards(newsStrip.recentItems, { emptyLabel: '최근 적재 뉴스가 없습니다.', compact: true })}
+          </div>
+        </div>
+      </div>
+    </details>` : ''}
+    ${activityInsights ? `
+    <div class="mb-4">
+      <div class="flex items-start justify-between gap-3 mb-2">
+        <div>
+          <div class="text-sm font-medium text-gray-300">🚫 오늘 안 산 이유</div>
+          <div class="text-xs text-gray-500 mt-1">리스크·비용·뉴스 게이트로 보류된 후보와 뉴스 재검증 흐름을 바로 확인합니다.</div>
+        </div>
+        <div class="text-[11px] text-gray-500">차단 ${escapeHtml(String(activityInsights.blockedCount || 0))}건 · 재검증 ${escapeHtml(String(activityInsights.recheckCount || 0))}종목</div>
+      </div>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+        ${activityInsights.cards.map((card) => `
+          <div class="bg-dark-900 rounded-lg p-3 text-center">
+            <div class="text-lg font-bold text-amber-300">${escapeHtml(String(card.count || 0))}</div>
+            <div class="text-xs text-gray-500">${escapeHtml(card.label)}</div>
+          </div>
+        `).join('')}
+      </div>
+      ${activityInsights.items?.length ? `
+      <div class="mt-3 space-y-2">
+        ${activityInsights.items.map((item) => `
+          <div class="rounded-lg border border-gray-700 bg-dark-900/70 px-3 py-2">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <div class="text-sm text-gray-200">${escapeHtml(item.title || item.symbol || '후보 종목')}</div>
+                <div class="text-xs text-gray-500 mt-1">${escapeHtml(item.reason || '')}</div>
+              </div>
+              <div class="text-[11px] rounded-full border border-gray-600 px-2 py-1 text-gray-300">${escapeHtml(item.label || '차단')}</div>
+            </div>
+          </div>
+        `).join('')}
+      </div>` : '<div class="mt-3 rounded-lg border border-dashed border-gray-700 bg-dark-900/40 px-3 py-3 text-xs text-gray-500">차단 또는 재검증 기록이 없습니다.</div>'}
+    </div>` : ''}
+    ${newsRationale.hasContent ? `
+    <div class="mb-4">
+      <div class="flex items-start justify-between gap-3 mb-2">
+        <div>
+          <div class="text-sm font-medium text-gray-300">🏷 매수/보류 근거 태그</div>
+          <div class="text-xs text-gray-500 mt-1">뉴스 위험도, 다중 소스 확인, 차단 사유를 리포트 기준으로 묶었습니다.</div>
+        </div>
+      </div>
+      <div class="grid gap-3 md:grid-cols-2">
+        <div class="rounded-2xl border border-gray-700 bg-dark-900/40 px-4 py-3">
+          <div class="text-xs uppercase tracking-[0.12em] text-gray-500">왜 샀나</div>
+          <div class="mt-3 space-y-2">
+            ${newsRationale.buyTags.length
+              ? newsRationale.buyTags.map((item) => `
+                <div class="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2">
+                  <div class="flex items-center justify-between gap-2">
+                    <div class="text-sm text-emerald-200">${escapeHtml(item.label)}</div>
+                    <div class="text-[11px] text-emerald-100/80">${escapeHtml(String(item.count))}건</div>
+                  </div>
+                  ${item.detail ? `<div class="mt-1 text-[11px] text-gray-400">${escapeHtml(item.detail)}</div>` : ''}
+                </div>
+              `).join('')
+              : '<div class="text-xs text-gray-500">뉴스 근거가 기록된 매수 내역이 아직 없습니다.</div>'}
+          </div>
+        </div>
+        <div class="rounded-2xl border border-gray-700 bg-dark-900/40 px-4 py-3">
+          <div class="text-xs uppercase tracking-[0.12em] text-gray-500">왜 안 샀나</div>
+          <div class="mt-3 space-y-2">
+            ${newsRationale.blockTags.length
+              ? newsRationale.blockTags.map((item) => `
+                <div class="rounded-xl border border-rose-500/20 bg-rose-500/5 px-3 py-2">
+                  <div class="flex items-center justify-between gap-2">
+                    <div class="text-sm text-rose-200">${escapeHtml(item.label)}</div>
+                    <div class="text-[11px] text-rose-100/80">${escapeHtml(String(item.count))}건</div>
+                  </div>
+                  ${item.detail ? `<div class="mt-1 text-[11px] text-gray-400">${escapeHtml(item.detail)}</div>` : ''}
+                </div>
+              `).join('')
+              : '<div class="text-xs text-gray-500">보류 근거 태그가 아직 없습니다.</div>'}
+          </div>
+        </div>
+      </div>
+    </div>` : ''}
     ${normalizedReport.market_summary ? `
     <div class="mb-3">
       <div class="text-sm font-medium text-gray-300 mb-1">📝 오늘 리뷰</div>
@@ -2581,6 +3249,183 @@ function createReportCard(report, context = {}) {
       <div class="text-xs text-gray-400 bg-dark-900 rounded p-2">${escapeHtml(topPicks)}</div>
     </div>` : ''}`;
   return div;
+}
+
+function renderMetricRows(rows = [], emptyLabel = '데이터가 아직 없습니다.') {
+  if (!rows.length) {
+    return `<div class="rounded-2xl border border-dashed border-gray-700 bg-dark-900/30 px-4 py-5 text-sm text-gray-500">${escapeHtml(emptyLabel)}</div>`;
+  }
+  return `
+    <div class="performance-table">
+      ${rows.map((row) => `
+        <div class="performance-table-row">
+          <div class="performance-table-cell metric-name">${escapeHtml(row.label)}</div>
+          <div class="performance-table-cell">${escapeHtml(row.tradeCount)}</div>
+          <div class="performance-table-cell">${escapeHtml(row.expectancy)}</div>
+          <div class="performance-table-cell">${escapeHtml(row.profitFactor)}</div>
+          <div class="performance-table-cell">${escapeHtml(row.totalPnl)}</div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderPeriodRows(rows = [], emptyLabel = '집계 대기 중입니다.') {
+  if (!rows.length) {
+    return `<div class="rounded-2xl border border-dashed border-gray-700 bg-dark-900/30 px-4 py-5 text-sm text-gray-500">${escapeHtml(emptyLabel)}</div>`;
+  }
+  return `
+    <div class="performance-table">
+      ${rows.map((row) => `
+        <div class="performance-table-row compact">
+          <div class="performance-table-cell metric-name">${escapeHtml(row.periodLabel)}</div>
+          <div class="performance-table-cell">${escapeHtml(row.expectancy)}</div>
+          <div class="performance-table-cell">${escapeHtml(row.profitFactor)}</div>
+          <div class="performance-table-cell">${escapeHtml(row.totalPnl)}</div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function createPerformanceDashboard(state) {
+  const div = document.createElement('div');
+  div.className = 'bg-dark-700 rounded-xl p-5 border border-gray-600 mx-2 chat-bubble';
+
+  div.innerHTML = `
+    <div class="flex items-start justify-between gap-3 mb-4">
+      <div>
+        <div class="text-lg font-bold text-white">📈 성과 분석</div>
+        <div class="text-xs text-gray-500 mt-1">뉴스 전략, Shadow, 주간/월간 성과를 한 화면에서 비교합니다.</div>
+      </div>
+      <div class="flex items-center gap-2">
+        <button type="button" onclick="loadPerformanceView()" class="text-[11px] text-gray-400 hover:text-gray-200 transition">새로고침</button>
+        <button type="button" onclick="openSettingsModal('news')" class="rounded-full border border-gray-600 px-3 py-1 text-[11px] text-gray-200 hover:border-blue-400 hover:text-white transition">뉴스 설정 열기</button>
+      </div>
+    </div>
+    <div class="news-overview-grid mb-4">
+      ${state.summaryCards.map((card) => `
+        <div class="news-overview-card">
+          <div class="news-overview-label">${escapeHtml(card.label)}</div>
+          <div class="news-overview-value">${escapeHtml(card.value)}</div>
+        </div>
+      `).join('')}
+    </div>
+    <div class="grid gap-4 xl:grid-cols-[1.2fr,0.8fr] mb-4">
+      <section class="rounded-2xl border border-gray-700 bg-dark-900/40 px-4 py-4">
+        <div class="text-xs uppercase tracking-[0.12em] text-gray-500">Shadow / Rollout</div>
+        <div class="mt-2 text-xl font-semibold text-white">${escapeHtml(state.rollout.status)}</div>
+        <div class="mt-1 text-sm text-gray-400">${escapeHtml(state.rollout.reason)}</div>
+      </section>
+      <section class="rounded-2xl border border-gray-700 bg-dark-900/40 px-4 py-4">
+        <div class="text-xs uppercase tracking-[0.12em] text-gray-500">News Ops</div>
+        <div class="mt-3 grid grid-cols-2 gap-3 text-sm">
+          <div><div class="text-gray-500">뉴스 게이트</div><div class="text-white font-semibold mt-1">${escapeHtml(state.newsOps.newsGateBlocks)}</div></div>
+          <div><div class="text-gray-500">재검증</div><div class="text-white font-semibold mt-1">${escapeHtml(state.newsOps.newsRechecks)}</div></div>
+          <div><div class="text-gray-500">평균 부정 압력</div><div class="text-white font-semibold mt-1">${escapeHtml(state.newsOps.avgNegativePressure)}</div></div>
+          <div><div class="text-gray-500">Shadow 차단율</div><div class="text-white font-semibold mt-1">${escapeHtml(state.newsOps.shadowBlockRate)}</div></div>
+        </div>
+      </section>
+    </div>
+    <section class="rounded-2xl border border-gray-700 bg-dark-900/40 px-4 py-4 mb-4">
+      <div class="flex items-center justify-between gap-3 mb-3">
+        <div>
+          <div class="text-xs uppercase tracking-[0.12em] text-gray-500">News vs Plain</div>
+          <div class="text-sm text-gray-400 mt-1">뉴스 메타가 남은 거래와 일반 거래의 실제 성과 비교</div>
+        </div>
+        <div class="grid grid-cols-3 gap-3 text-right text-[11px] text-gray-500">
+          <span>E 차이 ${escapeHtml(state.comparisonDelta.expectancy)}</span>
+          <span>PF 차이 ${escapeHtml(state.comparisonDelta.profitFactor)}</span>
+          <span>비용차감 ${escapeHtml(state.comparisonDelta.netPnlAfterCost)}</span>
+        </div>
+      </div>
+      ${renderMetricRows(state.comparisonRows, '비교할 거래 표본이 아직 없습니다.')}
+    </section>
+    <div class="grid gap-4 xl:grid-cols-2 mb-4">
+      <section class="rounded-2xl border border-gray-700 bg-dark-900/40 px-4 py-4">
+        <div class="flex items-center justify-between gap-3 mb-3">
+          <div>
+            <div class="text-xs uppercase tracking-[0.12em] text-gray-500">By Horizon</div>
+            <div class="text-sm text-gray-400 mt-1">단기/중기/장기 성과 비교</div>
+          </div>
+          <div class="performance-table-head">
+            <span>건수</span><span>E</span><span>PF</span><span>손익</span>
+          </div>
+        </div>
+        ${renderMetricRows(state.byHorizonRows, '호라이즌 집계가 아직 없습니다.')}
+      </section>
+      <section class="rounded-2xl border border-gray-700 bg-dark-900/40 px-4 py-4">
+        <div class="flex items-center justify-between gap-3 mb-3">
+          <div>
+            <div class="text-xs uppercase tracking-[0.12em] text-gray-500">By Strategy</div>
+            <div class="text-sm text-gray-400 mt-1">전략별 기대값과 손익 비교</div>
+          </div>
+          <div class="performance-table-head">
+            <span>건수</span><span>E</span><span>PF</span><span>손익</span>
+          </div>
+        </div>
+        ${renderMetricRows(state.byStrategyRows, '전략 집계가 아직 없습니다.')}
+      </section>
+    </div>
+    <div class="grid gap-4 xl:grid-cols-2">
+      <section class="rounded-2xl border border-gray-700 bg-dark-900/40 px-4 py-4">
+        <div class="flex items-center justify-between gap-3 mb-3">
+          <div>
+            <div class="text-xs uppercase tracking-[0.12em] text-gray-500">Weekly</div>
+            <div class="text-sm text-gray-400 mt-1">최근 주간 성과</div>
+          </div>
+          <div class="performance-table-head compact">
+            <span>E</span><span>PF</span><span>손익</span>
+          </div>
+        </div>
+        ${renderPeriodRows(state.weeklyRows, '주간 집계 대기 중입니다.')}
+      </section>
+      <section class="rounded-2xl border border-gray-700 bg-dark-900/40 px-4 py-4">
+        <div class="flex items-center justify-between gap-3 mb-3">
+          <div>
+            <div class="text-xs uppercase tracking-[0.12em] text-gray-500">Monthly</div>
+            <div class="text-sm text-gray-400 mt-1">최근 월간 성과</div>
+          </div>
+          <div class="performance-table-head compact">
+            <span>E</span><span>PF</span><span>손익</span>
+          </div>
+        </div>
+        ${renderPeriodRows(state.monthlyRows, '월간 집계 대기 중입니다.')}
+      </section>
+    </div>
+  `;
+
+  return div;
+}
+
+async function loadPerformanceView() {
+  const container = document.getElementById('chat-container');
+  container.innerHTML = '<div class="text-center text-gray-500 text-sm py-4">성과 분석 불러오는 중...</div>';
+  cleanupStockCards();
+
+  try {
+    const [summaryJson, weeklyJson, monthlyJson, overviewJson] = await Promise.all([
+      fetchJson(`${API}/performance/summary?days=30`),
+      fetchJson(`${API}/performance/periodic?period=weekly&size=6`),
+      fetchJson(`${API}/performance/periodic?period=monthly&size=6`),
+      fetchJson(`${API}/news/overview?recent_limit=4&performance_days=30`),
+    ]);
+    const state = buildPerformanceDashboardState({
+      summary: summaryJson?.data || {},
+      weekly: weeklyJson?.data || {},
+      monthly: monthlyJson?.data || {},
+      newsOverview: overviewJson?.data || {},
+    });
+    if (overviewJson?.data) {
+      newsOverviewSnapshot = overviewJson.data;
+      renderSidebarSettingSummaries();
+      renderNewsOverviewPanels();
+    }
+    container.innerHTML = '';
+    container.appendChild(createPerformanceDashboard(state));
+  } catch (err) {
+    container.innerHTML = `<div class="text-center text-red-400 text-sm py-8">성과 분석 로드 실패: ${escapeHtml(err.message || '알 수 없는 오류')}</div>`;
+  }
 }
 
 async function loadReportsArchive() {
@@ -2706,6 +3551,7 @@ async function loadTradeHistory(dateStr, container, prefetched = null) {
 }
 
 function renderTradeCard(t, type) {
+  const tradeCardState = buildTradeCardViewModel(t, type);
   const time = (type === 'completed' && t.exit_at)
     ? new Date(t.exit_at).toLocaleTimeString('ko-KR', {hour:'2-digit',minute:'2-digit'})
     : (t.entry_at ? new Date(t.entry_at).toLocaleTimeString('ko-KR', {hour:'2-digit',minute:'2-digit'}) : '');
@@ -2724,6 +3570,7 @@ function renderTradeCard(t, type) {
         <span>${t.quantity}주 · ${t.entry_price.toLocaleString()} → ${t.exit_price.toLocaleString()}원</span>
         <span>${time} · ${t.exit_reason || 'SIGNAL'}${t.hold_days > 0 ? ` · ${t.hold_days}일 보유` : ''}</span>
       </div>
+      ${tradeCardState.fillStatusLabel ? `<div class="text-[11px] text-amber-300 mt-1">${escapeHtml(tradeCardState.fillStatusLabel)}</div>` : ''}
       ${t.ai_confidence ? `<div class="text-xs text-gray-600 mt-1">신뢰도 ${(t.ai_confidence*100).toFixed(0)}% · ${t.strategy_type || ''}</div>` : ''}
     </div>`;
   }
@@ -2799,13 +3646,60 @@ async function loadSettings() {
     if (tier2FallbackEl) tier2FallbackEl.value = s.LLM_FALLBACK_PROVIDER_TIER2 || '';
     const manualLlmEl = document.getElementById('set-manual-llm-provider');
     if (manualLlmEl && s.MANUAL_LLM_PROVIDER) manualLlmEl.value = s.MANUAL_LLM_PROVIDER;
+    const newsLlmEnabledEl = document.getElementById('set-news-llm-enabled');
+    if (newsLlmEnabledEl) newsLlmEnabledEl.checked = Boolean(s.NEWS_LLM_ENABLED);
+    const newsLlmProviderEl = document.getElementById('set-news-llm-provider');
+    if (newsLlmProviderEl) newsLlmProviderEl.value = s.NEWS_LLM_PROVIDER || 'AUTOMATIC';
+    const newsIncludeForeignEl = document.getElementById('set-news-include-foreign');
+    if (newsIncludeForeignEl) newsIncludeForeignEl.checked = Boolean(s.NEWS_INCLUDE_FOREIGN);
+    const newsNasdaqEnabledEl = document.getElementById('set-news-nasdaq-enabled');
+    if (newsNasdaqEnabledEl) newsNasdaqEnabledEl.checked = Boolean(s.NEWS_NASDAQ_ENABLED);
+    const newsDomesticMediaEl = document.getElementById('set-news-domestic-media-enabled');
+    if (newsDomesticMediaEl) newsDomesticMediaEl.checked = Boolean(s.NEWS_DOMESTIC_MEDIA_ENABLED);
+    const newsGateEnabledEl = document.getElementById('set-news-gate-enabled');
+    if (newsGateEnabledEl) newsGateEnabledEl.checked = Boolean(s.NEWS_GATE_ENABLED);
+    const newsPollEnabledEl = document.getElementById('set-news-poll-enabled');
+    if (newsPollEnabledEl) newsPollEnabledEl.checked = Boolean(s.NEWS_POLL_ENABLED);
+    const newsNegativeThresholdEl = document.getElementById('set-news-negative-threshold');
+    if (newsNegativeThresholdEl) newsNegativeThresholdEl.value = String(s.NEWS_NEGATIVE_BLOCK_THRESHOLD ?? '');
+    const newsLookbackHoursEl = document.getElementById('set-news-lookback-hours');
+    if (newsLookbackHoursEl) newsLookbackHoursEl.value = String(s.NEWS_LOOKBACK_HOURS ?? '');
+    const newsPollTradingEl = document.getElementById('set-news-poll-interval-trading');
+    if (newsPollTradingEl) newsPollTradingEl.value = String(s.NEWS_POLL_INTERVAL_MIN_TRADING ?? '');
+    const newsPollOffEl = document.getElementById('set-news-poll-interval-off');
+    if (newsPollOffEl) newsPollOffEl.value = String(s.NEWS_POLL_INTERVAL_MIN_OFF_HOURS ?? '');
+    const newsShadowEnabledEl = document.getElementById('set-news-shadow-enabled');
+    if (newsShadowEnabledEl) newsShadowEnabledEl.checked = Boolean(s.NEWS_SHADOW_ENABLED);
+    const newsRolloutSampleEl = document.getElementById('set-news-rollout-min-sample');
+    if (newsRolloutSampleEl) newsRolloutSampleEl.value = String(s.NEWS_ROLLOUT_MIN_SAMPLE_SIZE ?? '');
+    const newsRolloutPfEl = document.getElementById('set-news-rollout-min-pf');
+    if (newsRolloutPfEl) newsRolloutPfEl.value = String(s.NEWS_ROLLOUT_MIN_PROFIT_FACTOR ?? '');
+    const newsRolloutExpectancyEl = document.getElementById('set-news-rollout-min-expectancy');
+    if (newsRolloutExpectancyEl) newsRolloutExpectancyEl.value = String(s.NEWS_ROLLOUT_MIN_EXPECTANCY ?? '');
+    const newsRolloutMddEl = document.getElementById('set-news-rollout-max-drawdown');
+    if (newsRolloutMddEl) newsRolloutMddEl.value = String(s.NEWS_ROLLOUT_MAX_DRAWDOWN_KRW ?? '');
+    const ollamaBaseUrlEl = document.getElementById('set-ollama-base-url');
+    if (ollamaBaseUrlEl) ollamaBaseUrlEl.value = s.OLLAMA_BASE_URL || '';
+    const ollamaModelEl = document.getElementById('set-ollama-model');
+    if (ollamaModelEl) ollamaModelEl.value = s.OLLAMA_MODEL || '';
     renderTierModelSelectors();
     updateBadge('badge-trading', s.TRADING_ENABLED ? '매매:ON' : '매매:OFF', s.TRADING_ENABLED ? 'green' : 'red');
     updateBadge('badge-mode', formatAutonomyModeLabel(s.AUTONOMY_MODE), 'purple');
     renderSettingGuidance();
     renderSidebarSettingSummaries();
+    renderNewsOverviewPanels();
     renderStrategyInsightsPanel();
     renderRuntimeControls();
+    refreshStockCardActions();
+    if (latestAccountSnapshot) {
+      renderPendingOrders(latestAccountSnapshot.pendingOrders || []);
+      if (currentView === 'trades-center') {
+        loadTradesCenterView(latestAccountSnapshot);
+      }
+      if (activePositionDetailPayload) {
+        renderPositionDetailModal(activePositionDetailPayload);
+      }
+    }
   } catch (err) {
     console.error('Settings load error:', err);
   }
@@ -2823,6 +3717,7 @@ async function updateSetting(key, value) {
     }
     await Promise.all([
       loadSettings(),
+      loadNewsOverview(),
       loadSystemStatus(),
       loadLLMStatus(),
     ]);
@@ -2837,6 +3732,7 @@ async function updateSetting(key, value) {
 async function refreshRuntimePanels() {
   await Promise.all([
     loadSettings(),
+    loadNewsOverview(),
     loadSystemStatus(),
     loadLLMStatus(),
     loadLLMUsage(),
@@ -2950,6 +3846,23 @@ function renderSidebarSettingSummaries() {
   if (riskSummaryEl) {
     const riskLabel = formatRiskAppetiteLabel(runtimeSettings?.RISK_APPETITE || 'MODERATE');
     riskSummaryEl.textContent = `현재 ${riskLabel} · 눌러서 전략 설정 열기`;
+  }
+  const llmSummaryEl = document.getElementById('left-llm-summary');
+  if (llmSummaryEl && runtimeSettings) {
+    const tier1Provider = runtimeSettings.LLM_PROVIDER_TIER1 || runtimeSettings.LLM_PROVIDER || 'CLAUDE_CODE';
+    const tier2Provider = runtimeSettings.LLM_PROVIDER_TIER2 || runtimeSettings.LLM_PROVIDER || 'CLAUDE_CODE';
+    llmSummaryEl.textContent = `T1 ${tier1Provider} · T2 ${tier2Provider}`;
+  }
+  const newsSummaryEl = document.getElementById('left-news-summary');
+  if (newsSummaryEl) {
+    const provider = runtimeSettings?.NEWS_LLM_PROVIDER || 'AUTOMATIC';
+    const includeForeign = runtimeSettings?.NEWS_INCLUDE_FOREIGN ? '해외 포함' : '국내 중심';
+    const domesticMedia = runtimeSettings?.NEWS_DOMESTIC_MEDIA_ENABLED ? '국내 미디어 ON' : '국내 미디어 OFF';
+    const recent24h = newsOverviewSnapshot?.ingestion?.recent_24h_count;
+    const recentText = newsOverviewSnapshot?.storage?.ready === false
+      ? '저장소 준비 필요'
+      : (Number.isFinite(Number(recent24h)) ? `24h ${formatInteger(recent24h)}건` : '수집 전');
+    newsSummaryEl.textContent = `${provider} · ${includeForeign} · ${domesticMedia} · ${recentText}`;
   }
 }
 
@@ -3155,6 +4068,9 @@ function getTierModelSettingKey(provider, tier, mode = 'primary') {
   if (provider === 'CODEX') {
     return tier === 'tier1' ? 'CODEX_MODEL_TIER1' : 'CODEX_MODEL_TIER2';
   }
+  if (provider === 'OLLAMA') {
+    return tier === 'tier1' ? 'OLLAMA_MODEL_TIER1' : 'OLLAMA_MODEL_TIER2';
+  }
   return tier === 'tier1' ? 'CLAUDE_CODE_MODEL_TIER1' : 'CLAUDE_CODE_MODEL_TIER2';
 }
 
@@ -3230,7 +4146,9 @@ function renderTierModelSelector(tier, mode = 'primary') {
   if (customEl) {
     customEl.placeholder = provider === 'CODEX'
       ? '예: gpt-5-codex / gpt-5.4'
-      : '예: sonnet / claude-sonnet-4-6';
+      : provider === 'OLLAMA'
+        ? '예: llama3.1:8b / qwen2.5:7b'
+        : '예: sonnet / claude-sonnet-4-6';
     customEl.value = '';
     customEl.disabled = false;
   }
@@ -3415,7 +4333,7 @@ async function loadSystemStatus() {
 // ── Report List ──
 async function loadReportList() {
   try {
-    const json = await fetchJson(`${API}/reports?limit=200`);
+    const json = await fetchJson(`${API}/reports?limit=100`);
     const countEl = document.getElementById('report-archive-count');
     const count = Array.isArray(json?.data) ? json.data.length : 0;
     if (countEl) countEl.textContent = `(${count})`;
@@ -3698,8 +4616,16 @@ Object.assign(window, {
   applyCustomTierModel,
   askQuestion,
   clearChat,
+  fetchBloombergNews,
+  fetchCnbcNews,
+  fetchNasdaqNews,
+  fetchDartNews,
+  fetchYonhapNews,
+  fetchKrxNews,
   generateReport,
   loadLLMUsage,
+  loadNewsOverview,
+  loadPerformanceView,
   loadTodayActivities,
   loadEventRadar,
   refreshLLMCatalog,

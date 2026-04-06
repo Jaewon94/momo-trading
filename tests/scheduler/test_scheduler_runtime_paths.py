@@ -26,6 +26,7 @@ async def test_scheduler_start_skips_when_disabled(monkeypatch) -> None:
         setup_called = True
 
     monkeypatch.setattr("scheduler.scheduler.settings.SCHEDULER_ENABLED", False)
+    monkeypatch.setattr("scheduler.scheduler.settings.NEWS_POLL_ENABLED", False)
     monkeypatch.setattr(scheduler, "_on_startup", fake_on_startup)
     monkeypatch.setattr(scheduler, "_setup_jobs", fake_setup_jobs)
 
@@ -34,6 +35,42 @@ async def test_scheduler_start_skips_when_disabled(monkeypatch) -> None:
     assert scheduler.is_running is False
     assert setup_called is False
     assert startup_called is False
+
+
+@pytest.mark.asyncio
+async def test_scheduler_start_runs_news_jobs_when_trading_disabled(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    startup_called = False
+    news_poll_called = False
+    job_ids: list[str] = []
+
+    async def fake_on_startup() -> None:
+        nonlocal startup_called
+        startup_called = True
+
+    async def fake_news_poll(*args, **kwargs) -> None:
+        nonlocal news_poll_called
+        news_poll_called = True
+
+    class FakeScheduler:
+        def start(self) -> None:
+            return None
+
+        def add_job(self, _func, _trigger, **kwargs) -> None:
+            job_ids.append(kwargs["id"])
+
+    monkeypatch.setattr("scheduler.scheduler.settings.SCHEDULER_ENABLED", False)
+    monkeypatch.setattr("scheduler.scheduler.settings.NEWS_POLL_ENABLED", True)
+    monkeypatch.setattr(scheduler, "_on_startup", fake_on_startup)
+    monkeypatch.setattr(scheduler, "_news_poll", fake_news_poll)
+    monkeypatch.setattr(scheduler, "_build_scheduler", lambda: FakeScheduler())
+
+    await scheduler.start()
+
+    assert scheduler.is_running is True
+    assert startup_called is False
+    assert news_poll_called is True
+    assert set(job_ids) == {"news_poll_trading", "news_poll_off_hours"}
 
 
 @pytest.mark.asyncio
@@ -143,6 +180,8 @@ def test_scheduler_setup_jobs_registers_expected_job_ids() -> None:
         "pre_market",
         "market_open_scan",
         "intraday_rescan",
+        "news_poll_trading",
+        "news_poll_off_hours",
         "holdings_check",
         "intraday_holdings_review",
         "force_liquidation",
@@ -151,6 +190,32 @@ def test_scheduler_setup_jobs_registers_expected_job_ids() -> None:
         "market_data",
         "expire_recommendations",
     }
+
+
+@pytest.mark.asyncio
+async def test_scheduler_news_poll_calls_service_with_market_hours(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    observed = {}
+
+    async def fake_poll_sources(_session, *, market_hours: bool):
+        observed["market_hours"] = market_hours
+        return {"created": 1}
+
+    class FakeSession:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr("scheduler.scheduler.settings.NEWS_POLL_ENABLED", True)
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("services.news_polling_service.news_polling_service.poll_sources", fake_poll_sources)
+
+    await scheduler._news_poll()
+
+    assert observed["market_hours"] is True
 
 
 @pytest.mark.asyncio

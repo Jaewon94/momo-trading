@@ -32,6 +32,38 @@ async def test_admin_settings_rejects_invalid_manual_provider_without_overwritin
 
 
 @pytest.mark.asyncio
+async def test_admin_settings_rejects_invalid_news_provider_without_overwriting(client, monkeypatch):
+    monkeypatch.setattr("api.routes.admin.settings.NEWS_LLM_PROVIDER", "AUTOMATIC")
+
+    response = await client.put(
+        "/api/v1/admin/settings",
+        json={"NEWS_LLM_PROVIDER": "invalid-provider"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"] == {}
+
+    settings_response = await client.get("/api/v1/admin/settings")
+
+    assert settings_response.status_code == 200
+    assert settings_response.json()["data"]["NEWS_LLM_PROVIDER"] == "AUTOMATIC"
+
+
+@pytest.mark.asyncio
+async def test_admin_settings_rejects_invalid_ollama_base_url_type(client, monkeypatch):
+    monkeypatch.setattr("api.routes.admin.settings.OLLAMA_BASE_URL", "http://localhost:11434")
+
+    response = await client.put(
+        "/api/v1/admin/settings",
+        json={"OLLAMA_BASE_URL": 123},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["OLLAMA_BASE_URL"]["new"] == "123"
+
+
+@pytest.mark.asyncio
 async def test_admin_settings_rejects_invalid_tier_provider_without_overwriting(client, monkeypatch):
     monkeypatch.setattr("api.routes.admin.settings.LLM_PROVIDER_TIER1", "CLAUDE_CODE")
 

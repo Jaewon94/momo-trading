@@ -1,7 +1,8 @@
 import pytest
 
 from agent.trading_agent import TradingAgent
-from trading.enums import Market, OrderSide, OrderType
+from strategy.signal import TradeSignal
+from trading.enums import Market, OrderSide, OrderType, SignalAction
 from trading.models import AccountBalance, Candle, CurrentPrice, HoldingInfo, OrderRequest, OrderResult
 
 
@@ -219,6 +220,7 @@ async def test_trading_agent_builds_portfolio_snapshot_from_broker_adapter(monke
         "holding_count": 1,
         "today_trade_count": 2,
         "holding_symbols": ["005930"],
+        "holding_quantities": {"005930": 4},
     }
     assert agent._available_cash == 1_200_000
 
@@ -236,6 +238,29 @@ async def test_trading_agent_normalizes_prefixed_holding_symbols_in_snapshot(mon
     snapshot = await agent._build_portfolio_snapshot()
 
     assert snapshot["holding_symbols"] == ["010170"]
+    assert snapshot["holding_quantities"] == {"010170": 7}
+
+
+def test_trading_agent_normalizes_sell_signal_quantity_to_full_holding() -> None:
+    agent = TradingAgent(broker_adapter=FakePortfolioBrokerAdapter())
+    signal = TradeSignal(
+        symbol="010170",
+        stock_id="010170",
+        action=SignalAction.SELL,
+        strength=0.7,
+        suggested_price=13_780,
+        suggested_quantity=2_300,
+        strategy_type="AGGRESSIVE_SHORT",
+        reason="AI 매도 추천",
+        confidence=0.52,
+    )
+
+    normalized_qty = agent._resolve_sell_quantity_from_snapshot(
+        signal=signal,
+        portfolio_snapshot={"holding_quantities": {"010170": 4}},
+    )
+
+    assert normalized_qty == 4
 
 
 @pytest.mark.asyncio

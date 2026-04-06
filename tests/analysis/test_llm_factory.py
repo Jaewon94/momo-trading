@@ -118,7 +118,7 @@ def test_llm_factory_reports_status_for_both_providers(monkeypatch) -> None:
     assert status["tier2"]["fallback_model_mode"] == "default"
     assert status["tier2"]["model"] == "claude-sonnet-4-6"
     assert status["tier2"]["model_mode"] == "explicit"
-    assert {item["id"] for item in status["available_providers"]} == {"CLAUDE_CODE", "CODEX"}
+    assert {item["id"] for item in status["available_providers"]} == {"CLAUDE_CODE", "CODEX", "OLLAMA"}
 
 
 def test_llm_factory_includes_provider_runtime_status(monkeypatch) -> None:
@@ -206,6 +206,29 @@ async def test_llm_factory_manual_generate_forces_codex(monkeypatch) -> None:
     assert result == "codex-result"
     assert provider == "CODEX"
     assert codex.calls == [("hello", "")]
+    assert claude.calls == []
+
+
+@pytest.mark.asyncio
+async def test_llm_factory_manual_generate_forces_ollama(monkeypatch) -> None:
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.MANUAL_LLM_PROVIDER", "OLLAMA")
+
+    factory = LLMFactory()
+    codex = FakeProvider(LLMProvider.CODEX, available=True, result="codex-result")
+    claude = FakeProvider(LLMProvider.CLAUDE_CODE, available=True, result="claude-result")
+    ollama = FakeProvider(LLMProvider.OLLAMA, available=True, result="ollama-result")
+    factory._providers[LLMTier.TIER1] = {
+        LLMProvider.CODEX: codex,
+        LLMProvider.CLAUDE_CODE: claude,
+        LLMProvider.OLLAMA: ollama,
+    }
+
+    result, provider = await factory.generate_manual("hello", default_tier=LLMTier.TIER1)
+
+    assert result == "ollama-result"
+    assert provider == "OLLAMA"
+    assert ollama.calls == [("hello", "")]
+    assert codex.calls == []
     assert claude.calls == []
 
 

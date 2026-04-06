@@ -25,6 +25,7 @@ from strategy.risk_manager import risk_manager
 from strategy.signal import TradeSignal
 from strategy.stable_short import StableShortStrategy
 from strategy.trade_horizon import TradeHorizon, decide_trade_horizon
+from services.news_signal_service import news_signal_service
 from trading.adapters.base import BrokerAdapter
 from trading.broker_factory import get_broker_adapter
 from trading.enums import ActivityPhase, ActivityType, LLMTier, Market, OrderSide, OrderType, SignalAction, SignalUrgency
@@ -81,6 +82,7 @@ class TradingAgent:
         event_bus.subscribe(EventType.PRICE_DROP, self._on_market_event)
         event_bus.subscribe(EventType.STOP_LOSS_HIT, self._on_stop_loss)
         event_bus.subscribe(EventType.TAKE_PROFIT_HIT, self._on_take_profit)
+        event_bus.subscribe(EventType.NEW_NEWS_ITEM, self._on_news_item)
         logger.debug("AI Trading Agent 시작 — 실시간 이벤트 구독 활성화")
 
     async def stop(self) -> None:
@@ -409,16 +411,34 @@ class TradingAgent:
         if not balance.is_valid:
             raise RuntimeError("계좌 조회 실패")
         holding_symbols = [normalize_krx_symbol(holding.symbol) for holding in holdings]
+        holding_quantities = {
+            normalize_krx_symbol(holding.symbol): int(getattr(holding, "quantity", 0) or 0)
+            for holding in holdings
+        }
         snapshot = {
             "cash": balance.cash,
             "total_asset": balance.total_asset,
             "holding_count": len(holdings),
             "today_trade_count": await self._get_today_trade_count(),
             "holding_symbols": holding_symbols,
+            "holding_quantities": holding_quantities,
         }
         async with self._cash_lock:
             self._available_cash = balance.cash
         return snapshot
+
+    @staticmethod
+    def _resolve_sell_quantity_from_snapshot(
+        signal: TradeSignal,
+        portfolio_snapshot: dict | None = None,
+    ) -> int:
+        symbol = normalize_krx_symbol(getattr(signal, "symbol", ""))
+        holding_quantities = (portfolio_snapshot or {}).get("holding_quantities") or {}
+        try:
+            holding_qty = int(holding_quantities.get(symbol, 0) or 0)
+        except (TypeError, ValueError):
+            holding_qty = 0
+        return max(holding_qty, 0)
 
     async def _lookup_current_price(self, symbol: str, market: str | Market = Market.KRX) -> float:
         """현재 브로커 어댑터 기준 실시간 현재가 조회"""
@@ -958,6 +978,29 @@ class TradingAgent:
                     detail=gate_eval,
                 )
                 return result
+            news_gate = await self._evaluate_news_gate(
+                symbol=symbol,
+                horizon=(signal.metadata or {}).get("trade_horizon"),
+            )
+            await self._record_news_shadow_decision(
+                symbol=symbol,
+                name=name,
+                strategy_type=strategy_type,
+                horizon=(signal.metadata or {}).get("trade_horizon"),
+                gate_eval=gate_eval,
+                news_gate=news_gate,
+                cycle_id=cycle_id,
+            )
+            if not news_gate["approved"]:
+                await activity_logger.log(
+                    ActivityType.RISK_GATE, ActivityPhase.SKIP,
+                    f"🚫 [{name}] 뉴스 게이트 차단: {news_gate['reason']}",
+                    cycle_id=cycle_id, symbol=symbol,
+                    detail=news_gate,
+                )
+                return result
+        else:
+            news_gate = None
 
         # 4.5 매도 시 보유 여부 확인 — 미보유 종목 매도 차단
         if signal.action == SignalAction.SELL:
@@ -971,6 +1014,24 @@ class TradingAgent:
                     cycle_id=cycle_id, symbol=symbol,
                 )
                 return result
+            holding_qty = self._resolve_sell_quantity_from_snapshot(signal, snap)
+            if holding_qty <= 0:
+                logger.debug("보유 수량 0으로 매도 스킵: {}", symbol)
+                await activity_logger.log(
+                    ActivityType.RISK_CHECK, ActivityPhase.SKIP,
+                    f"🚫 [{name}] 보유 수량 0주 → 매도 차단",
+                    cycle_id=cycle_id, symbol=symbol,
+                )
+                return result
+            if int(signal.suggested_quantity or 0) != holding_qty:
+                logger.info(
+                    "[{}] 매도 수량 보정: AI {}주 → 보유 {}주",
+                    symbol,
+                    int(signal.suggested_quantity or 0),
+                    holding_qty,
+                )
+                signal.suggested_quantity = holding_qty
+                signal.metadata["sell_quantity_source"] = "HOLDING_SNAPSHOT"
 
         # 5. 리스크 검사
         snap = portfolio_snapshot or {}
@@ -1032,13 +1093,22 @@ class TradingAgent:
             "ai_stop_loss_price": analysis.get("stop_loss_price"),
             "entry_rsi": indicators.get("rsi_14"),
             "entry_macd_hist": indicators.get("macd_histogram"),
+            "entry_pattern": self._extract_entry_pattern(chart_result),
             "market_regime": self._market_regime,
             "strategy_type": strategy_type,
             "stock_name": name,
             "trade_horizon": (signal.metadata or {}).get("trade_horizon"),
+            "chart_signal_direction": (chart_result.signal_summary or {}).get("direction"),
+            "chart_signal_confidence": (chart_result.signal_summary or {}).get("confidence"),
             "estimated_edge_bps": gate_eval.get("edge_bps") if gate_eval else None,
             "estimated_cost_bps": gate_eval.get("cost_bps") if gate_eval else None,
+            "edge_to_cost_ratio": gate_eval.get("edge_to_cost_ratio") if gate_eval else None,
             "cost_gate_ratio": gate_eval.get("min_ratio") if gate_eval else None,
+            "news_negative_pressure": news_gate.get("negative_pressure") if news_gate else None,
+            "news_negative_count": news_gate.get("negative_count") if news_gate else None,
+            "news_source_count": news_gate.get("source_count") if news_gate else None,
+            "news_threshold": news_gate.get("threshold") if news_gate else None,
+            "news_top_contributors": (news_gate.get("contributors") or [])[:3] if news_gate else None,
         }
 
         exec_result = await decision_maker.execute(
@@ -1803,9 +1873,82 @@ class TradingAgent:
             ),
             "edge_bps": edge_bps,
             "cost_bps": total_cost_bps,
+            "edge_to_cost_ratio": (edge_bps / total_cost_bps) if total_cost_bps > 0 else None,
             "min_ratio": min_ratio,
             "horizon": horizon_key,
         }
+
+    @staticmethod
+    def _extract_entry_pattern(chart_result: ChartAnalysisResult | None) -> str | None:
+        if not chart_result:
+            return None
+        patterns = ((chart_result.patterns or {}).get("patterns") or [])
+        if patterns:
+            first = patterns[0]
+            label = str(first.get("description") or first.get("name") or "").strip()
+            if label:
+                return label
+        trend = str(((chart_result.patterns or {}).get("trend") or "")).strip()
+        return trend or None
+
+    async def _evaluate_news_gate(self, *, symbol: str, horizon: str | None = None) -> dict:
+        if not settings.NEWS_GATE_ENABLED:
+            return {"approved": True, "reason": "뉴스 게이트 비활성화"}
+
+        try:
+            async with AsyncSessionLocal() as session:
+                return await news_signal_service.evaluate_gate(
+                    session,
+                    symbol=symbol,
+                    horizon=horizon,
+                )
+        except Exception as exc:
+            logger.warning("[{}] 뉴스 게이트 평가 실패, 보수적 통과: {}", symbol, str(exc))
+            return {
+                "approved": True,
+                "reason": f"뉴스 게이트 평가 실패: {str(exc)[:80]}",
+                "negative_pressure": 0.0,
+                "negative_count": 0,
+            }
+
+    async def _record_news_shadow_decision(
+        self,
+        *,
+        symbol: str,
+        name: str,
+        strategy_type: str,
+        horizon: str | None,
+        gate_eval: dict | None,
+        news_gate: dict | None,
+        cycle_id: str | None,
+    ) -> None:
+        if not bool(getattr(settings, "NEWS_SHADOW_ENABLED", True)):
+            return
+
+        detail = {
+            "kind": "NEWS_SHADOW_AB",
+            "policy": "NEWS_GATE",
+            "strategy_type": strategy_type,
+            "horizon": str(horizon or TradeHorizon.MID).upper(),
+            "actual_decision": "BUY" if (news_gate or {}).get("approved", True) else "BLOCK",
+            "baseline_decision": "BUY",
+            "blocked_by_news": not bool((news_gate or {}).get("approved", True)),
+            "negative_pressure": (news_gate or {}).get("negative_pressure"),
+            "threshold": (news_gate or {}).get("threshold"),
+            "source_count": (news_gate or {}).get("source_count"),
+            "edge_bps": (gate_eval or {}).get("edge_bps"),
+            "cost_bps": (gate_eval or {}).get("cost_bps"),
+            "edge_to_cost_ratio": (gate_eval or {}).get("edge_to_cost_ratio"),
+            "contributors": (news_gate or {}).get("contributors") or [],
+        }
+        await activity_logger.log(
+            ActivityType.REPORT,
+            ActivityPhase.COMPLETE,
+            f"🧪 [{name}] Shadow A/B: 뉴스ON={detail['actual_decision']} / 뉴스OFF=BUY",
+            cycle_id=cycle_id,
+            symbol=symbol,
+            detail=detail,
+        )
 
     async def _get_today_trade_count(self) -> int:
         """당일 체결 건수 조회"""
@@ -2074,6 +2217,85 @@ class TradingAgent:
             logger.error("실시간 분석 오류 ({}): {}", symbol, str(e))
         finally:
             self._analyzing.discard(symbol)
+
+    async def _on_news_item(self, event: Event) -> None:
+        """신규 뉴스 유입 → 보유/감시 종목만 증분 재검증"""
+        if not self._running:
+            return
+
+        from scheduler.market_calendar import market_calendar
+        if not market_calendar.is_krx_trading_hours():
+            return
+
+        symbols = [
+            normalize_krx_symbol(item)
+            for item in (event.data.get("symbols") or [])
+            if normalize_krx_symbol(item)
+        ]
+        if not symbols:
+            single = normalize_krx_symbol(event.data.get("symbol", ""))
+            symbols = [single] if single else []
+        if not symbols:
+            return
+
+        try:
+            snapshot = await self._build_portfolio_snapshot()
+        except Exception as e:
+            logger.warning("뉴스 재검증 스냅샷 조회 실패: {}", str(e))
+            return
+
+        tracked_symbols = {
+            normalize_krx_symbol(item)
+            for item in snapshot.get("holding_symbols", [])
+        }
+        tracked_symbols.update(
+            normalize_krx_symbol(item)
+            for item in event_detector.monitored_symbols
+        )
+        impacted = [symbol for symbol in symbols if symbol in tracked_symbols]
+        if not impacted:
+            return
+
+        awaitable_log = activity_logger.log
+        await awaitable_log(
+            ActivityType.EVENT, ActivityPhase.PROGRESS,
+            f"📰 신규 뉴스 감지 → 관련 종목 재검증 ({', '.join(impacted[:5])})",
+            detail={"symbols": impacted, "title": event.data.get("title", "")},
+        )
+
+        self._trading_context = await self._build_trading_context()
+
+        import time as _time
+        cooldown_sec = max(int(getattr(settings, "NEWS_RECHECK_COOLDOWN_SEC", 300) or 300), 1)
+        now_ts = _time.time()
+
+        for symbol in impacted:
+            news_key = f"news:{symbol}"
+            last_ts = self._cooldowns.get(news_key, 0)
+            if now_ts - last_ts < cooldown_sec:
+                continue
+            if symbol in self._selling or symbol in self._analyzing:
+                continue
+
+            self._cooldowns[news_key] = now_ts
+            self._analyzing.add(symbol)
+            try:
+                stock_info = {
+                    "symbol": symbol,
+                    "name": self._resolve_name(symbol),
+                    "strategy_type": "STABLE_SHORT",
+                    "trigger": event.type.value,
+                }
+                cycle_id = activity_logger.start_cycle()
+                await self._analyze_and_trade(
+                    stock_info,
+                    cycle_id,
+                    portfolio_snapshot=snapshot,
+                )
+            except Exception as e:
+                logger.error("뉴스 재검증 오류 ({}): {}", symbol, str(e))
+            finally:
+                self._analyzing.discard(symbol)
 
     async def _on_stop_loss(self, event: Event) -> None:
         """손절선 도달 → 즉시 매도"""

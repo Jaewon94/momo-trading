@@ -6,6 +6,7 @@ from loguru import logger
 
 from analysis.llm.claude_code_provider import ClaudeCodeProvider
 from analysis.llm.codex_provider import CodexProvider
+from analysis.llm.ollama_provider import OllamaProvider
 from core.config import DEFAULT_LLM_MODEL, normalize_llm_model_value, settings
 from trading.enums import ActivityPhase, ActivityType, LLMProvider, LLMTier
 
@@ -22,10 +23,12 @@ class LLMFactory:
             LLMTier.TIER1: {
                 LLMProvider.CLAUDE_CODE: ClaudeCodeProvider(LLMTier.TIER1),
                 LLMProvider.CODEX: CodexProvider(LLMTier.TIER1),
+                LLMProvider.OLLAMA: OllamaProvider(LLMTier.TIER1),
             },
             LLMTier.TIER2: {
                 LLMProvider.CLAUDE_CODE: ClaudeCodeProvider(LLMTier.TIER2),
                 LLMProvider.CODEX: CodexProvider(LLMTier.TIER2),
+                LLMProvider.OLLAMA: OllamaProvider(LLMTier.TIER2),
             },
         }
 
@@ -78,9 +81,13 @@ class LLMFactory:
     ):
         normalized_override = normalize_llm_model_value(model_override) if model_override is not None else None
         if normalized_override in (None, DEFAULT_LLM_MODEL):
-            return self._providers[tier][provider_key]
+            existing = self._providers.get(tier, {}).get(provider_key)
+            if existing is not None:
+                return existing
         if provider_key == LLMProvider.CLAUDE_CODE:
             return ClaudeCodeProvider(tier, model_override=normalized_override)
+        if provider_key == LLMProvider.OLLAMA:
+            return OllamaProvider(tier, model_override=normalized_override)
         return CodexProvider(tier, model_override=normalized_override)
 
     def _uses_claude_sessions(self) -> bool:
@@ -90,7 +97,9 @@ class LLMFactory:
         return False
 
     def _provider_runtime_status(self, provider_key: LLMProvider) -> dict:
-        provider = self._providers[LLMTier.TIER1][provider_key]
+        provider = self._providers.get(LLMTier.TIER1, {}).get(provider_key)
+        if provider is None:
+            provider = self._build_provider(LLMTier.TIER1, provider_key)
         if hasattr(provider, "status_snapshot"):
             return provider.status_snapshot()
         return {
@@ -264,14 +273,24 @@ class LLMFactory:
         tier2_model = normalize_llm_model_value(settings.CLAUDE_CODE_MODEL_TIER2 or settings.CLAUDE_CODE_MODEL)
         codex_tier1_model = normalize_llm_model_value(settings.CODEX_MODEL_TIER1 or settings.CODEX_MODEL)
         codex_tier2_model = normalize_llm_model_value(settings.CODEX_MODEL_TIER2 or settings.CODEX_MODEL)
+        ollama_tier1_model = normalize_llm_model_value(settings.OLLAMA_MODEL_TIER1 or settings.OLLAMA_MODEL)
+        ollama_tier2_model = normalize_llm_model_value(settings.OLLAMA_MODEL_TIER2 or settings.OLLAMA_MODEL)
         tier1_provider = (settings.LLM_PROVIDER_TIER1 or settings.LLM_PROVIDER or "CLAUDE_CODE").upper()
         tier2_provider = (settings.LLM_PROVIDER_TIER2 or settings.LLM_PROVIDER or "CLAUDE_CODE").upper()
         tier1_fallback_provider = (settings.LLM_FALLBACK_PROVIDER_TIER1 or "").upper()
         tier2_fallback_provider = (settings.LLM_FALLBACK_PROVIDER_TIER2 or "").upper()
         tier1_fallback_model = self._fallback_model_for_tier(LLMTier.TIER1)
         tier2_fallback_model = self._fallback_model_for_tier(LLMTier.TIER2)
-        tier1_selected_model = codex_tier1_model if tier1_provider == "CODEX" else tier1_model
-        tier2_selected_model = codex_tier2_model if tier2_provider == "CODEX" else tier2_model
+        tier1_selected_model = (
+            codex_tier1_model if tier1_provider == "CODEX"
+            else ollama_tier1_model if tier1_provider == "OLLAMA"
+            else tier1_model
+        )
+        tier2_selected_model = (
+            codex_tier2_model if tier2_provider == "CODEX"
+            else ollama_tier2_model if tier2_provider == "OLLAMA"
+            else tier2_model
+        )
         return {
             "tier1": {
                 "provider": tier1_provider,
@@ -312,10 +331,22 @@ class LLMFactory:
                     "has_key": True,
                     "runtime": self._provider_runtime_status(LLMProvider.CODEX),
                 },
+                {
+                    "id": "OLLAMA",
+                    "name": "Ollama (로컬)",
+                    "models": {"tier1": ollama_tier1_model, "tier2": ollama_tier2_model},
+                    "has_key": False,
+                    "runtime": self._provider_runtime_status(LLMProvider.OLLAMA),
+                },
             ],
             "manual_selection": {
                 "provider": (settings.MANUAL_LLM_PROVIDER or "AUTOMATIC").upper(),
-                "options": ["AUTOMATIC", "CLAUDE_CODE", "CODEX"],
+                "options": ["AUTOMATIC", "CLAUDE_CODE", "CODEX", "OLLAMA"],
+            },
+            "news_selection": {
+                "enabled": bool(settings.NEWS_LLM_ENABLED),
+                "provider": (settings.NEWS_LLM_PROVIDER or "AUTOMATIC").upper(),
+                "options": ["AUTOMATIC", "CLAUDE_CODE", "CODEX", "OLLAMA"],
             },
         }
 

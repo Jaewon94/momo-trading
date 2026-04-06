@@ -34,6 +34,7 @@ async def _recover_pending_confirms() -> dict[str, int | str]:
         "skipped": 0,
     }
     try:
+        from agent.decision_maker import DecisionMaker
         from core.database import AsyncSessionLocal
         from repositories.trade_result_repository import TradeResultRepository
         from trading.enums import BrokerProvider, OrderConfirmStatus
@@ -65,6 +66,7 @@ async def _recover_pending_confirms() -> dict[str, int | str]:
                 failed = 0
                 for tr in pending:
                     matched = order_map.get(str(tr.order_id))
+                    symbol = normalize_krx_symbol(getattr(tr, "stock_symbol", ""))
                     if matched:
                         filled_qty = int(getattr(matched, "filled_qty", 0) or 0)
                         if filled_qty > 0:
@@ -91,8 +93,58 @@ async def _recover_pending_confirms() -> dict[str, int | str]:
                             )
                             summary["skipped"] = int(summary["skipped"]) + 1
                             continue
+                    elif tr.side == "SELL":
+                        holding = holding_map.get(symbol)
+                        current_qty = int(getattr(holding, "quantity", 0) or 0) if holding else 0
+                        open_buys = await repo.get_all_open_buys(symbol)
+                        total_open_qty = sum(int(getattr(open_buy, "quantity", 0) or 0) for open_buy in open_buys)
+                        if (
+                            adapter.provider == BrokerProvider.KIWOOM
+                            and total_open_qty > 0
+                            and 0 <= current_qty < total_open_qty
+                        ):
+                            inferred_qty = total_open_qty - current_qty
+                            requested_qty = int(getattr(tr, "quantity", 0) or 0)
+                            if inferred_qty <= 0 or (requested_qty > 0 and inferred_qty > requested_qty):
+                                logger.warning(
+                                    "PENDING 복구 보류: {} {} 주문번호={} — 키움 체결수량 추론 불일치 (요청 {}주 / 추론 {}주)",
+                                    tr.stock_symbol, tr.side, tr.order_id, requested_qty, inferred_qty,
+                                )
+                                summary["skipped"] = int(summary["skipped"]) + 1
+                                continue
+                            filled_price = float(getattr(tr, "exit_price", 0.0) or 0.0)
+                            tr.status = OrderConfirmStatus.CONFIRMED.value
+                            tr.quantity = inferred_qty
+                            tr.exit_at = tr.exit_at or now_kst()
+                            tr.exit_reason = getattr(tr, "exit_reason", "") or "SIGNAL"
+                            sell_fill = DecisionMaker._apply_sell_fill_to_open_buys(
+                                session,
+                                open_buys,
+                                symbol=symbol,
+                                filled_qty=inferred_qty,
+                                filled_price=filled_price,
+                                exit_reason=tr.exit_reason,
+                                closed_at=tr.exit_at,
+                            )
+                            tr.notes = DecisionMaker._build_sell_fill_notes(
+                                partial_exit=bool(sell_fill["partial_exit"]),
+                                filled_quantity=int(sell_fill["applied_quantity"] or 0),
+                                requested_quantity=requested_qty or inferred_qty,
+                                remaining_open_quantity=int(sell_fill["remaining_open_quantity"] or 0),
+                                closed_lot_count=int(sell_fill["closed_lot_count"] or 0),
+                            )
+                            recovered += 1
+                            summary["recovered"] = int(summary["recovered"]) + 1
+                            logger.debug(
+                                "PENDING 복구({} 매도 추론): {} {} {}주 → CONFIRMED",
+                                "부분" if sell_fill["partial_exit"] else "전량",
+                                tr.stock_symbol,
+                                tr.side,
+                                int(sell_fill["applied_quantity"] or 0),
+                            )
+                            continue
                     elif tr.side == "BUY":
-                        holding = holding_map.get(normalize_krx_symbol(getattr(tr, "stock_symbol", "")))
+                        holding = holding_map.get(symbol)
                         if holding is not None:
                             inferred_qty = min(int(holding.quantity), int(tr.quantity or holding.quantity))
                             if inferred_qty > 0:

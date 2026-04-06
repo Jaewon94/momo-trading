@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -28,6 +29,24 @@ async def test_admin_position_detail_route_returns_summary_and_timeline(client, 
         entry_rsi=None,
         entry_pattern=None,
         market_regime="BULL",
+        notes=json.dumps({
+            "trade_horizon": "MID",
+            "estimated_edge_bps": 182.4,
+            "estimated_cost_bps": 61,
+            "edge_to_cost_ratio": 2.99,
+            "cost_gate_ratio": 1.3,
+            "news_negative_pressure": 0.22,
+            "news_negative_count": 2,
+            "news_source_count": 2,
+            "news_threshold": 0.75,
+            "news_top_contributors": [
+                {"headline": "한글 번역 제목", "pressure": 0.11},
+                {"headline": "공급 차질 우려", "pressure": 0.07},
+            ],
+            "chart_signal_direction": "BULLISH",
+            "chart_signal_confidence": 0.74,
+            "entry_pattern": "상승 추세 지속",
+        }, ensure_ascii=False),
         status="CONFIRMED",
         entry_at=datetime(2026, 4, 3, 9, 5),
         exit_at=None,
@@ -48,6 +67,25 @@ async def test_admin_position_detail_route_returns_summary_and_timeline(client, 
         confidence=0.82,
         error_message=None,
         created_at=datetime(2026, 4, 3, 9, 4),
+    )
+    news_item = SimpleNamespace(
+        id="n1",
+        source_code="DART",
+        source_name="금융감독원 전자공시",
+        source_tier="A",
+        region="KR",
+        official=True,
+        language="ko",
+        title="삼성전자 시설투자 공시",
+        summary="대규모 설비투자 계획 공시",
+        url="https://dart.fss.or.kr/example/005930",
+        published_at=datetime(2026, 4, 3, 9, 3),
+        sentiment_label="POSITIVE",
+        sentiment_score=0.76,
+        impact_score=0.88,
+        trust_score=1.0,
+        symbols_csv=",005930,",
+        created_at=datetime(2026, 4, 3, 9, 3),
     )
 
     class FakeTradeRepo:
@@ -86,8 +124,20 @@ async def test_admin_position_detail_route_returns_summary_and_timeline(client, 
                 ),
             ]
 
+    class FakeNewsRepo:
+        def __init__(self, _db) -> None:
+            pass
+
+        async def get_recent(self, *, limit=50, offset=0, symbol=None, source_code=None):
+            assert symbol == "005930"
+            assert limit == 21
+            assert offset == 0
+            assert source_code is None
+            return [news_item]
+
     monkeypatch.setattr("api.routes.admin.TradeResultRepository", FakeTradeRepo, raising=False)
     monkeypatch.setattr("api.routes.admin.AgentActivityRepository", FakeActivityRepo, raising=False)
+    monkeypatch.setattr("api.routes.admin.NewsItemRepository", FakeNewsRepo, raising=False)
     monkeypatch.setattr("api.routes.admin.get_broker_adapter", lambda: FakeBrokerAdapter(), raising=False)
 
     response = await client.get("/api/v1/admin/positions/005930")
@@ -97,9 +147,16 @@ async def test_admin_position_detail_route_returns_summary_and_timeline(client, 
     assert payload["symbol"] == "005930"
     assert payload["summary"]["holding"]["current_price"] == 73500.0
     assert payload["summary"]["latest_signal"]["recommendation"] == "BUY"
+    assert payload["summary"]["decision_insight"]["horizon"] == "MID"
+    assert payload["summary"]["decision_insight"]["cost"]["ratio"] == 2.99
+    assert payload["summary"]["decision_insight"]["news"]["contributors"][0]["headline"] == "한글 번역 제목"
+    assert payload["summary"]["decision_insight"]["chart"]["direction"] == "BULLISH"
     assert payload["summary"]["trade_stats"]["open_buy_count"] == 1
     assert payload["summary"]["holding_status"] == "ok"
-    assert [item["type"] for item in payload["timeline"]] == ["trade", "activity"]
+    assert [item["type"] for item in payload["timeline"]] == ["trade", "activity", "news"]
+    assert payload["timeline"][2]["title"] == "삼성전자 시설투자 공시"
+    assert payload["timeline"][2]["detail"]["source_code"] == "DART"
+    assert payload["timeline"][2]["detail"]["impact_score"] == 0.88
     assert payload["timeline_page"]["limit"] == 20
     assert payload["timeline_page"]["offset"] == 0
     assert payload["timeline_page"]["has_more"] is False
@@ -233,6 +290,13 @@ async def test_admin_position_detail_route_survives_holding_timeout(client, monk
         async def get_by_symbol(self, symbol, limit=50):
             return []
 
+    class EmptyNewsRepo:
+        def __init__(self, _db) -> None:
+            pass
+
+        async def get_recent(self, *, limit=50, offset=0, symbol=None, source_code=None):
+            return []
+
     class SlowBrokerAdapter:
         async def get_holdings(self):
             await asyncio.sleep(0.05)
@@ -240,6 +304,7 @@ async def test_admin_position_detail_route_survives_holding_timeout(client, monk
 
     monkeypatch.setattr("api.routes.admin.TradeResultRepository", FakeTradeRepo, raising=False)
     monkeypatch.setattr("api.routes.admin.AgentActivityRepository", FakeActivityRepo, raising=False)
+    monkeypatch.setattr("api.routes.admin.NewsItemRepository", EmptyNewsRepo, raising=False)
     monkeypatch.setattr("api.routes.admin.get_broker_adapter", lambda: SlowBrokerAdapter(), raising=False)
     monkeypatch.setattr("api.routes.admin.POSITION_DETAIL_HOLDING_TIMEOUT_SEC", 0.001, raising=False)
     monkeypatch.setattr("api.routes.admin._position_holdings_cache", {"items": None, "fetched_at": 0.0}, raising=False)

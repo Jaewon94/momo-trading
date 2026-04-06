@@ -16,6 +16,25 @@ async def test_admin_settings_exposes_manual_llm_provider(client):
     assert "CODEX_MODEL" in payload["data"]
     assert "CODEX_MODEL_TIER1" in payload["data"]
     assert "CODEX_MODEL_TIER2" in payload["data"]
+    assert "NEWS_LLM_ENABLED" in payload["data"]
+    assert "NEWS_LLM_PROVIDER" in payload["data"]
+    assert "NEWS_DOMESTIC_MEDIA_ENABLED" in payload["data"]
+    assert "NEWS_INCLUDE_FOREIGN" in payload["data"]
+    assert "NEWS_NASDAQ_ENABLED" in payload["data"]
+    assert "NEWS_GATE_ENABLED" in payload["data"]
+    assert "NEWS_LOOKBACK_HOURS" in payload["data"]
+    assert "NEWS_NEGATIVE_BLOCK_THRESHOLD" in payload["data"]
+    assert "NEWS_POLL_ENABLED" in payload["data"]
+    assert "NEWS_POLL_INTERVAL_MIN_TRADING" in payload["data"]
+    assert "NEWS_SHADOW_ENABLED" in payload["data"]
+    assert "NEWS_ROLLOUT_MIN_SAMPLE_SIZE" in payload["data"]
+    assert "NEWS_ROLLOUT_MIN_PROFIT_FACTOR" in payload["data"]
+    assert "NEWS_ROLLOUT_MIN_EXPECTANCY" in payload["data"]
+    assert "NEWS_ROLLOUT_MAX_DRAWDOWN_KRW" in payload["data"]
+    assert "OLLAMA_BASE_URL" in payload["data"]
+    assert "OLLAMA_MODEL" in payload["data"]
+    assert "OLLAMA_MODEL_TIER1" in payload["data"]
+    assert "OLLAMA_MODEL_TIER2" in payload["data"]
     assert "strategy_insights" in payload["data"]
 
 
@@ -31,6 +50,50 @@ async def test_admin_settings_updates_manual_llm_provider(client):
 
     assert settings_response.status_code == 200
     assert settings_response.json()["data"]["MANUAL_LLM_PROVIDER"] == "CODEX"
+
+
+async def test_admin_settings_updates_news_llm_provider(client):
+    response = await client.put(
+        "/api/v1/admin/settings",
+        json={
+            "NEWS_LLM_PROVIDER": "OLLAMA",
+            "NEWS_LLM_ENABLED": False,
+            "NEWS_DOMESTIC_MEDIA_ENABLED": True,
+            "NEWS_INCLUDE_FOREIGN": False,
+            "NEWS_NASDAQ_ENABLED": False,
+            "NEWS_GATE_ENABLED": False,
+            "NEWS_POLL_ENABLED": False,
+            "NEWS_POLL_INTERVAL_MIN_TRADING": 7,
+            "NEWS_SHADOW_ENABLED": False,
+            "NEWS_ROLLOUT_MIN_SAMPLE_SIZE": 18,
+            "NEWS_ROLLOUT_MIN_PROFIT_FACTOR": 1.25,
+            "NEWS_ROLLOUT_MIN_EXPECTANCY": 320.0,
+            "NEWS_ROLLOUT_MAX_DRAWDOWN_KRW": 750000,
+            "OLLAMA_BASE_URL": "http://127.0.0.1:11434",
+            "OLLAMA_MODEL_TIER1": "qwen2.5:7b",
+        },
+    )
+
+    assert response.status_code == 200
+
+    settings_response = await client.get("/api/v1/admin/settings")
+
+    assert settings_response.status_code == 200
+    assert settings_response.json()["data"]["NEWS_LLM_PROVIDER"] == "OLLAMA"
+    assert settings_response.json()["data"]["NEWS_LLM_ENABLED"] is False
+    assert settings_response.json()["data"]["NEWS_DOMESTIC_MEDIA_ENABLED"] is True
+    assert settings_response.json()["data"]["NEWS_INCLUDE_FOREIGN"] is False
+    assert settings_response.json()["data"]["NEWS_NASDAQ_ENABLED"] is False
+    assert settings_response.json()["data"]["NEWS_GATE_ENABLED"] is False
+    assert settings_response.json()["data"]["NEWS_POLL_ENABLED"] is False
+    assert settings_response.json()["data"]["NEWS_POLL_INTERVAL_MIN_TRADING"] == 7
+    assert settings_response.json()["data"]["NEWS_SHADOW_ENABLED"] is False
+    assert settings_response.json()["data"]["NEWS_ROLLOUT_MIN_SAMPLE_SIZE"] == 18
+    assert settings_response.json()["data"]["NEWS_ROLLOUT_MIN_PROFIT_FACTOR"] == 1.25
+    assert settings_response.json()["data"]["NEWS_ROLLOUT_MIN_EXPECTANCY"] == 320.0
+    assert settings_response.json()["data"]["NEWS_ROLLOUT_MAX_DRAWDOWN_KRW"] == 750000.0
+    assert settings_response.json()["data"]["OLLAMA_BASE_URL"] == "http://127.0.0.1:11434"
+    assert settings_response.json()["data"]["OLLAMA_MODEL_TIER1"] == "qwen2.5:7b"
 
 
 async def test_admin_settings_updates_tier_provider_and_fallback(client):

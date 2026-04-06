@@ -4,6 +4,7 @@ from sqlalchemy import StaticPool
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from core.database import get_async_db, get_async_db_with_transaction
+import models  # noqa: F401
 from models.base import Base
 
 # ── Async Test DB (in-memory SQLite) ──

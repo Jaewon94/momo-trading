@@ -13,6 +13,10 @@ def _write_executable(path: Path, content: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
+def _read_lines(path: Path) -> list[str]:
+    return path.read_text(encoding="utf-8").splitlines()
+
+
 def _build_test_env(
     tmp_path: Path,
     broker_provider: str,
@@ -114,7 +118,9 @@ def test_start_script_starts_kis_mcp_when_broker_provider_is_kis(tmp_path: Path)
 
     assert result.returncode == 0
     assert docker_log.read_text(encoding="utf-8").splitlines() == ["compose", "up", "-d", "kis-mcp"]
-    assert python_log.read_text(encoding="utf-8").splitlines()[0:3] == ["-m", "uvicorn", "main:app"]
+    python_lines = _read_lines(python_log)
+    uvicorn_index = python_lines.index("uvicorn")
+    assert python_lines[uvicorn_index - 1 : uvicorn_index + 2] == ["-m", "uvicorn", "main:app"]
 
 
 def test_start_script_stops_kis_mcp_when_broker_provider_is_not_kis(tmp_path: Path) -> None:
@@ -131,7 +137,41 @@ def test_start_script_stops_kis_mcp_when_broker_provider_is_not_kis(tmp_path: Pa
 
     assert result.returncode == 0
     assert docker_log.read_text(encoding="utf-8").splitlines() == ["compose", "stop", "kis-mcp"]
-    assert python_log.read_text(encoding="utf-8").splitlines()[0:3] == ["-m", "uvicorn", "main:app"]
+    python_lines = _read_lines(python_log)
+    uvicorn_index = python_lines.index("uvicorn")
+    assert python_lines[uvicorn_index - 1 : uvicorn_index + 2] == ["-m", "uvicorn", "main:app"]
+
+
+def test_start_script_default_foreground_does_not_enable_reload(tmp_path: Path) -> None:
+    env, _, python_log = _build_test_env(tmp_path, "KIWOOM")
+
+    result = subprocess.run(
+        ["bash", str(START_SCRIPT)],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "--reload" not in python_log.read_text(encoding="utf-8").splitlines()
+
+
+def test_start_script_enables_reload_only_with_explicit_flag(tmp_path: Path) -> None:
+    env, _, python_log = _build_test_env(tmp_path, "KIWOOM")
+
+    result = subprocess.run(
+        ["bash", str(START_SCRIPT), "--reload"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "--reload" in python_log.read_text(encoding="utf-8").splitlines()
 
 
 def test_start_script_blocks_start_when_target_port_is_already_in_use(tmp_path: Path) -> None:

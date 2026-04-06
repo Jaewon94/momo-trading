@@ -2,6 +2,7 @@
 from loguru import logger
 
 from analysis.llm.llm_factory import llm_factory
+from core.config import settings
 from trading.enums import LLMTier
 
 
@@ -10,6 +11,9 @@ class NewsAnalyzer:
 
     async def analyze_sentiment(self, stock_name: str, news_items: list[str]) -> dict:
         """뉴스 헤드라인 감성 분석"""
+        if not settings.NEWS_LLM_ENABLED:
+            return {"sentiment": "NEUTRAL", "score": 0.5, "summary": "뉴스 LLM 비활성화"}
+
         if not news_items:
             return {"sentiment": "NEUTRAL", "score": 0.5, "summary": "뉴스 데이터 없음"}
 
@@ -33,7 +37,11 @@ sentiment: POSITIVE | NEUTRAL | NEGATIVE
 score: 0.0 (매우 부정) ~ 1.0 (매우 긍정)"""
 
         try:
-            result, provider = await llm_factory.generate_tier1(prompt)
+            result, provider = await llm_factory.generate_manual(
+                prompt,
+                default_tier=LLMTier.TIER1,
+                manual_provider_override=(settings.NEWS_LLM_PROVIDER or "AUTOMATIC"),
+            )
             import json
             # JSON 파싱 시도
             start = result.find("{")

@@ -184,6 +184,211 @@ async def test_recover_pending_confirms_keeps_kiwoom_pending_when_unverifiable(m
 
 
 @pytest.mark.asyncio
+async def test_recover_pending_confirms_recovers_kiwoom_full_sell_when_holding_is_gone(monkeypatch) -> None:
+    pending_trade = SimpleNamespace(
+        order_id="0099007",
+        stock_symbol="215790",
+        side="SELL",
+        quantity=22000,
+        entry_price=0.0,
+        exit_price=1574.0,
+        pnl=0.0,
+        return_pct=0.0,
+        is_win=False,
+        hold_days=0,
+        exit_reason="",
+        exit_at=None,
+        notes="PENDING_CONFIRM: 체결 확인 대기 중",
+        status=OrderConfirmStatus.PENDING_CONFIRM.value,
+    )
+    open_buy = SimpleNamespace(
+        stock_symbol="215790",
+        side="BUY",
+        quantity=22000,
+        entry_price=1023.0,
+        pnl=0.0,
+        return_pct=0.0,
+        is_win=False,
+        hold_days=0,
+        exit_reason="",
+        exit_at=None,
+        entry_at=__import__("datetime").datetime(2026, 4, 2, 9, 8, 50),
+    )
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def begin(self):
+            return self
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_pending_confirms(self):
+            return [pending_trade]
+
+        async def get_all_open_buys(self, symbol):
+            assert symbol == "215790"
+            return [open_buy]
+
+    class FakeBrokerAdapter:
+        provider = BrokerProvider.KIWOOM
+
+        async def get_pending_orders(self):
+            return []
+
+        async def get_holdings(self):
+            return []
+
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("trading.broker_factory.get_broker_adapter", lambda: FakeBrokerAdapter())
+    monkeypatch.setattr(
+        "scheduler.jobs.portfolio_sync_job.now_kst",
+        lambda: __import__("datetime").datetime(2026, 4, 6, 11, 25, 0),
+    )
+
+    summary = await _recover_pending_confirms()
+
+    assert summary["recovered"] == 1
+    assert pending_trade.status == OrderConfirmStatus.CONFIRMED.value
+    assert pending_trade.notes is None
+
+
+@pytest.mark.asyncio
+async def test_recover_pending_confirms_recovers_kiwoom_partial_sell_from_remaining_holding(monkeypatch) -> None:
+    pending_trade = SimpleNamespace(
+        order_id="0099008",
+        stock_symbol="215790",
+        stock_name="이노인스트루먼트",
+        side="SELL",
+        strategy_type="SWING",
+        quantity=8,
+        entry_price=0.0,
+        exit_price=1574.0,
+        pnl=0.0,
+        return_pct=0.0,
+        is_win=False,
+        hold_days=0,
+        exit_reason="",
+        exit_at=None,
+        notes="PENDING_CONFIRM: 체결 확인 대기 중",
+        status=OrderConfirmStatus.PENDING_CONFIRM.value,
+    )
+    open_buy_1 = SimpleNamespace(
+        id="buy-1",
+        stock_symbol="215790",
+        stock_name="이노인스트루먼트",
+        side="BUY",
+        strategy_type="SWING",
+        quantity=5,
+        entry_price=1023.0,
+        pnl=0.0,
+        return_pct=0.0,
+        is_win=False,
+        hold_days=0,
+        exit_reason="",
+        exit_at=None,
+        entry_at=__import__("datetime").datetime(2026, 4, 2, 9, 8, 50),
+        status="CONFIRMED",
+        notes=None,
+    )
+    open_buy_2 = SimpleNamespace(
+        id="buy-2",
+        stock_symbol="215790",
+        stock_name="이노인스트루먼트",
+        side="BUY",
+        strategy_type="SWING",
+        quantity=3,
+        entry_price=1100.0,
+        pnl=0.0,
+        return_pct=0.0,
+        is_win=False,
+        hold_days=0,
+        exit_reason="",
+        exit_at=None,
+        entry_at=__import__("datetime").datetime(2026, 4, 2, 9, 20, 0),
+        status="CONFIRMED",
+        notes=None,
+    )
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.added = []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def begin(self):
+            return self
+
+        def add(self, obj):
+            self.added.append(obj)
+
+    session = FakeSession()
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_pending_confirms(self):
+            return [pending_trade]
+
+        async def get_all_open_buys(self, symbol):
+            assert symbol == "215790"
+            return [open_buy_1, open_buy_2]
+
+    class FakeBrokerAdapter:
+        provider = BrokerProvider.KIWOOM
+
+        async def get_pending_orders(self):
+            return []
+
+        async def get_holdings(self):
+            return [
+                HoldingInfo(
+                    symbol="215790",
+                    name="이노인스트루먼트",
+                    quantity=2,
+                    avg_buy_price=1100.0,
+                    current_price=1500.0,
+                    pnl=800.0,
+                    pnl_rate=36.36,
+                )
+            ]
+
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: session)
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("trading.broker_factory.get_broker_adapter", lambda: FakeBrokerAdapter())
+    monkeypatch.setattr(
+        "scheduler.jobs.portfolio_sync_job.now_kst",
+        lambda: __import__("datetime").datetime(2026, 4, 6, 11, 35, 0),
+    )
+
+    summary = await _recover_pending_confirms()
+
+    assert summary["recovered"] == 1
+    assert pending_trade.status == OrderConfirmStatus.CONFIRMED.value
+    assert pending_trade.quantity == 6
+    assert "PARTIAL_EXIT" in (pending_trade.notes or "")
+    assert open_buy_1.exit_at is not None
+    assert open_buy_2.quantity == 2
+    assert open_buy_2.exit_at is None
+    assert len(session.added) == 1
+    partial_close = session.added[0]
+    assert partial_close.exit_price == 1574.0
+    assert partial_close.exit_reason == "SIGNAL"
+
+
+@pytest.mark.asyncio
 async def test_repair_confirmed_zero_entry_prices_backfills_reconcilable_symbol(monkeypatch) -> None:
     zero_a = SimpleNamespace(
         stock_symbol="005930",

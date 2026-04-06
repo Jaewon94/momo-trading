@@ -86,18 +86,30 @@ class TradingScheduler:
             logger.debug("스케줄러 이미 실행 중")
             return
 
-        if not settings.SCHEDULER_ENABLED:
-            logger.debug("스케줄러 비활성화 (SCHEDULER_ENABLED=false)")
+        trading_jobs_enabled = bool(settings.SCHEDULER_ENABLED)
+        news_jobs_enabled = bool(settings.NEWS_POLL_ENABLED)
+
+        if not trading_jobs_enabled and not news_jobs_enabled:
+            logger.debug("스케줄러 비활성화 (SCHEDULER_ENABLED=false, NEWS_POLL_ENABLED=false)")
             return
 
         self.scheduler = self._build_scheduler()
-        self._setup_jobs()
+        self._setup_jobs(
+            include_trading_jobs=trading_jobs_enabled,
+            include_news_jobs=news_jobs_enabled,
+        )
         self.scheduler.start()
         self._running = True
-        logger.info("스케줄러 시작 — 트레이딩 타임라인 활성화")
+        if trading_jobs_enabled:
+            logger.info("스케줄러 시작 — 트레이딩 타임라인 활성화")
+        else:
+            logger.info("뉴스 폴링 스케줄러 시작 — 트레이딩 스케줄러 비활성")
 
         # 서버 기동 시 현재 상태에 맞는 초기 작업 실행
-        await self._on_startup()
+        if trading_jobs_enabled:
+            await self._on_startup()
+        elif news_jobs_enabled:
+            await self._news_poll()
 
     async def stop(self) -> None:
         if self._running:
@@ -106,118 +118,144 @@ class TradingScheduler:
             self.scheduler = self._build_scheduler()
             logger.info("스케줄러 중지")
 
-    def _setup_jobs(self) -> None:
+    def _setup_jobs(
+        self,
+        *,
+        include_trading_jobs: bool = True,
+        include_news_jobs: bool = True,
+    ) -> None:
         from scheduler.jobs.portfolio_sync_job import portfolio_sync_job
         from scheduler.jobs.market_data_job import market_data_job
 
-        # ── 장 시작 전 준비 (08:50 평일) — KRX 개장 10분 전 ──
-        self.scheduler.add_job(
-            self._pre_market,
-            "cron",
-            hour=8, minute=50,
-            day_of_week="mon-fri",
-            id="pre_market",
-            name="장 시작 전 준비",
-            misfire_grace_time=600,
-        )
+        if include_trading_jobs:
+            # ── 장 시작 전 준비 (08:50 평일) — KRX 개장 10분 전 ──
+            self.scheduler.add_job(
+                self._pre_market,
+                "cron",
+                hour=8, minute=50,
+                day_of_week="mon-fri",
+                id="pre_market",
+                name="장 시작 전 준비",
+                misfire_grace_time=600,
+            )
 
-        # ── 장 시작 스캔 (09:05 평일) — 전체 시장 스캔 → 종목 선정 → 매매 시작 ──
-        self.scheduler.add_job(
-            self._market_open_scan,
-            "cron",
-            hour=9, minute=5,
-            day_of_week="mon-fri",
-            id="market_open_scan",
-            name="장 시작 스캔 + 매매",
-            misfire_grace_time=600,
-        )
+            # ── 장 시작 스캔 (09:05 평일) — 전체 시장 스캔 → 종목 선정 → 매매 시작 ──
+            self.scheduler.add_job(
+                self._market_open_scan,
+                "cron",
+                hour=9, minute=5,
+                day_of_week="mon-fri",
+                id="market_open_scan",
+                name="장 시작 스캔 + 매매",
+                misfire_grace_time=600,
+            )
 
-        # ── 장중 재스캔 (11:00, 13:00 평일) — 새로운 기회 탐색 ──
-        self.scheduler.add_job(
-            self._intraday_rescan,
-            "cron",
-            hour="11,13", minute=0,
-            day_of_week="mon-fri",
-            id="intraday_rescan",
-            name="장중 재스캔",
-            misfire_grace_time=600,
-        )
+            # ── 장중 재스캔 (11:00, 13:00 평일) — 새로운 기회 탐색 ──
+            self.scheduler.add_job(
+                self._intraday_rescan,
+                "cron",
+                hour="11,13", minute=0,
+                day_of_week="mon-fri",
+                id="intraday_rescan",
+                name="장중 재스캔",
+                misfire_grace_time=600,
+            )
 
-        # ── 장중 보유종목 점검 (1시간 간격, 09:00~15:00) — WebSocket 보완용 안전망 ──
-        self.scheduler.add_job(
-            self._holdings_check,
-            "cron",
-            minute="0,15,30,45",
-            hour="9-14",
-            day_of_week="mon-fri",
-            id="holdings_check",
-            name="보유종목 손절/익절 점검",
-            misfire_grace_time=300,
-        )
+        if include_news_jobs:
+            self.scheduler.add_job(
+                self._news_poll,
+                "interval",
+                minutes=max(int(settings.NEWS_POLL_INTERVAL_MIN_TRADING or 5), 1),
+                id="news_poll_trading",
+                name="장중 뉴스 폴링",
+                kwargs={"market_hours": True},
+            )
 
-        # ── 장중 보유종목 AI 재평가 (30분 간격, 09:00~14:00) — 맥락 기반 HOLD/SELL + 임계값 조정 ──
-        self.scheduler.add_job(
-            self._intraday_holdings_review,
-            "cron",
-            minute="0,30",
-            hour="9-14",
-            day_of_week="mon-fri",
-            id="intraday_holdings_review",
-            name="장중 보유종목 AI 재평가",
-            misfire_grace_time=600,
-        )
+            self.scheduler.add_job(
+                self._news_poll,
+                "interval",
+                minutes=max(int(settings.NEWS_POLL_INTERVAL_MIN_OFF_HOURS or 30), 1),
+                id="news_poll_off_hours",
+                name="장외 뉴스 폴링",
+                kwargs={"market_hours": False},
+            )
 
-        # ── 장 마감 전 청산 (15:10 평일) — DAY_TRADING: 전량 매도 / 스윙: 스마트 청산 ──
-        self.scheduler.add_job(
-            self._force_liquidation,
-            "cron",
-            hour=settings.FORCE_LIQUIDATION_HOUR,
-            minute=settings.FORCE_LIQUIDATION_MINUTE,
-            day_of_week="mon-fri",
-            id="force_liquidation",
-            name="장 마감 전 청산",
-            misfire_grace_time=300,
-        )
+        if include_trading_jobs:
+            # ── 장중 보유종목 점검 (1시간 간격, 09:00~15:00) — WebSocket 보완용 안전망 ──
+            self.scheduler.add_job(
+                self._holdings_check,
+                "cron",
+                minute="0,15,30,45",
+                hour="9-14",
+                day_of_week="mon-fri",
+                id="holdings_check",
+                name="보유종목 손절/익절 점검",
+                misfire_grace_time=300,
+            )
 
-        # ── 장 마감 리뷰 (15:40 평일) — KRX 종가 기반 성과 리뷰 ──
-        self.scheduler.add_job(
-            self._post_market,
-            "cron",
-            hour=15, minute=40,
-            day_of_week="mon-fri",
-            id="post_market",
-            name="장 마감 성과 리뷰",
-            misfire_grace_time=3600,
-        )
+            # ── 장중 보유종목 AI 재평가 (30분 간격, 09:00~14:00) — 맥락 기반 HOLD/SELL + 임계값 조정 ──
+            self.scheduler.add_job(
+                self._intraday_holdings_review,
+                "cron",
+                minute="0,30",
+                hour="9-14",
+                day_of_week="mon-fri",
+                id="intraday_holdings_review",
+                name="장중 보유종목 AI 재평가",
+                misfire_grace_time=600,
+            )
 
-        # ── 포트폴리오 정산 (16:00) ──
-        self.scheduler.add_job(
-            portfolio_sync_job,
-            "cron",
-            hour=16, minute=0,
-            id="portfolio_sync",
-            name="포트폴리오 정산",
-            misfire_grace_time=3600,
-        )
+            # ── 장 마감 전 청산 (15:10 평일) — DAY_TRADING: 전량 매도 / 스윙: 스마트 청산 ──
+            self.scheduler.add_job(
+                self._force_liquidation,
+                "cron",
+                hour=settings.FORCE_LIQUIDATION_HOUR,
+                minute=settings.FORCE_LIQUIDATION_MINUTE,
+                day_of_week="mon-fri",
+                id="force_liquidation",
+                name="장 마감 전 청산",
+                misfire_grace_time=300,
+            )
 
-        # ── 일봉 데이터 수집 (16:30) ──
-        self.scheduler.add_job(
-            market_data_job,
-            "cron",
-            hour=16, minute=30,
-            id="market_data",
-            name="일봉 데이터 수집",
-            misfire_grace_time=3600,
-        )
+            # ── 장 마감 리뷰 (15:40 평일) — KRX 종가 기반 성과 리뷰 ──
+            self.scheduler.add_job(
+                self._post_market,
+                "cron",
+                hour=15, minute=40,
+                day_of_week="mon-fri",
+                id="post_market",
+                name="장 마감 성과 리뷰",
+                misfire_grace_time=3600,
+            )
 
-        # ── 만료 추천 정리 (1시간 간격) ──
-        self.scheduler.add_job(
-            self._expire_recommendations,
-            "interval",
-            hours=1,
-            id="expire_recommendations",
-            name="만료 추천 처리",
-        )
+            # ── 포트폴리오 정산 (16:00) ──
+            self.scheduler.add_job(
+                portfolio_sync_job,
+                "cron",
+                hour=16, minute=0,
+                id="portfolio_sync",
+                name="포트폴리오 정산",
+                misfire_grace_time=3600,
+            )
+
+            # ── 일봉 데이터 수집 (16:30) ──
+            self.scheduler.add_job(
+                market_data_job,
+                "cron",
+                hour=16, minute=30,
+                id="market_data",
+                name="일봉 데이터 수집",
+                misfire_grace_time=3600,
+            )
+
+            # ── 만료 추천 정리 (1시간 간격) ──
+            self.scheduler.add_job(
+                self._expire_recommendations,
+                "interval",
+                hours=1,
+                id="expire_recommendations",
+                name="만료 추천 처리",
+            )
 
     # ─────────── 스케줄 작업 구현 ───────────
 
@@ -442,6 +480,36 @@ class TradingScheduler:
                 logger.debug("WebSocket 구독 갱신: {}종목", len(symbols))
         except Exception as e:
             logger.warning("WebSocket 구독 갱신 실패: {}", str(e))
+
+    async def _news_poll(self, market_hours: bool | None = None) -> None:
+        """뉴스 자동 폴링 + 신규 뉴스 이벤트 발행"""
+        if not settings.NEWS_POLL_ENABLED:
+            return
+
+        from core.database import AsyncSessionLocal
+        from scheduler.market_calendar import market_calendar
+        from services.news_polling_service import news_polling_service
+
+        actual_market_hours = market_calendar.is_krx_trading_hours()
+        if market_hours is not None and actual_market_hours != market_hours:
+            return
+
+        try:
+            async with AsyncSessionLocal() as session:
+                summary = await news_polling_service.poll_sources(
+                    session,
+                    market_hours=actual_market_hours,
+                )
+            if summary.get("skipped"):
+                logger.debug("뉴스 폴링 스킵: {}", summary.get("reason", "unknown"))
+            if summary.get("created"):
+                logger.info(
+                    "뉴스 폴링 완료: 신규 {}건, 이벤트 {}건",
+                    summary.get("created", 0),
+                    summary.get("published_events", 0),
+                )
+        except Exception as e:
+            logger.warning("뉴스 폴링 오류: {}", str(e))
 
     async def _holdings_check(self) -> None:
         """보유종목 현재가 점검 — WebSocket 보완용 안전망 + 시간 기반 조기 청산

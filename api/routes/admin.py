@@ -5,27 +5,42 @@ import time as _time
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from fastapi.responses import StreamingResponse
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import OperationalError
 
 from admin.sse_manager import sse_manager
 from analysis.llm.model_catalog import model_catalog_service
 from core.config import normalize_llm_model_value, settings
-from core.database import get_async_db
+from core.database import get_async_db, get_async_db_with_transaction
+from exceptions.common import ServiceException
 from repositories.agent_activity_repository import AgentActivityRepository
 from repositories.daily_report_repository import DailyReportRepository
+from repositories.news_item_repository import NewsItemRepository
 from repositories.trade_result_repository import TradeResultRepository
 from realtime.event_detector import event_detector
 from schemas.activity_schema import ActivityResponse, CycleResponse
 from schemas.common import SuccessResponse
 from schemas.daily_report_schema import DailyReportResponse
 from schemas.feedback_schema import TradeResultResponse
+from schemas.news_schema import NewsBatchIngestRequest
 from schemas.qa_schema import QARequest, QAResponse
 from scheduler.jobs import portfolio_sync_job
 from services.activity_logger import activity_logger
+from services.bloomberg_news_service import bloomberg_news_service
+from services.cnbc_news_service import cnbc_news_service
+from services.krx_kind_disclosure_service import krx_kind_disclosure_service
 from services.llm_usage_service import llm_usage_service
+from services.manual_trade_service import manual_trade_service
+from services.nasdaq_news_service import nasdaq_news_service
+from services.news_ingest_service import news_ingest_service
+from services.open_dart_disclosure_service import open_dart_disclosure_service
+from services.news_reporting_service import news_reporting_service
+from services.news_runtime_service import news_runtime_service
 from services.performance_reporting_service import performance_reporting_service
+from services.yonhap_news_service import yonhap_news_service
 from strategy.risk_appetite_insights import build_strategy_insights
 from trading.account_manager import account_manager
 from trading.broker_factory import get_broker_adapter
@@ -90,6 +105,117 @@ def _extract_latest_signal(trades, activities):
     return None
 
 
+def _coerce_float(value):
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_contributors(value):
+    contributors = []
+    if not isinstance(value, list):
+        return contributors
+    for item in value[:3]:
+        if isinstance(item, dict):
+            headline = str(item.get("headline") or "").strip()
+            if not headline:
+                continue
+            contributors.append({
+                "headline": headline,
+                "pressure": _coerce_float(item.get("pressure")),
+                "source_code": str(item.get("source_code") or "").upper() or None,
+            })
+        elif isinstance(item, str) and item.strip():
+            contributors.append({
+                "headline": item.strip(),
+                "pressure": None,
+                "source_code": None,
+            })
+    return contributors
+
+
+def _build_decision_insight(trades, activities, latest_signal):
+    latest_buy_trade = next(
+        (trade for trade in trades if str(getattr(trade, "side", "")).upper() == "BUY"),
+        trades[0] if trades else None,
+    )
+    if not latest_signal and not latest_buy_trade:
+        return None
+
+    notes = _parse_json_detail(getattr(latest_buy_trade, "notes", None)) or {}
+    edge_bps = _coerce_float(notes.get("estimated_edge_bps"))
+    cost_bps = _coerce_float(notes.get("estimated_cost_bps"))
+    ratio = _coerce_float(notes.get("edge_to_cost_ratio"))
+    if ratio is None and edge_bps is not None and cost_bps not in (None, 0):
+        ratio = round(edge_bps / cost_bps, 2)
+
+    recommendation = (latest_signal or {}).get("recommendation") or getattr(latest_buy_trade, "ai_recommendation", "")
+    confidence = (latest_signal or {}).get("confidence")
+    if confidence is None:
+        confidence = _coerce_float(getattr(latest_buy_trade, "ai_confidence", None))
+
+    target_price = (latest_signal or {}).get("target_price")
+    if target_price is None:
+        target_price = _coerce_float(getattr(latest_buy_trade, "ai_target_price", None))
+
+    stop_loss_price = (latest_signal or {}).get("stop_loss_price")
+    if stop_loss_price is None:
+        stop_loss_price = _coerce_float(getattr(latest_buy_trade, "ai_stop_loss_price", None))
+
+    reason = (latest_signal or {}).get("reason") or ""
+    horizon = str(notes.get("trade_horizon") or "MID").upper()
+
+    chart = {
+        "market_regime": str(getattr(latest_buy_trade, "market_regime", "") or "").upper() or None,
+        "rsi": _coerce_float(getattr(latest_buy_trade, "entry_rsi", None)),
+        "macd_hist": _coerce_float(getattr(latest_buy_trade, "entry_macd_hist", None)),
+        "pattern": str(notes.get("entry_pattern") or getattr(latest_buy_trade, "entry_pattern", "") or "").strip() or None,
+        "direction": str(notes.get("chart_signal_direction") or "").upper() or None,
+        "signal_confidence": _coerce_float(notes.get("chart_signal_confidence")),
+    }
+
+    cost = {
+        "edge_bps": edge_bps,
+        "cost_bps": cost_bps,
+        "ratio": ratio,
+        "min_ratio": _coerce_float(notes.get("cost_gate_ratio")),
+    }
+
+    news = {
+        "negative_pressure": _coerce_float(notes.get("news_negative_pressure")),
+        "negative_count": int(notes.get("news_negative_count") or 0),
+        "source_count": int(notes.get("news_source_count") or 0),
+        "threshold": _coerce_float(notes.get("news_threshold")),
+        "contributors": _normalize_contributors(notes.get("news_top_contributors")),
+    }
+
+    has_chart = any(value is not None for value in chart.values())
+    has_cost = any(value is not None for value in cost.values())
+    has_news = (
+        news["negative_pressure"] is not None
+        or news["negative_count"] > 0
+        or news["source_count"] > 0
+        or bool(news["contributors"])
+    )
+    if not any([recommendation, has_chart, has_cost, has_news]):
+        return None
+
+    return {
+        "recommendation": recommendation or "대기",
+        "confidence": confidence,
+        "reason": reason,
+        "target_price": target_price,
+        "stop_loss_price": stop_loss_price,
+        "horizon": horizon,
+        "chart": chart,
+        "cost": cost,
+        "news": news,
+    }
+
+
 def _build_position_timeline(trades, activities):
     timeline = []
 
@@ -127,6 +253,39 @@ def _build_position_timeline(trades, activities):
         })
 
     timeline.sort(key=lambda item: item.get("at") or "", reverse=True)
+    return timeline
+
+
+def _build_news_timeline_entries(news_items):
+    timeline = []
+
+    for item in news_items:
+        serialized = news_ingest_service.serialize_item(item)
+        published_at = getattr(item, "published_at", None) or getattr(item, "created_at", None)
+        timeline.append({
+            "type": "news",
+            "at": published_at.isoformat() if published_at else None,
+            "title": serialized.get("display_title") or serialized.get("title") or "뉴스",
+            "summary": serialized.get("display_summary") or serialized.get("summary") or "",
+            "detail": {
+                "source_code": getattr(item, "source_code", "") or "",
+                "source_name": getattr(item, "source_name", "") or "",
+                "source_tier": getattr(item, "source_tier", "") or "",
+                "region": getattr(item, "region", "") or "",
+                "official": bool(getattr(item, "official", False)),
+                "language": getattr(item, "language", "") or "",
+                "url": getattr(item, "url", "") or "",
+                "sentiment_label": getattr(item, "sentiment_label", "") or "",
+                "sentiment_score": float(getattr(item, "sentiment_score", 0.0) or 0.0),
+                "impact_score": float(getattr(item, "impact_score", 0.0) or 0.0),
+                "trust_score": float(getattr(item, "trust_score", 0.0) or 0.0),
+                "original_title": serialized.get("original_title") or "",
+                "original_summary": serialized.get("original_summary") or "",
+                "translation_provider": serialized.get("translation_provider") or "",
+                "translation_status": serialized.get("translation_status") or "",
+            },
+        })
+
     return timeline
 
 
@@ -470,6 +629,24 @@ async def get_pending_orders():
         return SuccessResponse(data=[], message=f"미체결 주문 조회 실패: {str(e)[:100]}")
 
 
+@router.post("/account/holdings/{symbol}/sell")
+async def sell_account_holding(symbol: str):
+    result = await manual_trade_service.sell_position(symbol)
+    return SuccessResponse(data=result, message=f"{result['symbol']} 즉시 매도 주문 접수")
+
+
+@router.post("/account/pending-orders/{order_id}/cancel-buy")
+async def cancel_pending_buy_order(order_id: str):
+    result = await manual_trade_service.cancel_pending_buy(order_id)
+    return SuccessResponse(data=result, message="미체결 매수 주문 취소 완료")
+
+
+@router.post("/account/pending-orders/{order_id}/cancel-and-sell")
+async def cancel_pending_sell_and_resubmit(order_id: str):
+    result = await manual_trade_service.replace_pending_sell_with_market_order(order_id)
+    return SuccessResponse(data=result, message="취소 후 즉시 매도 주문 접수")
+
+
 @router.get("/events/radar")
 async def get_event_radar(
     limit: int = Query(8, ge=1, le=50),
@@ -480,6 +657,276 @@ async def get_event_radar(
         "summary": snapshot.get("summary") or {},
         "events": events,
     })
+
+
+@router.get("/news/sources")
+async def get_news_sources():
+    """뉴스 수집 소스 카탈로그 및 LLM 운영 설정"""
+    return SuccessResponse(data={
+        "domestic_media_enabled": bool(settings.NEWS_DOMESTIC_MEDIA_ENABLED),
+        "include_foreign": bool(settings.NEWS_INCLUDE_FOREIGN),
+        "nasdaq_enabled": bool(settings.NEWS_NASDAQ_ENABLED),
+        "llm": {
+            "enabled": bool(settings.NEWS_LLM_ENABLED),
+            "provider": settings.NEWS_LLM_PROVIDER,
+        },
+        "sources": news_ingest_service.get_source_catalog(
+            include_foreign=bool(settings.NEWS_INCLUDE_FOREIGN)
+        ),
+    })
+
+
+@router.get("/news/items")
+async def get_news_items(
+    symbol: str | None = Query(None),
+    source_code: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """저장된 뉴스 아이템 조회"""
+    items = await news_ingest_service.list_items(
+        db,
+        limit=limit,
+        offset=offset,
+        symbol=symbol,
+        source_code=source_code,
+    )
+    return SuccessResponse(data=[news_ingest_service.serialize_item(item) for item in items])
+
+
+@router.get("/news/overview")
+async def get_news_overview(
+    recent_limit: int = Query(5, ge=1, le=20),
+    performance_days: int = Query(30, ge=1, le=365),
+    db: AsyncSession = Depends(get_async_db),
+):
+    data = await news_reporting_service.build_overview(
+        db,
+        recent_limit=recent_limit,
+        performance_days=performance_days,
+    )
+    return SuccessResponse(data=data)
+
+
+@router.post("/news/ingest")
+async def ingest_news_items(
+    req: NewsBatchIngestRequest,
+    db: AsyncSession = Depends(get_async_db_with_transaction),
+):
+    """수집기/운영 테스트용 뉴스 수동 적재"""
+    summary = await news_ingest_service.ingest_items(
+        db,
+        [item.model_dump() for item in req.items],
+    )
+    return SuccessResponse(data=summary, message="뉴스 적재 완료")
+
+
+@router.post("/news/fetch/dart")
+async def fetch_dart_news(
+    days: int = Query(1, ge=1, le=30),
+    page_count: int = Query(50, ge=1, le=100),
+    corp_code: str | None = Query(None),
+    db: AsyncSession = Depends(get_async_db_with_transaction),
+):
+    """OpenDART 공시를 수집해 news_items에 적재"""
+    try:
+        summary = await open_dart_disclosure_service.fetch_and_ingest(
+            db,
+            days=days,
+            page_count=page_count,
+            corp_code=corp_code,
+        )
+    except RuntimeError as exc:
+        news_runtime_service.record_source_result(
+            "DART",
+            status="ERROR",
+            mode="MANUAL",
+            message=str(exc),
+        )
+        raise ServiceException.bad_request(str(exc)) from exc
+    except Exception as exc:
+        news_runtime_service.record_source_result(
+            "DART",
+            status="ERROR",
+            mode="MANUAL",
+            message=str(exc),
+        )
+        raise
+
+    news_runtime_service.record_source_result(
+        "DART",
+        status="SUCCESS" if summary.get("received") else "EMPTY",
+        mode="MANUAL",
+        message="신규 공시 적재 완료" if summary.get("created") else "조회된 데이터 없음",
+        counts=summary,
+    )
+    return SuccessResponse(data=summary, message="OpenDART 뉴스 수집 완료")
+
+
+@router.post("/news/fetch/krx")
+async def fetch_krx_news(
+    page_count: int = Query(50, ge=1, le=100),
+    db: AsyncSession = Depends(get_async_db_with_transaction),
+):
+    """KIND 오늘의공시를 수집해 news_items에 적재"""
+    try:
+        summary = await krx_kind_disclosure_service.fetch_and_ingest(
+            db,
+            page_count=page_count,
+        )
+    except Exception as exc:
+        news_runtime_service.record_source_result(
+            "KRX",
+            status="ERROR",
+            mode="MANUAL",
+            message=str(exc),
+        )
+        raise
+
+    news_runtime_service.record_source_result(
+        "KRX",
+        status="SUCCESS" if summary.get("received") else "EMPTY",
+        mode="MANUAL",
+        message="신규 KIND 공시 적재 완료" if summary.get("created") else "조회된 데이터 없음",
+        counts=summary,
+    )
+    return SuccessResponse(data=summary, message="KIND 뉴스 수집 완료")
+
+
+@router.post("/news/fetch/yonhap")
+async def fetch_yonhap_news(
+    limit: int = Query(30, ge=1, le=100),
+    db: AsyncSession = Depends(get_async_db_with_transaction),
+):
+    """연합뉴스TV 경제 RSS를 수집해 news_items에 적재"""
+    try:
+        summary = await yonhap_news_service.fetch_and_ingest(
+            db,
+            limit=limit,
+        )
+    except Exception as exc:
+        news_runtime_service.record_source_result(
+            "YONHAP",
+            status="ERROR",
+            mode="MANUAL",
+            message=str(exc),
+        )
+        raise
+
+    news_runtime_service.record_source_result(
+        "YONHAP",
+        status="SUCCESS" if summary.get("received") else "EMPTY",
+        mode="MANUAL",
+        message="연합뉴스TV 경제 뉴스 적재 완료" if summary.get("created") else "조회된 데이터 없음",
+        counts=summary,
+    )
+    return SuccessResponse(data=summary, message="연합뉴스TV 뉴스 수집 완료")
+
+
+@router.post("/news/fetch/bloomberg")
+async def fetch_bloomberg_news(
+    limit: int = Query(30, ge=1, le=100),
+    db: AsyncSession = Depends(get_async_db_with_transaction),
+):
+    """Bloomberg sitemap 뉴스를 수집해 news_items에 적재"""
+    try:
+        summary = await bloomberg_news_service.fetch_and_ingest(
+            db=db,
+            limit=limit,
+        )
+    except Exception as exc:
+        news_runtime_service.record_source_result(
+            "BLOOMBERG",
+            status="ERROR",
+            mode="MANUAL",
+            message=str(exc),
+        )
+        raise
+
+    news_runtime_service.record_source_result(
+        "BLOOMBERG",
+        status="SUCCESS" if summary.get("received") else "EMPTY",
+        mode="MANUAL",
+        message="Bloomberg 해외 뉴스 적재 완료" if summary.get("created") else "조회된 데이터 없음",
+        counts=summary,
+    )
+    return SuccessResponse(data=summary, message="Bloomberg 뉴스 수집 완료")
+
+
+@router.post("/news/fetch/cnbc")
+async def fetch_cnbc_news(
+    limit: int = Query(30, ge=1, le=100),
+    db: AsyncSession = Depends(get_async_db_with_transaction),
+):
+    """CNBC Markets RSS 뉴스를 수집해 news_items에 적재"""
+    try:
+        summary = await cnbc_news_service.fetch_and_ingest(
+            db=db,
+            limit=limit,
+        )
+    except Exception as exc:
+        news_runtime_service.record_source_result(
+            "CNBC",
+            status="ERROR",
+            mode="MANUAL",
+            message=str(exc),
+        )
+        raise
+
+    news_runtime_service.record_source_result(
+        "CNBC",
+        status="SUCCESS" if summary.get("received") else "EMPTY",
+        mode="MANUAL",
+        message="CNBC 해외 뉴스 적재 완료" if summary.get("created") else "조회된 데이터 없음",
+        counts=summary,
+    )
+    return SuccessResponse(data=summary, message="CNBC 뉴스 수집 완료")
+
+
+@router.post("/news/fetch/nasdaq")
+async def fetch_nasdaq_news(
+    limit: int = Query(30, ge=1, le=100),
+    db: AsyncSession = Depends(get_async_db_with_transaction),
+):
+    """Nasdaq Markets RSS 뉴스를 수집해 news_items에 적재"""
+    try:
+        summary = await nasdaq_news_service.fetch_and_ingest(
+            db=db,
+            limit=limit,
+        )
+    except RuntimeError as exc:
+        news_runtime_service.record_source_result(
+            "NASDAQ",
+            status="ERROR",
+            mode="MANUAL",
+            message=str(exc),
+        )
+        return JSONResponse(
+            status_code=502,
+            content={
+                "result": "ERROR",
+                "data": {},
+                "message": str(exc),
+            },
+        )
+    except Exception as exc:
+        news_runtime_service.record_source_result(
+            "NASDAQ",
+            status="ERROR",
+            mode="MANUAL",
+            message=str(exc),
+        )
+        raise
+
+    news_runtime_service.record_source_result(
+        "NASDAQ",
+        status="SUCCESS" if summary.get("received") else "EMPTY",
+        mode="MANUAL",
+        message="Nasdaq 해외 뉴스 적재 완료" if summary.get("created") else "조회된 데이터 없음",
+        counts=summary,
+    )
+    return SuccessResponse(data=summary, message="Nasdaq 뉴스 수집 완료")
 
 
 @router.get("/positions/{symbol}")
@@ -493,10 +940,20 @@ async def get_position_detail(
     normalized_symbol = normalize_krx_symbol(symbol)
     trade_repo = TradeResultRepository(db)
     activity_repo = AgentActivityRepository(db)
+    news_repo = NewsItemRepository(db)
 
     source_fetch_limit = timeline_limit + timeline_offset + 1
     trades = await trade_repo.get_by_symbol(normalized_symbol, limit=source_fetch_limit)
     activities = await activity_repo.get_by_symbol(normalized_symbol, limit=source_fetch_limit)
+    try:
+        news_items = await news_repo.get_recent(
+            limit=source_fetch_limit,
+            offset=0,
+            symbol=normalized_symbol,
+        )
+    except OperationalError as exc:
+        logger.debug("종목 상세 뉴스 조회 생략 ({}): {}", normalized_symbol, str(getattr(exc, "orig", exc)))
+        news_items = []
     open_buys = await trade_repo.get_all_open_buys(normalized_symbol)
 
     holding_payload = None
@@ -557,6 +1014,7 @@ async def get_position_detail(
         holding_message = f"실시간 보유 정보 조회 실패: {str(exc)[:80]}"
 
     latest_signal = _extract_latest_signal(trades, activities)
+    decision_insight = _build_decision_insight(trades, activities, latest_signal)
     name = (
         (holding_payload or {}).get("name")
         or (getattr(trades[0], "stock_name", None) if trades else None)
@@ -568,7 +1026,8 @@ async def get_position_detail(
         if getattr(trade, "exit_at", None) is not None
     )
 
-    full_timeline = _build_position_timeline(trades, activities)
+    full_timeline = _build_position_timeline(trades, activities) + _build_news_timeline_entries(news_items)
+    full_timeline.sort(key=lambda item: item.get("at") or "", reverse=True)
     timeline_slice = full_timeline[timeline_offset: timeline_offset + timeline_limit]
     has_more_timeline = len(full_timeline) > (timeline_offset + timeline_limit)
 
@@ -580,6 +1039,7 @@ async def get_position_detail(
             "holding_status": holding_status,
             "holding_message": holding_message,
             "latest_signal": latest_signal,
+            "decision_insight": decision_insight,
             "trade_stats": {
                 "total_trades": len(trades),
                 "open_buy_count": len(open_buys),
@@ -642,7 +1102,31 @@ MUTABLE_SETTINGS = [
     "CODEX_MODEL",
     "CODEX_MODEL_TIER1",
     "CODEX_MODEL_TIER2",
+    "OLLAMA_BASE_URL",
+    "OLLAMA_MODEL",
+    "OLLAMA_MODEL_TIER1",
+    "OLLAMA_MODEL_TIER2",
     "MANUAL_LLM_PROVIDER",
+    "NEWS_LLM_ENABLED",
+    "NEWS_LLM_PROVIDER",
+    "NEWS_DOMESTIC_MEDIA_ENABLED",
+    "NEWS_INCLUDE_FOREIGN",
+    "NEWS_NASDAQ_ENABLED",
+    "NEWS_GATE_ENABLED",
+    "NEWS_LOOKBACK_HOURS",
+    "NEWS_MAX_ITEMS_PER_SYMBOL",
+    "NEWS_NEGATIVE_BLOCK_THRESHOLD",
+    "NEWS_FRESHNESS_HALFLIFE_HOURS",
+    "NEWS_POLL_ENABLED",
+    "NEWS_POLL_INTERVAL_MIN_TRADING",
+    "NEWS_POLL_INTERVAL_MIN_OFF_HOURS",
+    "NEWS_POLL_PAGE_COUNT",
+    "NEWS_RECHECK_COOLDOWN_SEC",
+    "NEWS_SHADOW_ENABLED",
+    "NEWS_ROLLOUT_MIN_SAMPLE_SIZE",
+    "NEWS_ROLLOUT_MIN_PROFIT_FACTOR",
+    "NEWS_ROLLOUT_MIN_EXPECTANCY",
+    "NEWS_ROLLOUT_MAX_DRAWDOWN_KRW",
 ]
 
 
@@ -686,11 +1170,15 @@ async def update_settings(updates: dict):
             value = str(value).upper()
             if key.startswith("LLM_FALLBACK_PROVIDER_") and value in {"", "NONE"}:
                 value = ""
-            elif value not in {"CLAUDE_CODE", "CODEX"}:
+            elif value not in {"CLAUDE_CODE", "CODEX", "OLLAMA"}:
                 continue
         elif key == "MANUAL_LLM_PROVIDER":
             value = str(value).upper()
-            if value not in {"AUTOMATIC", "CLAUDE_CODE", "CODEX"}:
+            if value not in {"AUTOMATIC", "CLAUDE_CODE", "CODEX", "OLLAMA"}:
+                continue
+        elif key == "NEWS_LLM_PROVIDER":
+            value = str(value).upper()
+            if value not in {"AUTOMATIC", "CLAUDE_CODE", "CODEX", "OLLAMA"}:
                 continue
         elif key == "BUY_ORDER_EXECUTION_MODE":
             value = str(value).upper()
@@ -705,8 +1193,13 @@ async def update_settings(updates: dict):
             "CODEX_MODEL",
             "CODEX_MODEL_TIER1",
             "CODEX_MODEL_TIER2",
+            "OLLAMA_MODEL",
+            "OLLAMA_MODEL_TIER1",
+            "OLLAMA_MODEL_TIER2",
         }:
             value = normalize_llm_model_value(str(value))
+        elif isinstance(old, str):
+            value = str(value)
         setattr(settings, key, value)
         changed[key] = {"old": old, "new": value}
         logger.info("설정 변경: {} = {} → {}", key, old, value)

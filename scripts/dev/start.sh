@@ -4,6 +4,7 @@
 #
 # 사용법:
 #   ./start.sh          — 포그라운드 실행
+#   ./start.sh --reload — 포그라운드 실행 (자동 재시작)
 #   ./start.sh -d       — 백그라운드(데몬) 실행
 #   ./start.sh stop     — 백그라운드 프로세스 종료
 #   ./start.sh status   — 실행 상태 확인
@@ -245,6 +246,14 @@ sync_broker_sidecar() {
     fi
 }
 
+run_db_migrations() {
+    echo "🗂️  DB 마이그레이션 확인"
+    if ! "$PYTHON_BIN" -m alembic upgrade head; then
+        echo "❌ alembic upgrade head 실패"
+        exit 1
+    fi
+}
+
 if [ -f "$VENV_DIR/bin/activate" ]; then
     source "$VENV_DIR/bin/activate"
 else
@@ -305,6 +314,7 @@ case "${1:-}" in
         ensure_port_available || exit 1
 
         sync_broker_sidecar
+        run_db_migrations
 
         echo "🚀 momo-trading 백그라운드 시작"
         echo "   Host: $HOST:$PORT"
@@ -323,26 +333,39 @@ case "${1:-}" in
         echo "종료: ./start.sh stop"
         ;;
 
-    ""|--foreground)
+    ""|--foreground|-r|--reload)
+        UVICORN_ARGS=(
+            -m uvicorn main:app
+            --host "$HOST"
+            --port "$PORT"
+            --log-level info
+        )
+        if [ "${1:-}" = "-r" ] || [ "${1:-}" = "--reload" ]; then
+            UVICORN_ARGS+=(--reload)
+        fi
+
         ensure_port_available || exit 1
 
         sync_broker_sidecar
+        run_db_migrations
 
         echo "🚀 momo-trading 시작 (포그라운드)"
         echo "   Host: $HOST:$PORT"
         echo "   Admin: http://localhost:$PORT/admin"
         echo "   Admin: http://127.0.0.1:$PORT/admin"
+        if [ "${1:-}" = "-r" ] || [ "${1:-}" = "--reload" ]; then
+            echo "   Mode: reload"
+        else
+            echo "   Mode: stable"
+        fi
         echo "   종료: Ctrl+C"
         echo ""
 
-        "$PYTHON_BIN" -m uvicorn main:app \
-            --host "$HOST" --port "$PORT" \
-            --log-level info \
-            --reload
+        "$PYTHON_BIN" "${UVICORN_ARGS[@]}"
         ;;
 
     *)
-        echo "사용법: $0 [-d|stop|status|logs]"
+        echo "사용법: $0 [--reload|-d|stop|status|logs]"
         exit 1
         ;;
 esac
