@@ -11,6 +11,7 @@
 #   ./start.sh status   — 실행 상태 확인
 #   ./start.sh logs     — 실시간 로그 보기
 #   ./start.sh backup-db — 운영 DB 수동 백업
+#   ./start.sh check-news — 뉴스 파이프라인 상태 점검
 #
 set -euo pipefail
 
@@ -334,6 +335,11 @@ case "${1:-}" in
         run_db_backup
         ;;
 
+    check-news)
+        echo "🧪 뉴스 파이프라인 점검"
+        "$PYTHON_BIN" scripts/dev/check_news_pipeline.py
+        ;;
+
     status)
         if [ -f "$PID_FILE" ]; then
             PID=$(cat "$PID_FILE")
@@ -431,7 +437,7 @@ case "${1:-}" in
         ;;
 
     *)
-        echo "사용법: $0 [--reload|-d|stop [--backup]|status|logs|backup-db]"
+        echo "사용법: $0 [--reload|-d|stop [--backup]|status|logs|backup-db|check-news]"
         exit 1
         ;;
 esac

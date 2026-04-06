@@ -320,3 +320,21 @@ def test_start_script_backup_db_calls_backup_helper_without_starting_server(tmp_
     assert "운영 DB 백업 생성" in result.stdout
     assert docker_log.exists() is False
     assert _read_lines(python_log) == ["scripts/dev/backup_runtime_db.py"]
+
+
+def test_start_script_check_news_calls_news_helper_without_starting_server(tmp_path: Path) -> None:
+    env, docker_log, python_log = _build_test_env(tmp_path, "KIWOOM")
+
+    result = subprocess.run(
+        ["bash", str(START_SCRIPT), "check-news"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "뉴스 파이프라인 점검" in result.stdout
+    assert docker_log.exists() is False
+    assert _read_lines(python_log) == ["scripts/dev/check_news_pipeline.py"]
