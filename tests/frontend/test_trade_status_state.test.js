@@ -33,4 +33,33 @@ describe("trade_status_state", () => {
     expect(state.code).toBe("SELL_PENDING");
     expect(state.label).toBe("매도 대기중");
   });
+
+  test("distinguishes submitted orders from confirm-pending trades", () => {
+    const buySubmitted = resolveTradeExecutionState({
+      side: "BUY",
+      status: "PENDING_CONFIRM",
+      source: "order",
+    });
+    const sellSubmitted = resolveTradeExecutionState({
+      side: "SELL",
+      status: "PENDING_CONFIRM",
+      source: "order",
+    });
+
+    expect(buySubmitted.code).toBe("BUY_SUBMITTED");
+    expect(buySubmitted.label).toBe("매수 접수중");
+    expect(sellSubmitted.code).toBe("SELL_SUBMITTED");
+    expect(sellSubmitted.label).toBe("매도 접수중");
+  });
+
+  test("marks open confirmed buys as holding state when requested", () => {
+    const state = resolveTradeExecutionState({
+      side: "BUY",
+      status: "CONFIRMED",
+      isHolding: true,
+    });
+
+    expect(state.code).toBe("BUY_HOLDING");
+    expect(state.label).toBe("보유 중");
+  });
 });

@@ -104,12 +104,12 @@ export function buildTradeStageLabel(snapshot = {}, symbol = "") {
 
   const pendingSell = pendingOrders.find((item) => sameTradeSymbol(item?.symbol) && String(item?.side || "") === "매도");
   if (pendingSell) {
-    return resolveTradeExecutionState({ side: "SELL", status: "PENDING_CONFIRM" }).label;
+    return resolveTradeExecutionState({ side: "SELL", status: "PENDING_CONFIRM", source: "order" }).label;
   }
 
   const pendingBuy = pendingOrders.find((item) => sameTradeSymbol(item?.symbol) && String(item?.side || "") === "매수");
   if (pendingBuy) {
-    return resolveTradeExecutionState({ side: "BUY", status: "PENDING_CONFIRM" }).label;
+    return resolveTradeExecutionState({ side: "BUY", status: "PENDING_CONFIRM", source: "order" }).label;
   }
 
   const pendingConfirm = pendingConfirms.find((item) => sameTradeSymbol(item?.stock_symbol));
@@ -119,7 +119,11 @@ export function buildTradeStageLabel(snapshot = {}, symbol = "") {
 
   const openPosition = openPositions.find((item) => sameTradeSymbol(item?.stock_symbol));
   if (openPosition) {
-    return "보유 중";
+    return resolveTradeExecutionState({
+      side: openPosition?.side || "BUY",
+      status: openPosition?.status || "CONFIRMED",
+      isHolding: true,
+    }).label;
   }
 
   const openedTrade = opened.find((item) => sameTradeSymbol(item?.stock_symbol));

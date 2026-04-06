@@ -119,6 +119,10 @@ class PerformanceReportingService:
             "buckets": list(reversed(buckets)),
         }
 
+    def build_trade_comparison_from_results(self, trades: list[TradeResult]) -> dict:
+        points = [self._trade_point_from_result(row) for row in trades if getattr(row, "exit_at", None) is not None]
+        return self._calc_trade_comparisons(points)
+
     @staticmethod
     def _build_baseline_snapshot() -> dict:
         return {
@@ -142,20 +146,7 @@ class PerformanceReportingService:
             .order_by(TradeResult.exit_at.asc())
         )
         rows = (await session.execute(stmt)).scalars().all()
-        items: list[_TradePoint] = []
-        for row in rows:
-            items.append(_TradePoint(
-                strategy_type=str(getattr(row, "strategy_type", "") or ""),
-                horizon=self._extract_horizon(row),
-                pnl=float(getattr(row, "pnl", 0.0) or 0.0),
-                return_pct=float(getattr(row, "return_pct", 0.0) or 0.0),
-                exit_at=getattr(row, "exit_at"),
-                news_negative_pressure=self._extract_news_negative_pressure(row),
-                entry_price=float(getattr(row, "entry_price", 0.0) or 0.0),
-                quantity=int(getattr(row, "quantity", 0) or 0),
-                estimated_cost_bps=self._extract_estimated_cost_bps(row),
-            ))
-        return items
+        return [self._trade_point_from_result(row) for row in rows]
 
     async def _fetch_risk_control_counts(self, session: AsyncSession, *, from_dt: datetime, to_dt: datetime) -> dict:
         base = and_(
@@ -556,6 +547,19 @@ class PerformanceReportingService:
             return float(value)
         except (TypeError, ValueError):
             return None
+
+    def _trade_point_from_result(self, row: TradeResult) -> _TradePoint:
+        return _TradePoint(
+            strategy_type=str(getattr(row, "strategy_type", "") or ""),
+            horizon=self._extract_horizon(row),
+            pnl=float(getattr(row, "pnl", 0.0) or 0.0),
+            return_pct=float(getattr(row, "return_pct", 0.0) or 0.0),
+            exit_at=getattr(row, "exit_at"),
+            news_negative_pressure=self._extract_news_negative_pressure(row),
+            entry_price=float(getattr(row, "entry_price", 0.0) or 0.0),
+            quantity=int(getattr(row, "quantity", 0) or 0),
+            estimated_cost_bps=self._extract_estimated_cost_bps(row),
+        )
 
 
 performance_reporting_service = PerformanceReportingService()

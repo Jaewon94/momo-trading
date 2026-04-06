@@ -293,6 +293,28 @@ describe("position_detail_state", () => {
     expect(entry.tone).toBe("sell");
   });
 
+  test("renders closed buy lots as final-close lots instead of buy-filled labels", () => {
+    const entry = buildPositionTimelineEntry({
+      type: "trade",
+      at: "2026-04-03T10:25:00+09:00",
+      title: "최종 청산 lot",
+      side: "BUY",
+      status: "CONFIRMED",
+      summary: "삼성전자 · 1주",
+      detail: {
+        notes: null,
+        trade_state_kind_label: "최종 청산 lot",
+        trade_state_badge: "FINAL_EXIT",
+        trade_state_tone: "sell",
+        trade_state_icon: "청산",
+      },
+    });
+
+    expect(entry.kindLabel).toBe("최종 청산 lot");
+    expect(entry.badge).toBe("FINAL_EXIT");
+    expect(entry.tone).toBe("sell");
+  });
+
   test("builds recent event chips for the summary header", () => {
     const state = buildPositionDetailState({
       symbol: "215790",

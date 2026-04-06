@@ -76,10 +76,14 @@ describe("news_overview_state", () => {
           DART: {
             status: "SUCCESS",
             message: "신규 2건 적재",
+            last_success_at: "2026-04-06T09:18:00+09:00",
+            consecutive_failures: 0,
           },
           KRX: {
-            status: "IDLE",
+            status: "ERROR",
             message: "실수집 미연결",
+            last_error_at: "2026-04-06T09:17:00+09:00",
+            consecutive_failures: 3,
           },
         },
       },
@@ -87,8 +91,8 @@ describe("news_overview_state", () => {
 
     expect(pills[0]).toContain("OLLAMA");
     expect(pills[1]).toContain("해외 포함");
-    expect(pills.some((pill) => pill.includes("DART") && pill.includes("SUCCESS") && pill.includes("24h 3건"))).toBe(true);
-    expect(pills.some((pill) => pill.includes("KRX") && pill.includes("24h 0건") && pill.includes("미연결"))).toBe(true);
+    expect(pills.some((pill) => pill.includes("DART") && pill.includes("SUCCESS") && pill.includes("24h 3건") && pill.includes("마지막 성공"))).toBe(true);
+    expect(pills.some((pill) => pill.includes("KRX") && pill.includes("24h 0건") && pill.includes("실패 3회") && pill.includes("미연결"))).toBe(true);
   });
 
   test("builds trade baseline notice for reset guidance", () => {

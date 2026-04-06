@@ -89,6 +89,16 @@ describe("event_radar_state", () => {
   test("derives unified trade-stage labels from account snapshot", () => {
     expect(buildTradeStageLabel({
       pendingOrders: [{ symbol: "005930", side: "매수" }],
+    }, "005930")).toBe("매수 접수중");
+
+    expect(buildTradeStageLabel({
+      pendingOrders: [{ symbol: "005930", side: "매도" }],
+    }, "005930")).toBe("매도 접수중");
+
+    expect(buildTradeStageLabel({
+      trades: {
+        pending_confirms: [{ stock_symbol: "005930", side: "BUY", status: "PENDING_CONFIRM" }],
+      },
     }, "005930")).toBe("매수 대기중");
 
     expect(buildTradeStageLabel({

@@ -54,23 +54,35 @@ class NewsRuntimeService:
             return
         source_state = self._sources.get(code) or self._build_default_source_state({"code": code})
         now = now_kst()
+        normalized_status = str(status or "IDLE").upper()
+        consecutive_failures = int(source_state.get("consecutive_failures") or 0)
+        if normalized_status == "ERROR":
+            consecutive_failures += 1
+        elif normalized_status in {"SUCCESS", "EMPTY", "SKIPPED"}:
+            consecutive_failures = 0
+
         source_state.update({
-            "status": str(status or "IDLE").upper(),
+            "status": normalized_status,
             "mode": mode,
             "message": message or self._default_message_for_status(status),
             "updated_at": now,
             "counts": self._normalize_counts(counts),
+            "consecutive_failures": consecutive_failures,
         })
+        if normalized_status == "SUCCESS":
+            source_state["last_success_at"] = now
+        if normalized_status == "ERROR":
+            source_state["last_error_at"] = now
         self._sources[code] = source_state
 
         self._overall.update({
-            "last_status": source_state["status"],
+            "last_status": normalized_status,
             "last_mode": mode,
             "last_message": source_state["message"],
             "last_source_code": code,
             "last_run_at": now,
         })
-        if source_state["status"] == "SUCCESS":
+        if normalized_status == "SUCCESS":
             self._overall["last_success_at"] = now
 
     def _serialize_overall(self) -> dict[str, Any]:
@@ -86,6 +98,12 @@ class NewsRuntimeService:
         updated_at = payload.get("updated_at")
         if updated_at is not None:
             payload["updated_at"] = updated_at.isoformat()
+        last_success_at = payload.get("last_success_at")
+        if last_success_at is not None:
+            payload["last_success_at"] = last_success_at.isoformat()
+        last_error_at = payload.get("last_error_at")
+        if last_error_at is not None:
+            payload["last_error_at"] = last_error_at.isoformat()
         payload["counts"] = self._normalize_counts(payload.get("counts"))
         return payload
 
@@ -97,6 +115,9 @@ class NewsRuntimeService:
             "mode": None,
             "message": "대기 중" if implemented else "실수집 미연결",
             "updated_at": None,
+            "last_success_at": None,
+            "last_error_at": None,
+            "consecutive_failures": 0,
             "counts": self._normalize_counts(None),
             "implemented": implemented,
         }

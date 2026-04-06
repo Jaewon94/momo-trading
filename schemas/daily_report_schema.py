@@ -5,6 +5,30 @@ from typing import Optional
 from pydantic import BaseModel
 
 
+class TradeComparisonMetricsResponse(BaseModel):
+    trade_count: int = 0
+    expectancy: float = 0.0
+    profit_factor: float = 0.0
+    total_pnl: float = 0.0
+    estimated_cost_total: float = 0.0
+    net_pnl_after_cost: float = 0.0
+    avg_return_pct: float = 0.0
+    max_drawdown: float = 0.0
+    win_rate: float = 0.0
+
+
+class TradeComparisonDeltaResponse(BaseModel):
+    expectancy: float = 0.0
+    profit_factor: float = 0.0
+    net_pnl_after_cost: float = 0.0
+
+
+class ReportTradeComparisonResponse(BaseModel):
+    news_enriched: TradeComparisonMetricsResponse
+    plain: TradeComparisonMetricsResponse
+    delta: TradeComparisonDeltaResponse
+
+
 class DailyReportResponse(BaseModel):
     id: str
     report_date: date
@@ -25,6 +49,7 @@ class DailyReportResponse(BaseModel):
     next_day_plan: Optional[str] = None
     top_picks: Optional[str] = None
     strategy_stats: Optional[str] = None
+    trade_comparison: Optional[ReportTradeComparisonResponse] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

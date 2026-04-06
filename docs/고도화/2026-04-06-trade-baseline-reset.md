@@ -35,17 +35,18 @@
    - `POST /api/v1/admin/trades/reconcile-pending`
 3. 보유수량과 DB 열린 `BUY` lot가 다르면 보유 정합성 복구를 돌린다.
    - `POST /api/v1/admin/trades/reconcile-holdings`
+   - 또는 시스템 설정 탭의 `DB 초기화` 버튼으로 운영 이력을 비운 뒤 기준선을 다시 만든다.
+   - API: `POST /api/v1/admin/system/reset-operational-baseline`
 4. 장중에는 미체결이 존재할 수 있으므로 `PENDING_CONFIRM` 종목은 즉시 백필하지 않는다.
 5. 당일 장 종료 후 다시 한 번 `reconcile-pending -> reconcile-holdings` 순서로 점검한다.
 
 ## 남아 있는 한계
 - 과거 `SELL` 체결 중 대응 `BUY` lot가 사라진 건은 실현손익이 자동 복구되지 않는다.
 - 주간/월간 성과 분석은 기준선 리셋 이전 데이터가 섞여 있으면 왜곡될 수 있다.
-- 필요하면 성과 화면에 "기준선 리셋 이후 데이터" 배지를 추가하는 후속 작업이 필요하다.
+- 성과/뉴스 화면에는 "기준선 리셋 이후 데이터" 배지를 추가했지만, 과거 리포트 아카이브는 여전히 과거 DB 상태 영향을 받을 수 있다.
 
 ## 권장 후속 작업
-- 관리자 화면에 `DB 기준선 리셋 이후 운영 중` 안내 배지 추가
-- 성과 분석 화면에 `기준선 시점` 노출
 - `runtime/data/app.db` 백업 루틴 정리
   - 최소 일 1회 복사본 저장
   - 다른 컴퓨터 이동 전 DB 백업/복원 절차 문서화
+- `DB 초기화` 버튼 실행 전 현재 DB 백업 파일을 자동 생성할지 검토

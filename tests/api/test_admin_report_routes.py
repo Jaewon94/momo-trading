@@ -108,3 +108,62 @@ async def test_admin_reports_list_applies_trade_metrics_fallback(client, monkeyp
     assert payload["buy_count"] == 1
     assert payload["sell_count"] == 0
     assert payload["open_position_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_admin_report_by_date_includes_news_trade_comparison_snapshot(client, monkeypatch):
+    report = _build_report(date(2026, 4, 3))
+    completed = [
+        SimpleNamespace(
+            is_win=True,
+            pnl=15000.0,
+            return_pct=3.2,
+            strategy_type="STABLE",
+            exit_at=datetime(2026, 4, 3, 10, 15),
+            entry_price=10000.0,
+            quantity=10,
+            notes='{"news_negative_pressure": 0.24, "estimated_cost_bps": 12}',
+        ),
+        SimpleNamespace(
+            is_win=False,
+            pnl=-2000.0,
+            return_pct=-0.8,
+            strategy_type="STABLE",
+            exit_at=datetime(2026, 4, 3, 13, 20),
+            entry_price=9000.0,
+            quantity=10,
+            notes='{"estimated_cost_bps": 8}',
+        ),
+    ]
+
+    class FakeDailyReportRepo:
+        def __init__(self, _db) -> None:
+            pass
+
+        async def get_by_date(self, d):
+            assert d == date(2026, 4, 3)
+            return report
+
+    class FakeTradeRepo:
+        def __init__(self, _db) -> None:
+            pass
+
+        async def get_opened_by_date(self, _d):
+            return []
+
+        async def get_completed_by_date(self, _d):
+            return completed
+
+        async def get_all_open(self):
+            return []
+
+    monkeypatch.setattr("api.routes.admin.DailyReportRepository", FakeDailyReportRepo, raising=False)
+    monkeypatch.setattr("api.routes.admin.TradeResultRepository", FakeTradeRepo, raising=False)
+
+    response = await client.get("/api/v1/admin/reports/2026-04-03")
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    comparison = payload["trade_comparison"]
+    assert comparison["news_enriched"]["trade_count"] == 1
+    assert comparison["plain"]["trade_count"] == 1
+    assert comparison["delta"]["expectancy"] == 17000.0

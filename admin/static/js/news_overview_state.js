@@ -197,10 +197,22 @@ export function buildNewsOverviewSourcePills(overview) {
       const runtime = runtimeSources?.[item.code] || {};
       const status = String(runtime.status || "IDLE");
       const count24h = sourceCounts.get(String(item.code || "")) || 0;
-      const detail = runtime.message
-        ? String(runtime.message)
-        : (item.implemented ? `${String(item.tier || "-")} · ${String(item.region || "-")}` : "실수집 미연결");
-      return `<div class="news-source-pill"><strong>${String(item.code || "")}</strong><span>${status} · 24h ${count24h}건 · ${detail}</span></div>`;
+      const details = [];
+      details.push(`24h ${count24h}건`);
+      if (runtime.last_success_at) {
+        details.push(`마지막 성공 ${defaultFormatDateTime(runtime.last_success_at)}`);
+      }
+      if (Number(runtime.consecutive_failures || 0) > 0) {
+        details.push(`실패 ${Number(runtime.consecutive_failures || 0)}회`);
+      } else if (runtime.last_error_at && status === "ERROR") {
+        details.push(`마지막 실패 ${defaultFormatDateTime(runtime.last_error_at)}`);
+      }
+      details.push(
+        runtime.message
+          ? String(runtime.message)
+          : (item.implemented ? `${String(item.tier || "-")} · ${String(item.region || "-")}` : "실수집 미연결"),
+      );
+      return `<div class="news-source-pill"><strong>${String(item.code || "")}</strong><span>${status} · ${details.join(" · ")}</span></div>`;
     }),
   ];
 }

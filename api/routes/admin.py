@@ -32,7 +32,7 @@ from repositories.trade_result_repository import TradeResultRepository
 from realtime.event_detector import event_detector
 from schemas.activity_schema import ActivityResponse, CycleResponse
 from schemas.common import SuccessResponse
-from schemas.daily_report_schema import DailyReportResponse
+from schemas.daily_report_schema import DailyReportResponse, ReportTradeComparisonResponse
 from schemas.feedback_schema import TradeResultResponse
 from schemas.news_schema import NewsBatchIngestRequest
 from schemas.qa_schema import QARequest, QAResponse
@@ -272,11 +272,11 @@ def _build_position_timeline(trades, activities):
                 tone = "sell"
                 icon = "부분"
             elif has_exit:
-                title = "매도 완료"
-                kind_label = "매도 완료"
-                badge = status or "SELL"
+                title = "최종 청산 lot"
+                kind_label = "최종 청산 lot"
+                badge = "FINAL_EXIT"
                 tone = "sell"
-                icon = "매도"
+                icon = "청산"
             else:
                 title = "매수 완료"
                 kind_label = "매수 완료"
@@ -368,18 +368,30 @@ def _report_looks_empty(report) -> bool:
 
 async def _build_report_response(report, trade_repo: TradeResultRepository, open_symbols_cache: set[str] | None = None):
     payload = DailyReportResponse.model_validate(report)
-    if not _report_looks_empty(report):
-        return payload
-
     report_date = getattr(report, "report_date", None)
+    completed = []
+    if report_date:
+        completed = await trade_repo.get_completed_by_date(report_date)
+    trade_comparison = ReportTradeComparisonResponse.model_validate(
+        performance_reporting_service.build_trade_comparison_from_results(completed)
+    )
+
+    if not _report_looks_empty(report):
+        return payload.model_copy(update={
+            "trade_comparison": trade_comparison,
+        })
+
     if not report_date:
-        return payload
+        return payload.model_copy(update={
+            "trade_comparison": trade_comparison,
+        })
 
     opened = await trade_repo.get_opened_by_date(report_date)
-    completed = await trade_repo.get_completed_by_date(report_date)
     trade_has_data = bool(opened or completed)
     if not trade_has_data:
-        return payload
+        return payload.model_copy(update={
+            "trade_comparison": trade_comparison,
+        })
 
     if open_symbols_cache is None:
         all_open = await trade_repo.get_all_open()
@@ -404,6 +416,7 @@ async def _build_report_response(report, trade_repo: TradeResultRepository, open
         "total_pnl": total_pnl,
         "open_position_count": open_position_count,
         "total_orders": max(int(getattr(report, "total_orders", 0) or 0), buy_count + sell_count),
+        "trade_comparison": trade_comparison,
     })
 
 

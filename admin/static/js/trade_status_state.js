@@ -26,9 +26,12 @@ export function resolveTradeExecutionState({
   status = "",
   notes = null,
   hasExit = false,
+  source = "trade",
+  isHolding = false,
 } = {}) {
   const normalizedSide = toUpper(side);
   const normalizedStatus = toUpper(status);
+  const normalizedSource = toUpper(source);
   const parsedNotes = typeof notes === "object" && notes !== null ? notes : parseTradeNotes(notes);
   const fillType = toUpper(parsedNotes?.fill_type);
   const remainingOpenQuantity = toNumber(parsedNotes?.remaining_open_quantity, 0);
@@ -36,9 +39,9 @@ export function resolveTradeExecutionState({
   if (normalizedSide === "SELL") {
     if (normalizedStatus === "PENDING_CONFIRM") {
       return {
-        code: "SELL_PENDING",
-        label: "매도 대기중",
-        shortLabel: "매도 대기중",
+        code: normalizedSource === "ORDER" ? "SELL_SUBMITTED" : "SELL_PENDING",
+        label: normalizedSource === "ORDER" ? "매도 접수중" : "매도 대기중",
+        shortLabel: normalizedSource === "ORDER" ? "매도 접수중" : "매도 대기중",
         badge: normalizedStatus || "SELL",
         tone: "pending",
         remainingOpenQuantity,
@@ -66,9 +69,9 @@ export function resolveTradeExecutionState({
 
   if (normalizedStatus === "PENDING_CONFIRM") {
     return {
-      code: "BUY_PENDING",
-      label: "매수 대기중",
-      shortLabel: "매수 대기중",
+      code: normalizedSource === "ORDER" ? "BUY_SUBMITTED" : "BUY_PENDING",
+      label: normalizedSource === "ORDER" ? "매수 접수중" : "매수 대기중",
+      shortLabel: normalizedSource === "ORDER" ? "매수 접수중" : "매수 대기중",
       badge: normalizedStatus || "BUY",
       tone: "pending",
       remainingOpenQuantity,
@@ -96,6 +99,17 @@ export function resolveTradeExecutionState({
     };
   }
 
+  if (isHolding) {
+    return {
+      code: "BUY_HOLDING",
+      label: "보유 중",
+      shortLabel: "보유 중",
+      badge: normalizedStatus || "BUY",
+      tone: "buy",
+      remainingOpenQuantity,
+    };
+  }
+
   return {
     code: "BUY_FILLED",
     label: "매수 완료",
@@ -105,4 +119,3 @@ export function resolveTradeExecutionState({
     remainingOpenQuantity,
   };
 }
-

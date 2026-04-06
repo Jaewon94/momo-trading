@@ -44,6 +44,7 @@ import { buildStrategyInsightsViewModel } from './strategy_insights_state.js';
 import { buildCatalogErrorCopy, buildCatalogMetaText } from './llm_catalog_state.js';
 import { buildPositionDetailState, groupPositionTimeline } from './position_detail_state.js';
 import { buildReportActivityInsights } from './report_activity_state.js';
+import { buildReportPerformanceState } from './report_performance_state.js';
 import {
   buildNewsOverviewCards,
   buildNewsOverviewSourcePills,
@@ -3058,6 +3059,7 @@ function createReportCard(report, context = {}) {
   const activityInsights = context.activityInsights || null;
   const newsOverview = context.newsOverview || null;
   const tradeSnapshot = context.tradeSnapshot || null;
+  const reportPerformance = buildReportPerformanceState(normalizedReport);
   const newsPerformance = newsOverview?.performance || {};
   const newsSettings = newsOverview?.settings || {};
   const newsStorage = newsOverview?.storage || {};
@@ -3118,6 +3120,35 @@ function createReportCard(report, context = {}) {
         <div class="text-xl font-bold ${unrealizedPnlColor}">${unrealizedPnl >= 0 ? '+' : ''}${unrealizedPnl.toLocaleString()}원</div>
         <div class="text-xs text-gray-500">미실현 손익</div>
       </div>
+    </div>
+    <div class="mb-4 rounded-2xl border border-gray-700 bg-dark-900/40 px-4 py-4">
+      <div class="flex items-start justify-between gap-3 mb-3">
+        <div>
+          <div class="text-sm font-medium text-gray-300">🧪 뉴스 반영 거래 비교</div>
+          <div class="text-xs text-gray-500 mt-1">리포트 기준 청산 거래를 뉴스 반영 여부로 나눠 기대값과 손익을 비교합니다.</div>
+        </div>
+        <div class="text-[11px] text-gray-500">${escapeHtml(reportPerformance.helperLabel)}</div>
+      </div>
+      ${reportPerformance.ready ? `
+        <div class="performance-table">
+          ${reportPerformance.rows.map((row) => `
+            <div class="performance-table-row">
+              <div class="performance-table-cell metric-name">${escapeHtml(row.label)}</div>
+              <div class="performance-table-cell">${escapeHtml(row.tradeCount)}</div>
+              <div class="performance-table-cell">${escapeHtml(row.expectancy)}</div>
+              <div class="performance-table-cell">${escapeHtml(row.profitFactor)}</div>
+              <div class="performance-table-cell">${escapeHtml(row.totalPnl)}</div>
+            </div>
+          `).join('')}
+        </div>
+        <div class="mt-3 flex flex-wrap gap-3 text-[11px] text-gray-400">
+          <span>E 차이 ${escapeHtml(reportPerformance.delta.expectancy)}</span>
+          <span>PF 차이 ${escapeHtml(reportPerformance.delta.profitFactor)}</span>
+          <span>비용차감 ${escapeHtml(reportPerformance.delta.netPnlAfterCost)}</span>
+        </div>
+      ` : `
+        <div class="rounded-2xl border border-dashed border-gray-700 bg-dark-900/30 px-4 py-5 text-sm text-gray-500">${escapeHtml(reportPerformance.emptyLabel)}</div>
+      `}
     </div>
     ${newsOverview && newsStrip ? `
     <details class="report-news-strip ${newsStatusToneClass} mb-4">
