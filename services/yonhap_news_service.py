@@ -37,7 +37,7 @@ class YonhapNewsService:
         items = self._parse_rss(response.text)[: max(int(limit), 1)]
         if not items:
             return []
-        return await self._attach_symbols(session, items)
+        return await news_ingest_service._attach_symbols(session, items)
 
     async def fetch_and_ingest(
         self,
@@ -73,49 +73,6 @@ class YonhapNewsService:
                     "copyright_notice": "연합뉴스TV RSS는 영리 목적 사용 금지 문구가 있어 운영 정책 검토 필요",
                 },
             })
-        return items
-
-    async def _attach_symbols(
-        self,
-        session: AsyncSession,
-        items: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        result = await session.execute(
-            select(Stock.symbol, Stock.name)
-            .where(Stock.is_active == True)  # noqa: E712
-            .order_by(Stock.name.desc())
-        )
-        stock_rows = [
-            {
-                "symbol": str(symbol),
-                "name": str(name or "").strip(),
-            }
-            for symbol, name in result.all()
-            if str(name or "").strip()
-        ]
-        stock_rows.sort(key=lambda item: len(item["name"]), reverse=True)
-
-        for item in items:
-            haystack = " ".join([
-                str(item.get("title") or ""),
-                str(item.get("summary") or ""),
-            ])
-            matched_symbols: list[str] = []
-            matched_names: list[str] = []
-            for stock in stock_rows:
-                name = stock["name"]
-                if len(name) < 2:
-                    continue
-                if name in haystack:
-                    matched_symbols.append(stock["symbol"])
-                    matched_names.append(name)
-                if len(matched_symbols) >= 5:
-                    break
-            item["symbols"] = matched_symbols
-            metadata = dict(item.get("metadata") or {})
-            if matched_names:
-                metadata["matched_stock_names"] = matched_names
-            item["metadata"] = metadata
         return items
 
     @staticmethod

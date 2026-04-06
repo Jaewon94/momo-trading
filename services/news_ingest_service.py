@@ -8,9 +8,11 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.news_item import NewsItem
+from models.stock import Stock
 from repositories.news_item_repository import NewsItemRepository
 from trading.symbols import normalize_krx_symbol
 from util.time_util import KST, ensure_kst, now_kst
@@ -134,6 +136,17 @@ class NewsIngestService:
         duplicates = 0
         skipped = 0
         created_items: list[dict[str, Any]] = []
+        if not items:
+            return {
+                "summary": {
+                    "received": 0,
+                    "created": 0,
+                    "duplicates": 0,
+                    "skipped": 0,
+                },
+                "created_items": [],
+            }
+        items = await self._attach_symbols(session, items)
 
         for raw in items:
             normalized = self._normalize_item(raw)
@@ -176,6 +189,77 @@ class NewsIngestService:
             symbol=symbol,
             source_code=source_code,
         )
+
+    async def _attach_symbols(
+        self,
+        session: AsyncSession,
+        items: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        result = await session.execute(
+            select(Stock.symbol, Stock.name)
+            .where(Stock.is_active == True)  # noqa: E712
+            .order_by(Stock.name.desc(), Stock.created_at.desc())
+        )
+        stock_rows = [
+            {
+                "symbol": normalize_krx_symbol(symbol),
+                "name": str(name or "").strip(),
+            }
+            for symbol, name in result.all()
+            if str(name or "").strip()
+        ]
+        stock_rows.sort(key=lambda item: len(item["name"]), reverse=True)
+
+        enriched: list[dict[str, Any]] = []
+        for item in items:
+            copied = dict(item)
+            existing_symbols = self._normalize_symbols(copied.get("symbols"))
+            metadata = dict(copied.get("metadata") or {})
+            if existing_symbols:
+                copied["symbols"] = existing_symbols
+                copied["metadata"] = metadata
+                enriched.append(copied)
+                continue
+
+            haystack = " ".join([
+                str(copied.get("title") or ""),
+                str(copied.get("summary") or ""),
+                str(metadata.get("translated_title") or ""),
+                str(metadata.get("translated_summary") or ""),
+            ])
+            matched_symbols: list[str] = []
+            matched_names: list[str] = []
+            seen_names: set[str] = set()
+            for stock in stock_rows:
+                name = stock["name"]
+                if len(name) < 2:
+                    continue
+                if name not in haystack:
+                    continue
+                if name in seen_names:
+                    continue
+                matched_symbols.append(stock["symbol"])
+                matched_names.append(name)
+                seen_names.add(name)
+                if len(matched_symbols) >= 5:
+                    break
+
+            copied["symbols"] = matched_symbols
+            if matched_names:
+                metadata["matched_stock_names"] = matched_names
+                metadata["related_symbols"] = matched_symbols
+                primary_symbol = matched_symbols[0]
+                metadata.setdefault("primary_symbol", primary_symbol)
+                metadata.setdefault("symbol_weights", {primary_symbol: 1.0})
+                if len(matched_symbols) > 1:
+                    metadata.setdefault(
+                        "related_symbol_weights",
+                        {symbol: 0.72 for symbol in matched_symbols[1:]},
+                    )
+            copied["metadata"] = metadata
+            enriched.append(copied)
+
+        return enriched
 
     def serialize_item(self, item: NewsItem) -> dict[str, Any]:
         metadata = self._load_metadata(getattr(item, "metadata_json", None))

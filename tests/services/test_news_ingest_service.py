@@ -3,6 +3,7 @@ from datetime import datetime
 import pytest
 
 from tests.conftest import TestAsyncSessionLocal
+from models.stock import Stock
 
 
 @pytest.mark.asyncio
@@ -107,3 +108,45 @@ async def test_news_ingest_service_serialize_item_prefers_translated_display_fie
     assert payload["display_summary"] == "반도체 수요 기대가 개선됐다는 내용"
     assert payload["original_title"] == "Samsung and LG Rally as Chip Cycle Improves"
     assert payload["original_summary"] == "Semiconductor demand outlook improved."
+
+
+@pytest.mark.asyncio
+async def test_news_ingest_service_attaches_symbols_from_translated_metadata():
+    from repositories.news_item_repository import NewsItemRepository
+    from services.news_ingest_service import NewsIngestService
+
+    service = NewsIngestService()
+
+    async with TestAsyncSessionLocal() as session:
+        session.add_all([
+            Stock(symbol="005930", name="삼성전자", market="KOSPI", is_active=True),
+            Stock(symbol="066570", name="LG전자", market="KOSPI", is_active=True),
+        ])
+        await session.commit()
+
+        summary = await service.ingest_items(session, [
+            {
+                "source_code": "INVESTING",
+                "title": "Samsung and LG rally on AI demand optimism",
+                "summary": "Foreign market commentary",
+                "published_at": "2026-04-05T09:01:00+09:00",
+                "url": "https://www.investing.com/news/stock-market-news/example",
+                "metadata": {
+                    "translated_title": "AI 수요 기대에 삼성전자와 LG전자 강세",
+                    "translated_summary": "외신에서 삼성전자와 LG전자 수혜를 언급",
+                },
+            },
+        ])
+        await session.commit()
+        candidates = await NewsItemRepository(session).get_recent(limit=10, source_code="INVESTING")
+        item = next(
+            candidate for candidate in candidates
+            if candidate.url == "https://www.investing.com/news/stock-market-news/example"
+        )
+
+    payload = service.serialize_item(item)
+
+    assert summary["created"] == 1
+    assert payload["symbols"] == ["005930", "066570"]
+    assert payload["metadata"]["matched_stock_names"] == ["삼성전자", "LG전자"]
+    assert payload["metadata"]["primary_symbol"] == "005930"
