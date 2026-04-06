@@ -55,6 +55,7 @@ export function buildRuntimeOperationsViewModel(systemStatus = {}) {
   const items = [
     { key: "broker", title: "브로커", ...operations.broker },
     { key: "news_polling", title: "뉴스", ...operations.news_polling },
+    { key: "ollama", title: "Ollama", ...operations.ollama },
     { key: "orders", title: "주문", ...operations.orders },
   ].filter((item) => item.label || item.message);
 

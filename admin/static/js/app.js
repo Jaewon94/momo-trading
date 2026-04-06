@@ -1823,6 +1823,9 @@ function renderTodayTrades(data) {
     todayCount,
     hasContent,
   } = state;
+  const holdings = Array.isArray(latestAccountSnapshot?.holdings) ? latestAccountSnapshot.holdings : [];
+  const currentHoldingCount = holdings.length
+    || new Set(openPositions.map((item) => item.stock_symbol).filter(Boolean)).size;
 
   if (countEl) countEl.textContent = String(todayCount);
 
@@ -1851,7 +1854,7 @@ function renderTodayTrades(data) {
       </div>
       <div class="flex items-center justify-between mt-1">
         <span class="text-gray-400">현재 보유</span>
-        <span class="text-purple-300 font-semibold">${new Set(openPositions.map((item) => item.stock_symbol).filter(Boolean)).size}종목</span>
+        <span class="text-purple-300 font-semibold">${currentHoldingCount}종목</span>
       </div>
       <div class="text-[11px] text-gray-500 mt-2">상세 목록은 거래 센터에서 확인</div>
     </div>

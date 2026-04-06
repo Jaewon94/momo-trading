@@ -308,6 +308,10 @@ run_db_backup() {
     "$PYTHON_BIN" scripts/dev/backup_runtime_db.py
 }
 
+check_ollama_runtime() {
+    "$PYTHON_BIN" scripts/dev/check_ollama_runtime.py --ensure-started || true
+}
+
 if [ -f "$VENV_DIR/bin/activate" ]; then
     source "$VENV_DIR/bin/activate"
 else
@@ -376,6 +380,7 @@ case "${1:-}" in
 
         sync_broker_sidecar
         run_db_migrations
+        check_ollama_runtime
 
         echo "🚀 momo-trading 백그라운드 시작"
         echo "   Host: $HOST:$PORT"
@@ -420,6 +425,7 @@ case "${1:-}" in
 
         sync_broker_sidecar
         run_db_migrations
+        check_ollama_runtime
 
         echo "🚀 momo-trading 시작 (포그라운드)"
         echo "   Host: $HOST:$PORT"

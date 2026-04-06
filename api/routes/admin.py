@@ -14,6 +14,7 @@ from sqlalchemy.exc import OperationalError
 
 from admin.sse_manager import sse_manager
 from analysis.llm.model_catalog import model_catalog_service
+from analysis.llm.ollama_provider import OllamaProvider
 from core.config import settings
 from core.database import AsyncSessionLocal, get_async_db, get_async_db_with_transaction
 from core.runtime_settings import MUTABLE_SETTINGS
@@ -1550,6 +1551,37 @@ async def get_system_status(db: AsyncSession = Depends(get_async_db)):
             "created_at": None,
         }
 
+    ollama_candidates = [
+        settings.LLM_PROVIDER_TIER1,
+        settings.LLM_PROVIDER_TIER2,
+        settings.LLM_FALLBACK_PROVIDER_TIER1,
+        settings.LLM_FALLBACK_PROVIDER_TIER2,
+        settings.MANUAL_LLM_PROVIDER,
+        settings.MANUAL_LLM_FALLBACK_PROVIDER,
+        settings.NEWS_LLM_PROVIDER,
+        settings.NEWS_LLM_FALLBACK_PROVIDER,
+    ]
+    ollama_required = any(str(value or "").upper() == "OLLAMA" for value in ollama_candidates)
+    if not ollama_required:
+        ollama_ops = {
+            "status": "OK",
+            "label": "Ollama 미사용",
+            "message": "현재 활성 AI 설정에 Ollama가 포함되어 있지 않습니다.",
+            "base_url": settings.OLLAMA_BASE_URL,
+        }
+    else:
+        ollama_available = await OllamaProvider(LLMTier.TIER1).is_available()
+        ollama_ops = {
+            "status": "OK" if ollama_available else "WARN",
+            "label": "Ollama 연결 정상" if ollama_available else "Ollama 연결 필요",
+            "message": (
+                f"{settings.OLLAMA_BASE_URL} 연결 확인"
+                if ollama_available
+                else f"{settings.OLLAMA_BASE_URL} 에 연결할 수 없습니다."
+            ),
+            "base_url": settings.OLLAMA_BASE_URL,
+        }
+
     return SuccessResponse(data={
         "broker_provider": broker_provider,
         "mcp_required": mcp_required,
@@ -1567,6 +1599,7 @@ async def get_system_status(db: AsyncSession = Depends(get_async_db)):
         "operations": {
             "broker": broker_ops,
             "news_polling": news_ops,
+            "ollama": ollama_ops,
             "orders": order_ops,
         },
     })

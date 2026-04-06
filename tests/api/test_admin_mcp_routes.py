@@ -27,6 +27,14 @@ async def test_admin_mcp_reconnect_route_reconnects_runtime_client(client, monke
 @pytest.mark.asyncio
 async def test_system_status_marks_mcp_as_optional_for_kiwoom(client, monkeypatch):
     monkeypatch.setattr("api.routes.admin.settings.BROKER_PROVIDER", "KIWOOM")
+    monkeypatch.setattr("api.routes.admin.settings.LLM_PROVIDER_TIER1", "CODEX")
+    monkeypatch.setattr("api.routes.admin.settings.LLM_PROVIDER_TIER2", "CODEX")
+    monkeypatch.setattr("api.routes.admin.settings.LLM_FALLBACK_PROVIDER_TIER1", "")
+    monkeypatch.setattr("api.routes.admin.settings.LLM_FALLBACK_PROVIDER_TIER2", "")
+    monkeypatch.setattr("api.routes.admin.settings.MANUAL_LLM_PROVIDER", "CODEX")
+    monkeypatch.setattr("api.routes.admin.settings.MANUAL_LLM_FALLBACK_PROVIDER", "")
+    monkeypatch.setattr("api.routes.admin.settings.NEWS_LLM_PROVIDER", "CODEX")
+    monkeypatch.setattr("api.routes.admin.settings.NEWS_LLM_FALLBACK_PROVIDER", "")
     monkeypatch.setattr("api.routes.admin.mcp_client._post_client", None, raising=False)
     monkeypatch.setattr("api.routes.admin.mcp_client._session_id", None, raising=False)
     monkeypatch.setattr("api.routes.admin.trading_scheduler._running", False)
@@ -40,6 +48,8 @@ async def test_system_status_marks_mcp_as_optional_for_kiwoom(client, monkeypatc
     assert payload["mcp_required"] is False
     assert payload["mcp_connected"] is False
     assert payload["operations"]["broker"]["status"] == "OK"
+    assert payload["operations"]["ollama"]["status"] == "OK"
+    assert payload["operations"]["ollama"]["label"] == "Ollama 미사용"
 
 
 @pytest.mark.asyncio
@@ -52,8 +62,13 @@ async def test_system_status_includes_operations_summary(client, monkeypatch):
 
     monkeypatch.setattr("api.routes.admin.settings.BROKER_PROVIDER", "KIS")
     monkeypatch.setattr("api.routes.admin.settings.NEWS_POLL_ENABLED", True)
+    monkeypatch.setattr("api.routes.admin.settings.NEWS_LLM_PROVIDER", "OLLAMA")
+    monkeypatch.setattr("api.routes.admin.settings.NEWS_LLM_FALLBACK_PROVIDER", "")
     monkeypatch.setattr("api.routes.admin.mcp_client._post_client", None, raising=False)
     monkeypatch.setattr("api.routes.admin.mcp_client._session_id", None, raising=False)
+    async def fake_ollama_available(self):
+        return False
+    monkeypatch.setattr("api.routes.admin.OllamaProvider.is_available", fake_ollama_available)
     monkeypatch.setattr(
         "api.routes.admin.news_runtime_service.get_snapshot",
         lambda *, include_foreign: {
@@ -84,5 +99,6 @@ async def test_system_status_includes_operations_summary(client, monkeypatch):
     assert operations["broker"]["status"] == "ERROR"
     assert operations["news_polling"]["status"] == "ERROR"
     assert "DART" in operations["news_polling"]["message"]
+    assert operations["ollama"]["status"] == "WARN"
     assert operations["orders"]["status"] == "WARN"
     assert operations["orders"]["message"] == "주문 한도 초과"

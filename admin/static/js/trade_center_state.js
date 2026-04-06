@@ -30,6 +30,28 @@ function groupOpenPositions(openPositions = [], holdings = []) {
     holdingBySymbol[holding.symbol] = holding;
   });
 
+  if (Object.keys(holdingBySymbol).length) {
+    return normalizeTradeList(holdings)
+      .filter((holding) => holding?.symbol)
+      .map((holding) => {
+      const groupedItem = grouped[holding.symbol] || null;
+      const quantity = toNumber(holding?.quantity, toNumber(groupedItem?.quantity));
+      const avgPrice = toNumber(holding?.avg_buy_price, 0)
+        || (groupedItem && groupedItem.quantity > 0
+          ? Math.round(groupedItem.totalCost / groupedItem.quantity)
+          : 0);
+      return {
+        symbol: holding.symbol,
+        name: holding?.name || groupedItem?.name || holding.symbol,
+        quantity,
+        avgPrice,
+        currentPrice: toNumber(holding?.current_price),
+        pnl: toNumber(holding?.pnl),
+        pnlRate: toNumber(holding?.pnl_rate),
+      };
+    });
+  }
+
   return Object.values(grouped).map((item) => {
     const holding = holdingBySymbol[item.symbol];
     const avgPrice = item.quantity > 0 ? Math.round(item.totalCost / item.quantity) : 0;
