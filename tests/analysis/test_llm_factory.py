@@ -55,6 +55,18 @@ class FakeAlwaysFailingProvider(FakeProvider):
         raise RuntimeError("provider failed")
 
 
+class FakeMutatingFailingProvider(FakeProvider):
+    def __init__(self, provider: LLMProvider, on_generate) -> None:
+        super().__init__(provider, available=True, result="")
+        self._on_generate = on_generate
+
+    async def generate(self, prompt: str, system_prompt: str = "") -> str:
+        self.calls.append((prompt, system_prompt))
+        self._available = False
+        self._on_generate()
+        raise RuntimeError("provider failed")
+
+
 @pytest.mark.asyncio
 async def test_llm_factory_uses_configured_primary_provider(monkeypatch) -> None:
     monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_PROVIDER_TIER1", "CODEX")
@@ -386,3 +398,26 @@ async def test_llm_factory_records_observability_metric_on_failure(monkeypatch) 
 
     assert observed["status"] == "ERROR"
     assert observed["fallback_used"] is False
+
+
+async def test_llm_factory_re_resolves_default_chain_after_primary_failure(monkeypatch) -> None:
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_PROVIDER_TIER1", "CODEX")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_FALLBACK_PROVIDER_TIER1", "CLAUDE_CODE")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_FALLBACK_MODEL_TIER1", "DEFAULT")
+
+    def disable_fallback() -> None:
+        monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_FALLBACK_PROVIDER_TIER1", "")
+
+    factory = LLMFactory()
+    codex = FakeMutatingFailingProvider(LLMProvider.CODEX, on_generate=disable_fallback)
+    claude = FakeProvider(LLMProvider.CLAUDE_CODE, available=True, result="claude-result")
+    factory._providers[LLMTier.TIER1] = {
+        LLMProvider.CODEX: codex,
+        LLMProvider.CLAUDE_CODE: claude,
+    }
+
+    with pytest.raises(RuntimeError, match="provider failed"):
+        await factory.generate("hello", LLMTier.TIER1)
+
+    assert codex.calls == [("hello", "")]
+    assert claude.calls == []

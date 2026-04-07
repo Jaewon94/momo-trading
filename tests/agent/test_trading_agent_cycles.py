@@ -310,6 +310,58 @@ async def test_tier1_analysis_retries_once_when_first_response_is_unparseable(mo
 
 
 @pytest.mark.asyncio
+async def test_analyze_and_trade_forwards_manual_model_override(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    forwarded: dict[str, str | None] = {}
+
+    async def fake_log(*args, **kwargs) -> None:
+        return None
+
+    async def fake_fetch_symbol_market_data(_symbol: str):
+        price_resp = SimpleNamespace(success=True, data={"price": 70_000, "change": 0, "change_rate": 0, "volume": 1_000}, error=None)
+        empty_resp = SimpleNamespace(success=False, data={}, error="no-data")
+        return price_resp, empty_resp, empty_resp
+
+    async def fake_tier1_analysis(*args, **kwargs) -> dict:
+        forwarded["tier1_provider"] = kwargs.get("manual_provider_override")
+        forwarded["tier1_model"] = kwargs.get("manual_model_override")
+        return {
+            "recommendation": "BUY",
+            "confidence": 0.81,
+            "reason": "테스트",
+            "target_price": 72_000,
+            "stop_loss_price": 68_000,
+            "provider": "CODEX",
+        }
+
+    async def fake_tier2_review(*args, **kwargs) -> dict:
+        forwarded["tier2_provider"] = kwargs.get("manual_provider_override")
+        forwarded["tier2_model"] = kwargs.get("manual_model_override")
+        return {"approved": False, "reason": "테스트", "provider": "CODEX"}
+
+    monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
+    monkeypatch.setattr(agent, "_fetch_symbol_market_data", fake_fetch_symbol_market_data)
+    monkeypatch.setattr(agent, "_tier1_analysis", fake_tier1_analysis)
+    monkeypatch.setattr(agent, "_tier2_review", fake_tier2_review)
+
+    result = await agent._analyze_and_trade(
+        {"symbol": "005930", "name": "삼성전자", "strategy_type": "STABLE_SHORT"},
+        "cycle-manual-model",
+        portfolio_snapshot={"cash": 1_000_000, "holding_symbols": ["005930"], "holding_count": 1, "today_trade_count": 0},
+        manual_provider_override="CODEX",
+        manual_model_override="gpt-5.4",
+    )
+
+    assert result == {"symbol": "005930", "signal": False, "executed": False}
+    assert forwarded == {
+        "tier1_provider": "CODEX",
+        "tier1_model": "gpt-5.4",
+        "tier2_provider": "CODEX",
+        "tier2_model": "gpt-5.4",
+    }
+
+
+@pytest.mark.asyncio
 async def test_run_trading_cycle_skips_buy_candidate_when_cash_is_blocked(monkeypatch) -> None:
     agent = TradingAgent(broker_adapter=StubBrokerAdapter())
     logs = []

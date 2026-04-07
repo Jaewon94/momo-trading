@@ -17,6 +17,7 @@
 ※ DAY_TRADING_ONLY=true: 당일 매수→당일 청산 필수 (오버나이트 없음)
 ※ DAY_TRADING_ONLY=false: 스윙 모드 — 유망 종목 오버나이트 보유 (스마트 청산)
 """
+from collections.abc import Awaitable
 import asyncio
 import copy
 import time as _time
@@ -42,6 +43,7 @@ class TradingScheduler:
         self.scheduler = self._build_scheduler()
         self._running = False
         self._news_poll_lock = asyncio.Lock()
+        self._background_tasks: set[asyncio.Task[object]] = set()
         self._last_event_news_poll_at = 0.0
         self._last_event_news_poll_by_symbol: dict[str, float] = {}
         self._event_handlers_registered = False
@@ -84,6 +86,27 @@ class TradingScheduler:
         event_bus.subscribe(EventType.MARKET_OPEN, self._on_news_trigger_event)
         self._event_handlers_registered = True
 
+    def _schedule_background_task(
+        self,
+        coro: Awaitable[object],
+        *,
+        label: str,
+    ) -> asyncio.Task[object]:
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+
+        def _finalize(done_task: asyncio.Task[object]) -> None:
+            self._background_tasks.discard(done_task)
+            if done_task.cancelled():
+                return
+            try:
+                done_task.result()
+            except Exception as exc:  # pragma: no cover - logging path
+                logger.warning("{} 실패: {}", label, str(exc))
+
+        task.add_done_callback(_finalize)
+        return task
+
     async def _on_news_trigger_event(self, event: Event) -> None:
         if not settings.NEWS_POLL_ENABLED:
             return
@@ -102,11 +125,12 @@ class TradingScheduler:
             self._last_event_news_poll_by_symbol[symbol] = now_mono
 
         self._last_event_news_poll_at = now_mono
-        asyncio.create_task(
+        self._schedule_background_task(
             self._news_poll(
                 trigger_mode="AUTO_EVENT",
                 trigger_reason=event.type.value,
-            )
+            ),
+            label="이벤트 기반 뉴스 폴링",
         )
 
     async def _fetch_current_price(self, symbol: str, market: Market = Market.KRX) -> float:

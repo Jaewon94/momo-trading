@@ -134,10 +134,26 @@ class LLMFactory:
         Returns:
             (생성 텍스트, 사용된 provider 이름)
         """
-        provider_chain = provider_chain or self._provider_chain(tier)
         last_error = None
+        attempted_providers: set[LLMProvider] = set()
+        active_chain: list[LLMProvider] = list(provider_chain) if provider_chain else self._provider_chain(tier)
 
-        for index, provider_key in enumerate(provider_chain):
+        while True:
+            if provider_chain is None:
+                active_chain = self._provider_chain(tier)
+            next_candidate = next(
+                (
+                    (index, provider_key)
+                    for index, provider_key in enumerate(active_chain)
+                    if provider_key not in attempted_providers
+                ),
+                None,
+            )
+            if next_candidate is None:
+                break
+
+            index, provider_key = next_candidate
+            attempted_providers.add(provider_key)
             fallback_model = self._fallback_model_for_tier(tier) if index > 0 else None
             explicit_model_override = None
             if provider_model_overrides:
@@ -203,7 +219,7 @@ class LLMFactory:
                         cycle_id=cycle_id,
                         symbol=symbol,
                         detail={
-                            "provider_chain": [item.value for item in provider_chain],
+                            "provider_chain": [item.value for item in active_chain],
                             "selected_provider_index": index,
                             "system_prompt_chars": len(system_prompt or ""),
                         },
@@ -229,11 +245,11 @@ class LLMFactory:
             prompt_chars=len(prompt),
             response_chars=None,
             retry_count=0,
-            fallback_used=len(provider_chain) > 1,
+            fallback_used=len(active_chain) > 1,
             cycle_id=cycle_id,
             symbol=symbol,
             detail={
-                "provider_chain": [item.value for item in provider_chain],
+                "provider_chain": [item.value for item in active_chain],
                 "system_prompt_chars": len(system_prompt or ""),
                 "error": str(last_error)[:200] if last_error else "unknown",
             },
@@ -247,7 +263,7 @@ class LLMFactory:
                 symbol=symbol,
                 detail={
                     "tier": tier.value,
-                    "provider_chain": [item.value for item in provider_chain],
+                    "provider_chain": [item.value for item in active_chain],
                     "system_prompt_chars": len(system_prompt or ""),
                     "prompt_chars": len(prompt or ""),
                 },

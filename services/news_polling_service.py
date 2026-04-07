@@ -17,6 +17,7 @@ from services.news_ingest_service import news_ingest_service
 from services.observability_service import observability_service
 from services.error_capture_service import error_capture_service
 from services.krx_kind_disclosure_service import krx_kind_disclosure_service
+from services.news_translation_service import news_translation_service
 from services.open_dart_disclosure_service import open_dart_disclosure_service
 from services.news_runtime_service import news_runtime_service
 from services.seeking_alpha_news_service import seeking_alpha_news_service
@@ -81,7 +82,8 @@ class NewsPollingService:
             result = source_results[spec.source_code]
             all_items.extend(result.items)
 
-        detailed = await news_ingest_service.ingest_items_detailed(session, all_items)
+        prepared_items = await news_translation_service.translate_items(all_items) if all_items else []
+        detailed = await news_ingest_service.ingest_items_detailed(session, prepared_items)
         summary = dict(detailed["summary"])
         source_summaries = {
             str(source_code or "").upper(): dict(counts or {})

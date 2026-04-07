@@ -41,7 +41,7 @@ INVESTING_RSS_NONSTANDARD_DATE = """<?xml version="1.0" encoding="UTF-8"?>
 </rss>
 """
 
-INVESTING_RSS_MALFORMED = """<?xml version="1.0" encoding="UTF-8"?>
+INVESTING_RSS_MALFORMED_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
   <channel>
     <title>Investing.com Stock Market News</title>
@@ -55,6 +55,23 @@ INVESTING_RSS_MALFORMED = """<?xml version="1.0" encoding="UTF-8"?>
   </channel>
 </rss>
 <!-- trailing junk
+"""
+
+
+INVESTING_RSS_MALFORMED_SUFFIX = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Investing.com Stock Market News</title>
+    <item>
+      <title>Chip stocks recover after midday drop</title>
+      <link>https://www.investing.com/news/stock-market-news/chip-stocks-recover-400004</link>
+      <description>Afternoon rebound led by semiconductor names.</description>
+      <pubDate>Mon, 06 Apr 2026 07:30:00 GMT</pubDate>
+      <guid>investing-4</guid>
+    </item>
+  </channel>
+</rss>
+<broken
 """
 
 
@@ -139,7 +156,7 @@ async def test_investing_news_service_sanitizes_malformed_xml():
     transport = httpx.MockTransport(
         lambda request: httpx.Response(
             200,
-            text=INVESTING_RSS_MALFORMED,
+            text=INVESTING_RSS_MALFORMED_XML,
             headers={"Content-Type": "application/rss+xml; charset=UTF-8"},
         )
     )
@@ -149,3 +166,25 @@ async def test_investing_news_service_sanitizes_malformed_xml():
 
     assert len(items) == 1
     assert items[0]["title"] == "Chip stocks & AI names climb"
+
+
+@pytest.mark.asyncio
+async def test_investing_news_service_recovers_from_malformed_rss_suffix():
+    import httpx
+
+    from services.investing_news_service import InvestingNewsService
+
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            text=INVESTING_RSS_MALFORMED_SUFFIX,
+            headers={"Content-Type": "application/rss+xml; charset=UTF-8"},
+        )
+    )
+
+    service = InvestingNewsService(transport=transport)
+    items = await service.fetch_recent_news(limit=5)
+
+    assert len(items) == 1
+    assert items[0]["external_id"] == "investing-4"
+    assert items[0]["title"] == "Chip stocks recover after midday drop"

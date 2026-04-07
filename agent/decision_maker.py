@@ -29,7 +29,8 @@ from trading.enums import (
     OrderType,
     RecommendationStatus,
 )
-from trading.models import OrderRequest
+from trading.models import OrderRequest, PendingOrderInfo
+from trading.symbols import normalize_krx_symbol
 from util.time_util import now_kst
 
 
@@ -108,6 +109,39 @@ class DecisionMaker:
             ))
             return result
 
+        if signal.action.value == OrderSide.BUY.value:
+            existing_pending_buy = await self._find_existing_pending_buy(signal.symbol)
+            if existing_pending_buy is not None:
+                skip_msg = (
+                    "기존 미체결 매수 주문 존재 → 신규 주문 차단 "
+                    f"(주문번호: {existing_pending_buy.order_id}, 잔량 {existing_pending_buy.remaining_qty}주)"
+                )
+                result = {
+                    "mode": "AUTONOMOUS",
+                    "symbol": signal.symbol,
+                    "action": signal.action.value,
+                    "success": False,
+                    "order_id": "",
+                    "message": skip_msg,
+                    "data": {
+                        "pending_order_id": existing_pending_buy.order_id,
+                        "pending_remaining_qty": existing_pending_buy.remaining_qty,
+                        "pending_order_price": existing_pending_buy.order_price,
+                    },
+                }
+                await activity_logger.log(
+                    ActivityType.DECISION, ActivityPhase.SKIP,
+                    f"\u23f8\ufe0f [{signal.symbol}] {skip_msg}",
+                    cycle_id=cycle_id, symbol=signal.symbol,
+                    detail=result,
+                )
+                await event_bus.publish(Event(
+                    type=EventType.ORDER_EXECUTED,
+                    data=result,
+                    source="decision_maker",
+                ))
+                return result
+
         order_result = await self._broker_adapter.place_order(self._build_order_request(signal))
 
         order_id = order_result.order_id or ""
@@ -177,6 +211,25 @@ class DecisionMaker:
         ))
 
         return result
+
+    async def _find_existing_pending_buy(self, symbol: str) -> PendingOrderInfo | None:
+        normalized_symbol = normalize_krx_symbol(symbol)
+        try:
+            pending_orders = await self._broker_adapter.get_pending_orders()
+        except Exception as e:
+            logger.warning("[{}] 미체결 주문 조회 실패 — 중복 매수 차단 검사 생략: {}", normalized_symbol, str(e))
+            return None
+
+        for order in pending_orders:
+            if normalize_krx_symbol(order.symbol) != normalized_symbol:
+                continue
+            side_text = str(order.side or "").upper()
+            if "매수" not in str(order.side or "") and side_text != OrderSide.BUY.value:
+                continue
+            if int(order.remaining_qty or 0) <= 0:
+                continue
+            return order
+        return None
 
     @staticmethod
     def _build_order_request(signal: TradeSignal) -> OrderRequest:

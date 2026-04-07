@@ -4,9 +4,11 @@ import time
 
 from loguru import logger
 
+from core.config import settings
 from realtime.event_detector import event_detector
 from realtime.stream_manager import stream_manager
 from trading.broker_factory import get_broker_adapter
+from trading.enums import BrokerProvider
 from trading.enums import Market
 from realtime.stream_backend import get_stream_backend
 
@@ -32,24 +34,45 @@ class RealtimeMonitor:
         self._health_task: asyncio.Task | None = None
         self._poll_task: asyncio.Task | None = None
 
+    @staticmethod
+    def _uses_kis_websocket() -> bool:
+        provider = (settings.BROKER_PROVIDER or BrokerProvider.KIS.value).upper()
+        return provider == BrokerProvider.KIS.value
+
+    def _start_polling_task(self) -> None:
+        self._polling_active = True
+        if self._poll_task is None or self._poll_task.done():
+            self._poll_task = asyncio.create_task(self._poll_loop())
+
+    def _stop_polling_task(self) -> None:
+        self._polling_active = False
+        if self._poll_task and not self._poll_task.done():
+            self._poll_task.cancel()
+        self._poll_task = None
+
     async def start(self) -> None:
         """실시간 모니터링 시작"""
+        from scheduler.market_calendar import market_calendar
+
         self._running = True
         self._last_ws_data_time = time.monotonic()
-        get_stream_backend().set_on_price(self._on_price_update)
-        await stream_manager.start()
-        # WebSocket 상태 점검 루프 시작
+
+        if self._uses_kis_websocket():
+            get_stream_backend().set_on_price(self._on_price_update)
+            await stream_manager.start()
+            logger.debug("실시간 모니터 시작 (WebSocket, 실패해도 서버 기동)")
+        else:
+            if market_calendar.is_krx_trading_hours():
+                self._start_polling_task()
+            logger.debug("실시간 모니터 시작 ({} 폴링 모드)", settings.BROKER_PROVIDER)
         self._health_task = asyncio.create_task(self._ws_health_loop())
-        logger.debug("실시간 모니터 시작 (폴링 폴백 대기)")
 
     async def stop(self) -> None:
         """실시간 모니터링 중지"""
         self._running = False
-        self._polling_active = False
+        self._stop_polling_task()
         if self._health_task and not self._health_task.done():
             self._health_task.cancel()
-        if self._poll_task and not self._poll_task.done():
-            self._poll_task.cancel()
         await stream_manager.stop()
         logger.debug("실시간 모니터 중지")
 
@@ -58,10 +81,7 @@ class RealtimeMonitor:
         self._last_ws_data_time = time.monotonic()
         # WebSocket 복구 → 폴링 비활성화
         if self._polling_active:
-            self._polling_active = False
-            if self._poll_task and not self._poll_task.done():
-                self._poll_task.cancel()
-                self._poll_task = None
+            self._stop_polling_task()
             logger.debug("WebSocket 데이터 수신 복구 → 폴링 폴백 비활성화")
         await event_detector.on_price_update(data)
 
@@ -77,11 +97,14 @@ class RealtimeMonitor:
                 from scheduler.market_calendar import market_calendar
                 if not market_calendar.is_krx_trading_hours():
                     if self._polling_active:
-                        self._polling_active = False
-                        if self._poll_task and not self._poll_task.done():
-                            self._poll_task.cancel()
-                            self._poll_task = None
+                        self._stop_polling_task()
                         logger.debug("장외 시간 → 폴링 폴백 비활성화")
+                    continue
+
+                if not self._uses_kis_websocket():
+                    if not self._polling_active:
+                        logger.debug("{} 모드 → 폴링 폴백 활성화", settings.BROKER_PROVIDER)
+                        self._start_polling_task()
                     continue
 
                 ws_disconnected = not stream_manager.is_connected
@@ -90,10 +113,7 @@ class RealtimeMonitor:
                 if (ws_disconnected or data_stale) and not self._polling_active:
                     reason = "연결 끊김" if ws_disconnected else f"데이터 {self.WS_STALE_THRESHOLD_SEC}초 미수신"
                     logger.warning("WebSocket 단절 감지 ({}) → 폴링 폴백 활성화", reason)
-                    self._polling_active = True
-                    # 폴링 태스크 시작
-                    if self._poll_task is None or self._poll_task.done():
-                        self._poll_task = asyncio.create_task(self._poll_loop())
+                    self._start_polling_task()
 
             except asyncio.CancelledError:
                 break

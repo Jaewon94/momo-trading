@@ -2,6 +2,10 @@ import pytest
 import asyncio
 
 
+async def _passthrough_translate_items(items):
+    return items
+
+
 @pytest.mark.asyncio
 async def test_news_polling_service_publishes_events_for_created_items(monkeypatch):
     from services.news_polling_service import NewsPollingService
@@ -258,6 +262,10 @@ async def test_news_polling_service_includes_bloomberg_when_foreign_enabled(monk
         "services.news_polling_service.news_ingest_service.ingest_items_detailed",
         fake_ingest_items_detailed,
     )
+    monkeypatch.setattr(
+        "services.news_polling_service.news_translation_service.translate_items",
+        _passthrough_translate_items,
+    )
     monkeypatch.setattr("services.news_polling_service.event_bus.publish", fake_publish)
 
     service = NewsPollingService()
@@ -346,6 +354,10 @@ async def test_news_polling_service_includes_cnbc_when_foreign_enabled(monkeypat
     monkeypatch.setattr(
         "services.news_polling_service.news_ingest_service.ingest_items_detailed",
         fake_ingest_items_detailed,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.news_translation_service.translate_items",
+        _passthrough_translate_items,
     )
     monkeypatch.setattr("services.news_polling_service.event_bus.publish", fake_publish)
 
@@ -436,6 +448,10 @@ async def test_news_polling_service_includes_nasdaq_when_foreign_enabled(monkeyp
     monkeypatch.setattr(
         "services.news_polling_service.news_ingest_service.ingest_items_detailed",
         fake_ingest_items_detailed,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.news_translation_service.translate_items",
+        _passthrough_translate_items,
     )
     monkeypatch.setattr("services.news_polling_service.event_bus.publish", fake_publish)
 
@@ -567,6 +583,10 @@ async def test_news_polling_service_includes_investing_when_foreign_enabled(monk
         "services.news_polling_service.news_ingest_service.ingest_items_detailed",
         fake_ingest_items_detailed,
     )
+    monkeypatch.setattr(
+        "services.news_polling_service.news_translation_service.translate_items",
+        _passthrough_translate_items,
+    )
     monkeypatch.setattr("services.news_polling_service.event_bus.publish", fake_publish)
 
     service = NewsPollingService()
@@ -664,6 +684,10 @@ async def test_news_polling_service_includes_seeking_alpha_when_foreign_enabled(
         "services.news_polling_service.news_ingest_service.ingest_items_detailed",
         fake_ingest_items_detailed,
     )
+    monkeypatch.setattr(
+        "services.news_polling_service.news_translation_service.translate_items",
+        _passthrough_translate_items,
+    )
     monkeypatch.setattr("services.news_polling_service.event_bus.publish", fake_publish)
 
     service = NewsPollingService()
@@ -728,6 +752,121 @@ async def test_news_polling_service_skips_nasdaq_when_source_disabled(monkeypatc
 
     assert snapshot["sources"]["NASDAQ"]["status"] == "SKIPPED"
     assert snapshot["sources"]["NASDAQ"]["message"] == "NEWS_NASDAQ_ENABLED disabled"
+
+
+@pytest.mark.asyncio
+async def test_news_polling_service_translates_foreign_items_before_ingest(monkeypatch):
+    from services.news_polling_service import NewsPollingService
+
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_POLL_ENABLED", True)
+    monkeypatch.setattr("services.news_polling_service.settings.OPEN_DART_API_KEY", "")
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_DOMESTIC_MEDIA_ENABLED", False)
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_INCLUDE_FOREIGN", True)
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_NASDAQ_ENABLED", False)
+
+    async def fake_fetch_recent_krx_disclosures(*, page_count):
+        assert page_count == 25
+        return []
+
+    async def fake_fetch_recent_bloomberg_news(*, limit):
+        assert limit == 25
+        return [
+            {
+                "source_code": "BLOOMBERG",
+                "title": "Samsung suppliers gain on memory optimism",
+                "published_at": "2026-04-05T09:20:00+09:00",
+                "symbols": ["005930"],
+                "url": "https://www.bloomberg.com/news/articles/example",
+                "external_id": "example",
+                "language": "en",
+                "metadata": {
+                    "publisher": "Bloomberg Markets",
+                },
+            }
+        ]
+
+    async def fake_fetch_recent_cnbc_news(*, limit):
+        assert limit == 25
+        return []
+
+    async def fake_fetch_recent_investing_news(*, limit):
+        assert limit == 25
+        return []
+
+    async def fake_fetch_recent_seeking_alpha_news(*, limit):
+        assert limit == 25
+        return []
+
+    async def fake_translate_items(items):
+        assert len(items) == 1
+        copied = dict(items[0])
+        copied["metadata"] = {
+            **dict(items[0].get("metadata") or {}),
+            "translated_title": "메모리 업황 기대에 삼성 공급망 강세",
+            "translated_summary": "외신 기사 한글 요약",
+            "translation_provider": "CODEX",
+            "translation_status": "SUCCESS",
+        }
+        return [copied]
+
+    async def fake_ingest_items_detailed(session, items):
+        assert len(items) == 1
+        assert items[0]["source_code"] == "BLOOMBERG"
+        assert items[0]["metadata"]["translated_title"] == "메모리 업황 기대에 삼성 공급망 강세"
+        assert items[0]["metadata"]["translation_status"] == "SUCCESS"
+        return {
+            "summary": {"received": 1, "created": 1, "duplicates": 0, "skipped": 0},
+            "created_items": [
+                {
+                    "source_code": "BLOOMBERG",
+                    "title": "Samsung suppliers gain on memory optimism",
+                    "published_at": "2026-04-05T09:20:00+09:00",
+                    "symbols": ["005930"],
+                }
+            ],
+        }
+
+    published = []
+
+    async def fake_publish(event):
+        published.append(event)
+
+    monkeypatch.setattr(
+        "services.news_polling_service.krx_kind_disclosure_service.fetch_recent_disclosures",
+        fake_fetch_recent_krx_disclosures,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.bloomberg_news_service.fetch_recent_news",
+        fake_fetch_recent_bloomberg_news,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.cnbc_news_service.fetch_recent_news",
+        fake_fetch_recent_cnbc_news,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.investing_news_service.fetch_recent_news",
+        fake_fetch_recent_investing_news,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.seeking_alpha_news_service.fetch_recent_news",
+        fake_fetch_recent_seeking_alpha_news,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.news_translation_service.translate_items",
+        fake_translate_items,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.news_ingest_service.ingest_items_detailed",
+        fake_ingest_items_detailed,
+    )
+    monkeypatch.setattr("services.news_polling_service.event_bus.publish", fake_publish)
+
+    service = NewsPollingService()
+    summary = await service.poll_sources(object(), market_hours=False)
+
+    assert summary["created"] == 1
+    assert summary["published_events"] == 1
+    assert published[0].data["symbols"] == ["005930"]
 
 
 @pytest.mark.asyncio

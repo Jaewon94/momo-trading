@@ -7,13 +7,14 @@ from agent.decision_maker import DecisionMaker
 from core.events import EventType
 from strategy.signal import TradeSignal
 from trading.enums import Market, OrderConfirmStatus, OrderSide, OrderType, SignalAction
-from trading.models import OrderRequest, OrderResult, OrderStatusInfo
+from trading.models import OrderRequest, OrderResult, OrderStatusInfo, PendingOrderInfo
 
 
 class FakeBrokerAdapter:
     def __init__(self, result: OrderResult) -> None:
         self.result = result
         self.requests: list[OrderRequest] = []
+        self.pending_orders: list[PendingOrderInfo] = []
         self.order_status: OrderStatusInfo | None = None
         self.queried_order_ids: list[str] = []
         self.cache_invalidated = False
@@ -26,6 +27,9 @@ class FakeBrokerAdapter:
     async def get_order_status(self, order_id: str) -> OrderStatusInfo | None:
         self.queried_order_ids.append(order_id)
         return self.order_status
+
+    async def get_pending_orders(self) -> list[PendingOrderInfo]:
+        return list(self.pending_orders)
 
     async def cancel_order(self, order_id: str, market=Market.KRX) -> OrderResult:
         self.cancelled_order_ids.append(order_id)
@@ -221,6 +225,50 @@ async def test_decision_maker_rejects_non_positive_quantity_without_broker_call(
     assert result["success"] is False
     assert result["message"] == "주문 수량이 유효하지 않습니다"
     assert result["order_id"] == ""
+    assert adapter.requests == []
+    assert events[0].data["success"] is False
+    assert len(logs) == 2
+
+
+@pytest.mark.asyncio
+async def test_decision_maker_skips_buy_when_pending_buy_exists(monkeypatch) -> None:
+    events = []
+    logs = []
+    adapter = FakeBrokerAdapter(
+        OrderResult(success=True, order_id="ORD-PENDING-NEW", message="주문 접수")
+    )
+    adapter.pending_orders = [
+        PendingOrderInfo(
+            order_id="ORD-PENDING",
+            symbol="005930",
+            name="삼성전자",
+            side="매수",
+            order_qty=2,
+            filled_qty=0,
+            remaining_qty=2,
+            order_price=71_000,
+            order_time="100000",
+        )
+    ]
+    decision_maker = DecisionMaker(broker_adapter=adapter)
+
+    async def fake_log(*args, **kwargs):
+        logs.append((args, kwargs))
+
+    async def fake_publish(event):
+        events.append(event)
+
+    monkeypatch.setattr("agent.decision_maker.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.decision_maker.event_bus.publish", fake_publish)
+
+    result = await decision_maker._execute_autonomous(
+        build_signal(),
+        cycle_id="cycle-pending-buy",
+    )
+
+    assert result["success"] is False
+    assert result["order_id"] == ""
+    assert "기존 미체결 매수 주문" in result["message"]
     assert adapter.requests == []
     assert events[0].data["success"] is False
     assert len(logs) == 2

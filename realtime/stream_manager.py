@@ -3,7 +3,9 @@ import asyncio
 
 from loguru import logger
 
+from core.config import settings
 from realtime.stream_backend import get_stream_backend
+from trading.enums import BrokerProvider
 
 
 class StreamManager:
@@ -20,8 +22,17 @@ class StreamManager:
         self._listen_task: asyncio.Task | None = None
         self._stream_backend = get_stream_backend()
 
+    @staticmethod
+    def _supports_kis_streams() -> bool:
+        provider = (settings.BROKER_PROVIDER or BrokerProvider.KIS.value).upper()
+        return provider == BrokerProvider.KIS.value
+
     async def start(self) -> None:
         """스트림 관리 시작"""
+        if not self._supports_kis_streams():
+            logger.debug("BROKER_PROVIDER={} → KIS WebSocket 스트림 비활성", settings.BROKER_PROVIDER)
+            return
+
         self._running = True
         try:
             await self._stream_backend.start()
@@ -44,6 +55,9 @@ class StreamManager:
 
     async def subscribe_symbols(self, symbols: list[tuple[str, str]]) -> None:
         """종목 리스트 구독 (symbol, market) 쌍"""
+        if not self._supports_kis_streams():
+            return
+
         for symbol, market in symbols:
             if self._stream_backend.subscription_count >= 41:
                 logger.warning("구독 한도 도달 (41종목), 우선순위 낮은 종목 해제 필요")
@@ -54,12 +68,20 @@ class StreamManager:
 
     async def unsubscribe_symbols(self, symbols: list[str]) -> None:
         """종목 구독 해제"""
+        if not self._supports_kis_streams():
+            self._priority_symbols.clear()
+            return
+
         for symbol in symbols:
             market = self._priority_symbols.pop(symbol, "KRX")
             await self._stream_backend.unsubscribe(symbol, market)
 
     async def update_subscriptions(self, new_symbols: list[tuple[str, str]]) -> None:
         """AI가 선정한 새 종목으로 구독 목록 업데이트"""
+        if not self._supports_kis_streams():
+            self._priority_symbols.clear()
+            return
+
         new_set = {s[0] for s in new_symbols}
         current_set = set(self._priority_symbols.keys())
 
@@ -95,10 +117,14 @@ class StreamManager:
 
     @property
     def subscription_count(self) -> int:
+        if not self._supports_kis_streams():
+            return 0
         return self._stream_backend.subscription_count
 
     @property
     def is_connected(self) -> bool:
+        if not self._supports_kis_streams():
+            return False
         return self._stream_backend.is_connected
 
 

@@ -1,5 +1,6 @@
 import pytest
 from types import SimpleNamespace
+import asyncio
 
 from core.events import Event, EventType
 from scheduler.scheduler import TradingScheduler
@@ -82,6 +83,7 @@ async def test_scheduler_start_runs_news_jobs_when_trading_disabled(monkeypatch)
     monkeypatch.setattr("asyncio.create_task", fake_create_task)
 
     await scheduler.start()
+    await asyncio.sleep(0)
 
     for coro in created_tasks:
         await coro
@@ -137,6 +139,7 @@ async def test_scheduler_start_runs_news_poll_once_on_startup_when_trading_enabl
     monkeypatch.setattr("asyncio.create_task", fake_create_task)
 
     await scheduler.start()
+    await asyncio.sleep(0)
 
     for coro in created_tasks:
         await coro
@@ -150,6 +153,47 @@ async def test_scheduler_start_runs_news_poll_once_on_startup_when_trading_enabl
     assert "news_translation_backfill" in job_ids
     assert "resource_snapshot" in job_ids
     assert "observability_maintenance" in job_ids
+
+
+@pytest.mark.asyncio
+async def test_scheduler_start_does_not_block_on_initial_news_poll(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    startup_called = False
+    news_poll_started = asyncio.Event()
+    allow_news_poll_finish = asyncio.Event()
+
+    async def fake_on_startup() -> None:
+        nonlocal startup_called
+        startup_called = True
+
+    async def fake_news_poll(*args, **kwargs) -> None:
+        news_poll_started.set()
+        await allow_news_poll_finish.wait()
+
+    class FakeScheduler:
+        def start(self) -> None:
+            return None
+
+        def add_job(self, _func, _trigger, **kwargs) -> None:
+            return None
+
+    monkeypatch.setattr("scheduler.scheduler.settings.SCHEDULER_ENABLED", True)
+    monkeypatch.setattr("scheduler.scheduler.settings.NEWS_POLL_ENABLED", True)
+    monkeypatch.setattr(scheduler, "_on_startup", fake_on_startup)
+    monkeypatch.setattr(scheduler, "_news_poll", fake_news_poll)
+    monkeypatch.setattr(scheduler, "_build_scheduler", lambda: FakeScheduler())
+
+    start_task = asyncio.create_task(scheduler.start())
+
+    await asyncio.wait_for(news_poll_started.wait(), timeout=1)
+    await asyncio.sleep(0)
+
+    assert startup_called is True
+    assert start_task.done() is True
+    assert scheduler.is_running is True
+
+    allow_news_poll_finish.set()
+    await asyncio.wait_for(start_task, timeout=1)
 
 
 @pytest.mark.asyncio
@@ -296,9 +340,11 @@ async def test_scheduler_news_poll_calls_service_with_market_hours(monkeypatch) 
             nonlocal committed
             committed = True
 
+    fake_session = FakeSession()
+
     monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_trading_hours", lambda: True)
     monkeypatch.setattr("scheduler.scheduler.settings.NEWS_POLL_ENABLED", True)
-    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: fake_session)
     monkeypatch.setattr("services.news_polling_service.news_polling_service.poll_sources", fake_poll_sources)
 
     await scheduler._news_poll()
