@@ -50,6 +50,7 @@ from services.news_ingest_service import news_ingest_service
 from services.open_dart_disclosure_service import open_dart_disclosure_service
 from services.news_reporting_service import news_reporting_service
 from services.news_runtime_service import news_runtime_service
+from services.observability_reporting_service import observability_reporting_service
 from services.performance_reporting_service import performance_reporting_service
 from services.runtime_settings_service import runtime_settings_service
 from services.runtime_backup_service import runtime_backup_service
@@ -633,6 +634,20 @@ async def get_performance_periodic(
         db,
         period=normalized,
         size=size,
+    )
+    return SuccessResponse(data=data)
+
+
+@router.get("/observability/overview")
+async def get_observability_overview(
+    hours: int = Query(24, ge=1, le=24 * 30),
+    points: int = Query(120, ge=10, le=1000),
+    db: AsyncSession = Depends(get_async_db),
+):
+    data = await observability_reporting_service.build_overview(
+        db,
+        hours=hours,
+        points=points,
     )
     return SuccessResponse(data=data)
 

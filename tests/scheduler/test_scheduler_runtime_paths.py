@@ -71,7 +71,7 @@ async def test_scheduler_start_runs_news_jobs_when_trading_disabled(monkeypatch)
     assert scheduler.is_running is True
     assert startup_called is False
     assert news_poll_called is True
-    assert set(job_ids) == {"news_poll_trading", "news_poll_off_hours"}
+    assert set(job_ids) == {"news_poll_trading", "news_poll_off_hours", "resource_snapshot", "observability_maintenance"}
 
 
 @pytest.mark.asyncio
@@ -109,6 +109,8 @@ async def test_scheduler_start_runs_news_poll_once_on_startup_when_trading_enabl
     assert news_poll_called is True
     assert "news_poll_trading" in job_ids
     assert "news_poll_off_hours" in job_ids
+    assert "resource_snapshot" in job_ids
+    assert "observability_maintenance" in job_ids
 
 
 @pytest.mark.asyncio
@@ -220,6 +222,8 @@ def test_scheduler_setup_jobs_registers_expected_job_ids() -> None:
         "intraday_rescan",
         "news_poll_trading",
         "news_poll_off_hours",
+        "resource_snapshot",
+        "observability_maintenance",
         "holdings_check",
         "intraday_holdings_review",
         "force_liquidation",
@@ -316,6 +320,66 @@ async def test_scheduler_event_trigger_respects_global_cooldown(monkeypatch) -> 
     await __import__("asyncio").sleep(0)
 
     assert calls == ["PRICE_SURGE"]
+
+
+@pytest.mark.asyncio
+async def test_scheduler_observability_maintenance_records_success_metric(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    observed = {}
+
+    async def fake_run_maintenance():
+        return {
+            "resource_rollups_created": 2,
+            "execution_rollups_created": 3,
+            "deleted_resource_rows": 4,
+            "deleted_execution_rows": 1,
+        }
+
+    async def fake_record_execution_metric(**kwargs):
+        observed.update(kwargs)
+
+    monkeypatch.setattr(
+        "scheduler.scheduler.observability_maintenance_service.run_maintenance",
+        fake_run_maintenance,
+    )
+    monkeypatch.setattr(
+        "scheduler.scheduler.observability_service.record_execution_metric",
+        fake_record_execution_metric,
+    )
+
+    await scheduler._observability_maintenance()
+
+    assert observed["metric_type"] == "JOB"
+    assert observed["metric_name"] == "OBSERVABILITY_MAINTENANCE"
+    assert observed["status"] == "SUCCESS"
+    assert observed["detail"]["resource_rollups_created"] == 2
+
+
+@pytest.mark.asyncio
+async def test_scheduler_observability_maintenance_records_error_metric(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    observed = {}
+
+    async def fake_run_maintenance():
+        raise RuntimeError("maintenance failed")
+
+    async def fake_record_execution_metric(**kwargs):
+        observed.update(kwargs)
+
+    monkeypatch.setattr(
+        "scheduler.scheduler.observability_maintenance_service.run_maintenance",
+        fake_run_maintenance,
+    )
+    monkeypatch.setattr(
+        "scheduler.scheduler.observability_service.record_execution_metric",
+        fake_record_execution_metric,
+    )
+
+    with pytest.raises(RuntimeError):
+        await scheduler._observability_maintenance()
+
+    assert observed["metric_name"] == "OBSERVABILITY_MAINTENANCE"
+    assert observed["status"] == "ERROR"
 
 
 @pytest.mark.asyncio

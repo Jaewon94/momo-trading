@@ -292,3 +292,53 @@ async def test_llm_factory_builds_fallback_provider_with_override_model(monkeypa
         (LLMTier.TIER1, LLMProvider.CODEX, None),
         (LLMTier.TIER1, LLMProvider.CLAUDE_CODE, "claude-opus-4-6"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_llm_factory_records_observability_metric_on_success(monkeypatch) -> None:
+    factory = LLMFactory()
+    observed = {}
+    ollama = FakeProvider(LLMProvider.OLLAMA, available=True, result="ollama-result")
+    factory._providers[LLMTier.TIER1] = {LLMProvider.OLLAMA: ollama}
+
+    async def fake_record_llm_call(**kwargs):
+        observed.update(kwargs)
+        return None
+
+    monkeypatch.setattr("analysis.llm.llm_factory.observability_service.record_llm_call", fake_record_llm_call)
+
+    result, provider = await factory.generate(
+        "hello",
+        LLMTier.TIER1,
+        provider_chain=[LLMProvider.OLLAMA],
+    )
+
+    assert result == "ollama-result"
+    assert provider == "OLLAMA"
+    assert observed["status"] == "SUCCESS"
+    assert observed["provider"] == "OLLAMA"
+    assert observed["prompt_chars"] == 5
+
+
+@pytest.mark.asyncio
+async def test_llm_factory_records_observability_metric_on_failure(monkeypatch) -> None:
+    factory = LLMFactory()
+    observed = {}
+    failing = FakeFailingProvider(LLMProvider.OLLAMA)
+    factory._providers[LLMTier.TIER1] = {LLMProvider.OLLAMA: failing}
+
+    async def fake_record_llm_call(**kwargs):
+        observed.update(kwargs)
+        return None
+
+    monkeypatch.setattr("analysis.llm.llm_factory.observability_service.record_llm_call", fake_record_llm_call)
+
+    with pytest.raises(RuntimeError):
+        await factory.generate(
+            "hello",
+            LLMTier.TIER1,
+            provider_chain=[LLMProvider.OLLAMA],
+        )
+
+    assert observed["status"] == "ERROR"
+    assert observed["fallback_used"] is False

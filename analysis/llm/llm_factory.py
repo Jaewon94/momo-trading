@@ -15,6 +15,7 @@ from analysis.llm.selection_policy import (
     resolve_tier_selection,
 )
 from core.config import DEFAULT_LLM_MODEL, normalize_llm_model_value, settings
+from services.observability_service import observability_service
 from trading.enums import ActivityPhase, ActivityType, LLMProvider, LLMTier
 
 
@@ -188,6 +189,24 @@ class LLMFactory:
                         symbol=symbol,
                         cycle_id=cycle_id,
                     )
+                    await observability_service.record_llm_call(
+                        status="SUCCESS",
+                        provider=provider_name,
+                        model=model_id,
+                        tier=tier.value,
+                        elapsed_ms=elapsed_ms,
+                        prompt_chars=len(prompt),
+                        response_chars=len(result),
+                        retry_count=attempt,
+                        fallback_used=index > 0,
+                        cycle_id=cycle_id,
+                        symbol=symbol,
+                        detail={
+                            "provider_chain": [item.value for item in provider_chain],
+                            "selected_provider_index": index,
+                            "system_prompt_chars": len(system_prompt or ""),
+                        },
+                    )
 
                     return result, provider_name
                 except Exception as e:
@@ -200,6 +219,24 @@ class LLMFactory:
                     break
             logger.warning("{} 호출 실패, fallback provider 확인", provider.provider.value)
 
+        await observability_service.record_llm_call(
+            status="ERROR",
+            provider=None,
+            model=None,
+            tier=tier.value,
+            elapsed_ms=None,
+            prompt_chars=len(prompt),
+            response_chars=None,
+            retry_count=0,
+            fallback_used=len(provider_chain) > 1,
+            cycle_id=cycle_id,
+            symbol=symbol,
+            detail={
+                "provider_chain": [item.value for item in provider_chain],
+                "system_prompt_chars": len(system_prompt or ""),
+                "error": str(last_error)[:200] if last_error else "unknown",
+            },
+        )
         raise last_error or RuntimeError("사용 가능한 LLM provider가 없습니다")
 
     async def _log_llm_conversation(

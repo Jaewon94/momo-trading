@@ -36,6 +36,7 @@ MANIFEST
 
 # ===== 환경 설정 =====
 # 가상환경
+.venv
 .env/
 .venv/
 .venv*/

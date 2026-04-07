@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -13,6 +14,7 @@ from services.cnbc_news_service import cnbc_news_service
 from services.investing_news_service import investing_news_service
 from services.nasdaq_news_service import nasdaq_news_service
 from services.news_ingest_service import news_ingest_service
+from services.observability_service import observability_service
 from services.krx_kind_disclosure_service import krx_kind_disclosure_service
 from services.open_dart_disclosure_service import open_dart_disclosure_service
 from services.news_runtime_service import news_runtime_service
@@ -40,6 +42,7 @@ class NewsSourcePollResult:
 
 class NewsPollingService:
     async def poll_sources(self, session, *, market_hours: bool, mode: str | None = None) -> dict:
+        started_at = time.time()
         runtime_mode = mode or ("AUTO_TRADING" if market_hours else "AUTO_OFF_HOURS")
         source_specs = self._build_source_specs(session, page_count=max(int(settings.NEWS_POLL_PAGE_COUNT or 25), 1))
         if not settings.NEWS_POLL_ENABLED:
@@ -55,6 +58,14 @@ class NewsPollingService:
             await self._log_news_activity(
                 "🛰 뉴스 자동 수집 스킵 · NEWS_POLL_ENABLED 비활성",
                 detail={"mode": runtime_mode, "reason": summary["reason"]},
+            )
+            await observability_service.record_news_poll(
+                status="SKIPPED",
+                elapsed_ms=int((time.time() - started_at) * 1000),
+                item_count=0,
+                success_count=0,
+                error_count=0,
+                detail={"mode": runtime_mode, "market_hours": market_hours, "reason": summary["reason"]},
             )
             return summary
         source_results = await self._poll_enabled_sources(source_specs)
@@ -113,6 +124,22 @@ class NewsPollingService:
                 "mode": runtime_mode,
                 "market_hours": market_hours,
                 "summary": summary,
+                "published_events": published_events,
+                "sources": source_briefs,
+            },
+        )
+        source_error_count = sum(1 for result in source_results.values() if result.status == "ERROR")
+        await observability_service.record_news_poll(
+            status="PARTIAL_ERROR" if source_error_count else "SUCCESS",
+            elapsed_ms=int((time.time() - started_at) * 1000),
+            item_count=int(summary.get("received") or 0),
+            success_count=int(summary.get("created") or 0),
+            error_count=source_error_count,
+            detail={
+                "mode": runtime_mode,
+                "market_hours": market_hours,
+                "duplicates": int(summary.get("duplicates") or 0),
+                "skipped": int(summary.get("skipped") or 0),
                 "published_events": published_events,
                 "sources": source_briefs,
             },

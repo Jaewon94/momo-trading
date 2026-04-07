@@ -73,6 +73,7 @@ import {
 } from './news_overview_state.js';
 import { buildNewsArchiveCountSummary, buildNewsArchiveState } from './news_archive_state.js';
 import { buildNewsPerformanceCards, buildNewsRolloutPolicy } from './news_performance_state.js';
+import { buildObservabilityDashboardState } from './observability_state.js';
 import { buildPerformanceDashboardState } from './performance_page_state.js';
 import { buildReportNewsRationale } from './report_news_state.js';
 import { buildTradeCardViewModel } from './trade_history_state.js';
@@ -3852,9 +3853,115 @@ function renderPeriodRows(rows = [], emptyLabel = '집계 대기 중입니다.')
   `;
 }
 
-function createPerformanceDashboard(state) {
+function renderObservabilityChartCard(card, strokeClass) {
+  const path = card?.line?.path || '';
+  if (!path) {
+    return '<div class="observability-chart-empty">데이터 수집 중...</div>';
+  }
+  return `
+    <svg viewBox="0 0 360 96" class="observability-chart-svg" preserveAspectRatio="none">
+      <path d="${escapeHtml(path)}" class="observability-chart-path ${strokeClass}" />
+    </svg>
+    <div class="observability-chart-meta">
+      <span>min ${escapeHtml(String(card.line.min ?? '-'))}${escapeHtml(card.unit || '')}</span>
+      <span>max ${escapeHtml(String(card.line.max ?? '-'))}${escapeHtml(card.unit || '')}</span>
+      <span>last ${escapeHtml(String(card.line.last ?? '-'))}${escapeHtml(card.unit || '')}</span>
+    </div>
+  `;
+}
+
+function createPerformanceDashboard(state, observabilityState = null) {
   const div = document.createElement('div');
   div.className = 'bg-dark-700 rounded-xl p-5 border border-gray-600 mx-2 chat-bubble';
+  const obs = observabilityState;
+  const selectedObservabilityHours = Number(window.performanceObservabilityHours || 24);
+  const observabilityMarkup = obs ? `
+    <section class="rounded-2xl border border-gray-700 bg-dark-900/40 px-4 py-4 mb-4">
+      <div class="flex items-start justify-between gap-3 mb-3">
+        <div>
+          <div class="text-xs uppercase tracking-[0.12em] text-gray-500">Observability</div>
+          <div class="text-sm text-gray-400 mt-1">로컬 머신 압박과 Ollama/뉴스 파이프라인 성능을 함께 확인합니다.</div>
+          <div class="mt-2 text-[11px] text-gray-500">${escapeHtml(obs.machine.host)} · ${escapeHtml(obs.machine.runtime)} · ${escapeHtml(obs.machine.platform)} · 최근 ${escapeHtml(obs.machine.latestCollectedAt)} · ${escapeHtml(String(obs.window.hours || 24))}h / ${escapeHtml(obs.window.resolution || 'raw')}</div>
+        </div>
+        <div class="flex items-center gap-2">
+          <button type="button" onclick="loadPerformanceView(24)" class="rounded-full border px-3 py-1 text-[11px] transition ${selectedObservabilityHours === 24 ? 'border-blue-400 text-white' : 'border-gray-600 text-gray-300 hover:border-blue-400 hover:text-white'}">24시간</button>
+          <button type="button" onclick="loadPerformanceView(168)" class="rounded-full border px-3 py-1 text-[11px] transition ${selectedObservabilityHours === 168 ? 'border-blue-400 text-white' : 'border-gray-600 text-gray-300 hover:border-blue-400 hover:text-white'}">7일</button>
+        </div>
+      </div>
+      <div class="news-overview-grid mb-4">
+        ${obs.summaryCards.map((card) => `
+          <div class="news-overview-card">
+            <div class="news-overview-label">${escapeHtml(card.label)}</div>
+            <div class="news-overview-value">${escapeHtml(card.value)}</div>
+            <div class="news-overview-help">${escapeHtml(card.help)}</div>
+          </div>
+        `).join('')}
+      </div>
+      <div class="grid gap-4 xl:grid-cols-2 mb-4">
+        ${obs.resourceCharts.map((card, index) => `
+          <div class="rounded-2xl border border-gray-700 bg-dark-950/50 px-4 py-4">
+            <div class="flex items-center justify-between gap-2">
+              <div class="text-sm text-white font-medium">${escapeHtml(card.label)}</div>
+              <div class="text-[11px] text-gray-500">${escapeHtml(card.unit || 'ratio')}</div>
+            </div>
+            <div class="observability-chart-shell mt-3">
+              ${renderObservabilityChartCard(card, ['stroke-blue-400','stroke-emerald-400','stroke-amber-400','stroke-fuchsia-400'][index] || 'stroke-blue-400')}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+      <div class="grid gap-4 xl:grid-cols-[1.05fr,0.95fr]">
+        <section class="rounded-2xl border border-gray-700 bg-dark-950/40 px-4 py-4">
+          <div class="flex items-center justify-between gap-3 mb-3">
+            <div>
+              <div class="text-xs uppercase tracking-[0.12em] text-gray-500">LLM Breakdown</div>
+              <div class="text-sm text-gray-400 mt-1">프로바이더별 호출량, 지연, fallback 비율</div>
+            </div>
+            <div class="performance-table-head compact">
+              <span>성공률</span><span>평균</span><span>p95</span>
+            </div>
+          </div>
+          ${obs.providerRows.length ? `
+            <div class="performance-table">
+              ${obs.providerRows.map((row) => `
+                <div class="performance-table-row compact">
+                  <div class="performance-table-cell metric-name">${escapeHtml(row.provider)} · ${escapeHtml(row.calls)} · FB ${escapeHtml(row.fallbackRate)}</div>
+                  <div class="performance-table-cell">${escapeHtml(row.successRate)}</div>
+                  <div class="performance-table-cell">${escapeHtml(row.avgLatency)}</div>
+                  <div class="performance-table-cell">${escapeHtml(row.p95Latency)}</div>
+                </div>
+              `).join('')}
+            </div>
+          ` : '<div class="text-xs text-gray-500">최근 LLM 호출 메트릭이 없습니다.</div>'}
+        </section>
+        <section class="rounded-2xl border border-gray-700 bg-dark-950/40 px-4 py-4">
+          <div class="text-xs uppercase tracking-[0.12em] text-gray-500">News Poll Pipeline</div>
+          <div class="grid grid-cols-2 gap-3 text-sm mt-3">
+            ${obs.newsRows.map((row) => `
+              <div>
+                <div class="text-gray-500">${escapeHtml(row.label)}</div>
+                <div class="text-white font-semibold mt-1">${escapeHtml(row.value)}</div>
+              </div>
+            `).join('')}
+          </div>
+          <div class="mt-4 flex flex-wrap gap-2">
+            ${obs.statusRows.map((row) => `<span class="news-item-badge">${escapeHtml(row.status)} ${escapeHtml(row.count)}</span>`).join('')}
+          </div>
+        </section>
+      </div>
+      <section class="rounded-2xl border border-gray-700 bg-dark-950/40 px-4 py-4 mt-4">
+        <div class="text-xs uppercase tracking-[0.12em] text-gray-500">Maintenance</div>
+        <div class="grid grid-cols-2 xl:grid-cols-3 gap-3 text-sm mt-3">
+          ${obs.maintenanceRows.map((row) => `
+            <div>
+              <div class="text-gray-500">${escapeHtml(row.label)}</div>
+              <div class="text-white font-semibold mt-1">${escapeHtml(row.value)}</div>
+            </div>
+          `).join('')}
+        </div>
+      </section>
+    </section>
+  ` : '';
 
   div.innerHTML = `
     <div class="flex items-start justify-between gap-3 mb-4">
@@ -3917,6 +4024,7 @@ function createPerformanceDashboard(state) {
         </div>
       </div>
     </section>
+    ${observabilityMarkup}
     <div class="news-overview-grid mb-4">
       ${state.summaryCards.map((card) => `
         <div class="news-overview-card">
@@ -4039,17 +4147,21 @@ function createPerformanceDashboard(state) {
   return div;
 }
 
-async function loadPerformanceView() {
+async function loadPerformanceView(observabilityHours = null) {
   const container = document.getElementById('chat-container');
   container.innerHTML = '<div class="text-center text-gray-500 text-sm py-4">성과 분석 불러오는 중...</div>';
   cleanupStockCards();
+  const resolvedObservabilityHours = Number(observabilityHours || window.performanceObservabilityHours || 24);
+  window.performanceObservabilityHours = resolvedObservabilityHours;
+  const observabilityPoints = resolvedObservabilityHours > 48 ? 168 : 120;
 
   try {
-    const [summaryJson, weeklyJson, monthlyJson, overviewJson] = await Promise.all([
+    const [summaryJson, weeklyJson, monthlyJson, overviewJson, observabilityJson] = await Promise.all([
       fetchJson(`${API}/performance/summary?days=30`),
       fetchJson(`${API}/performance/periodic?period=weekly&size=6`),
       fetchJson(`${API}/performance/periodic?period=monthly&size=6`),
       fetchJson(`${API}/news/overview?recent_limit=4&performance_days=30`),
+      fetchJson(`${API}/observability/overview?hours=${resolvedObservabilityHours}&points=${observabilityPoints}`).catch(() => ({ data: null })),
     ]);
     const state = buildPerformanceDashboardState({
       summary: summaryJson?.data || {},
@@ -4062,8 +4174,11 @@ async function loadPerformanceView() {
       renderSidebarSettingSummaries();
       renderNewsOverviewPanels();
     }
+    const observabilityState = observabilityJson?.data
+      ? buildObservabilityDashboardState(observabilityJson.data)
+      : null;
     container.innerHTML = '';
-    container.appendChild(createPerformanceDashboard(state));
+    container.appendChild(createPerformanceDashboard(state, observabilityState));
   } catch (err) {
     container.innerHTML = `<div class="text-center text-red-400 text-sm py-8">성과 분석 로드 실패: ${escapeHtml(err.message || '알 수 없는 오류')}</div>`;
   }

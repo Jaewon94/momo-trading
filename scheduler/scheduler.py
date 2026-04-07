@@ -25,6 +25,8 @@ from loguru import logger
 
 from core.config import settings
 from core.events import Event, EventType, event_bus
+from services.observability_maintenance_service import observability_maintenance_service
+from services.observability_service import observability_service
 from trading.broker_factory import get_broker_adapter
 from trading.enums import ActivityPhase, ActivityType, Market, OrderSide, OrderType
 from trading.models import OrderRequest
@@ -163,6 +165,32 @@ class TradingScheduler:
             self.scheduler = self._build_scheduler()
             logger.info("스케줄러 중지")
 
+    async def _resource_snapshot(self) -> None:
+        await observability_service.record_resource_snapshot()
+
+    async def _observability_maintenance(self) -> None:
+        started_at = _time.perf_counter()
+        try:
+            summary = await observability_maintenance_service.run_maintenance()
+            elapsed_ms = int((_time.perf_counter() - started_at) * 1000)
+            await observability_service.record_execution_metric(
+                metric_type="JOB",
+                metric_name="OBSERVABILITY_MAINTENANCE",
+                status="SUCCESS",
+                elapsed_ms=elapsed_ms,
+                detail=summary,
+            )
+        except Exception as exc:
+            elapsed_ms = int((_time.perf_counter() - started_at) * 1000)
+            await observability_service.record_execution_metric(
+                metric_type="JOB",
+                metric_name="OBSERVABILITY_MAINTENANCE",
+                status="ERROR",
+                elapsed_ms=elapsed_ms,
+                detail={"error": str(exc)},
+            )
+            raise
+
     def _setup_jobs(
         self,
         *,
@@ -223,6 +251,24 @@ class TradingScheduler:
                 id="news_poll_off_hours",
                 name="장외 뉴스 폴링",
                 kwargs={"market_hours": False},
+            )
+
+        if bool(getattr(settings, "METRICS_RESOURCE_SAMPLING_ENABLED", True)):
+            self.scheduler.add_job(
+                self._resource_snapshot,
+                "interval",
+                minutes=max(int(getattr(settings, "METRICS_RESOURCE_INTERVAL_MIN", 5) or 5), 1),
+                id="resource_snapshot",
+                name="리소스 스냅샷",
+            )
+
+        if bool(getattr(settings, "METRICS_MAINTENANCE_ENABLED", True)):
+            self.scheduler.add_job(
+                self._observability_maintenance,
+                "interval",
+                minutes=max(int(getattr(settings, "METRICS_MAINTENANCE_INTERVAL_MIN", 60) or 60), 1),
+                id="observability_maintenance",
+                name="운영 메트릭 롤업/정리",
             )
 
         if include_trading_jobs:

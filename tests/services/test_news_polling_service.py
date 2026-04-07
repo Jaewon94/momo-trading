@@ -852,3 +852,47 @@ async def test_news_polling_service_respects_fetch_concurrency_limit(monkeypatch
     summary = await task
 
     assert summary["received"] == 0
+
+
+@pytest.mark.asyncio
+async def test_news_polling_service_records_observability_metric(monkeypatch):
+    from services.news_polling_service import NewsPollingService
+
+    observed = {}
+
+    async def fake_record_news_poll(**kwargs):
+        observed.update(kwargs)
+        return None
+
+    async def fake_fetch_recent_krx_disclosures(*, page_count):
+        assert page_count == 25
+        return []
+
+    async def fake_ingest_items_detailed(_session, items):
+        assert items == []
+        return {
+            "summary": {"received": 0, "created": 0, "duplicates": 0, "skipped": 0},
+            "created_items": [],
+        }
+
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_POLL_ENABLED", True)
+    monkeypatch.setattr("services.news_polling_service.settings.OPEN_DART_API_KEY", "")
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_INCLUDE_FOREIGN", False)
+    monkeypatch.setattr(
+        "services.news_polling_service.krx_kind_disclosure_service.fetch_recent_disclosures",
+        fake_fetch_recent_krx_disclosures,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.news_ingest_service.ingest_items_detailed",
+        fake_ingest_items_detailed,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.observability_service.record_news_poll",
+        fake_record_news_poll,
+    )
+
+    summary = await NewsPollingService().poll_sources(object(), market_hours=False)
+
+    assert summary["received"] == 0
+    assert observed["status"] == "SUCCESS"
+    assert observed["item_count"] == 0

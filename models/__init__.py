@@ -12,3 +12,7 @@ from models.daily_report import DailyReport
 from models.news_item import NewsItem
 from models.runtime_setting import RuntimeSetting
 from models.trading_rule import TradingRule
+from models.resource_snapshot import ResourceSnapshot
+from models.execution_metric import ExecutionMetric
+from models.resource_hourly_rollup import ResourceHourlyRollup
+from models.execution_metric_hourly_rollup import ExecutionMetricHourlyRollup
