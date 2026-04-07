@@ -14,6 +14,7 @@ from models.execution_metric import ExecutionMetric
 from models.execution_metric_hourly_rollup import ExecutionMetricHourlyRollup
 from models.resource_hourly_rollup import ResourceHourlyRollup
 from models.resource_snapshot import ResourceSnapshot
+from services.llm_runtime_recommendation_service import llm_runtime_recommendation_service
 from services.observability_maintenance_service import observability_maintenance_service
 from util.time_util import ensure_kst, now_kst
 
@@ -68,6 +69,8 @@ class ObservabilityReportingService:
 
         news_poll_rows = [row for row in job_rows if str(row.metric_name or "").upper() == "NEWS_POLL"]
         maintenance_rows = [row for row in job_rows if str(row.metric_name or "").upper() == "OBSERVABILITY_MAINTENANCE"]
+        llm_summary = self._build_llm_summary(llm_rows)
+        news_poll_summary = self._build_news_poll_summary(news_poll_rows)
         llm_trend_rows, news_trend_rows = await self._build_execution_trend_payloads(
             session,
             start_at=start_at,
@@ -77,6 +80,16 @@ class ObservabilityReportingService:
         )
 
         return {
+            "recommendations": llm_runtime_recommendation_service.build_recommendations(
+                latest_snapshot=self._serialize_resource_snapshot(latest_snapshot),
+                resource_summary=resource_summary,
+                llm_summary=llm_summary,
+                news_poll_summary=news_poll_summary,
+                window={
+                    "hours": window_hours,
+                    "resolution": "hourly_rollup" if use_rollups else "raw",
+                },
+            ),
             "window": {
                 "hours": window_hours,
                 "from": start_at.isoformat(),
@@ -86,9 +99,9 @@ class ObservabilityReportingService:
             "latest_snapshot": self._serialize_resource_snapshot(latest_snapshot),
             "resource_summary": resource_summary,
             "resource_series": resource_series_payload,
-            "llm": self._build_llm_summary(llm_rows),
+            "llm": llm_summary,
             "jobs": {
-                "news_poll": self._build_news_poll_summary(news_poll_rows),
+                "news_poll": news_poll_summary,
                 "maintenance": self._build_maintenance_summary(maintenance_rows),
             },
             "trends": {

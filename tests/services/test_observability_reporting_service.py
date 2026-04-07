@@ -130,6 +130,7 @@ async def test_observability_reporting_service_builds_overview_from_recent_metri
     assert payload["jobs"]["news_poll"]["source_error_total"] == 2
     assert payload["jobs"]["maintenance"]["last_status"] == "SUCCESS"
     assert payload["jobs"]["maintenance"]["last_deleted_resource_rows"] == 4
+    assert payload["recommendations"]["news_translation"]["current"]["provider"] in {"CLAUDE_CODE", "OLLAMA", "CODEX"}
     assert len(payload["trends"]["llm"]) == 1
     assert payload["trends"]["llm"][0]["calls"] == 2
     assert sum(point["created_total"] for point in payload["trends"]["news_poll"]) == 8

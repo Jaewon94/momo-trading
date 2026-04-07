@@ -3978,6 +3978,18 @@ function createObservabilityDashboard(observabilityState) {
           `).join('')}
         </div>
       </section>
+      <section class="rounded-2xl border border-gray-700 bg-dark-950/40 px-4 py-4 mt-4">
+        <div class="text-xs uppercase tracking-[0.12em] text-gray-500">LLM Recommendation</div>
+        <div class="news-overview-grid mt-3">
+          ${obs.recommendationCards.map((card) => `
+            <div class="news-overview-card">
+              <div class="news-overview-label">${escapeHtml(card.label)}</div>
+              <div class="news-overview-value text-base">${escapeHtml(card.value)}</div>
+              <div class="news-overview-help">${escapeHtml(card.help)}</div>
+            </div>
+          `).join('')}
+        </div>
+      </section>
     </section>
   `;
   return div;

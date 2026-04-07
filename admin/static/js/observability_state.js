@@ -76,6 +76,11 @@ export function buildObservabilityDashboardState(payload = {}) {
   const trends = payload?.trends || {};
   const llmTrend = Array.isArray(trends?.llm) ? trends.llm : [];
   const newsTrend = Array.isArray(trends?.news_poll) ? trends.news_poll : [];
+  const recommendations = payload?.recommendations || {};
+  const machinePressure = recommendations?.machine_pressure || {};
+  const newsRecommendation = recommendations?.news_translation || {};
+  const manualRecommendation = recommendations?.manual_analysis || {};
+  const concurrencyRecommendation = recommendations?.ollama_concurrency || {};
 
   return {
     machine: {
@@ -218,5 +223,27 @@ export function buildObservabilityDashboardState(payload = {}) {
         count: `${Number(row.count || 0)}회`,
       }))
       : [],
+    recommendationCards: [
+      {
+        label: "머신 압박",
+        value: String(machinePressure.severity || "-"),
+        help: Array.isArray(machinePressure.reasons) ? machinePressure.reasons.join(" · ") : "-",
+      },
+      {
+        label: "뉴스 번역 추천",
+        value: `${String((newsRecommendation.recommended || {}).provider || "-")} / ${String((newsRecommendation.recommended || {}).model || "-")}`,
+        help: `${String(newsRecommendation.action || "KEEP")} · ${Array.isArray(newsRecommendation.reasons) ? newsRecommendation.reasons.join(" · ") : "-"}`,
+      },
+      {
+        label: "수동 분석 추천",
+        value: `${String((manualRecommendation.recommended || {}).provider || "-")} / ${String((manualRecommendation.recommended || {}).model || "-")}`,
+        help: `${String(manualRecommendation.action || "KEEP")} · ${Array.isArray(manualRecommendation.reasons) ? manualRecommendation.reasons.join(" · ") : "-"}`,
+      },
+      {
+        label: "Ollama 병렬도",
+        value: `${Number(concurrencyRecommendation.recommended_parallel_jobs || 0)}개`,
+        help: Array.isArray(concurrencyRecommendation.reasons) ? concurrencyRecommendation.reasons.join(" · ") : "-",
+      },
+    ],
   };
 }

@@ -83,6 +83,26 @@ describe("observability_state", () => {
         resource_rollup_buckets: 18,
         execution_rollup_buckets: 22,
       },
+      recommendations: {
+        machine_pressure: {
+          severity: "MEDIUM",
+          reasons: ["메모리 사용률 62.4%"],
+        },
+        news_translation: {
+          action: "DOWNGRADE",
+          recommended: { provider: "OLLAMA", model: "qwen3:8b" },
+          reasons: ["장중 안정성을 위해 8b 이하 권장"],
+        },
+        manual_analysis: {
+          action: "KEEP",
+          recommended: { provider: "CLAUDE_CODE", model: "DEFAULT" },
+          reasons: ["수동 분석은 현재 고품질 provider 유지 권장"],
+        },
+        ollama_concurrency: {
+          recommended_parallel_jobs: 1,
+          reasons: ["8b 이상 또는 일반 상태에서는 동시 실행 1개 권장"],
+        },
+      },
     });
 
     expect(state.machine.host).toBe("mac-local");
@@ -93,6 +113,8 @@ describe("observability_state", () => {
     expect(state.summaryCards[7]).toMatchObject({ label: "Hourly Rollup", value: "22개" });
     expect(state.maintenanceRows[1]).toMatchObject({ label: "최근 상태", value: "SUCCESS" });
     expect(state.maintenanceRows[4]).toMatchObject({ label: "최근 raw 정리", value: "15건" });
+    expect(state.recommendationCards[0]).toMatchObject({ label: "머신 압박", value: "MEDIUM" });
+    expect(state.recommendationCards[1]).toMatchObject({ label: "뉴스 번역 추천", value: "OLLAMA / qwen3:8b" });
     expect(state.resourceCharts[0].line.path.startsWith("M")).toBe(true);
     expect(state.trendCharts[0]).toMatchObject({ label: "LLM Avg Latency", meta: "호출 3회" });
     expect(state.trendCharts[3]).toMatchObject({ label: "News Created", meta: "생성 9건" });
