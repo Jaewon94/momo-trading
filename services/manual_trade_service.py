@@ -4,6 +4,7 @@ from agent.decision_maker import decision_maker
 from core.config import settings
 from exceptions.common import ServiceException
 from services.activity_logger import activity_logger
+from services.error_capture_service import error_capture_service
 from scheduler.market_calendar import market_calendar
 from trading.adapters.base import BrokerAdapter
 from trading.broker_factory import get_broker_adapter
@@ -25,6 +26,26 @@ class ManualTradeService:
     @staticmethod
     def _normalize_symbol(symbol: str) -> str:
         return normalize_krx_symbol(symbol)
+
+    async def _capture_runtime_error(
+        self,
+        *,
+        operation: str,
+        exc: Exception,
+        symbol: str | None = None,
+        order_id: str | None = None,
+    ) -> None:
+        provider = getattr(getattr(self.broker_adapter, "provider", None), "value", None)
+        await error_capture_service.capture_exception(
+            component="manual_trade",
+            operation=operation,
+            exc=exc,
+            symbol=self._normalize_symbol(symbol) if symbol else None,
+            provider=provider,
+            detail={
+                "order_id": str(order_id) if order_id else None,
+            },
+        )
 
     async def _ensure_trading_enabled(self) -> None:
         if not settings.TRADING_ENABLED:
@@ -78,192 +99,225 @@ class ManualTradeService:
         )
 
     async def sell_position(self, symbol: str) -> dict:
-        await self._ensure_trading_enabled()
-        await self._ensure_regular_session_sell_supported()
         normalized_symbol = self._normalize_symbol(symbol)
-        holding = await self._find_holding(normalized_symbol)
-        pending_orders = await self._get_pending_orders()
-        pending_sell = next(
-            (
-                order for order in pending_orders
-                if self._normalize_symbol(getattr(order, "symbol", "")) == normalized_symbol
-                and str(getattr(order, "side", "")) == "매도"
-            ),
-            None,
-        )
-        if pending_sell:
-            raise ServiceException.conflict("이미 같은 종목의 매도 주문이 대기 중입니다")
+        try:
+            await self._ensure_trading_enabled()
+            await self._ensure_regular_session_sell_supported()
+            holding = await self._find_holding(normalized_symbol)
+            pending_orders = await self._get_pending_orders()
+            pending_sell = next(
+                (
+                    order for order in pending_orders
+                    if self._normalize_symbol(getattr(order, "symbol", "")) == normalized_symbol
+                    and str(getattr(order, "side", "")) == "매도"
+                ),
+                None,
+            )
+            if pending_sell:
+                raise ServiceException.conflict("이미 같은 종목의 매도 주문이 대기 중입니다")
 
-        result = await self._place_market_sell(holding)
-        if not result.success or not result.order_id:
-            message = result.message or "즉시 매도 주문 접수 실패"
+            result = await self._place_market_sell(holding)
+            if not result.success or not result.order_id:
+                message = result.message or "즉시 매도 주문 접수 실패"
+                await activity_logger.log(
+                    ActivityType.ORDER,
+                    ActivityPhase.ERROR,
+                    f"❌ [{normalized_symbol}] 수동 즉시 매도 실패: {message}",
+                    symbol=normalized_symbol,
+                    error_message=message,
+                )
+                raise ServiceException.bad_request(message)
+
+            quantity = int(getattr(holding, "quantity", 0) or 0)
+            expected_price = float(getattr(holding, "current_price", 0.0) or 0.0)
             await activity_logger.log(
                 ActivityType.ORDER,
-                ActivityPhase.ERROR,
-                f"❌ [{normalized_symbol}] 수동 즉시 매도 실패: {message}",
+                ActivityPhase.COMPLETE,
+                f"🖱 [{normalized_symbol}] 수동 즉시 매도 주문 접수 — {quantity}주",
                 symbol=normalized_symbol,
-                error_message=message,
+                detail={
+                    "action": "MANUAL_SELL",
+                    "order_id": result.order_id,
+                    "quantity": quantity,
+                    "order_type": "MARKET",
+                },
             )
-            raise ServiceException.bad_request(message)
-
-        quantity = int(getattr(holding, "quantity", 0) or 0)
-        expected_price = float(getattr(holding, "current_price", 0.0) or 0.0)
-        await activity_logger.log(
-            ActivityType.ORDER,
-            ActivityPhase.COMPLETE,
-            f"🖱 [{normalized_symbol}] 수동 즉시 매도 주문 접수 — {quantity}주",
-            symbol=normalized_symbol,
-            detail={
-                "action": "MANUAL_SELL",
-                "order_id": result.order_id,
+            await decision_maker.confirm_and_record(
+                symbol=normalized_symbol,
+                side="SELL",
+                order_id=result.order_id,
+                quantity=quantity,
+                expected_price=expected_price,
+                analysis_context={
+                    "stock_name": getattr(holding, "name", normalized_symbol),
+                    "strategy_type": "MANUAL",
+                    "ai_recommendation": "SELL",
+                    "entry_pattern": "MANUAL_SELL",
+                },
+                exit_reason="MANUAL_SELL",
+            )
+            self.broker_adapter.invalidate_cache()
+            return {
+                "symbol": normalized_symbol,
+                "name": getattr(holding, "name", normalized_symbol),
                 "quantity": quantity,
-                "order_type": "MARKET",
-            },
-        )
-        await decision_maker.confirm_and_record(
-            symbol=normalized_symbol,
-            side="SELL",
-            order_id=result.order_id,
-            quantity=quantity,
-            expected_price=expected_price,
-            analysis_context={
-                "stock_name": getattr(holding, "name", normalized_symbol),
-                "strategy_type": "MANUAL",
-                "ai_recommendation": "SELL",
-                "entry_pattern": "MANUAL_SELL",
-            },
-            exit_reason="MANUAL_SELL",
-        )
-        self.broker_adapter.invalidate_cache()
-        return {
-            "symbol": normalized_symbol,
-            "name": getattr(holding, "name", normalized_symbol),
-            "quantity": quantity,
-            "order_id": result.order_id,
-            "message": "즉시 매도 주문 접수",
-        }
+                "order_id": result.order_id,
+                "message": "즉시 매도 주문 접수",
+            }
+        except ServiceException:
+            raise
+        except Exception as exc:
+            await self._capture_runtime_error(
+                operation="sell_position",
+                exc=exc,
+                symbol=normalized_symbol,
+            )
+            raise
 
     async def cancel_pending_buy(self, order_id: str) -> dict:
-        await self._ensure_trading_enabled()
-        order = await self._find_pending_order(order_id)
-        if str(getattr(order, "side", "")) != "매수":
-            raise ServiceException.bad_request("미체결 매수 주문만 취소할 수 있습니다")
+        try:
+            await self._ensure_trading_enabled()
+            order = await self._find_pending_order(order_id)
+            if str(getattr(order, "side", "")) != "매수":
+                raise ServiceException.bad_request("미체결 매수 주문만 취소할 수 있습니다")
 
-        result = await self.broker_adapter.cancel_order(str(order_id), market=Market.KRX)
-        if not result.success:
-            message = result.message or "미체결 매수 주문 취소 실패"
+            result = await self.broker_adapter.cancel_order(str(order_id), market=Market.KRX)
+            if not result.success:
+                message = result.message or "미체결 매수 주문 취소 실패"
+                await activity_logger.log(
+                    ActivityType.ORDER,
+                    ActivityPhase.ERROR,
+                    f"❌ [{self._normalize_symbol(order.symbol)}] 미체결 매수 주문 취소 실패: {message}",
+                    symbol=self._normalize_symbol(order.symbol),
+                    error_message=message,
+                )
+                raise ServiceException.bad_request(message)
+
+            self.broker_adapter.invalidate_cache()
             await activity_logger.log(
                 ActivityType.ORDER,
-                ActivityPhase.ERROR,
-                f"❌ [{self._normalize_symbol(order.symbol)}] 미체결 매수 주문 취소 실패: {message}",
+                ActivityPhase.COMPLETE,
+                f"🧹 [{self._normalize_symbol(order.symbol)}] 미체결 매수 주문 취소 — 주문번호: {order_id}",
                 symbol=self._normalize_symbol(order.symbol),
-                error_message=message,
+                detail={
+                    "action": "CANCEL_PENDING_BUY",
+                    "order_id": str(order_id),
+                    "side": "BUY",
+                },
             )
-            raise ServiceException.bad_request(message)
-
-        self.broker_adapter.invalidate_cache()
-        await activity_logger.log(
-            ActivityType.ORDER,
-            ActivityPhase.COMPLETE,
-            f"🧹 [{self._normalize_symbol(order.symbol)}] 미체결 매수 주문 취소 — 주문번호: {order_id}",
-            symbol=self._normalize_symbol(order.symbol),
-            detail={
-                "action": "CANCEL_PENDING_BUY",
+            return {
                 "order_id": str(order_id),
-                "side": "BUY",
-            },
-        )
-        return {
-            "order_id": str(order_id),
-            "symbol": self._normalize_symbol(order.symbol),
-            "name": getattr(order, "name", self._normalize_symbol(order.symbol)),
-            "message": "미체결 매수 주문 취소 완료",
-        }
+                "symbol": self._normalize_symbol(order.symbol),
+                "name": getattr(order, "name", self._normalize_symbol(order.symbol)),
+                "message": "미체결 매수 주문 취소 완료",
+            }
+        except ServiceException:
+            raise
+        except Exception as exc:
+            await self._capture_runtime_error(
+                operation="cancel_pending_buy",
+                exc=exc,
+                symbol=getattr(locals().get("order", None), "symbol", None),
+                order_id=order_id,
+            )
+            raise
 
     async def replace_pending_sell_with_market_order(self, order_id: str) -> dict:
-        await self._ensure_trading_enabled()
-        await self._ensure_regular_session_sell_supported()
-        order = await self._find_pending_order(order_id)
-        if str(getattr(order, "side", "")) != "매도":
-            raise ServiceException.bad_request("미체결 매도 주문만 재매도할 수 있습니다")
+        order = None
+        try:
+            await self._ensure_trading_enabled()
+            await self._ensure_regular_session_sell_supported()
+            order = await self._find_pending_order(order_id)
+            if str(getattr(order, "side", "")) != "매도":
+                raise ServiceException.bad_request("미체결 매도 주문만 재매도할 수 있습니다")
 
-        holding = await self._find_holding(order.symbol)
-        cancel_result = await self.broker_adapter.cancel_order(str(order_id), market=Market.KRX)
-        if not cancel_result.success:
-            message = cancel_result.message or "기존 매도 주문 취소 실패"
+            holding = await self._find_holding(order.symbol)
+            cancel_result = await self.broker_adapter.cancel_order(str(order_id), market=Market.KRX)
+            if not cancel_result.success:
+                message = cancel_result.message or "기존 매도 주문 취소 실패"
+                await activity_logger.log(
+                    ActivityType.ORDER,
+                    ActivityPhase.ERROR,
+                    f"❌ [{self._normalize_symbol(order.symbol)}] 기존 매도 주문 취소 실패: {message}",
+                    symbol=self._normalize_symbol(order.symbol),
+                    error_message=message,
+                )
+                raise ServiceException.bad_request(message)
+
             await activity_logger.log(
                 ActivityType.ORDER,
-                ActivityPhase.ERROR,
-                f"❌ [{self._normalize_symbol(order.symbol)}] 기존 매도 주문 취소 실패: {message}",
+                ActivityPhase.COMPLETE,
+                f"🧹 [{self._normalize_symbol(order.symbol)}] 기존 매도 주문 취소 — 주문번호: {order_id}",
                 symbol=self._normalize_symbol(order.symbol),
-                error_message=message,
+                detail={
+                    "action": "CANCEL_PENDING_SELL",
+                    "order_id": str(order_id),
+                    "side": "SELL",
+                },
             )
-            raise ServiceException.bad_request(message)
 
-        await activity_logger.log(
-            ActivityType.ORDER,
-            ActivityPhase.COMPLETE,
-            f"🧹 [{self._normalize_symbol(order.symbol)}] 기존 매도 주문 취소 — 주문번호: {order_id}",
-            symbol=self._normalize_symbol(order.symbol),
-            detail={
-                "action": "CANCEL_PENDING_SELL",
-                "order_id": str(order_id),
-                "side": "SELL",
-            },
-        )
+            result = await self._place_market_sell(holding)
+            if not result.success or not result.order_id:
+                message = result.message or "시장가 재매도 주문 접수 실패"
+                await activity_logger.log(
+                    ActivityType.ORDER,
+                    ActivityPhase.ERROR,
+                    f"❌ [{self._normalize_symbol(order.symbol)}] 취소 후 즉시 매도 실패: {message}",
+                    symbol=self._normalize_symbol(order.symbol),
+                    error_message=message,
+                )
+                raise ServiceException.internal_server_error(
+                    f"기존 매도 주문은 취소되었지만 새 매도 주문 접수에 실패했습니다: {message}"
+                )
 
-        result = await self._place_market_sell(holding)
-        if not result.success or not result.order_id:
-            message = result.message or "시장가 재매도 주문 접수 실패"
+            quantity = int(getattr(holding, "quantity", 0) or 0)
+            expected_price = float(getattr(holding, "current_price", 0.0) or 0.0)
             await activity_logger.log(
                 ActivityType.ORDER,
-                ActivityPhase.ERROR,
-                f"❌ [{self._normalize_symbol(order.symbol)}] 취소 후 즉시 매도 실패: {message}",
+                ActivityPhase.COMPLETE,
+                f"🖱 [{self._normalize_symbol(order.symbol)}] 취소 후 즉시 매도 재접수 — {quantity}주",
                 symbol=self._normalize_symbol(order.symbol),
-                error_message=message,
+                detail={
+                    "action": "CANCEL_AND_SELL",
+                    "cancelled_order_id": str(order_id),
+                    "new_order_id": result.order_id,
+                    "quantity": quantity,
+                    "order_type": "MARKET",
+                },
             )
-            raise ServiceException.internal_server_error(
-                f"기존 매도 주문은 취소되었지만 새 매도 주문 접수에 실패했습니다: {message}"
+            await decision_maker.confirm_and_record(
+                symbol=self._normalize_symbol(order.symbol),
+                side="SELL",
+                order_id=result.order_id,
+                quantity=quantity,
+                expected_price=expected_price,
+                analysis_context={
+                    "stock_name": getattr(holding, "name", self._normalize_symbol(order.symbol)),
+                    "strategy_type": "MANUAL",
+                    "ai_recommendation": "SELL",
+                    "entry_pattern": "CANCEL_AND_SELL",
+                },
+                exit_reason="MANUAL_REPLACE_SELL",
             )
-
-        quantity = int(getattr(holding, "quantity", 0) or 0)
-        expected_price = float(getattr(holding, "current_price", 0.0) or 0.0)
-        await activity_logger.log(
-            ActivityType.ORDER,
-            ActivityPhase.COMPLETE,
-            f"🖱 [{self._normalize_symbol(order.symbol)}] 취소 후 즉시 매도 재접수 — {quantity}주",
-            symbol=self._normalize_symbol(order.symbol),
-            detail={
-                "action": "CANCEL_AND_SELL",
+            self.broker_adapter.invalidate_cache()
+            return {
+                "symbol": self._normalize_symbol(order.symbol),
+                "name": getattr(order, "name", self._normalize_symbol(order.symbol)),
+                "quantity": quantity,
                 "cancelled_order_id": str(order_id),
                 "new_order_id": result.order_id,
-                "quantity": quantity,
-                "order_type": "MARKET",
-            },
-        )
-        await decision_maker.confirm_and_record(
-            symbol=self._normalize_symbol(order.symbol),
-            side="SELL",
-            order_id=result.order_id,
-            quantity=quantity,
-            expected_price=expected_price,
-            analysis_context={
-                "stock_name": getattr(holding, "name", self._normalize_symbol(order.symbol)),
-                "strategy_type": "MANUAL",
-                "ai_recommendation": "SELL",
-                "entry_pattern": "CANCEL_AND_SELL",
-            },
-            exit_reason="MANUAL_REPLACE_SELL",
-        )
-        self.broker_adapter.invalidate_cache()
-        return {
-            "symbol": self._normalize_symbol(order.symbol),
-            "name": getattr(order, "name", self._normalize_symbol(order.symbol)),
-            "quantity": quantity,
-            "cancelled_order_id": str(order_id),
-            "new_order_id": result.order_id,
-            "message": "기존 매도 주문 취소 후 시장가 매도 재접수",
-        }
+                "message": "기존 매도 주문 취소 후 시장가 매도 재접수",
+            }
+        except ServiceException:
+            raise
+        except Exception as exc:
+            await self._capture_runtime_error(
+                operation="replace_pending_sell_with_market_order",
+                exc=exc,
+                symbol=getattr(order, "symbol", None),
+                order_id=order_id,
+            )
+            raise
 
 
 manual_trade_service = ManualTradeService()

@@ -10,6 +10,7 @@ from loguru import logger
 from analysis.llm.llm_factory import llm_factory
 from analysis.llm.selection_policy import resolve_news_selection
 from core.config import settings
+from services.error_capture_service import error_capture_service
 from trading.enums import LLMTier
 
 
@@ -124,6 +125,17 @@ Summary: {summary}
             return copied
         except Exception as exc:
             logger.debug("해외 뉴스 번역 실패: {}", str(exc))
+            await error_capture_service.capture_exception(
+                component="news_translation",
+                operation="translate_item",
+                exc=exc,
+                provider=str(selected_news.provider or "CLAUDE_CODE").upper(),
+                detail={
+                    "source_code": str(item.get("source_code") or ""),
+                    "language": str(item.get("language") or ""),
+                    "title": title[:160],
+                },
+            )
             metadata["translation_status"] = "FAILED"
             error_text = str(exc).strip() or exc.__class__.__name__
             metadata["translation_error"] = error_text[:120]

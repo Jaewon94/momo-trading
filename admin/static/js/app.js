@@ -2879,6 +2879,8 @@ function switchView(view) {
     loadPerformanceView();
   } else if (view === 'observability') {
     loadObservabilityView();
+  } else if (view === 'errors') {
+    loadErrorObservabilityView();
   } else if (view === 'news-archive') {
     loadNewsArchiveView();
   } else if (view === 'trades-center') {
@@ -3990,41 +3992,100 @@ function createObservabilityDashboard(observabilityState) {
           `).join('')}
         </div>
       </section>
-      <div class="grid gap-4 xl:grid-cols-2 mt-4">
-        <section class="rounded-2xl border border-gray-700 bg-dark-950/40 px-4 py-4">
-          <div class="text-xs uppercase tracking-[0.12em] text-gray-500">Recent Errors</div>
-          <div class="mt-3 space-y-2">
-            ${obs.recentErrors.length ? obs.recentErrors.map((row) => `
-              <div class="rounded-xl border border-gray-700 bg-dark-900/45 px-3 py-3">
-                <div class="flex items-start justify-between gap-3">
-                  <div>
-                    <div class="text-sm text-white font-medium">${escapeHtml(row.title)}</div>
-                    <div class="text-[11px] text-gray-500 mt-1">${escapeHtml(row.meta)}</div>
-                  </div>
-                  <div class="text-[11px] text-gray-500">${escapeHtml(row.occurredAt)}</div>
+      <div class="mt-4 flex justify-end">
+        <button type="button" onclick="loadErrorObservabilityView(${selectedObservabilityHours})" class="rounded-full border border-rose-500/40 px-3 py-1 text-[11px] text-rose-200 hover:border-rose-300 hover:text-white transition">
+          에러 관측 페이지 열기
+        </button>
+      </div>
+    </section>
+  `;
+  return div;
+}
+
+function renderErrorObservabilityPanels(obs) {
+  return `
+    <div class="grid gap-4 xl:grid-cols-2 mt-4">
+      <section class="rounded-2xl border border-rose-900/40 bg-rose-950/10 px-4 py-4">
+        <div class="text-xs uppercase tracking-[0.12em] text-rose-300">Recent Errors</div>
+        <div class="mt-3 space-y-2">
+          ${obs.recentErrors.length ? obs.recentErrors.map((row) => `
+            <div class="rounded-xl border border-rose-900/30 bg-dark-900/45 px-3 py-3">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <div class="text-sm text-white font-medium">${escapeHtml(row.title)}</div>
+                  <div class="text-[11px] text-gray-500 mt-1">${escapeHtml(row.meta)}</div>
                 </div>
-                <div class="text-xs text-gray-300 mt-2">${escapeHtml(row.detail)}</div>
+                <div class="text-[11px] text-gray-500">${escapeHtml(row.occurredAt)}</div>
               </div>
-            `).join('') : '<div class="text-xs text-gray-500">최근 에러가 없습니다.</div>'}
-          </div>
-        </section>
-        <section class="rounded-2xl border border-gray-700 bg-dark-950/40 px-4 py-4">
-          <div class="text-xs uppercase tracking-[0.12em] text-gray-500">Repeated Incidents</div>
-          <div class="mt-3 space-y-2">
-            ${obs.incidentRows.length ? obs.incidentRows.map((row) => `
-              <div class="rounded-xl border border-gray-700 bg-dark-900/45 px-3 py-3">
-                <div class="flex items-start justify-between gap-3">
-                  <div>
-                    <div class="text-sm text-white font-medium">${escapeHtml(row.title)}</div>
-                    <div class="text-[11px] text-gray-500 mt-1">${escapeHtml(row.meta)}</div>
-                  </div>
-                  <div class="text-[11px] text-gray-500">${escapeHtml(row.lastSeenAt)}</div>
+              <div class="text-xs text-gray-300 mt-2">${escapeHtml(row.detail)}</div>
+            </div>
+          `).join('') : '<div class="text-xs text-gray-500">최근 에러가 없습니다.</div>'}
+        </div>
+      </section>
+      <section class="rounded-2xl border border-amber-900/40 bg-amber-950/10 px-4 py-4">
+        <div class="text-xs uppercase tracking-[0.12em] text-amber-300">Repeated Incidents</div>
+        <div class="mt-3 space-y-2">
+          ${obs.incidentRows.length ? obs.incidentRows.map((row) => `
+            <div class="rounded-xl border border-amber-900/30 bg-dark-900/45 px-3 py-3">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <div class="text-sm text-white font-medium">${escapeHtml(row.title)}</div>
+                  <div class="text-[11px] text-gray-500 mt-1">${escapeHtml(row.meta)}</div>
                 </div>
-                <div class="text-xs text-gray-300 mt-2">${escapeHtml(row.detail)}</div>
+                <div class="text-[11px] text-gray-500">${escapeHtml(row.lastSeenAt)}</div>
               </div>
-            `).join('') : '<div class="text-xs text-gray-500">누적 incident가 없습니다.</div>'}
-          </div>
-        </section>
+              <div class="text-xs text-gray-300 mt-2">${escapeHtml(row.detail)}</div>
+            </div>
+          `).join('') : '<div class="text-xs text-gray-500">누적 incident가 없습니다.</div>'}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function createErrorObservabilityDashboard(observabilityState) {
+  const div = document.createElement('div');
+  div.className = 'bg-dark-700 rounded-xl p-5 border border-gray-600 mx-2 chat-bubble';
+  const obs = observabilityState;
+  const selectedObservabilityHours = Number(window.performanceObservabilityHours || 24);
+  const recentCount = Array.isArray(obs.recentErrors) ? obs.recentErrors.length : 0;
+  const incidentCount = Array.isArray(obs.incidentRows) ? obs.incidentRows.length : 0;
+
+  div.innerHTML = `
+    <section class="rounded-2xl border border-gray-700 bg-dark-900/40 px-4 py-4">
+      <div class="flex items-start justify-between gap-3 mb-3">
+        <div>
+          <div class="text-lg font-bold text-white">🚨 에러 관측</div>
+          <div class="text-sm text-gray-400 mt-1">장중에 쌓인 예외와 반복 incident를 저녁 점검 관점에서 따로 봅니다.</div>
+          <div class="mt-2 text-[11px] text-gray-500">${escapeHtml(obs.machine.host)} · 최근 ${escapeHtml(obs.machine.latestCollectedAt)} · ${escapeHtml(String(obs.window.hours || 24))}h / ${escapeHtml(obs.window.resolution || 'raw')}</div>
+        </div>
+        <div class="flex items-center gap-2">
+          <button type="button" onclick="loadErrorObservabilityView(24)" class="rounded-full border px-3 py-1 text-[11px] transition ${selectedObservabilityHours === 24 ? 'border-rose-400 text-white' : 'border-gray-600 text-gray-300 hover:border-rose-400 hover:text-white'}">24시간</button>
+          <button type="button" onclick="loadErrorObservabilityView(168)" class="rounded-full border px-3 py-1 text-[11px] transition ${selectedObservabilityHours === 168 ? 'border-rose-400 text-white' : 'border-gray-600 text-gray-300 hover:border-rose-400 hover:text-white'}">7일</button>
+        </div>
+      </div>
+      <div class="news-overview-grid mb-4">
+        <div class="news-overview-card">
+          <div class="news-overview-label">최근 에러</div>
+          <div class="news-overview-value">${escapeHtml(String(recentCount))}</div>
+          <div class="news-overview-help">현재 창에서 보여주는 최근 개별 예외 수</div>
+        </div>
+        <div class="news-overview-card">
+          <div class="news-overview-label">반복 incident</div>
+          <div class="news-overview-value">${escapeHtml(String(incidentCount))}</div>
+          <div class="news-overview-help">fingerprint로 묶인 누적 문제 수</div>
+        </div>
+        <div class="news-overview-card">
+          <div class="news-overview-label">머신 정보</div>
+          <div class="news-overview-value text-base">${escapeHtml(obs.machine.host)}</div>
+          <div class="news-overview-help">${escapeHtml(obs.machine.runtime)} · ${escapeHtml(obs.machine.platform)}</div>
+        </div>
+      </div>
+      ${renderErrorObservabilityPanels(obs)}
+      <div class="mt-4 flex justify-end">
+        <button type="button" onclick="loadObservabilityView(${selectedObservabilityHours})" class="rounded-full border border-gray-600 px-3 py-1 text-[11px] text-gray-200 hover:border-blue-400 hover:text-white transition">
+          시스템 관측으로 돌아가기
+        </button>
       </div>
     </section>
   `;
@@ -4269,6 +4330,30 @@ async function loadObservabilityView(observabilityHours = null) {
     container.appendChild(createObservabilityDashboard(observabilityState));
   } catch (err) {
     container.innerHTML = `<div class="text-center text-red-400 text-sm py-8">시스템 관측 로드 실패: ${escapeHtml(err.message || '알 수 없는 오류')}</div>`;
+  }
+}
+
+async function loadErrorObservabilityView(observabilityHours = null) {
+  const container = document.getElementById('chat-container');
+  container.innerHTML = '<div class="text-center text-gray-500 text-sm py-4">에러 관측 불러오는 중...</div>';
+  cleanupStockCards();
+  const resolvedObservabilityHours = Number(observabilityHours || window.performanceObservabilityHours || 24);
+  window.performanceObservabilityHours = resolvedObservabilityHours;
+  const observabilityPoints = resolvedObservabilityHours > 48 ? 168 : 120;
+
+  try {
+    const observabilityJson = await fetchJson(`${API}/observability/overview?hours=${resolvedObservabilityHours}&points=${observabilityPoints}`);
+    const observabilityState = observabilityJson?.data
+      ? buildObservabilityDashboardState(observabilityJson.data)
+      : null;
+    container.innerHTML = '';
+    if (!observabilityState) {
+      container.innerHTML = '<div class="text-center text-gray-500 text-sm py-8">에러 관측 데이터가 아직 없습니다.</div>';
+      return;
+    }
+    container.appendChild(createErrorObservabilityDashboard(observabilityState));
+  } catch (err) {
+    container.innerHTML = `<div class="text-center text-red-400 text-sm py-8">에러 관측 로드 실패: ${escapeHtml(err.message || '알 수 없는 오류')}</div>`;
   }
 }
 

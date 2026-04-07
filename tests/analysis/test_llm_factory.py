@@ -49,6 +49,12 @@ class FakeFailingProvider(FakeProvider):
         raise RuntimeError("provider failed")
 
 
+class FakeAlwaysFailingProvider(FakeProvider):
+    async def generate(self, prompt: str, system_prompt: str = "") -> str:
+        self.calls.append((prompt, system_prompt))
+        raise RuntimeError("provider failed")
+
+
 @pytest.mark.asyncio
 async def test_llm_factory_uses_configured_primary_provider(monkeypatch) -> None:
     monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_PROVIDER_TIER1", "CODEX")
@@ -256,6 +262,44 @@ async def test_llm_factory_skips_retry_when_provider_becomes_unavailable(monkeyp
     assert provider == "CLAUDE_CODE"
     assert codex.calls == [("hello", "")]
     assert claude.calls == [("hello", "")]
+
+
+@pytest.mark.asyncio
+async def test_llm_factory_captures_error_when_all_providers_fail(monkeypatch) -> None:
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_PROVIDER_TIER1", "CODEX")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_FALLBACK_PROVIDER_TIER1", "")
+
+    async def fake_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr("analysis.llm.llm_factory.asyncio.sleep", fake_sleep)
+
+    captured = {}
+
+    async def fake_capture_exception(**kwargs):
+        captured.update(kwargs)
+        return {"fingerprint": "fp-1"}
+
+    async def fake_record_llm_call(**kwargs):
+        return None
+
+    factory = LLMFactory()
+    codex = FakeAlwaysFailingProvider(LLMProvider.CODEX, available=True, result="")
+    factory._providers[LLMTier.TIER1] = {
+        LLMProvider.CODEX: codex,
+    }
+
+    monkeypatch.setattr("analysis.llm.llm_factory.error_capture_service.capture_exception", fake_capture_exception)
+    monkeypatch.setattr("analysis.llm.llm_factory.observability_service.record_llm_call", fake_record_llm_call)
+
+    with pytest.raises(RuntimeError, match="provider failed"):
+        await factory.generate("hello", LLMTier.TIER1, symbol="005930", cycle_id="cycle-1")
+
+    assert captured["component"] == "llm_factory"
+    assert captured["operation"] == "generate"
+    assert captured["symbol"] == "005930"
+    assert captured["cycle_id"] == "cycle-1"
+    assert captured["detail"]["tier"] == "TIER1"
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,7 @@ from analysis.llm.selection_policy import (
     resolve_tier_selection,
 )
 from core.config import DEFAULT_LLM_MODEL, normalize_llm_model_value, settings
+from services.error_capture_service import error_capture_service
 from services.observability_service import observability_service
 from trading.enums import ActivityPhase, ActivityType, LLMProvider, LLMTier
 
@@ -237,6 +238,20 @@ class LLMFactory:
                 "error": str(last_error)[:200] if last_error else "unknown",
             },
         )
+        if last_error is not None:
+            await error_capture_service.capture_exception(
+                component="llm_factory",
+                operation="generate",
+                exc=last_error,
+                cycle_id=cycle_id,
+                symbol=symbol,
+                detail={
+                    "tier": tier.value,
+                    "provider_chain": [item.value for item in provider_chain],
+                    "system_prompt_chars": len(system_prompt or ""),
+                    "prompt_chars": len(prompt or ""),
+                },
+            )
         raise last_error or RuntimeError("사용 가능한 LLM provider가 없습니다")
 
     async def _log_llm_conversation(

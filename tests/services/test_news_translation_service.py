@@ -135,6 +135,39 @@ async def test_news_translation_service_records_parse_failure_reason(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_news_translation_service_captures_translation_failures(monkeypatch):
+    service = NewsTranslationService()
+    captured = {}
+
+    async def fake_generate(*args, **kwargs):
+        raise RuntimeError("llm timeout")
+
+    async def fake_capture_exception(**kwargs):
+        captured.update(kwargs)
+        return {"fingerprint": "fp-1"}
+
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_ENABLED", True)
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_PROVIDER", "OLLAMA")
+    monkeypatch.setattr("services.news_translation_service.llm_factory.generate", fake_generate)
+    monkeypatch.setattr("services.news_translation_service.error_capture_service.capture_exception", fake_capture_exception)
+
+    items = await service.translate_items([
+        {
+            "source_code": "INVESTING",
+            "language": "en",
+            "title": "Hyundai shares rise on stronger outlook",
+            "summary": "Investors cheered the stronger guidance.",
+        },
+    ])
+
+    assert items[0]["metadata"]["translation_status"] == "FAILED"
+    assert captured["component"] == "news_translation"
+    assert captured["operation"] == "translate_item"
+    assert captured["provider"] == "OLLAMA"
+    assert captured["detail"]["source_code"] == "INVESTING"
+
+
+@pytest.mark.asyncio
 async def test_news_translation_service_clears_previous_error_on_success(monkeypatch):
     monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_ENABLED", True)
 

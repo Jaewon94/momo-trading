@@ -42,6 +42,12 @@ class FakeBrokerAdapter:
         self.cache_invalidated = True
 
 
+class FailingBrokerAdapter(FakeBrokerAdapter):
+    async def place_order(self, request: OrderRequest) -> OrderResult:
+        self.placed_requests.append(request)
+        raise RuntimeError("broker down")
+
+
 @pytest.mark.asyncio
 async def test_manual_trade_service_places_market_sell_and_confirms(monkeypatch):
     adapter = FakeBrokerAdapter(
@@ -252,3 +258,41 @@ async def test_manual_trade_service_rejects_immediate_sell_outside_regular_sessi
 
     assert exc_info.value.status_code == 400
     assert "현재 세션(장외)" in str(exc_info.value.message)
+
+
+@pytest.mark.asyncio
+async def test_manual_trade_service_captures_unexpected_broker_error(monkeypatch):
+    adapter = FailingBrokerAdapter(
+        holdings=[
+            HoldingInfo(
+                symbol="005930",
+                name="삼성전자",
+                quantity=5,
+                avg_buy_price=70000,
+                current_price=72000,
+                pnl=10000,
+                pnl_rate=1.5,
+            ),
+        ],
+    )
+    service = ManualTradeService(broker_adapter=adapter)
+    captured = {}
+
+    monkeypatch.setattr("services.manual_trade_service.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr(
+        "services.manual_trade_service.market_calendar.get_market_session_info",
+        lambda: {"is_regular_open": True, "label": "정규장"},
+    )
+
+    async def fake_capture_exception(**kwargs):
+        captured.update(kwargs)
+        return {"fingerprint": "fp-1"}
+
+    monkeypatch.setattr("services.manual_trade_service.error_capture_service.capture_exception", fake_capture_exception)
+
+    with pytest.raises(RuntimeError, match="broker down"):
+        await service.sell_position("005930")
+
+    assert captured["component"] == "manual_trade"
+    assert captured["operation"] == "sell_position"
+    assert captured["symbol"] == "005930"

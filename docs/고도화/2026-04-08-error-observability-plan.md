@@ -6,7 +6,11 @@
   - 공통 저장 서비스 `services/error_capture_service.py`
   - 뉴스 소스 polling 실패 연동
   - 스케줄러 뉴스 polling 실패 연동
+  - LLM factory 전체 호출 실패 연동
+  - 뉴스 번역 fallback 실패 연동
+  - 수동 주문/취소/재매도 브로커 예외 연동
   - 관리자 `시스템 관측` 화면의 `Recent Errors`, `Repeated Incidents` 섹션 추가
+  - 관리자 `에러 관측` 전용 페이지 추가
 - 다음 확장 후보
   - 주문/브로커/LLM provider 예외 연동
   - incident mute/resolved 처리
@@ -27,6 +31,13 @@
 - 1차 연결 포인트
   - 뉴스 소스 polling 실패
   - 스케줄러 뉴스 polling 실패
+- 확장 연결 포인트
+  - `analysis/llm/llm_factory.py`
+    - provider chain 전체 실패 시 capture
+  - `services/news_translation_service.py`
+    - 번역 실패 후 fallback metadata를 남기는 경로에서 capture
+  - `services/manual_trade_service.py`
+    - 수동 매도 / 매수취소 / 매도재접수 중 브로커 예외 capture
 - 시스템 관측 화면 표시
   - Recent Errors
   - Repeated Incidents
