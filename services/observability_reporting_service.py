@@ -11,6 +11,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.execution_metric import ExecutionMetric
+from models.execution_metric_hourly_rollup import ExecutionMetricHourlyRollup
 from models.resource_hourly_rollup import ResourceHourlyRollup
 from models.resource_snapshot import ResourceSnapshot
 from services.observability_maintenance_service import observability_maintenance_service
@@ -67,6 +68,13 @@ class ObservabilityReportingService:
 
         news_poll_rows = [row for row in job_rows if str(row.metric_name or "").upper() == "NEWS_POLL"]
         maintenance_rows = [row for row in job_rows if str(row.metric_name or "").upper() == "OBSERVABILITY_MAINTENANCE"]
+        llm_trend_rows, news_trend_rows = await self._build_execution_trend_payloads(
+            session,
+            start_at=start_at,
+            use_rollups=use_rollups,
+            llm_rows=llm_rows,
+            news_poll_rows=news_poll_rows,
+        )
 
         return {
             "window": {
@@ -82,6 +90,10 @@ class ObservabilityReportingService:
             "jobs": {
                 "news_poll": self._build_news_poll_summary(news_poll_rows),
                 "maintenance": self._build_maintenance_summary(maintenance_rows),
+            },
+            "trends": {
+                "llm": llm_trend_rows,
+                "news_poll": news_trend_rows,
             },
             "storage": await observability_maintenance_service.summarize_storage(
                 session,
@@ -167,6 +179,56 @@ class ObservabilityReportingService:
             .order_by(ExecutionMetric.created_at.asc())
         )
         return list((await session.execute(stmt)).scalars().all())
+
+    async def _fetch_execution_rollups(
+        self,
+        session: AsyncSession,
+        *,
+        start_at,
+        metric_type: str,
+        metric_name: str,
+    ) -> list[ExecutionMetricHourlyRollup]:
+        stmt = (
+            select(ExecutionMetricHourlyRollup)
+            .where(and_(
+                ExecutionMetricHourlyRollup.bucket_start >= start_at,
+                ExecutionMetricHourlyRollup.metric_type == metric_type,
+                ExecutionMetricHourlyRollup.metric_name == metric_name,
+            ))
+            .order_by(ExecutionMetricHourlyRollup.bucket_start.asc())
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def _build_execution_trend_payloads(
+        self,
+        session: AsyncSession,
+        *,
+        start_at,
+        use_rollups: bool,
+        llm_rows: list[ExecutionMetric],
+        news_poll_rows: list[ExecutionMetric],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        if use_rollups:
+            llm_rollups = await self._fetch_execution_rollups(
+                session,
+                start_at=start_at,
+                metric_type="LLM_CALL",
+                metric_name="LLM_GENERATE",
+            )
+            news_rollups = await self._fetch_execution_rollups(
+                session,
+                start_at=start_at,
+                metric_type="JOB",
+                metric_name="NEWS_POLL",
+            )
+            return (
+                [self._serialize_llm_rollup_point(row) for row in llm_rollups],
+                [self._serialize_news_rollup_point(row) for row in news_rollups],
+            )
+        return (
+            self._build_llm_trend_from_rows(llm_rows),
+            self._build_news_poll_trend_from_rows(news_poll_rows),
+        )
 
     def _build_resource_summary(self, rows: list[ResourceSnapshot]) -> dict[str, Any]:
         latest = rows[-1] if rows else None
@@ -275,6 +337,40 @@ class ObservabilityReportingService:
             "last_deleted_execution_rows": int(detail.get("deleted_execution_rows") or 0),
         }
 
+    def _build_llm_trend_from_rows(self, rows: list[ExecutionMetric]) -> list[dict[str, Any]]:
+        grouped: dict[str, list[ExecutionMetric]] = defaultdict(list)
+        for row in rows:
+            bucket = ensure_kst(row.created_at).replace(minute=0, second=0, microsecond=0).isoformat()
+            grouped[bucket].append(row)
+        points = []
+        for bucket, bucket_rows in sorted(grouped.items()):
+            elapsed_values = [int(row.elapsed_ms) for row in bucket_rows if row.elapsed_ms is not None]
+            success_count = sum(1 for row in bucket_rows if str(row.status or "").upper() == "SUCCESS")
+            points.append({
+                "created_at": bucket,
+                "calls": len(bucket_rows),
+                "avg_elapsed_ms": _round_or_none(sum(elapsed_values) / len(elapsed_values), 1) if elapsed_values else None,
+                "success_rate": self._percent(success_count, len(bucket_rows)),
+            })
+        return points
+
+    def _build_news_poll_trend_from_rows(self, rows: list[ExecutionMetric]) -> list[dict[str, Any]]:
+        grouped: dict[str, list[ExecutionMetric]] = defaultdict(list)
+        for row in rows:
+            bucket = ensure_kst(row.created_at).replace(minute=0, second=0, microsecond=0).isoformat()
+            grouped[bucket].append(row)
+        points = []
+        for bucket, bucket_rows in sorted(grouped.items()):
+            elapsed_values = [int(row.elapsed_ms) for row in bucket_rows if row.elapsed_ms is not None]
+            points.append({
+                "created_at": bucket,
+                "runs": len(bucket_rows),
+                "avg_elapsed_ms": _round_or_none(sum(elapsed_values) / len(elapsed_values), 1) if elapsed_values else None,
+                "created_total": sum(int(row.success_count or 0) for row in bucket_rows),
+                "error_total": sum(int(row.error_count or 0) for row in bucket_rows),
+            })
+        return points
+
     @staticmethod
     def _serialize_resource_snapshot(row: ResourceSnapshot | None) -> dict[str, Any] | None:
         if row is None:
@@ -321,6 +417,44 @@ class ObservabilityReportingService:
             "ollama_rss_mb": _round_or_none(row.avg_ollama_rss_mb, 2),
             "ollama_running": bool((row.ollama_running_rate or 0.0) > 0.0),
             "sample_count": int(row.sample_count or 0),
+        }
+
+    @staticmethod
+    def _serialize_llm_rollup_point(row: ExecutionMetricHourlyRollup) -> dict[str, Any]:
+        return {
+            "created_at": ensure_kst(row.bucket_start).isoformat(),
+            "calls": int(row.sample_count or 0),
+            "avg_elapsed_ms": _round_or_none(row.avg_elapsed_ms, 1),
+            "success_rate": ObservabilityReportingService._percent(int(row.success_count or 0), int(row.sample_count or 0)),
+        }
+
+    @staticmethod
+    def _serialize_news_rollup_point(row: ExecutionMetricHourlyRollup) -> dict[str, Any]:
+        return {
+            "created_at": ensure_kst(row.bucket_start).isoformat(),
+            "runs": int(row.sample_count or 0),
+            "avg_elapsed_ms": _round_or_none(row.avg_elapsed_ms, 1),
+            "created_total": int(row.success_total or 0),
+            "error_total": int(row.error_total or 0),
+        }
+
+    @staticmethod
+    def _serialize_llm_rollup_point(row: ExecutionMetricHourlyRollup) -> dict[str, Any]:
+        return {
+            "created_at": ensure_kst(row.bucket_start).isoformat(),
+            "calls": int(row.sample_count or 0),
+            "avg_elapsed_ms": _round_or_none(row.avg_elapsed_ms, 1),
+            "success_rate": ObservabilityReportingService._percent(int(row.success_count or 0), int(row.sample_count or 0)),
+        }
+
+    @staticmethod
+    def _serialize_news_rollup_point(row: ExecutionMetricHourlyRollup) -> dict[str, Any]:
+        return {
+            "created_at": ensure_kst(row.bucket_start).isoformat(),
+            "runs": int(row.sample_count or 0),
+            "avg_elapsed_ms": _round_or_none(row.avg_elapsed_ms, 1),
+            "created_total": int(row.success_total or 0),
+            "error_total": int(row.error_total or 0),
         }
 
     @staticmethod

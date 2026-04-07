@@ -43,6 +43,16 @@ describe("observability_state", () => {
         hours: 168,
         resolution: "hourly_rollup",
       },
+      trends: {
+        llm: [
+          { created_at: "2026-04-07T21:00:00+09:00", calls: 2, avg_elapsed_ms: 1600, success_rate: 50 },
+          { created_at: "2026-04-08T00:00:00+09:00", calls: 1, avg_elapsed_ms: 2200, success_rate: 100 },
+        ],
+        news_poll: [
+          { created_at: "2026-04-07T21:00:00+09:00", runs: 2, avg_elapsed_ms: 4800, created_total: 4, error_total: 1 },
+          { created_at: "2026-04-08T00:00:00+09:00", runs: 2, avg_elapsed_ms: 5600, created_total: 5, error_total: 1 },
+        ],
+      },
       jobs: {
         news_poll: {
           runs: 4,
@@ -84,6 +94,8 @@ describe("observability_state", () => {
     expect(state.maintenanceRows[1]).toMatchObject({ label: "최근 상태", value: "SUCCESS" });
     expect(state.maintenanceRows[4]).toMatchObject({ label: "최근 raw 정리", value: "15건" });
     expect(state.resourceCharts[0].line.path.startsWith("M")).toBe(true);
+    expect(state.trendCharts[0]).toMatchObject({ label: "LLM Avg Latency", meta: "호출 3회" });
+    expect(state.trendCharts[3]).toMatchObject({ label: "News Created", meta: "생성 9건" });
     expect(state.providerRows[0]).toMatchObject({ provider: "OLLAMA", calls: "3회" });
     expect(state.newsRows[4]).toMatchObject({ label: "생성 기사", value: "9건" });
     expect(state.statusRows[0]).toMatchObject({ status: "SUCCESS", count: "3회" });

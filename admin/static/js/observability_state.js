@@ -73,6 +73,9 @@ export function buildObservabilityDashboardState(payload = {}) {
   const maintenance = payload?.jobs?.maintenance || {};
   const storage = payload?.storage || {};
   const windowInfo = payload?.window || {};
+  const trends = payload?.trends || {};
+  const llmTrend = Array.isArray(trends?.llm) ? trends.llm : [];
+  const newsTrend = Array.isArray(trends?.news_poll) ? trends.news_poll : [];
 
   return {
     machine: {
@@ -151,6 +154,36 @@ export function buildObservabilityDashboardState(payload = {}) {
         label: "Ollama RSS",
         unit: "MB",
         line: buildLinePath(series, "ollama_rss_mb"),
+      },
+    ],
+    trendCharts: [
+      {
+        key: "avg_elapsed_ms",
+        label: "LLM Avg Latency",
+        unit: "ms",
+        line: buildLinePath(llmTrend, "avg_elapsed_ms"),
+        meta: `호출 ${llmTrend.reduce((total, point) => total + Number(point.calls || 0), 0)}회`,
+      },
+      {
+        key: "success_rate",
+        label: "LLM Success Rate",
+        unit: "%",
+        line: buildLinePath(llmTrend, "success_rate"),
+        meta: `최근 ${windowInfo.resolution || "raw"} 추세`,
+      },
+      {
+        key: "avg_elapsed_ms",
+        label: "News Poll Avg Latency",
+        unit: "ms",
+        line: buildLinePath(newsTrend, "avg_elapsed_ms"),
+        meta: `실행 ${newsTrend.reduce((total, point) => total + Number(point.runs || 0), 0)}회`,
+      },
+      {
+        key: "created_total",
+        label: "News Created",
+        unit: "",
+        line: buildLinePath(newsTrend, "created_total"),
+        meta: `생성 ${newsTrend.reduce((total, point) => total + Number(point.created_total || 0), 0)}건`,
       },
     ],
     providerRows: Array.isArray(llm.provider_breakdown)

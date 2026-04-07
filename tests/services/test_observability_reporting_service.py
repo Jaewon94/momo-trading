@@ -4,6 +4,7 @@ import pytest
 from sqlalchemy import delete
 
 from models.execution_metric import ExecutionMetric
+from models.execution_metric_hourly_rollup import ExecutionMetricHourlyRollup
 from models.resource_hourly_rollup import ResourceHourlyRollup
 from models.resource_snapshot import ResourceSnapshot
 from services.observability_reporting_service import ObservabilityReportingService
@@ -14,6 +15,7 @@ from util.time_util import now_kst
 @pytest.mark.asyncio
 async def test_observability_reporting_service_builds_overview_from_recent_metrics():
     async with TestAsyncSessionLocal() as session:
+        await session.execute(delete(ExecutionMetricHourlyRollup))
         await session.execute(delete(ResourceHourlyRollup))
         await session.execute(delete(ExecutionMetric))
         await session.execute(delete(ResourceSnapshot))
@@ -128,12 +130,16 @@ async def test_observability_reporting_service_builds_overview_from_recent_metri
     assert payload["jobs"]["news_poll"]["source_error_total"] == 2
     assert payload["jobs"]["maintenance"]["last_status"] == "SUCCESS"
     assert payload["jobs"]["maintenance"]["last_deleted_resource_rows"] == 4
+    assert len(payload["trends"]["llm"]) == 1
+    assert payload["trends"]["llm"][0]["calls"] == 2
+    assert sum(point["created_total"] for point in payload["trends"]["news_poll"]) == 8
     assert payload["storage"]["raw_retention_days"] >= 1
 
 
 @pytest.mark.asyncio
 async def test_observability_reporting_service_uses_hourly_rollups_for_long_windows():
     async with TestAsyncSessionLocal() as session:
+        await session.execute(delete(ExecutionMetricHourlyRollup))
         await session.execute(delete(ResourceHourlyRollup))
         await session.execute(delete(ExecutionMetric))
         await session.execute(delete(ResourceSnapshot))
@@ -185,6 +191,30 @@ async def test_observability_reporting_service_uses_hourly_rollups_for_long_wind
                     avg_ollama_rss_mb=2200.0,
                     peak_ollama_rss_mb=3200.0,
                 ),
+                ExecutionMetricHourlyRollup(
+                    bucket_start=now - timedelta(days=6),
+                    metric_type="LLM_CALL",
+                    metric_name="LLM_GENERATE",
+                    provider="OLLAMA",
+                    model="ollama:qwen3:14b",
+                    sample_count=3,
+                    success_count=2,
+                    avg_elapsed_ms=1700.0,
+                    p95_elapsed_ms=2200.0,
+                ),
+                ExecutionMetricHourlyRollup(
+                    bucket_start=now - timedelta(days=1),
+                    metric_type="JOB",
+                    metric_name="NEWS_POLL",
+                    sample_count=4,
+                    success_count=3,
+                    partial_error_count=1,
+                    item_total=18,
+                    success_total=7,
+                    error_total=2,
+                    avg_elapsed_ms=5100.0,
+                    p95_elapsed_ms=6200.0,
+                ),
             ])
 
         service = ObservabilityReportingService()
@@ -194,3 +224,5 @@ async def test_observability_reporting_service_uses_hourly_rollups_for_long_wind
     assert len(payload["resource_series"]) == 2
     assert payload["resource_summary"]["snapshot_count"] == 22
     assert payload["resource_series"][0]["sample_count"] == 12
+    assert payload["trends"]["llm"][0]["calls"] == 3
+    assert payload["trends"]["news_poll"][0]["created_total"] == 7
