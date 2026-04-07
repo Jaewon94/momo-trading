@@ -41,6 +41,7 @@ from scheduler.jobs import portfolio_sync_job
 from services.activity_logger import activity_logger
 from services.bloomberg_news_service import bloomberg_news_service
 from services.cnbc_news_service import cnbc_news_service
+from services.error_capture_service import error_capture_service
 from services.investing_news_service import investing_news_service
 from services.krx_kind_disclosure_service import krx_kind_disclosure_service
 from services.llm_usage_service import llm_usage_service
@@ -118,6 +119,29 @@ def _extract_latest_signal(trades, activities):
             }
 
     return None
+
+
+async def _capture_admin_api_error(
+    operation: str,
+    exc: Exception,
+    *,
+    symbol: str | None = None,
+    detail: dict | None = None,
+) -> None:
+    provider = None
+    try:
+        provider = getattr(getattr(get_broker_adapter(), "provider", None), "value", None)
+    except Exception:
+        provider = None
+
+    await error_capture_service.capture_exception(
+        component="admin_api",
+        operation=operation,
+        exc=exc,
+        symbol=normalize_krx_symbol(symbol) if symbol else None,
+        provider=provider,
+        detail=detail,
+    )
 
 
 def _coerce_float(value):
@@ -849,6 +873,11 @@ async def get_account_balance():
         })
     except Exception as e:
         logger.error("계좌 잔고 조회 실패: {}", str(e))
+        await _capture_admin_api_error(
+            "account_balance",
+            e,
+            detail={"route": "/admin/account/balance"},
+        )
         return SuccessResponse(data=None, message=f"잔고 조회 실패: {str(e)[:100]}")
 
 
@@ -871,6 +900,11 @@ async def get_account_holdings():
         ])
     except Exception as e:
         logger.error("보유 종목 조회 실패: {}", str(e))
+        await _capture_admin_api_error(
+            "account_holdings",
+            e,
+            detail={"route": "/admin/account/holdings"},
+        )
         return SuccessResponse(data=[], message=f"보유 종목 조회 실패: {str(e)[:100]}")
 
 
@@ -895,6 +929,11 @@ async def get_pending_orders():
         ])
     except Exception as e:
         logger.error("미체결 주문 조회 실패: {}", str(e))
+        await _capture_admin_api_error(
+            "account_pending_orders",
+            e,
+            detail={"route": "/admin/account/pending-orders"},
+        )
         return SuccessResponse(data=[], message=f"미체결 주문 조회 실패: {str(e)[:100]}")
 
 

@@ -82,6 +82,75 @@ async def test_admin_pending_orders_route_uses_broker_adapter(client, monkeypatc
     assert payload["data"][0]["remaining_qty"] == 5
 
 
+async def test_admin_balance_route_captures_broker_errors(client, monkeypatch):
+    captured = {}
+
+    class FailingBrokerAdapter:
+        async def get_balance(self):
+            raise RuntimeError("broker unavailable")
+
+    async def fake_capture_admin_api_error(operation, exc, *, symbol=None, detail=None):
+        captured["operation"] = operation
+        captured["message"] = str(exc)
+        captured["detail"] = detail
+
+    monkeypatch.setattr("api.routes.admin.get_broker_adapter", lambda: FailingBrokerAdapter())
+    monkeypatch.setattr("api.routes.admin._capture_admin_api_error", fake_capture_admin_api_error)
+
+    response = await client.get("/api/v1/admin/account/balance")
+
+    assert response.status_code == 200
+    assert response.json()["data"] is None
+    assert captured["operation"] == "account_balance"
+    assert captured["detail"]["route"] == "/admin/account/balance"
+
+
+async def test_admin_holdings_route_captures_broker_errors(client, monkeypatch):
+    captured = {}
+
+    class FailingBrokerAdapter:
+        async def get_holdings(self):
+            raise RuntimeError("holdings unavailable")
+
+    async def fake_capture_admin_api_error(operation, exc, *, symbol=None, detail=None):
+        captured["operation"] = operation
+        captured["message"] = str(exc)
+        captured["detail"] = detail
+
+    monkeypatch.setattr("api.routes.admin.get_broker_adapter", lambda: FailingBrokerAdapter())
+    monkeypatch.setattr("api.routes.admin._capture_admin_api_error", fake_capture_admin_api_error)
+
+    response = await client.get("/api/v1/admin/account/holdings")
+
+    assert response.status_code == 200
+    assert response.json()["data"] == []
+    assert captured["operation"] == "account_holdings"
+    assert captured["detail"]["route"] == "/admin/account/holdings"
+
+
+async def test_admin_pending_orders_route_captures_broker_errors(client, monkeypatch):
+    captured = {}
+
+    class FailingBrokerAdapter:
+        async def get_pending_orders(self):
+            raise RuntimeError("pending unavailable")
+
+    async def fake_capture_admin_api_error(operation, exc, *, symbol=None, detail=None):
+        captured["operation"] = operation
+        captured["message"] = str(exc)
+        captured["detail"] = detail
+
+    monkeypatch.setattr("api.routes.admin.get_broker_adapter", lambda: FailingBrokerAdapter())
+    monkeypatch.setattr("api.routes.admin._capture_admin_api_error", fake_capture_admin_api_error)
+
+    response = await client.get("/api/v1/admin/account/pending-orders")
+
+    assert response.status_code == 200
+    assert response.json()["data"] == []
+    assert captured["operation"] == "account_pending_orders"
+    assert captured["detail"]["route"] == "/admin/account/pending-orders"
+
+
 async def test_admin_manual_sell_route_delegates_to_service(client, monkeypatch):
     observed = {}
 
