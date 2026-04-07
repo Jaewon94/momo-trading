@@ -448,6 +448,43 @@ async def test_news_polling_service_includes_nasdaq_when_foreign_enabled(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_news_polling_service_captures_source_errors(monkeypatch):
+    from services.news_polling_service import NewsPollingService, NewsSourcePollSpec
+
+    captured = {}
+
+    async def fake_capture_exception(**kwargs):
+        captured.update(kwargs)
+        return {"fingerprint": "fp-1"}
+
+    async def failing_fetch():
+        raise RuntimeError("feed timeout")
+
+    monkeypatch.setattr(
+        "services.news_polling_service.error_capture_service.capture_exception",
+        fake_capture_exception,
+    )
+
+    service = NewsPollingService()
+    result = await service._poll_single_source(
+        NewsSourcePollSpec(
+            source_code="BLOOMBERG",
+            enabled=True,
+            skip_message="",
+            fetch=failing_fetch,
+        ),
+        semaphore=asyncio.Semaphore(1),
+    )
+
+    assert result.status == "ERROR"
+    assert result.message == "feed timeout"
+    assert captured["component"] == "news_polling"
+    assert captured["operation"] == "poll_source:BLOOMBERG"
+    assert captured["detail"]["source_code"] == "BLOOMBERG"
+    assert isinstance(captured["exc"], RuntimeError)
+
+
+@pytest.mark.asyncio
 async def test_news_polling_service_includes_investing_when_foreign_enabled(monkeypatch):
     from services.news_polling_service import NewsPollingService
 

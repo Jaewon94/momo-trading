@@ -16,3 +16,5 @@ from models.resource_snapshot import ResourceSnapshot
 from models.execution_metric import ExecutionMetric
 from models.resource_hourly_rollup import ResourceHourlyRollup
 from models.execution_metric_hourly_rollup import ExecutionMetricHourlyRollup
+from models.error_event import ErrorEvent
+from models.error_incident import ErrorIncident

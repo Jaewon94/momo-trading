@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.execution_metric import ExecutionMetric
 from models.execution_metric_hourly_rollup import ExecutionMetricHourlyRollup
+from models.error_event import ErrorEvent
+from models.error_incident import ErrorIncident
 from models.resource_hourly_rollup import ResourceHourlyRollup
 from models.resource_snapshot import ResourceSnapshot
 from services.llm_runtime_recommendation_service import llm_runtime_recommendation_service
@@ -33,6 +35,15 @@ def _round_or_none(value: float | None, digits: int = 2) -> float | None:
     if value is None:
         return None
     return round(float(value), digits)
+
+
+def _truncate_text(value: str | None, limit: int) -> str | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text[:limit]
 
 
 class ObservabilityReportingService:
@@ -107,6 +118,10 @@ class ObservabilityReportingService:
             "trends": {
                 "llm": llm_trend_rows,
                 "news_poll": news_trend_rows,
+            },
+            "errors": {
+                "recent": await self._build_recent_errors(session, start_at=start_at, limit=8),
+                "incidents": await self._build_error_incidents(session, limit=8),
             },
             "storage": await observability_maintenance_service.summarize_storage(
                 session,
@@ -242,6 +257,62 @@ class ObservabilityReportingService:
             self._build_llm_trend_from_rows(llm_rows),
             self._build_news_poll_trend_from_rows(news_poll_rows),
         )
+
+    async def _build_recent_errors(
+        self,
+        session: AsyncSession,
+        *,
+        start_at,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        stmt = (
+            select(ErrorEvent)
+            .where(ErrorEvent.created_at >= start_at)
+            .order_by(ErrorEvent.created_at.desc())
+            .limit(limit)
+        )
+        rows = list((await session.execute(stmt)).scalars().all())
+        return [
+            {
+                "created_at": ensure_kst(row.created_at).isoformat(),
+                "component": row.component,
+                "operation": row.operation,
+                "severity": row.severity,
+                "exception_type": row.exception_type,
+                "exception_message": _truncate_text(row.exception_message, 160),
+                "symbol": row.symbol,
+                "provider": row.provider,
+                "fingerprint": row.fingerprint,
+            }
+            for row in rows
+        ]
+
+    async def _build_error_incidents(
+        self,
+        session: AsyncSession,
+        *,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        stmt = (
+            select(ErrorIncident)
+            .order_by(ErrorIncident.last_seen_at.desc())
+            .limit(limit)
+        )
+        rows = list((await session.execute(stmt)).scalars().all())
+        return [
+            {
+                "title": row.title,
+                "component": row.component,
+                "operation": row.operation,
+                "severity": row.severity,
+                "status": row.status,
+                "occurrence_count": int(row.occurrence_count or 0),
+                "last_seen_at": ensure_kst(row.last_seen_at).isoformat() if row.last_seen_at else None,
+                "exception_type": row.exception_type,
+                "last_message": _truncate_text(row.last_message, 160),
+            }
+            for row in rows
+        ]
 
     def _build_resource_summary(self, rows: list[ResourceSnapshot]) -> dict[str, Any]:
         latest = rows[-1] if rows else None

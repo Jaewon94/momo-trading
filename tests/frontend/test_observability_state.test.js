@@ -103,6 +103,28 @@ describe("observability_state", () => {
           reasons: ["8b 이상 또는 일반 상태에서는 동시 실행 1개 권장"],
         },
       },
+      errors: {
+        recent: [
+          {
+            created_at: "2026-04-08T00:22:00+09:00",
+            component: "scheduler",
+            operation: "news_poll",
+            severity: "ERROR",
+            exception_type: "RuntimeError",
+            exception_message: "poll failed",
+          },
+        ],
+        incidents: [
+          {
+            title: "scheduler · news_poll · RuntimeError",
+            severity: "ERROR",
+            status: "OPEN",
+            occurrence_count: 3,
+            last_seen_at: "2026-04-08T00:22:00+09:00",
+            last_message: "poll failed",
+          },
+        ],
+      },
     });
 
     expect(state.machine.host).toBe("mac-local");
@@ -115,6 +137,8 @@ describe("observability_state", () => {
     expect(state.maintenanceRows[4]).toMatchObject({ label: "최근 raw 정리", value: "15건" });
     expect(state.recommendationCards[0]).toMatchObject({ label: "머신 압박", value: "MEDIUM" });
     expect(state.recommendationCards[1]).toMatchObject({ label: "뉴스 번역 추천", value: "OLLAMA / qwen3:8b" });
+    expect(state.recentErrors[0]).toMatchObject({ title: "scheduler · news_poll" });
+    expect(state.incidentRows[0]).toMatchObject({ title: "scheduler · news_poll · RuntimeError" });
     expect(state.resourceCharts[0].line.path.startsWith("M")).toBe(true);
     expect(state.trendCharts[0]).toMatchObject({ label: "LLM Avg Latency", meta: "호출 3회" });
     expect(state.trendCharts[3]).toMatchObject({ label: "News Created", meta: "생성 9건" });

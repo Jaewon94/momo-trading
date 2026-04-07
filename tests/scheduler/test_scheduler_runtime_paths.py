@@ -263,6 +263,41 @@ async def test_scheduler_news_poll_calls_service_with_market_hours(monkeypatch) 
 
 
 @pytest.mark.asyncio
+async def test_scheduler_news_poll_captures_runtime_errors(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    observed = {}
+
+    async def failing_poll_sources(_session, *, market_hours: bool, mode: str | None = None):
+        raise RuntimeError("poll exploded")
+
+    async def fake_capture_exception(**kwargs):
+        observed.update(kwargs)
+        return {"fingerprint": "fp-1"}
+
+    class FakeSession:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_trading_hours", lambda: False)
+    monkeypatch.setattr("scheduler.scheduler.settings.NEWS_POLL_ENABLED", True)
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("services.news_polling_service.news_polling_service.poll_sources", failing_poll_sources)
+    monkeypatch.setattr("scheduler.scheduler.error_capture_service.capture_exception", fake_capture_exception)
+
+    await scheduler._news_poll(trigger_mode="AUTO_EVENT", trigger_reason="PRICE_SURGE")
+
+    assert observed["component"] == "scheduler"
+    assert observed["operation"] == "news_poll"
+    assert observed["detail"]["trigger_mode"] == "AUTO_EVENT"
+    assert observed["detail"]["trigger_reason"] == "PRICE_SURGE"
+    assert observed["detail"]["market_hours"] is False
+    assert isinstance(observed["exc"], RuntimeError)
+
+
+@pytest.mark.asyncio
 async def test_scheduler_event_trigger_runs_news_poll_in_auto_event_mode(monkeypatch) -> None:
     scheduler = TradingScheduler()
     observed = {}

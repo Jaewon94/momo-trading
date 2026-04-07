@@ -27,6 +27,7 @@ from core.config import settings
 from core.events import Event, EventType, event_bus
 from services.observability_maintenance_service import observability_maintenance_service
 from services.observability_service import observability_service
+from services.error_capture_service import error_capture_service
 from trading.broker_factory import get_broker_adapter
 from trading.enums import ActivityPhase, ActivityType, Market, OrderSide, OrderType
 from trading.models import OrderRequest
@@ -613,6 +614,16 @@ class TradingScheduler:
                 logger.debug("이벤트 기반 뉴스 폴링 완료: {} ({})", runtime_mode, trigger_reason)
         except Exception as e:
             logger.warning("뉴스 폴링 오류: {}", str(e))
+            await error_capture_service.capture_exception(
+                component="scheduler",
+                operation="news_poll",
+                exc=e,
+                detail={
+                    "trigger_mode": runtime_mode,
+                    "trigger_reason": trigger_reason,
+                    "market_hours": actual_market_hours,
+                },
+            )
 
     async def _holdings_check(self) -> None:
         """보유종목 현재가 점검 — WebSocket 보완용 안전망 + 시간 기반 조기 청산

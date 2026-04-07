@@ -3990,6 +3990,42 @@ function createObservabilityDashboard(observabilityState) {
           `).join('')}
         </div>
       </section>
+      <div class="grid gap-4 xl:grid-cols-2 mt-4">
+        <section class="rounded-2xl border border-gray-700 bg-dark-950/40 px-4 py-4">
+          <div class="text-xs uppercase tracking-[0.12em] text-gray-500">Recent Errors</div>
+          <div class="mt-3 space-y-2">
+            ${obs.recentErrors.length ? obs.recentErrors.map((row) => `
+              <div class="rounded-xl border border-gray-700 bg-dark-900/45 px-3 py-3">
+                <div class="flex items-start justify-between gap-3">
+                  <div>
+                    <div class="text-sm text-white font-medium">${escapeHtml(row.title)}</div>
+                    <div class="text-[11px] text-gray-500 mt-1">${escapeHtml(row.meta)}</div>
+                  </div>
+                  <div class="text-[11px] text-gray-500">${escapeHtml(row.occurredAt)}</div>
+                </div>
+                <div class="text-xs text-gray-300 mt-2">${escapeHtml(row.detail)}</div>
+              </div>
+            `).join('') : '<div class="text-xs text-gray-500">최근 에러가 없습니다.</div>'}
+          </div>
+        </section>
+        <section class="rounded-2xl border border-gray-700 bg-dark-950/40 px-4 py-4">
+          <div class="text-xs uppercase tracking-[0.12em] text-gray-500">Repeated Incidents</div>
+          <div class="mt-3 space-y-2">
+            ${obs.incidentRows.length ? obs.incidentRows.map((row) => `
+              <div class="rounded-xl border border-gray-700 bg-dark-900/45 px-3 py-3">
+                <div class="flex items-start justify-between gap-3">
+                  <div>
+                    <div class="text-sm text-white font-medium">${escapeHtml(row.title)}</div>
+                    <div class="text-[11px] text-gray-500 mt-1">${escapeHtml(row.meta)}</div>
+                  </div>
+                  <div class="text-[11px] text-gray-500">${escapeHtml(row.lastSeenAt)}</div>
+                </div>
+                <div class="text-xs text-gray-300 mt-2">${escapeHtml(row.detail)}</div>
+              </div>
+            `).join('') : '<div class="text-xs text-gray-500">누적 incident가 없습니다.</div>'}
+          </div>
+        </section>
+      </div>
     </section>
   `;
   return div;

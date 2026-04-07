@@ -81,6 +81,9 @@ export function buildObservabilityDashboardState(payload = {}) {
   const newsRecommendation = recommendations?.news_translation || {};
   const manualRecommendation = recommendations?.manual_analysis || {};
   const concurrencyRecommendation = recommendations?.ollama_concurrency || {};
+  const errors = payload?.errors || {};
+  const recentErrors = Array.isArray(errors?.recent) ? errors.recent : [];
+  const incidents = Array.isArray(errors?.incidents) ? errors.incidents : [];
 
   return {
     machine: {
@@ -245,5 +248,17 @@ export function buildObservabilityDashboardState(payload = {}) {
         help: Array.isArray(concurrencyRecommendation.reasons) ? concurrencyRecommendation.reasons.join(" · ") : "-",
       },
     ],
+    recentErrors: recentErrors.map((row) => ({
+      title: [row.component, row.operation].filter(Boolean).join(" · ") || "-",
+      meta: [row.severity, row.exception_type, row.symbol].filter(Boolean).join(" · "),
+      detail: String(row.exception_message || "-"),
+      occurredAt: formatDateTimeLabel(row.created_at),
+    })),
+    incidentRows: incidents.map((row) => ({
+      title: String(row.title || "-"),
+      meta: [row.severity, row.status, `${Number(row.occurrence_count || 0)}회`].filter(Boolean).join(" · "),
+      detail: String(row.last_message || "-"),
+      lastSeenAt: formatDateTimeLabel(row.last_seen_at),
+    })),
   };
 }

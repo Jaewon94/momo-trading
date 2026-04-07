@@ -15,6 +15,7 @@ from services.investing_news_service import investing_news_service
 from services.nasdaq_news_service import nasdaq_news_service
 from services.news_ingest_service import news_ingest_service
 from services.observability_service import observability_service
+from services.error_capture_service import error_capture_service
 from services.krx_kind_disclosure_service import krx_kind_disclosure_service
 from services.open_dart_disclosure_service import open_dart_disclosure_service
 from services.news_runtime_service import news_runtime_service
@@ -251,6 +252,12 @@ class NewsPollingService:
             async with semaphore:
                 items = await spec.fetch()
         except Exception as exc:
+            await error_capture_service.capture_exception(
+                component="news_polling",
+                operation=f"poll_source:{spec.source_code}",
+                exc=exc,
+                detail={"source_code": spec.source_code},
+            )
             return NewsSourcePollResult(
                 source_code=spec.source_code,
                 status="ERROR",

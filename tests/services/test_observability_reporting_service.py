@@ -5,6 +5,8 @@ from sqlalchemy import delete
 
 from models.execution_metric import ExecutionMetric
 from models.execution_metric_hourly_rollup import ExecutionMetricHourlyRollup
+from models.error_event import ErrorEvent
+from models.error_incident import ErrorIncident
 from models.resource_hourly_rollup import ResourceHourlyRollup
 from models.resource_snapshot import ResourceSnapshot
 from services.observability_reporting_service import ObservabilityReportingService
@@ -16,6 +18,8 @@ from util.time_util import now_kst
 async def test_observability_reporting_service_builds_overview_from_recent_metrics():
     async with TestAsyncSessionLocal() as session:
         await session.execute(delete(ExecutionMetricHourlyRollup))
+        await session.execute(delete(ErrorEvent))
+        await session.execute(delete(ErrorIncident))
         await session.execute(delete(ResourceHourlyRollup))
         await session.execute(delete(ExecutionMetric))
         await session.execute(delete(ResourceSnapshot))
@@ -111,6 +115,29 @@ async def test_observability_reporting_service_builds_overview_from_recent_metri
                     detail='{"resource_rollups_created": 1, "execution_rollups_created": 2, "deleted_resource_rows": 4, "deleted_execution_rows": 1}',
                     created_at=now - timedelta(minutes=4),
                 ),
+                ErrorEvent(
+                    fingerprint="abc123",
+                    severity="ERROR",
+                    component="scheduler",
+                    operation="news_poll",
+                    handled=True,
+                    exception_type="RuntimeError",
+                    exception_message="poll failed",
+                    created_at=now - timedelta(minutes=3),
+                ),
+                ErrorIncident(
+                    fingerprint="abc123",
+                    title="scheduler · news_poll · RuntimeError",
+                    component="scheduler",
+                    operation="news_poll",
+                    severity="ERROR",
+                    status="OPEN",
+                    first_seen_at=now - timedelta(minutes=30),
+                    last_seen_at=now - timedelta(minutes=3),
+                    occurrence_count=2,
+                    exception_type="RuntimeError",
+                    last_message="poll failed",
+                ),
             ])
 
         service = ObservabilityReportingService()
@@ -131,6 +158,9 @@ async def test_observability_reporting_service_builds_overview_from_recent_metri
     assert payload["jobs"]["maintenance"]["last_status"] == "SUCCESS"
     assert payload["jobs"]["maintenance"]["last_deleted_resource_rows"] == 4
     assert payload["recommendations"]["news_translation"]["current"]["provider"] in {"CLAUDE_CODE", "OLLAMA", "CODEX"}
+    assert payload["errors"]["recent"][0]["component"] == "scheduler"
+    assert payload["errors"]["incidents"][0]["occurrence_count"] == 2
+    assert payload["errors"]["incidents"][0]["last_seen_at"].startswith("2026-")
     assert len(payload["trends"]["llm"]) == 1
     assert payload["trends"]["llm"][0]["calls"] == 2
     assert sum(point["created_total"] for point in payload["trends"]["news_poll"]) == 8
