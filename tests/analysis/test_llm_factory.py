@@ -421,3 +421,53 @@ async def test_llm_factory_re_resolves_default_chain_after_primary_failure(monke
 
     assert codex.calls == [("hello", "")]
     assert claude.calls == []
+
+
+@pytest.mark.asyncio
+async def test_llm_factory_re_resolves_manual_chain_after_primary_failure(monkeypatch) -> None:
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.MANUAL_LLM_PROVIDER", "CODEX")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.MANUAL_LLM_MODEL", "DEFAULT")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.MANUAL_LLM_FALLBACK_PROVIDER", "CLAUDE_CODE")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.MANUAL_LLM_FALLBACK_MODEL", "DEFAULT")
+
+    def disable_manual_fallback() -> None:
+        monkeypatch.setattr("analysis.llm.llm_factory.settings.MANUAL_LLM_FALLBACK_PROVIDER", "")
+
+    factory = LLMFactory()
+    codex = FakeMutatingFailingProvider(LLMProvider.CODEX, on_generate=disable_manual_fallback)
+    claude = FakeProvider(LLMProvider.CLAUDE_CODE, available=True, result="claude-result")
+    factory._providers[LLMTier.TIER1] = {
+        LLMProvider.CODEX: codex,
+        LLMProvider.CLAUDE_CODE: claude,
+    }
+
+    with pytest.raises(RuntimeError, match="provider failed"):
+        await factory.generate_manual("hello", default_tier=LLMTier.TIER1)
+
+    assert codex.calls == [("hello", "")]
+    assert claude.calls == []
+
+
+@pytest.mark.asyncio
+async def test_llm_factory_re_resolves_news_chain_after_primary_failure(monkeypatch) -> None:
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.NEWS_LLM_PROVIDER", "CODEX")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.NEWS_LLM_MODEL", "DEFAULT")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.NEWS_LLM_FALLBACK_PROVIDER", "CLAUDE_CODE")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.NEWS_LLM_FALLBACK_MODEL", "DEFAULT")
+
+    def disable_news_fallback() -> None:
+        monkeypatch.setattr("analysis.llm.llm_factory.settings.NEWS_LLM_FALLBACK_PROVIDER", "")
+
+    factory = LLMFactory()
+    codex = FakeMutatingFailingProvider(LLMProvider.CODEX, on_generate=disable_news_fallback)
+    claude = FakeProvider(LLMProvider.CLAUDE_CODE, available=True, result="claude-result")
+    factory._providers[LLMTier.TIER1] = {
+        LLMProvider.CODEX: codex,
+        LLMProvider.CLAUDE_CODE: claude,
+    }
+
+    with pytest.raises(RuntimeError, match="provider failed"):
+        await factory.generate_news("hello")
+
+    assert codex.calls == [("hello", "")]
+    assert claude.calls == []

@@ -1,4 +1,5 @@
 """LLM Factory — Claude Code CLI / Codex CLI 라우팅"""
+from collections.abc import Callable
 import asyncio
 import time
 
@@ -50,12 +51,30 @@ class LLMFactory:
                 chain.append(fallback)
         return chain
 
-    def _manual_provider_chain(
+    def _manual_selection_resolver(
         self,
         default_tier: LLMTier,
+        *,
         manual_provider_override: str | None = None,
-    ) -> list[LLMProvider]:
-        return list(resolve_manual_selection(default_tier, provider_override=manual_provider_override).provider_chain)
+        manual_model_override: str | None = None,
+    ) -> Callable[[], tuple[list[LLMProvider], dict[LLMProvider, str] | None]]:
+        def _resolve() -> tuple[list[LLMProvider], dict[LLMProvider, str] | None]:
+            selection = resolve_manual_selection(
+                default_tier,
+                provider_override=manual_provider_override,
+                model_override=manual_model_override,
+            )
+            return list(selection.provider_chain), selection.provider_model_overrides
+
+        return _resolve
+
+    @staticmethod
+    def _news_selection_resolver() -> Callable[[], tuple[list[LLMProvider], dict[LLMProvider, str] | None]]:
+        def _resolve() -> tuple[list[LLMProvider], dict[LLMProvider, str] | None]:
+            selection = resolve_news_selection()
+            return list(selection.provider_chain), selection.provider_model_overrides
+
+        return _resolve
 
     @staticmethod
     def _fallback_model_for_tier(tier: LLMTier) -> str:
@@ -128,6 +147,7 @@ class LLMFactory:
         *, symbol: str | None = None, cycle_id: str | None = None,
         provider_chain: list[LLMProvider] | None = None,
         provider_model_overrides: dict[LLMProvider, str] | None = None,
+        provider_selection_resolver: Callable[[], tuple[list[LLMProvider], dict[LLMProvider, str] | None]] | None = None,
     ) -> tuple[str, str]:
         """텍스트 생성 (최대 2회 시도)
 
@@ -137,10 +157,14 @@ class LLMFactory:
         last_error = None
         attempted_providers: set[LLMProvider] = set()
         active_chain: list[LLMProvider] = list(provider_chain) if provider_chain else self._provider_chain(tier)
+        active_overrides = provider_model_overrides
 
         while True:
-            if provider_chain is None:
-                active_chain = self._provider_chain(tier)
+            if provider_selection_resolver is not None:
+                active_chain, active_overrides = provider_selection_resolver()
+            else:
+                active_chain = list(provider_chain) if provider_chain else self._provider_chain(tier)
+                active_overrides = provider_model_overrides
             next_candidate = next(
                 (
                     (index, provider_key)
@@ -156,8 +180,8 @@ class LLMFactory:
             attempted_providers.add(provider_key)
             fallback_model = self._fallback_model_for_tier(tier) if index > 0 else None
             explicit_model_override = None
-            if provider_model_overrides:
-                explicit_model_override = provider_model_overrides.get(provider_key)
+            if active_overrides:
+                explicit_model_override = active_overrides.get(provider_key)
             provider = self._build_provider(
                 tier,
                 provider_key,
@@ -326,19 +350,39 @@ class LLMFactory:
         수동 작업 전용 primary/fallback 설정을 사용하고,
         provider/model override가 주어지면 primary만 덮어쓴다.
         """
-        selection = resolve_manual_selection(
-            default_tier,
-            provider_override=manual_provider_override,
-            model_override=manual_model_override,
-        )
         return await self.generate(
             prompt,
             default_tier,
             system_prompt,
             symbol=symbol,
             cycle_id=cycle_id,
-            provider_chain=list(selection.provider_chain),
-            provider_model_overrides=selection.provider_model_overrides,
+            provider_selection_resolver=self._manual_selection_resolver(
+                default_tier,
+                manual_provider_override=manual_provider_override,
+                manual_model_override=manual_model_override,
+            ),
+        )
+
+    async def generate_news(
+        self,
+        prompt: str,
+        tier: LLMTier = LLMTier.TIER1,
+        system_prompt: str = "",
+        *,
+        symbol: str | None = None,
+        cycle_id: str | None = None,
+    ) -> tuple[str, str]:
+        """뉴스 전용 LLM 생성.
+
+        뉴스 primary/fallback 설정을 매 fallback 선택 시점마다 다시 읽는다.
+        """
+        return await self.generate(
+            prompt,
+            tier,
+            system_prompt,
+            symbol=symbol,
+            cycle_id=cycle_id,
+            provider_selection_resolver=self._news_selection_resolver(),
         )
 
     def get_llm_status(self) -> dict:

@@ -1,7 +1,6 @@
 import asyncio
 
 import pytest
-from trading.enums import LLMProvider
 from services.news_translation_service import NewsTranslationService
 
 
@@ -33,9 +32,7 @@ async def test_news_translation_service_adds_korean_translation_metadata(monkeyp
 
     service = NewsTranslationService()
 
-    async def fake_generate(prompt, tier, system_prompt="", *, provider_chain=None, provider_model_overrides=None, **kwargs):
-        assert [provider.value for provider in provider_chain] == ["CODEX"]
-        assert provider_model_overrides is None
+    async def fake_generate_news(prompt, tier, system_prompt="", **kwargs):
         assert tier.value == "TIER1"
         assert "Translate the following financial news into Korean" in prompt
         return (
@@ -46,8 +43,8 @@ async def test_news_translation_service_adds_korean_translation_metadata(monkeyp
     monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_ENABLED", True)
     monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_PROVIDER", "CODEX")
     monkeypatch.setattr(
-        "services.news_translation_service.llm_factory.generate",
-        fake_generate,
+        "services.news_translation_service.llm_factory.generate_news",
+        fake_generate_news,
     )
 
     items = await service.translate_items([
@@ -75,9 +72,8 @@ async def test_news_translation_service_uses_news_specific_ollama_model(monkeypa
     service = NewsTranslationService()
     captured = {}
 
-    async def fake_generate(prompt, tier, system_prompt="", *, provider_chain=None, provider_model_overrides=None, **kwargs):
-        captured["provider_chain"] = [provider.value for provider in provider_chain]
-        captured["model_overrides"] = provider_model_overrides
+    async def fake_generate_news(prompt, tier, system_prompt="", **kwargs):
+        captured["default_tier"] = tier.value
         return (
             '{"translated_title":"현대차 상승","translated_summary":"현지 판매 호조 기대","sentiment_label":"POSITIVE","sentiment_score":0.61}',
             "OLLAMA",
@@ -87,8 +83,8 @@ async def test_news_translation_service_uses_news_specific_ollama_model(monkeypa
     monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_PROVIDER", "OLLAMA")
     monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_MODEL", "qwen2.5:14b")
     monkeypatch.setattr(
-        "services.news_translation_service.llm_factory.generate",
-        fake_generate,
+        "services.news_translation_service.llm_factory.generate_news",
+        fake_generate_news,
     )
 
     items = await service.translate_items([
@@ -100,8 +96,7 @@ async def test_news_translation_service_uses_news_specific_ollama_model(monkeypa
         },
     ])
 
-    assert captured["provider_chain"] == ["OLLAMA"]
-    assert captured["model_overrides"] == {LLMProvider.OLLAMA: "qwen2.5:14b"}
+    assert captured["default_tier"] == "TIER1"
     assert items[0]["metadata"]["translation_provider"] == "OLLAMA"
 
 
@@ -117,7 +112,7 @@ async def test_news_translation_service_records_parse_failure_reason(monkeypatch
     monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_ENABLED", True)
     monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_PROVIDER", "CODEX")
     monkeypatch.setattr(
-        "services.news_translation_service.llm_factory.generate",
+        "services.news_translation_service.llm_factory.generate_news",
         fake_generate,
     )
 
@@ -177,7 +172,7 @@ async def test_news_translation_service_clears_previous_error_on_success(monkeyp
             "OLLAMA",
         )
 
-    monkeypatch.setattr("services.news_translation_service.llm_factory.generate", fake_generate)
+    monkeypatch.setattr("services.news_translation_service.llm_factory.generate_news", fake_generate)
 
     service = NewsTranslationService()
     items = await service.translate_items([

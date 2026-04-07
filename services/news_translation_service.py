@@ -104,12 +104,10 @@ Summary: {summary}
         metadata = dict(item.get("metadata") or {})
         selected_news = news_selection or resolve_news_selection()
         try:
-            result, provider = await llm_factory.generate(
+            result, provider = await llm_factory.generate_news(
                 prompt,
                 LLMTier.TIER1,
                 "",
-                provider_chain=list(selected_news.provider_chain),
-                provider_model_overrides=selected_news.provider_model_overrides,
             )
             start = result.find("{")
             end = result.rfind("}") + 1
