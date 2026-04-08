@@ -4047,6 +4047,37 @@ function renderErrorObservabilityPanels(obs) {
                 <div class="text-[11px] text-gray-500">${escapeHtml(row.lastSeenAt)}</div>
               </div>
               <div class="text-xs text-gray-300 mt-2">${escapeHtml(row.detail)}</div>
+              ${row.ownerNote ? `<div class="text-[11px] text-amber-200 mt-2">메모 · ${escapeHtml(row.ownerNote)}</div>` : ''}
+              <div class="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onclick="updateIncidentStatus('${escapeHtml(row.fingerprint)}', 'OPEN')"
+                  class="rounded-full border px-2 py-1 text-[11px] transition ${row.status === 'OPEN' ? 'border-amber-300 text-white' : 'border-gray-600 text-gray-300 hover:border-amber-300 hover:text-white'}"
+                >
+                  OPEN
+                </button>
+                <button
+                  type="button"
+                  onclick="updateIncidentStatus('${escapeHtml(row.fingerprint)}', 'RESOLVED')"
+                  class="rounded-full border px-2 py-1 text-[11px] transition ${row.status === 'RESOLVED' ? 'border-emerald-300 text-white' : 'border-gray-600 text-gray-300 hover:border-emerald-300 hover:text-white'}"
+                >
+                  RESOLVED
+                </button>
+                <button
+                  type="button"
+                  onclick="updateIncidentStatus('${escapeHtml(row.fingerprint)}', 'MUTED')"
+                  class="rounded-full border px-2 py-1 text-[11px] transition ${row.status === 'MUTED' ? 'border-sky-300 text-white' : 'border-gray-600 text-gray-300 hover:border-sky-300 hover:text-white'}"
+                >
+                  MUTED
+                </button>
+                <button
+                  type="button"
+                  onclick="editIncidentNote('${escapeHtml(row.fingerprint)}', '${escapeHtml(encodeURIComponent(row.ownerNote || ''))}')"
+                  class="rounded-full border border-gray-600 px-2 py-1 text-[11px] text-gray-300 hover:border-amber-300 hover:text-white transition"
+                >
+                  메모
+                </button>
+              </div>
             </div>
           `).join('') : '<div class="text-xs text-gray-500">누적 incident가 없습니다.</div>'}
         </div>
@@ -4366,6 +4397,40 @@ async function loadErrorObservabilityView(observabilityHours = null) {
     container.appendChild(createErrorObservabilityDashboard(observabilityState));
   } catch (err) {
     container.innerHTML = `<div class="text-center text-red-400 text-sm py-8">에러 관측 로드 실패: ${escapeHtml(err.message || '알 수 없는 오류')}</div>`;
+  }
+}
+
+async function updateIncidentStatus(fingerprint, status) {
+  try {
+    setStatus('runtime', `incident 상태를 ${status}로 변경 중...`);
+    const json = await fetchJson(`${API}/observability/incidents/${encodeURIComponent(fingerprint)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    setStatus('runtime', json?.message || `incident 상태가 ${status}로 변경되었습니다.`);
+    await loadErrorObservabilityView(window.performanceObservabilityHours || 24);
+  } catch (err) {
+    setStatus('error', err.message || 'incident 상태 변경 실패');
+  }
+}
+
+async function editIncidentNote(fingerprint, currentNoteEncoded = '') {
+  const currentNote = currentNoteEncoded ? decodeURIComponent(currentNoteEncoded) : '';
+  const nextNote = window.prompt('incident 메모를 입력하세요. 비우면 메모를 제거합니다.', currentNote || '');
+  if (nextNote === null) return;
+
+  try {
+    setStatus('runtime', 'incident 메모 저장 중...');
+    const json = await fetchJson(`${API}/observability/incidents/${encodeURIComponent(fingerprint)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ owner_note: nextNote }),
+    });
+    setStatus('runtime', json?.message || 'incident 메모가 저장되었습니다.');
+    await loadErrorObservabilityView(window.performanceObservabilityHours || 24);
+  } catch (err) {
+    setStatus('error', err.message || 'incident 메모 저장 실패');
   }
 }
 
@@ -5900,6 +5965,7 @@ Object.assign(window, {
   loadNewsOverview,
   loadObservabilityView,
   loadPerformanceView,
+  loadErrorObservabilityView,
   loadTodayActivities,
   loadEventRadar,
   refreshLLMCatalog,
@@ -5918,6 +5984,8 @@ Object.assign(window, {
   triggerCycle,
   updateSetting,
   updateTierModelSetting,
+  updateIncidentStatus,
+  editIncidentNote,
   openSettingsModal,
   closeSettingsModal,
   closeSettingsModalOnBackdrop,

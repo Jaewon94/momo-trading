@@ -357,3 +357,60 @@ async def test_news_signal_service_prefers_sector_weights_over_shared_sector_rel
     assert semiconductor["contributors"][0]["sector_relevance"] == 1.08
     assert internet["contributors"][0]["sector_relevance"] == 1.04
     assert semiconductor["negative_pressure"] > internet["negative_pressure"]
+
+
+@pytest.mark.asyncio
+async def test_news_signal_service_applies_market_reaction_weight_from_metadata(monkeypatch):
+    from services.news_signal_service import NewsSignalService
+
+    monkeypatch.setattr("services.news_signal_service.settings.NEWS_GATE_ENABLED", True)
+    monkeypatch.setattr("services.news_signal_service.settings.NEWS_LOOKBACK_HOURS", 24)
+    monkeypatch.setattr("services.news_signal_service.settings.NEWS_NEGATIVE_BLOCK_THRESHOLD", 1.5)
+    monkeypatch.setattr("services.news_signal_service.settings.NEWS_FRESHNESS_HALFLIFE_HOURS", 8)
+
+    async with TestAsyncSessionLocal() as session:
+        session.add_all([
+            NewsItem(
+                source_code="BLOOMBERG",
+                source_name="Bloomberg",
+                source_tier="B",
+                region="GLOBAL",
+                official=False,
+                language="en",
+                title="AI chip outlook weakens",
+                published_at=now_kst() - timedelta(hours=1),
+                sentiment_label="NEGATIVE",
+                sentiment_score=0.24,
+                impact_score=0.72,
+                trust_score=0.88,
+                symbols_csv=",715930,",
+                metadata_json='{"market_reaction_weight":1.12,"matched_sector_labels":["AI반도체"],"theme_weights":{"AI반도체":1.06},"sector_symbols":["715930"]}',
+                dedupe_hash="gate-market-reaction-1",
+            ),
+            NewsItem(
+                source_code="BLOOMBERG",
+                source_name="Bloomberg",
+                source_tier="B",
+                region="GLOBAL",
+                official=False,
+                language="en",
+                title="AI chip outlook weakens",
+                published_at=now_kst() - timedelta(hours=1),
+                sentiment_label="NEGATIVE",
+                sentiment_score=0.24,
+                impact_score=0.72,
+                trust_score=0.88,
+                symbols_csv=",725930,",
+                metadata_json='{"matched_sector_labels":["AI반도체"],"theme_weights":{"AI반도체":1.0},"sector_symbols":["725930"]}',
+                dedupe_hash="gate-market-reaction-2",
+            ),
+        ])
+        await session.commit()
+
+        service = NewsSignalService()
+        boosted = await service.evaluate_gate(session, symbol="715930", horizon="MID")
+        baseline = await service.evaluate_gate(session, symbol="725930", horizon="MID")
+
+    assert boosted["contributors"][0]["market_reaction_weight"] == 1.12
+    assert boosted["contributors"][0]["theme_relevance"] == 1.06
+    assert boosted["negative_pressure"] > baseline["negative_pressure"]

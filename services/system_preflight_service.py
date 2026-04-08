@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from analysis.llm.ollama_provider import OllamaProvider
 from services.broker_smoke_service import run_broker_smoke_test
+from services.error_capture_service import error_capture_service
 from services.news_reporting_service import news_reporting_service
 from trading.broker_factory import get_broker_adapter
 from trading.enums import LLMTier, Market
@@ -14,21 +15,13 @@ class SystemPreflightService:
     async def build_snapshot(self, db: AsyncSession) -> dict:
         adapter = get_broker_adapter()
         probe_symbol = await self._pick_probe_symbol(adapter)
-        broker = await run_broker_smoke_test(
-            adapter=adapter,
-            symbol=probe_symbol,
-            market=Market.KRX,
-        )
-        news = await news_reporting_service.build_overview(
-            db,
-            recent_limit=1,
-            performance_days=7,
-        )
-        ollama = await self._build_ollama_check()
+        broker = await self._run_broker_check(adapter=adapter, probe_symbol=probe_symbol)
+        news = await self._run_news_check(db)
+        ollama = await self._run_ollama_check()
 
         checks = {
-            "broker": self._build_broker_check(broker),
-            "news": self._build_news_check(news),
+            "broker": broker,
+            "news": news,
             "ollama": ollama,
         }
         overall = self._resolve_overall(checks)
@@ -39,6 +32,72 @@ class SystemPreflightService:
             "checks": checks,
             "actions": self._build_actions(checks),
         }
+
+    async def _run_broker_check(self, *, adapter, probe_symbol: str) -> dict:
+        try:
+            result = await run_broker_smoke_test(
+                adapter=adapter,
+                symbol=probe_symbol,
+                market=Market.KRX,
+            )
+        except Exception as exc:
+            await error_capture_service.capture_exception(
+                component="preflight",
+                operation="broker_check",
+                exc=exc,
+                provider=getattr(getattr(adapter, "provider", None), "value", None),
+                symbol=probe_symbol,
+                detail={"probe_symbol": probe_symbol},
+            )
+            return {
+                "status": "ERROR",
+                "label": "브로커 확인 필요",
+                "message": str(exc) or "브로커 사전 점검 실패",
+                "ok": False,
+                "detail": {"probe_symbol": probe_symbol},
+            }
+        return self._build_broker_check(result)
+
+    async def _run_news_check(self, db: AsyncSession) -> dict:
+        try:
+            overview = await news_reporting_service.build_overview(
+                db,
+                recent_limit=1,
+                performance_days=7,
+            )
+        except Exception as exc:
+            await error_capture_service.capture_exception(
+                component="preflight",
+                operation="news_check",
+                exc=exc,
+            )
+            return {
+                "status": "ERROR",
+                "label": "뉴스 확인 필요",
+                "message": str(exc) or "뉴스 사전 점검 실패",
+                "ok": False,
+                "alerts": [],
+                "last_status": "ERROR",
+                "last_run_at": None,
+            }
+        return self._build_news_check(overview)
+
+    async def _run_ollama_check(self) -> dict:
+        try:
+            return await self._build_ollama_check()
+        except Exception as exc:
+            await error_capture_service.capture_exception(
+                component="preflight",
+                operation="ollama_check",
+                exc=exc,
+                provider="OLLAMA",
+            )
+            return {
+                "status": "ERROR",
+                "label": "Ollama 확인 필요",
+                "message": str(exc) or "Ollama 사전 점검 실패",
+                "ok": False,
+            }
 
     async def _pick_probe_symbol(self, adapter) -> str:
         try:

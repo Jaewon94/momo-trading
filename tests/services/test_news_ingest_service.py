@@ -279,3 +279,5 @@ async def test_news_ingest_service_builds_sector_weights_for_multi_sector_articl
     assert {"715930", "710660", "735420", "703500"}.issubset(set(metadata["sector_symbols"]))
     assert metadata["sector_weights"]["715930"] == pytest.approx(1.08)
     assert metadata["sector_weights"]["735420"] == pytest.approx(1.04)
+    assert metadata["theme_weights"]["AI반도체"] >= metadata["theme_weights"]["플랫폼인터넷"]
+    assert metadata["market_reaction_weight"] > 1.0

@@ -158,9 +158,11 @@ class NewsSignalService:
         session_multiplier = self._session_multiplier(now=now, published_at=published_at)
         symbol_relevance = self._symbol_relevance_multiplier(metadata, symbol=symbol)
         sector_relevance = self._sector_relevance_multiplier(metadata, symbol=symbol)
+        theme_relevance = self._theme_relevance_multiplier(metadata, symbol=symbol)
+        market_reaction_weight = self._market_reaction_multiplier(metadata)
         relevance_multiplier = symbol_relevance * sector_relevance
         pressure_base = negative_score * freshness * impact * trust * severity
-        pressure = pressure_base * session_multiplier * relevance_multiplier
+        pressure = pressure_base * session_multiplier * relevance_multiplier * theme_relevance * market_reaction_weight
 
         if pressure <= 0:
             return None
@@ -178,6 +180,8 @@ class NewsSignalService:
             "session_multiplier": round(session_multiplier, 4),
             "symbol_relevance": round(symbol_relevance, 4),
             "sector_relevance": round(sector_relevance, 4),
+            "theme_relevance": round(theme_relevance, 4),
+            "market_reaction_weight": round(market_reaction_weight, 4),
             "relevance_multiplier": round(relevance_multiplier, 4),
             "pressure_base": round(pressure_base, 4),
         }
@@ -277,6 +281,42 @@ class NewsSignalService:
                 return self._clamp_multiplier(sector_relevance, low=0.7, high=1.2)
 
         return 1.0
+
+    def _theme_relevance_multiplier(self, metadata: dict[str, Any], *, symbol: str) -> float:
+        raw_theme_weights = metadata.get("theme_weights")
+        if not isinstance(raw_theme_weights, dict):
+            return 1.0
+
+        normalized_symbol = normalize_krx_symbol(symbol)
+        sector_symbols = {
+            normalize_krx_symbol(item)
+            for item in metadata.get("sector_symbols") or []
+            if normalize_krx_symbol(item)
+        }
+        if sector_symbols and normalized_symbol not in sector_symbols:
+            return 1.0
+
+        candidate_labels: list[str] = []
+        sector_label = str(metadata.get("sector_label") or "").strip()
+        if sector_label:
+            candidate_labels.append(sector_label)
+        for label in metadata.get("matched_sector_labels") or []:
+            normalized_label = str(label or "").strip()
+            if normalized_label:
+                candidate_labels.append(normalized_label)
+
+        weights: list[float] = []
+        for label in candidate_labels:
+            try:
+                weights.append(float(raw_theme_weights.get(label)))
+            except (TypeError, ValueError):
+                continue
+        if not weights:
+            return 1.0
+        return self._clamp_multiplier(max(weights), low=0.85, high=1.15)
+
+    def _market_reaction_multiplier(self, metadata: dict[str, Any]) -> float:
+        return self._clamp_multiplier(metadata.get("market_reaction_weight"), low=0.85, high=1.2)
 
     @staticmethod
     def _lookup_symbol_weight(raw: Any, *, symbol: str) -> float | None:

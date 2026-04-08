@@ -261,6 +261,36 @@ async def test_manual_trade_service_rejects_immediate_sell_outside_regular_sessi
 
 
 @pytest.mark.asyncio
+async def test_manual_trade_service_rejects_immediate_sell_when_broker_capability_excludes_regular(monkeypatch):
+    adapter = FakeBrokerAdapter(
+        holdings=[
+            HoldingInfo(
+                symbol="005930",
+                name="삼성전자",
+                quantity=5,
+                avg_buy_price=70000,
+                current_price=72000,
+                pnl=10000,
+                pnl_rate=1.5,
+            ),
+        ],
+    )
+    adapter.capabilities = BrokerCapabilities(supported_order_sessions=[OrderSession.AFTER_HOURS_SINGLE])
+    service = ManualTradeService(broker_adapter=adapter)
+    monkeypatch.setattr("services.manual_trade_service.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr(
+        "services.manual_trade_service.market_calendar.get_market_session_info",
+        lambda: {"is_regular_open": True, "label": "정규장"},
+    )
+
+    with pytest.raises(ServiceException) as exc_info:
+        await service.sell_position("005930")
+
+    assert exc_info.value.status_code == 400
+    assert "정규장 즉시 매도" in str(exc_info.value.message)
+
+
+@pytest.mark.asyncio
 async def test_manual_trade_service_captures_unexpected_broker_error(monkeypatch):
     adapter = FailingBrokerAdapter(
         holdings=[

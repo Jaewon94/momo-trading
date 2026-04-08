@@ -36,6 +36,24 @@ class NewsSourceDefinition:
 class NewsIngestService:
     """외부 뉴스 수집기들이 공통으로 쓰는 정규화/저장 계층."""
 
+    _SOURCE_REACTION_WEIGHTS: dict[str, float] = {
+        "DART": 1.12,
+        "KRX": 1.1,
+        "YONHAP": 1.03,
+        "REUTERS": 1.05,
+        "BLOOMBERG": 1.06,
+        "CNBC": 1.05,
+        "NASDAQ": 1.05,
+        "INVESTING": 1.04,
+        "SEEKING_ALPHA": 1.02,
+    }
+    _THEME_BASE_WEIGHTS: dict[str, float] = {
+        "AI반도체": 1.08,
+        "반도체": 1.06,
+        "플랫폼인터넷": 1.04,
+        "인터넷": 1.03,
+    }
+
     _CATALOG: dict[str, NewsSourceDefinition] = {
         "DART": NewsSourceDefinition(
             code="DART",
@@ -275,6 +293,7 @@ class NewsIngestService:
                 copied["symbols"] = existing_symbols
                 metadata = self._enrich_symbol_metadata(
                     metadata,
+                    source_code=str(copied.get("source_code") or ""),
                     symbols=existing_symbols,
                     matched_names=[],
                     matched_categories=[],
@@ -351,6 +370,7 @@ class NewsIngestService:
             copied["symbols"] = inferred_symbols
             enriched_metadata = self._enrich_symbol_metadata(
                 metadata,
+                source_code=str(copied.get("source_code") or ""),
                 symbols=inferred_symbols,
                 matched_names=matched_names,
                 matched_categories=matched_categories,
@@ -368,6 +388,7 @@ class NewsIngestService:
         self,
         metadata: dict[str, Any],
         *,
+        source_code: str,
         symbols: list[str],
         matched_names: list[str],
         matched_categories: list[str],
@@ -471,7 +492,29 @@ class NewsIngestService:
                 )
                 enriched["sector_weights"] = combined_sector_weights
 
+        theme_weights = self._build_theme_weights(matched_categories)
+        if theme_weights:
+            enriched["theme_weights"] = theme_weights
+            enriched["market_reaction_weight"] = max(
+                float(enriched.get("market_reaction_weight") or 1.0),
+                self._market_reaction_weight(source_code, matched_categories),
+            )
+
         return enriched
+
+    def _build_theme_weights(self, matched_categories: list[str]) -> dict[str, float]:
+        theme_weights: dict[str, float] = {}
+        for index, category in enumerate(matched_categories):
+            base_weight = float(self._THEME_BASE_WEIGHTS.get(category, 1.02))
+            adjusted_weight = max(base_weight - (index * 0.02), 1.0)
+            theme_weights[category] = round(adjusted_weight, 2)
+        return theme_weights
+
+    def _market_reaction_weight(self, source_code: str, matched_categories: list[str]) -> float:
+        source_weight = float(self._SOURCE_REACTION_WEIGHTS.get(str(source_code or "").upper(), 1.0))
+        theme_weights = self._build_theme_weights(matched_categories)
+        strongest_theme_weight = max(theme_weights.values(), default=1.0)
+        return round(max(source_weight, strongest_theme_weight), 2)
 
     def serialize_item(self, item: NewsItem) -> dict[str, Any]:
         metadata = self._load_metadata(getattr(item, "metadata_json", None))

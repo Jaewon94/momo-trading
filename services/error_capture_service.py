@@ -94,6 +94,8 @@ class ErrorCaptureService:
                             await incident_repo.create(incident)
                         else:
                             incident.severity = severity
+                            if str(incident.status or "").upper() == "RESOLVED":
+                                incident.status = "OPEN"
                             incident.last_seen_at = now
                             incident.occurrence_count = int(incident.occurrence_count or 0) + 1
                             incident.exception_type = exception_type

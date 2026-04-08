@@ -301,6 +301,7 @@ class ObservabilityReportingService:
         rows = list((await session.execute(stmt)).scalars().all())
         return [
             {
+                "fingerprint": row.fingerprint,
                 "title": row.title,
                 "component": row.component,
                 "operation": row.operation,
@@ -310,6 +311,7 @@ class ObservabilityReportingService:
                 "last_seen_at": ensure_kst(row.last_seen_at).isoformat() if row.last_seen_at else None,
                 "exception_type": row.exception_type,
                 "last_message": _truncate_text(row.last_message, 160),
+                "owner_note": _truncate_text(row.owner_note, 200),
             }
             for row in rows
         ]

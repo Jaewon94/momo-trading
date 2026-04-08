@@ -36,6 +36,7 @@ from schemas.common import SuccessResponse
 from schemas.daily_report_schema import DailyReportResponse, ReportTradeComparisonResponse
 from schemas.feedback_schema import TradeResultResponse
 from schemas.news_schema import NewsBatchIngestRequest
+from schemas.observability_schema import ErrorIncidentUpdateRequest
 from schemas.qa_schema import QARequest, QAResponse
 from scheduler.jobs import portfolio_sync_job
 from services.activity_logger import activity_logger
@@ -52,6 +53,7 @@ from services.news_ingest_service import news_ingest_service
 from services.open_dart_disclosure_service import open_dart_disclosure_service
 from services.news_reporting_service import news_reporting_service
 from services.news_runtime_service import news_runtime_service
+from services.error_incident_service import error_incident_service
 from services.observability_reporting_service import observability_reporting_service
 from services.performance_reporting_service import performance_reporting_service
 from services.runtime_settings_service import runtime_settings_service
@@ -674,6 +676,27 @@ async def get_observability_overview(
         hours=hours,
         points=points,
     )
+    return SuccessResponse(data=data)
+
+
+@router.patch("/observability/incidents/{fingerprint}")
+async def update_observability_incident(
+    fingerprint: str,
+    payload: ErrorIncidentUpdateRequest,
+    db: AsyncSession = Depends(get_async_db),
+):
+    try:
+        data = await error_incident_service.update_incident(
+            db,
+            fingerprint=fingerprint,
+            status=payload.status,
+            owner_note=payload.owner_note,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if data is None:
+        raise HTTPException(status_code=404, detail="incident not found")
     return SuccessResponse(data=data)
 
 

@@ -255,10 +255,13 @@ export function buildObservabilityDashboardState(payload = {}) {
       occurredAt: formatDateTimeLabel(row.created_at),
     })),
     incidentRows: incidents.map((row) => ({
+      fingerprint: String(row.fingerprint || ""),
       title: String(row.title || "-"),
       meta: [row.severity, row.status, `${Number(row.occurrence_count || 0)}회`].filter(Boolean).join(" · "),
+      status: String(row.status || "OPEN").toUpperCase(),
       detail: String(row.last_message || "-"),
       lastSeenAt: formatDateTimeLabel(row.last_seen_at),
+      ownerNote: String(row.owner_note || "").trim(),
     })),
   };
 }
