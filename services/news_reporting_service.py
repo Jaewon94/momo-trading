@@ -46,6 +46,9 @@ class NewsReportingService:
             "total_count": 0,
             "recent_24h_count": 0,
             "recent_7d_count": 0,
+            "recent_24h_published_count": 0,
+            "recent_7d_published_count": 0,
+            "latest_created_at": None,
             "latest_published_at": None,
             "by_source_24h": [],
         }
@@ -175,6 +178,9 @@ class NewsReportingService:
                 "total_count": 0,
                 "recent_24h_count": 0,
                 "recent_7d_count": 0,
+                "recent_24h_published_count": 0,
+                "recent_7d_published_count": 0,
+                "latest_created_at": None,
                 "latest_published_at": None,
                 "by_source_24h": [],
                 "translation_pending_count": 0,
@@ -190,11 +196,22 @@ class NewsReportingService:
         )
         recent_24h_stmt = select(func.count(NewsItem.id)).where(
             NewsItem.source_code.in_(sorted(allowed_codes)),
-            NewsItem.published_at >= since_24h,
+            NewsItem.created_at >= since_24h,
         )
         recent_7d_stmt = select(func.count(NewsItem.id)).where(
             NewsItem.source_code.in_(sorted(allowed_codes)),
+            NewsItem.created_at >= since_7d,
+        )
+        recent_24h_published_stmt = select(func.count(NewsItem.id)).where(
+            NewsItem.source_code.in_(sorted(allowed_codes)),
+            NewsItem.published_at >= since_24h,
+        )
+        recent_7d_published_stmt = select(func.count(NewsItem.id)).where(
+            NewsItem.source_code.in_(sorted(allowed_codes)),
             NewsItem.published_at >= since_7d,
+        )
+        latest_created_stmt = select(func.max(NewsItem.created_at)).where(
+            NewsItem.source_code.in_(sorted(allowed_codes))
         )
         latest_stmt = select(func.max(NewsItem.published_at)).where(
             NewsItem.source_code.in_(sorted(allowed_codes))
@@ -203,7 +220,7 @@ class NewsReportingService:
             select(NewsItem.source_code, func.count(NewsItem.id))
             .where(
                 NewsItem.source_code.in_(sorted(allowed_codes)),
-                NewsItem.published_at >= since_24h,
+                NewsItem.created_at >= since_24h,
             )
             .group_by(NewsItem.source_code)
             .order_by(func.count(NewsItem.id).desc(), NewsItem.source_code.asc())
@@ -220,6 +237,9 @@ class NewsReportingService:
         total_count = int((await session.execute(total_stmt)).scalar() or 0)
         recent_24h = int((await session.execute(recent_24h_stmt)).scalar() or 0)
         recent_7d = int((await session.execute(recent_7d_stmt)).scalar() or 0)
+        recent_24h_published = int((await session.execute(recent_24h_published_stmt)).scalar() or 0)
+        recent_7d_published = int((await session.execute(recent_7d_published_stmt)).scalar() or 0)
+        latest_created_at = (await session.execute(latest_created_stmt)).scalar()
         latest_published_at = (await session.execute(latest_stmt)).scalar()
         by_source_rows = (await session.execute(by_source_stmt)).all()
         translation_pending_count = int((await session.execute(translation_pending_stmt)).scalar() or 0)
@@ -229,6 +249,9 @@ class NewsReportingService:
             "total_count": total_count,
             "recent_24h_count": recent_24h,
             "recent_7d_count": recent_7d,
+            "recent_24h_published_count": recent_24h_published,
+            "recent_7d_published_count": recent_7d_published,
+            "latest_created_at": ensure_kst(latest_created_at).isoformat() if latest_created_at else None,
             "latest_published_at": ensure_kst(latest_published_at).isoformat() if latest_published_at else None,
             "by_source_24h": [
                 {

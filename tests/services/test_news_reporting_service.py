@@ -1,7 +1,12 @@
+from datetime import timedelta
+
 import pytest
 from sqlalchemy.exc import OperationalError
 
+from models.news_item import NewsItem
 from services.news_reporting_service import NewsReportingService
+from tests.conftest import TestAsyncSessionLocal
+from util.time_util import now_kst
 
 
 @pytest.mark.asyncio
@@ -76,3 +81,99 @@ async def test_news_reporting_service_returns_empty_storage_snapshot_when_table_
     assert "shadow_enabled" in overview["settings"]
     assert "rollout_min_sample_size" in overview["settings"]
     assert "rollout_max_drawdown_krw" in overview["settings"]
+
+
+@pytest.mark.asyncio
+async def test_news_reporting_service_uses_ingested_time_for_recent_counts(monkeypatch):
+    service = NewsReportingService()
+    now = now_kst().replace(tzinfo=None)
+
+    async def fake_build_summary(_session, *, days: int):
+        return {
+            "baseline": {},
+            "window": {"days": days, "trade_count": 0},
+            "overall": {},
+            "risk_controls": {"news_gate_blocks": 0, "news_rechecks": 0},
+            "news_context": {"trade_count": 0, "avg_negative_pressure": 0.0},
+            "shadow": {},
+            "rollout": {},
+        }
+
+    async def fake_periodic(_session, *, period: str, size: int):
+        return {"period": period, "buckets": []}
+
+    monkeypatch.setattr(
+        "services.news_reporting_service.performance_reporting_service.build_summary",
+        fake_build_summary,
+    )
+    monkeypatch.setattr(
+        "services.news_reporting_service.performance_reporting_service.build_periodic_summary",
+        fake_periodic,
+    )
+    monkeypatch.setattr(
+        "services.news_reporting_service.news_runtime_service.get_snapshot",
+        lambda *, include_foreign: {
+            "overall": {
+                "last_status": "SUCCESS",
+                "last_message": "신규 1건 적재",
+                "last_run_at": now_kst().isoformat(),
+            },
+            "sources": {"INVESTING": {"status": "SUCCESS"}},
+        },
+    )
+
+    async with TestAsyncSessionLocal() as session:
+        stale_published_recently_ingested = NewsItem(
+            source_code="INVESTING",
+            source_name="Investing.com",
+            source_tier="B",
+            region="GLOBAL",
+            official=False,
+            language="en",
+            title="Older article ingested today",
+            summary=None,
+            body=None,
+            url="https://example.com/news/older-ingested-today",
+            external_id="older-ingested-today",
+            published_at=now - timedelta(days=2),
+            sentiment_label=None,
+            sentiment_score=0.5,
+            impact_score=0.0,
+            trust_score=0.0,
+            symbols_csv=",005930,",
+            metadata_json=None,
+            dedupe_hash="older-ingested-today",
+            created_at=now - timedelta(hours=1),
+        )
+        old_ingested = NewsItem(
+            source_code="INVESTING",
+            source_name="Investing.com",
+            source_tier="B",
+            region="GLOBAL",
+            official=False,
+            language="en",
+            title="Recent article ingested long ago",
+            summary=None,
+            body=None,
+            url="https://example.com/news/recent-ingested-old",
+            external_id="recent-ingested-old",
+            published_at=now - timedelta(hours=3),
+            sentiment_label=None,
+            sentiment_score=0.5,
+            impact_score=0.0,
+            trust_score=0.0,
+            symbols_csv=",005930,",
+            metadata_json=None,
+            dedupe_hash="recent-ingested-old",
+            created_at=now - timedelta(days=2),
+        )
+        session.add_all([stale_published_recently_ingested, old_ingested])
+        await session.commit()
+
+        overview = await service.build_overview(session, recent_limit=5, performance_days=7)
+
+    assert overview["ingestion"]["recent_24h_count"] == 1
+    assert overview["ingestion"]["recent_24h_published_count"] == 1
+    assert overview["ingestion"]["latest_created_at"] is not None
+    assert overview["health"]["status"] == "OK"
+    assert "최근 24시간 신규 적재 0건" not in overview["health"]["alerts"]
