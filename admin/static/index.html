@@ -845,6 +845,12 @@
       color: #64748b;
       margin-bottom: 8px;
     }
+    .account-summary-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #f8fafc;
+      margin-bottom: 10px;
+    }
     .account-balance-summary {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -860,11 +866,54 @@
       border-radius: 999px;
       background: rgba(30,41,59,0.88);
       overflow: hidden;
+      display: flex;
     }
     .account-balance-bar-fill {
       height: 100%;
+    }
+    .account-balance-bar-fill.cash {
+      background: linear-gradient(90deg, rgba(56,189,248,0.9), rgba(14,165,233,0.86));
+    }
+    .account-balance-bar-fill.stock {
+      background: linear-gradient(90deg, rgba(74,222,128,0.88), rgba(34,197,94,0.82));
+    }
+    .account-balance-legend {
+      margin-top: 10px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .account-balance-legend-item {
+      border: 1px solid rgba(71,85,105,0.45);
+      border-radius: 10px;
+      background: rgba(15,23,42,0.42);
+      padding: 8px 10px;
+    }
+    .account-balance-legend-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: #94a3b8;
+    }
+    .account-balance-dot {
+      width: 8px;
+      height: 8px;
       border-radius: 999px;
-      background: linear-gradient(90deg, rgba(56,189,248,0.85), rgba(34,197,94,0.8));
+      flex: 0 0 auto;
+    }
+    .account-balance-dot.cash { background: #38bdf8; }
+    .account-balance-dot.stock { background: #4ade80; }
+    .account-balance-legend-value {
+      margin-top: 4px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #f8fafc;
+    }
+    .account-balance-legend-meta {
+      margin-top: 3px;
+      font-size: 11px;
+      color: #94a3b8;
     }
     .account-balance-empty {
       font-size: 12px;
@@ -1309,7 +1358,8 @@
           </div>
 
           <div class="account-summary-card">
-            <div class="account-summary-kicker">Asset Mix</div>
+            <div class="account-summary-kicker">Portfolio Mix</div>
+            <div class="account-summary-title">자산 구성</div>
             <div id="account-info" class="text-xs">
               <div class="account-balance-empty">&#xb85c;&#xb529; &#xc911;...</div>
             </div>

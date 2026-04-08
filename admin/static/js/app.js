@@ -1678,30 +1678,29 @@ function renderAccountBalance(data) {
     return;
   }
   const stats = buildPortfolioQuickStatsModel(data, latestAccountSnapshot?.holdings, latestAccountSnapshot?.pendingOrders, latestAccountSnapshot?.trades);
-  const pnlColor = stats.unrealizedPnl >= 0 ? 'text-emerald-300' : 'text-rose-300';
   const cashRatio = Number.isFinite(stats.cashRatio) ? stats.cashRatio.toFixed(1) : '0.0';
+  const stockRatio = Number.isFinite(100 - stats.cashRatio) ? (100 - stats.cashRatio).toFixed(1) : '0.0';
   el.innerHTML = `
-    <div class="account-balance-summary">
-      <div>
-        <div class="account-balance-label">현금</div>
-        <div class="account-balance-value">${formatKRW(stats.cash)}</div>
-      </div>
-      <div class="account-balance-align-right">
-        <div class="account-balance-label">현금 비중</div>
-        <div class="account-balance-value">${cashRatio}%</div>
-      </div>
-    </div>
     <div class="account-balance-bar">
       <div class="account-balance-bar-fill cash" style="width:${Math.max(0, Math.min(100, stats.cashRatio))}%"></div>
+      <div class="account-balance-bar-fill stock" style="width:${Math.max(0, Math.min(100, 100 - stats.cashRatio))}%"></div>
     </div>
-    <div class="account-balance-summary mt-2">
-      <div>
-        <div class="account-balance-label">평가금액</div>
-        <div class="account-balance-value">${formatKRW(stats.stockValue)}</div>
+    <div class="account-balance-legend">
+      <div class="account-balance-legend-item">
+        <div class="account-balance-legend-label">
+          <span class="account-balance-dot cash"></span>
+          현금
+        </div>
+        <div class="account-balance-legend-value">${formatKRW(stats.cash)}</div>
+        <div class="account-balance-legend-meta">${cashRatio}%</div>
       </div>
-      <div class="account-balance-align-right">
-        <div class="account-balance-label">평가손익</div>
-        <div class="account-balance-value ${pnlColor}">${stats.unrealizedPnl >= 0 ? '+' : ''}${formatKRW(stats.unrealizedPnl)}</div>
+      <div class="account-balance-legend-item">
+        <div class="account-balance-legend-label">
+          <span class="account-balance-dot stock"></span>
+          주식 평가액
+        </div>
+        <div class="account-balance-value">${formatKRW(stats.stockValue)}</div>
+        <div class="account-balance-legend-meta">${stockRatio}%</div>
       </div>
     </div>`;
 }
