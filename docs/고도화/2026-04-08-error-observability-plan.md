@@ -12,7 +12,7 @@
   - 관리자 `시스템 관측` 화면의 `Recent Errors`, `Repeated Incidents` 섹션 추가
   - 관리자 `에러 관측` 전용 페이지 추가
 - 다음 확장 후보
-  - 주문/브로커/LLM provider 예외 연동
+  - 장 시작 전 preflight 실패를 별도 운영 이벤트로 축적
   - incident mute/resolved 처리
   - 반복 임계치 기반 알림
 
@@ -98,6 +98,8 @@
   - 최근 개별 예외를 시간순으로 확인
 - `시스템 관측 > Repeated Incidents`
   - 반복 발생 빈도가 쌓인 incident를 확인
+- `뉴스` / `시스템 상태`
+  - 에러 자체뿐 아니라 source cooldown, broker retry 이후 최종 실패 여부를 함께 본다
 - 저녁 점검 루틴 추천
   - `Repeated Incidents` 상위 항목 확인
   - 같은 fingerprint가 어느 component / operation에서 반복되는지 확인

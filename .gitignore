@@ -81,6 +81,8 @@ logs/
 runtime/logs/*
 runtime/pids/*
 runtime/data/*.db
+runtime/data/*.db-wal
+runtime/data/*.db-shm
 runtime/data/*.json
 !runtime/logs/.gitkeep
 !runtime/pids/.gitkeep
@@ -91,6 +93,8 @@ runtime/data/*.json
 *.sqlite
 *.sqlite3
 *.db-journal
+*.db-wal
+*.db-shm
 
 # ===== 테스트 및 커버리지 =====
 htmlcov/

@@ -47,3 +47,5 @@ Store low-cardinality operational metrics that help answer:
 - Add retention/cleanup for old raw metrics.
 - Add read API and admin charts for hourly rollups.
 - Add backlog and scheduler-lag metrics.
+- Feed runtime metrics into start-of-day preflight checks and operator guidance.
+- Surface news-source cooldown, broker retry outcomes, and partial-error states in admin views.

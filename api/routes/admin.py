@@ -57,6 +57,7 @@ from services.performance_reporting_service import performance_reporting_service
 from services.runtime_settings_service import runtime_settings_service
 from services.runtime_backup_service import runtime_backup_service
 from services.seeking_alpha_news_service import seeking_alpha_news_service
+from services.system_preflight_service import system_preflight_service
 from services.yonhap_news_service import yonhap_news_service
 from strategy.risk_appetite_insights import build_strategy_insights
 from trading.account_manager import account_manager
@@ -1698,6 +1699,13 @@ async def get_system_status(db: AsyncSession = Depends(get_async_db)):
             "orders": order_ops,
         },
     })
+
+
+@router.get("/system/preflight")
+async def get_system_preflight(db: AsyncSession = Depends(get_async_db)):
+    """장 시작 전 read-only 운영 점검"""
+    snapshot = await system_preflight_service.build_snapshot(db)
+    return SuccessResponse(data=snapshot)
 
 
 @router.post("/mcp/reconnect")

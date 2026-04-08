@@ -76,6 +76,15 @@
 - [x] 뉴스 소스 fetch 병렬화
   - `DART`, `KRX`, `YONHAP`, `BLOOMBERG`, `CNBC`, `NASDAQ`, `INVESTING`, `SEEKING_ALPHA`를 task 단위로 병렬 조회
   - 소스별 런타임 상태 기록과 DB ingest/save 순서는 기존 의미 유지
+- [x] 뉴스 소스 런타임 집계 정합성 보강
+  - source pill의 `received / created / duplicates / skipped`를 실제 ingest 결과 기준으로 집계
+  - overall 상태를 마지막 성공 소스가 덮지 않도록 `SUCCESS / EMPTY / PARTIAL_ERROR`로 별도 계산
+- [x] 반복 실패 소스 cooldown
+  - `NEWS_SOURCE_FAILURE_THRESHOLD`, `NEWS_SOURCE_FAILURE_COOLDOWN_MIN` 추가
+  - 같은 소스가 연속 실패하면 잠시 polling을 쉬고 `cooldown` 상태를 운영 UI에 노출
+- [x] 해외 뉴스 소스 방어적 파싱/요청 보강
+  - `Investing.com` RSS가 일부 malformed XML로 내려와도 정리 후 파싱
+  - `Yonhap` 요청은 브라우저형 header를 사용해 403 가능성 완화
 - [x] 뉴스 감성/영향도 점수 정교화
   - 장중/장외 세션 가중치 반영
   - `pressure_base`와 세션/다중소스 보정 후 최종 압력 분리 집계
@@ -134,4 +143,5 @@
 - [ ] 소스별 마지막 성공/실패 원인 확인
   - 1차 반영: 뉴스 overview/source pill에 마지막 상태 메시지 + `24h 적재 건수` 표시
   - 2차 반영: `마지막 성공 시각`, `연속 실패 횟수`, `최근 실행 시각`, `신규/중복/스킵`, `마지막 실패 시각` 표시
+  - 3차 반영: `cooldown 남은 시간` 표시 및 일부 소스 실패 시 overall `PARTIAL_ERROR` 유지
   - 운영 점검 명령: `bash start.sh check-news`
