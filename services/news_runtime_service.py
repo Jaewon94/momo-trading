@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import timedelta
 from typing import Any
 
+from core.config import settings
 from services.news_ingest_service import news_ingest_service
 from util.time_util import now_kst
 
@@ -40,6 +42,37 @@ class NewsRuntimeService:
             "sources": ordered_sources,
         }
 
+    def get_source_state(self, source_code: str) -> dict[str, Any]:
+        code = str(source_code or "").upper().strip()
+        return deepcopy(self._sources.get(code) or self._build_default_source_state({"code": code}))
+
+    def get_source_cooldown(self, source_code: str) -> dict[str, Any]:
+        state = self.get_source_state(source_code)
+        threshold = max(int(settings.NEWS_SOURCE_FAILURE_THRESHOLD or 1), 1)
+        cooldown_minutes = max(int(settings.NEWS_SOURCE_FAILURE_COOLDOWN_MIN or 1), 1)
+        consecutive_failures = int(state.get("consecutive_failures") or 0)
+        last_error_at = state.get("last_error_at")
+        if consecutive_failures < threshold or last_error_at is None:
+            return {
+                "active": False,
+                "remaining_seconds": 0,
+                "until": None,
+            }
+
+        cooldown_until = last_error_at + timedelta(minutes=cooldown_minutes)
+        remaining_seconds = int((cooldown_until - now_kst()).total_seconds())
+        if remaining_seconds <= 0:
+            return {
+                "active": False,
+                "remaining_seconds": 0,
+                "until": cooldown_until.isoformat(),
+            }
+        return {
+            "active": True,
+            "remaining_seconds": remaining_seconds,
+            "until": cooldown_until.isoformat(),
+        }
+
     def record_source_result(
         self,
         source_code: str,
@@ -48,6 +81,7 @@ class NewsRuntimeService:
         mode: str,
         message: str | None = None,
         counts: dict[str, Any] | None = None,
+        update_overall: bool = True,
     ) -> None:
         code = str(source_code or "").upper().strip()
         if not code:
@@ -75,14 +109,35 @@ class NewsRuntimeService:
             source_state["last_error_at"] = now
         self._sources[code] = source_state
 
+        if update_overall:
+            self._overall.update({
+                "last_status": normalized_status,
+                "last_mode": mode,
+                "last_message": source_state["message"],
+                "last_source_code": code,
+                "last_run_at": now,
+            })
+            if normalized_status == "SUCCESS":
+                self._overall["last_success_at"] = now
+
+    def record_overall_result(
+        self,
+        *,
+        status: str,
+        mode: str,
+        message: str | None = None,
+        source_code: str | None = None,
+    ) -> None:
+        now = now_kst()
+        normalized_status = str(status or "IDLE").upper()
         self._overall.update({
             "last_status": normalized_status,
             "last_mode": mode,
-            "last_message": source_state["message"],
-            "last_source_code": code,
+            "last_message": message or self._default_message_for_status(normalized_status),
+            "last_source_code": str(source_code or "").upper().strip() or None,
             "last_run_at": now,
         })
-        if normalized_status == "SUCCESS":
+        if normalized_status in {"SUCCESS", "PARTIAL_ERROR"}:
             self._overall["last_success_at"] = now
 
     def _serialize_overall(self) -> dict[str, Any]:
@@ -105,12 +160,17 @@ class NewsRuntimeService:
         if last_error_at is not None:
             payload["last_error_at"] = last_error_at.isoformat()
         payload["counts"] = self._normalize_counts(payload.get("counts"))
+        cooldown = self.get_source_cooldown(str(payload.get("source_code") or ""))
+        payload["cooldown_active"] = bool(cooldown.get("active"))
+        payload["cooldown_until"] = cooldown.get("until")
+        payload["cooldown_remaining_sec"] = int(cooldown.get("remaining_seconds") or 0)
         return payload
 
     def _build_default_source_state(self, source: dict[str, Any]) -> dict[str, Any]:
         code = str(source.get("code") or "").upper()
         implemented = code in self.IMPLEMENTED_SOURCES
         return {
+            "source_code": code,
             "status": "IDLE",
             "mode": None,
             "message": "대기 중" if implemented else "실수집 미연결",
@@ -143,6 +203,8 @@ class NewsRuntimeService:
             return "수집 스킵"
         if normalized == "ERROR":
             return "수집 실패"
+        if normalized == "PARTIAL_ERROR":
+            return "일부 소스 실패"
         return "대기 중"
 
 

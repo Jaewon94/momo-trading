@@ -55,7 +55,13 @@ class NewsPollingService:
                     mode=runtime_mode,
                     message=summary["reason"],
                     counts=summary,
+                    update_overall=False,
                 )
+            news_runtime_service.record_overall_result(
+                status="SKIPPED",
+                mode=runtime_mode,
+                message=summary["reason"],
+            )
             await self._log_news_activity(
                 "🛰 뉴스 자동 수집 스킵 · NEWS_POLL_ENABLED 비활성",
                 detail={"mode": runtime_mode, "reason": summary["reason"]},
@@ -73,17 +79,14 @@ class NewsPollingService:
         all_items: list[dict[str, Any]] = []
         for spec in source_specs:
             result = source_results[spec.source_code]
-            news_runtime_service.record_source_result(
-                spec.source_code,
-                status=result.status,
-                mode=runtime_mode,
-                message=result.message,
-                counts=result.counts,
-            )
             all_items.extend(result.items)
 
         detailed = await news_ingest_service.ingest_items_detailed(session, all_items)
         summary = dict(detailed["summary"])
+        source_summaries = {
+            str(source_code or "").upper(): dict(counts or {})
+            for source_code, counts in (detailed.get("source_summaries") or {}).items()
+        }
         published_events = 0
 
         for item in detailed["created_items"]:
@@ -105,15 +108,27 @@ class NewsPollingService:
         source_briefs = []
         for spec in source_specs:
             result = source_results[spec.source_code]
-            counts = result.counts or {}
+            counts = dict(result.counts or {})
+            if result.status not in {"ERROR", "SKIPPED"}:
+                counts = self._merge_runtime_counts(counts, source_summaries.get(spec.source_code))
+            runtime_status = self._resolve_runtime_status(result, counts)
+            runtime_message = self._build_source_runtime_message(result, counts)
+            news_runtime_service.record_source_result(
+                spec.source_code,
+                status=runtime_status,
+                mode=runtime_mode,
+                message=runtime_message,
+                counts=counts,
+                update_overall=False,
+            )
             source_briefs.append({
                 "source_code": spec.source_code,
-                "status": result.status,
+                "status": runtime_status,
                 "received": int(counts.get("received") or 0),
                 "created": int(counts.get("created") or 0),
                 "duplicates": int(counts.get("duplicates") or 0),
                 "skipped": int(counts.get("skipped") or 0),
-                "message": result.message,
+                "message": runtime_message,
             })
 
         await self._log_news_activity(
@@ -130,6 +145,11 @@ class NewsPollingService:
             },
         )
         source_error_count = sum(1 for result in source_results.values() if result.status == "ERROR")
+        news_runtime_service.record_overall_result(
+            status=self._resolve_overall_status(summary, source_error_count=source_error_count),
+            mode=runtime_mode,
+            message=self._build_overall_runtime_message(summary, source_error_count=source_error_count),
+        )
         await observability_service.record_news_poll(
             status="PARTIAL_ERROR" if source_error_count else "SUCCESS",
             elapsed_ms=int((time.time() - started_at) * 1000),
@@ -248,6 +268,17 @@ class NewsPollingService:
                 counts={"skipped": 1},
                 items=[],
             )
+        cooldown = news_runtime_service.get_source_cooldown(spec.source_code)
+        if cooldown.get("active"):
+            remaining_seconds = int(cooldown.get("remaining_seconds") or 0)
+            remaining_minutes = max(1, remaining_seconds // 60) if remaining_seconds else 1
+            return NewsSourcePollResult(
+                source_code=spec.source_code,
+                status="SKIPPED",
+                message=f"연속 실패로 약 {remaining_minutes}분 cooldown 중",
+                counts={"skipped": 1},
+                items=[],
+            )
         try:
             async with semaphore:
                 items = await spec.fetch()
@@ -272,6 +303,75 @@ class NewsPollingService:
             counts={"received": len(items), "created": 0, "duplicates": 0, "skipped": 0},
             items=items,
         )
+
+    @staticmethod
+    def _merge_runtime_counts(base_counts: dict[str, int], source_summary: dict[str, int] | None) -> dict[str, int]:
+        counts = {
+            "received": int(base_counts.get("received") or 0),
+            "created": int(base_counts.get("created") or 0),
+            "duplicates": int(base_counts.get("duplicates") or 0),
+            "skipped": int(base_counts.get("skipped") or 0),
+        }
+        if not source_summary:
+            return counts
+        for key in ("received", "created", "duplicates", "skipped"):
+            counts[key] = int(source_summary.get(key) or 0)
+        return counts
+
+    @staticmethod
+    def _resolve_runtime_status(result: NewsSourcePollResult, counts: dict[str, int]) -> str:
+        if result.status in {"ERROR", "SKIPPED"}:
+            return result.status
+        if int(counts.get("received") or 0) <= 0:
+            return "EMPTY"
+        return "SUCCESS"
+
+    @staticmethod
+    def _build_source_runtime_message(result: NewsSourcePollResult, counts: dict[str, int]) -> str:
+        if result.status in {"ERROR", "SKIPPED"}:
+            return result.message
+        received = int(counts.get("received") or 0)
+        created = int(counts.get("created") or 0)
+        duplicates = int(counts.get("duplicates") or 0)
+        skipped = int(counts.get("skipped") or 0)
+        if received <= 0:
+            return "조회된 데이터 없음"
+        if created > 0:
+            return f"신규 {created}건 적재 · 중복 {duplicates}건 · 스킵 {skipped}건"
+        if duplicates > 0:
+            return f"신규 없음 · 기존 기사 중복 {duplicates}건"
+        if skipped > 0:
+            return f"신규 없음 · 스킵 {skipped}건"
+        return "신규 반영 없음"
+
+    @staticmethod
+    def _resolve_overall_status(summary: dict[str, Any], *, source_error_count: int) -> str:
+        if source_error_count:
+            return "PARTIAL_ERROR"
+        if int(summary.get("received") or 0) <= 0:
+            return "EMPTY"
+        return "SUCCESS"
+
+    @staticmethod
+    def _build_overall_runtime_message(summary: dict[str, Any], *, source_error_count: int) -> str:
+        created = int(summary.get("created") or 0)
+        duplicates = int(summary.get("duplicates") or 0)
+        skipped = int(summary.get("skipped") or 0)
+        received = int(summary.get("received") or 0)
+        if source_error_count:
+            return (
+                f"일부 소스 실패 · 신규 {created}건 · 중복 {duplicates}건 · "
+                f"스킵 {skipped}건 · 오류 {source_error_count}건"
+            )
+        if received <= 0:
+            return "조회된 데이터 없음"
+        if created > 0:
+            return f"신규 {created}건 적재 · 중복 {duplicates}건 · 스킵 {skipped}건"
+        if duplicates > 0:
+            return f"신규 없음 · 기존 기사 중복 {duplicates}건"
+        if skipped > 0:
+            return f"신규 없음 · 스킵 {skipped}건"
+        return "신규 반영 없음"
 
 
 news_polling_service = NewsPollingService()

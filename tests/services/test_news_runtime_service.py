@@ -85,3 +85,57 @@ def test_news_runtime_service_tracks_source_success_and_failure_streaks():
     assert source["last_error_at"] is not None
     assert source["consecutive_failures"] == 0
     assert source["counts"]["created"] == 2
+
+
+def test_news_runtime_service_can_record_overall_result_without_source_override():
+    service = NewsRuntimeService()
+
+    service.record_source_result(
+        "DART",
+        status="ERROR",
+        mode="AUTO_TRADING",
+        message="타임아웃",
+        counts={"received": 0, "created": 0, "duplicates": 0, "skipped": 0},
+        update_overall=False,
+    )
+    service.record_overall_result(
+        status="PARTIAL_ERROR",
+        mode="AUTO_TRADING",
+        message="일부 소스 실패 · 신규 0건 · 중복 3건 · 스킵 0건 · 오류 1건",
+    )
+
+    snapshot = service.get_snapshot(include_foreign=False)
+
+    assert snapshot["overall"]["last_status"] == "PARTIAL_ERROR"
+    assert snapshot["overall"]["last_message"].startswith("일부 소스 실패")
+    assert snapshot["sources"]["DART"]["status"] == "ERROR"
+
+
+def test_news_runtime_service_marks_source_cooldown_when_failures_repeat(monkeypatch):
+    service = NewsRuntimeService()
+    monkeypatch.setattr("services.news_runtime_service.settings.NEWS_SOURCE_FAILURE_THRESHOLD", 2)
+    monkeypatch.setattr("services.news_runtime_service.settings.NEWS_SOURCE_FAILURE_COOLDOWN_MIN", 30)
+
+    service.record_source_result(
+        "INVESTING",
+        status="ERROR",
+        mode="AUTO_EVENT",
+        message="dns fail",
+        counts={"received": 0, "created": 0, "duplicates": 0, "skipped": 0},
+        update_overall=False,
+    )
+    service.record_source_result(
+        "INVESTING",
+        status="ERROR",
+        mode="AUTO_EVENT",
+        message="dns fail",
+        counts={"received": 0, "created": 0, "duplicates": 0, "skipped": 0},
+        update_overall=False,
+    )
+
+    snapshot = service.get_snapshot(include_foreign=True)
+    source = snapshot["sources"]["INVESTING"]
+
+    assert source["cooldown_active"] is True
+    assert int(source["cooldown_remaining_sec"]) > 0
+    assert source["cooldown_until"] is not None

@@ -269,6 +269,11 @@ export function buildNewsOverviewSourcePills(overview) {
       if (Number(runtime.consecutive_failures || 0) > 0) {
         details.push(`연속 실패 ${Number(runtime.consecutive_failures || 0)}회`);
       }
+      if (runtime.cooldown_active) {
+        const remainingSec = Number(runtime.cooldown_remaining_sec || 0);
+        const remainingMin = remainingSec > 0 ? Math.max(1, Math.ceil(remainingSec / 60)) : 0;
+        details.push(`cooldown ${remainingMin}분 남음`);
+      }
       details.push(
         runtime.message
           ? String(runtime.message)

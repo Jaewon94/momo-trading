@@ -70,6 +70,8 @@ MUTABLE_SETTINGS = [
     "NEWS_POLL_INTERVAL_MIN_OFF_HOURS",
     "NEWS_POLL_PAGE_COUNT",
     "NEWS_FETCH_CONCURRENCY",
+    "NEWS_SOURCE_FAILURE_THRESHOLD",
+    "NEWS_SOURCE_FAILURE_COOLDOWN_MIN",
     "NEWS_TRANSLATION_CONCURRENCY",
     "NEWS_CLAUDE_SHARE_SESSION",
     "NEWS_RECHECK_COOLDOWN_SEC",
@@ -96,9 +98,16 @@ def coerce_runtime_setting_value(key: str, value: Any) -> Any:
             normalized_int = int(value)
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=f"{key} must be an integer") from exc
-        if key in {"NEWS_FETCH_CONCURRENCY", "NEWS_TRANSLATION_CONCURRENCY"}:
+        if key in {
+            "NEWS_FETCH_CONCURRENCY",
+            "NEWS_TRANSLATION_CONCURRENCY",
+            "NEWS_SOURCE_FAILURE_THRESHOLD",
+        }:
             if normalized_int < 1 or normalized_int > 8:
                 raise HTTPException(status_code=400, detail=f"{key} must be between 1 and 8")
+        if key == "NEWS_SOURCE_FAILURE_COOLDOWN_MIN":
+            if normalized_int < 1 or normalized_int > 240:
+                raise HTTPException(status_code=400, detail=f"{key} must be between 1 and 240")
         return normalized_int
 
     if isinstance(current, float):

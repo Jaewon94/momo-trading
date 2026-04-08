@@ -146,6 +146,7 @@ class NewsIngestService:
         duplicates = 0
         skipped = 0
         created_items: list[dict[str, Any]] = []
+        source_summaries: dict[str, dict[str, int]] = {}
         if not items:
             return {
                 "summary": {
@@ -154,23 +155,38 @@ class NewsIngestService:
                     "duplicates": 0,
                     "skipped": 0,
                 },
+                "source_summaries": {},
                 "created_items": [],
             }
         items = await self._attach_symbols(session, items)
 
         for raw in items:
+            source_code = str(raw.get("source_code") or "").upper().strip() or "UNKNOWN"
+            source_summary = source_summaries.setdefault(
+                source_code,
+                {
+                    "received": 0,
+                    "created": 0,
+                    "duplicates": 0,
+                    "skipped": 0,
+                },
+            )
+            source_summary["received"] += 1
             normalized = self._normalize_item(raw)
             if not normalized:
                 skipped += 1
+                source_summary["skipped"] += 1
                 continue
 
             existing = await repo.get_by_dedupe_hash(normalized["dedupe_hash"])
             if existing:
                 duplicates += 1
+                source_summary["duplicates"] += 1
                 continue
 
             saved = await repo.create(NewsItem(**normalized))
             created += 1
+            source_summary["created"] += 1
             created_items.append(self.serialize_item(saved))
 
         return {
@@ -180,6 +196,7 @@ class NewsIngestService:
                 "duplicates": duplicates,
                 "skipped": skipped,
             },
+            "source_summaries": source_summaries,
             "created_items": created_items,
         }
 

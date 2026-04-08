@@ -14,7 +14,7 @@ async def test_news_ingest_service_ingests_and_deduplicates_items():
     service = NewsIngestService()
 
     async with TestAsyncSessionLocal() as session:
-        summary = await service.ingest_items(session, [
+        detailed = await service.ingest_items_detailed(session, [
             {
                 "source_code": "DART",
                 "title": "삼성전자 주요사항보고서 제출",
@@ -41,10 +41,14 @@ async def test_news_ingest_service_ingests_and_deduplicates_items():
 
         repo = NewsItemRepository(session)
         stored = await repo.get_recent(limit=10, symbol="777777")
+        summary = detailed["summary"]
+        source_summaries = detailed["source_summaries"]
 
     assert summary["received"] == 3
     assert summary["created"] == 2
     assert summary["duplicates"] == 1
+    assert source_summaries["DART"] == {"received": 2, "created": 1, "duplicates": 1, "skipped": 0}
+    assert source_summaries["REUTERS"] == {"received": 1, "created": 1, "duplicates": 0, "skipped": 0}
     assert len(stored) == 2
 
     latest = stored[0]

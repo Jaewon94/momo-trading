@@ -487,6 +487,9 @@ async def test_news_polling_service_captures_source_errors(monkeypatch):
 @pytest.mark.asyncio
 async def test_news_polling_service_includes_investing_when_foreign_enabled(monkeypatch):
     from services.news_polling_service import NewsPollingService
+    from services.news_runtime_service import news_runtime_service
+
+    news_runtime_service.reset()
 
     monkeypatch.setattr("services.news_polling_service.settings.NEWS_POLL_ENABLED", True)
     monkeypatch.setattr("services.news_polling_service.settings.OPEN_DART_API_KEY", "")
@@ -577,6 +580,9 @@ async def test_news_polling_service_includes_investing_when_foreign_enabled(monk
 @pytest.mark.asyncio
 async def test_news_polling_service_includes_seeking_alpha_when_foreign_enabled(monkeypatch):
     from services.news_polling_service import NewsPollingService
+    from services.news_runtime_service import news_runtime_service
+
+    news_runtime_service.reset()
 
     monkeypatch.setattr("services.news_polling_service.settings.NEWS_POLL_ENABLED", True)
     monkeypatch.setattr("services.news_polling_service.settings.OPEN_DART_API_KEY", "")
@@ -933,3 +939,230 @@ async def test_news_polling_service_records_observability_metric(monkeypatch):
     assert summary["received"] == 0
     assert observed["status"] == "SUCCESS"
     assert observed["item_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_news_polling_service_updates_runtime_counts_from_ingest(monkeypatch):
+    from services.news_polling_service import NewsPollingService
+    from services.news_runtime_service import news_runtime_service
+
+    news_runtime_service.reset()
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_POLL_ENABLED", True)
+    monkeypatch.setattr("services.news_polling_service.settings.OPEN_DART_API_KEY", "")
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_DOMESTIC_MEDIA_ENABLED", True)
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_INCLUDE_FOREIGN", False)
+
+    async def fake_fetch_recent_krx_disclosures(*, page_count):
+        assert page_count == 25
+        return []
+
+    async def fake_fetch_recent_yonhap_news(_session, *, limit):
+        assert limit == 25
+        return [
+            {
+                "source_code": "YONHAP",
+                "title": "삼성전자 투자 확대",
+                "published_at": "2026-04-08T10:00:00+09:00",
+                "url": "https://example.com/news/1",
+            },
+            {
+                "source_code": "YONHAP",
+                "title": "삼성전자 투자 확대",
+                "published_at": "2026-04-08T10:00:00+09:00",
+                "url": "https://example.com/news/1",
+            },
+        ]
+
+    async def fake_ingest_items_detailed(_session, items):
+        assert len(items) == 2
+        return {
+            "summary": {"received": 2, "created": 1, "duplicates": 1, "skipped": 0},
+            "source_summaries": {
+                "YONHAP": {"received": 2, "created": 1, "duplicates": 1, "skipped": 0},
+            },
+            "created_items": [
+                {
+                    "source_code": "YONHAP",
+                    "title": "삼성전자 투자 확대",
+                    "published_at": "2026-04-08T10:00:00+09:00",
+                    "symbols": ["005930"],
+                }
+            ],
+        }
+
+    monkeypatch.setattr(
+        "services.news_polling_service.krx_kind_disclosure_service.fetch_recent_disclosures",
+        fake_fetch_recent_krx_disclosures,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.yonhap_news_service.fetch_recent_news",
+        fake_fetch_recent_yonhap_news,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.news_ingest_service.ingest_items_detailed",
+        fake_ingest_items_detailed,
+    )
+
+    summary = await NewsPollingService().poll_sources(object(), market_hours=False)
+    snapshot = news_runtime_service.get_snapshot(include_foreign=False)
+
+    assert summary["created"] == 1
+    assert snapshot["sources"]["YONHAP"]["counts"] == {
+        "received": 2,
+        "created": 1,
+        "duplicates": 1,
+        "skipped": 0,
+    }
+    assert snapshot["sources"]["YONHAP"]["message"] == "신규 1건 적재 · 중복 1건 · 스킵 0건"
+
+
+@pytest.mark.asyncio
+async def test_news_polling_service_marks_overall_partial_error_when_some_sources_fail(monkeypatch):
+    from services.news_polling_service import NewsPollingService
+    from services.news_runtime_service import news_runtime_service
+
+    news_runtime_service.reset()
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_POLL_ENABLED", True)
+    monkeypatch.setattr("services.news_polling_service.settings.OPEN_DART_API_KEY", "")
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_DOMESTIC_MEDIA_ENABLED", True)
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_INCLUDE_FOREIGN", False)
+
+    async def fake_fetch_recent_krx_disclosures(*, page_count):
+        assert page_count == 25
+        raise RuntimeError("krx down")
+
+    async def fake_fetch_recent_yonhap_news(_session, *, limit):
+        assert limit == 25
+        return [
+            {
+                "source_code": "YONHAP",
+                "title": "삼성전자 투자 확대",
+                "published_at": "2026-04-08T10:00:00+09:00",
+                "url": "https://example.com/news/1",
+            }
+        ]
+
+    async def fake_ingest_items_detailed(_session, items):
+        assert len(items) == 1
+        return {
+            "summary": {"received": 1, "created": 0, "duplicates": 1, "skipped": 0},
+            "source_summaries": {
+                "YONHAP": {"received": 1, "created": 0, "duplicates": 1, "skipped": 0},
+            },
+            "created_items": [],
+        }
+
+    monkeypatch.setattr(
+        "services.news_polling_service.krx_kind_disclosure_service.fetch_recent_disclosures",
+        fake_fetch_recent_krx_disclosures,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.yonhap_news_service.fetch_recent_news",
+        fake_fetch_recent_yonhap_news,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.news_ingest_service.ingest_items_detailed",
+        fake_ingest_items_detailed,
+    )
+
+    await NewsPollingService().poll_sources(object(), market_hours=False)
+    snapshot = news_runtime_service.get_snapshot(include_foreign=False)
+
+    assert snapshot["overall"]["last_status"] == "PARTIAL_ERROR"
+    assert snapshot["overall"]["last_message"] == "일부 소스 실패 · 신규 0건 · 중복 1건 · 스킵 0건 · 오류 1건"
+    assert snapshot["sources"]["KRX"]["status"] == "ERROR"
+    assert snapshot["sources"]["YONHAP"]["message"] == "신규 없음 · 기존 기사 중복 1건"
+
+
+@pytest.mark.asyncio
+async def test_news_polling_service_skips_source_during_failure_cooldown(monkeypatch):
+    from services.news_polling_service import NewsPollingService
+    from services.news_runtime_service import news_runtime_service
+
+    news_runtime_service.reset()
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_POLL_ENABLED", True)
+    monkeypatch.setattr("services.news_polling_service.settings.OPEN_DART_API_KEY", "")
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_DOMESTIC_MEDIA_ENABLED", False)
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_INCLUDE_FOREIGN", True)
+    monkeypatch.setattr("services.news_polling_service.settings.NEWS_NASDAQ_ENABLED", False)
+    monkeypatch.setattr("services.news_runtime_service.settings.NEWS_SOURCE_FAILURE_THRESHOLD", 2)
+    monkeypatch.setattr("services.news_runtime_service.settings.NEWS_SOURCE_FAILURE_COOLDOWN_MIN", 30)
+
+    news_runtime_service.record_source_result(
+        "INVESTING",
+        status="ERROR",
+        mode="AUTO_EVENT",
+        message="dns fail",
+        counts={"received": 0, "created": 0, "duplicates": 0, "skipped": 0},
+        update_overall=False,
+    )
+    news_runtime_service.record_source_result(
+        "INVESTING",
+        status="ERROR",
+        mode="AUTO_EVENT",
+        message="dns fail",
+        counts={"received": 0, "created": 0, "duplicates": 0, "skipped": 0},
+        update_overall=False,
+    )
+
+    called = {"investing": 0}
+
+    async def fake_fetch_recent_krx_disclosures(*, page_count):
+        assert page_count == 25
+        return []
+
+    async def fake_fetch_recent_bloomberg_news(*, limit):
+        assert limit == 25
+        return []
+
+    async def fake_fetch_recent_cnbc_news(*, limit):
+        assert limit == 25
+        return []
+
+    async def fake_fetch_recent_investing_news(*, limit):
+        called["investing"] += 1
+        return []
+
+    async def fake_fetch_recent_seeking_alpha_news(*, limit):
+        assert limit == 25
+        return []
+
+    async def fake_ingest_items_detailed(_session, items):
+        assert items == []
+        return {
+            "summary": {"received": 0, "created": 0, "duplicates": 0, "skipped": 0},
+            "source_summaries": {},
+            "created_items": [],
+        }
+
+    monkeypatch.setattr(
+        "services.news_polling_service.krx_kind_disclosure_service.fetch_recent_disclosures",
+        fake_fetch_recent_krx_disclosures,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.bloomberg_news_service.fetch_recent_news",
+        fake_fetch_recent_bloomberg_news,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.cnbc_news_service.fetch_recent_news",
+        fake_fetch_recent_cnbc_news,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.investing_news_service.fetch_recent_news",
+        fake_fetch_recent_investing_news,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.seeking_alpha_news_service.fetch_recent_news",
+        fake_fetch_recent_seeking_alpha_news,
+    )
+    monkeypatch.setattr(
+        "services.news_polling_service.news_ingest_service.ingest_items_detailed",
+        fake_ingest_items_detailed,
+    )
+
+    await NewsPollingService().poll_sources(object(), market_hours=False)
+    snapshot = news_runtime_service.get_snapshot(include_foreign=True)
+
+    assert called["investing"] == 0
+    assert snapshot["sources"]["INVESTING"]["status"] == "SKIPPED"
+    assert "cooldown" in snapshot["sources"]["INVESTING"]["message"]
