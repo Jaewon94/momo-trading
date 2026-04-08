@@ -1,18 +1,26 @@
 from datetime import datetime
+import inspect
 from types import SimpleNamespace
 
 import pytest
 
 from agent.trading_agent import TradingAgent
 from core.events import Event, EventType
+from trading.models import BuyingPowerInfo
 
 
 class StubBrokerAdapter:
-    pass
+    async def get_buying_power(self, symbol: str, price: float | None = None, market=None) -> BuyingPowerInfo:
+        return BuyingPowerInfo(success=True, max_qty=10, available_cash=1_000_000)
 
 
 def _kst_time(hour: int, minute: int = 0) -> datetime:
     return datetime(2026, 4, 2, hour, minute, 0)
+
+
+def test_analyze_and_trade_accepts_manual_model_override() -> None:
+    params = inspect.signature(TradingAgent._analyze_and_trade).parameters
+    assert "manual_model_override" in params
 
 
 @pytest.mark.asyncio
@@ -204,8 +212,8 @@ async def test_run_trading_cycle_caches_scan_metadata_before_analysis(monkeypatc
     async def fake_build_trading_context() -> str:
         return "trade-context"
 
-    async def fake_buying_power(_symbol: str) -> dict:
-        return {"success": True, "max_qty": 10}
+    async def fake_buying_power(_symbol: str, price: float | None = None, market=None) -> BuyingPowerInfo:
+        return BuyingPowerInfo(success=True, max_qty=10, available_cash=1_000_000)
 
     async def fake_analyze_and_trade(stock_info, cycle_id, **kwargs) -> dict:
         analyzed_payloads.append(
@@ -234,7 +242,7 @@ async def test_run_trading_cycle_caches_scan_metadata_before_analysis(monkeypatc
     monkeypatch.setattr(agent, "_build_market_context", lambda _scan_result: "market-context")
     monkeypatch.setattr(agent, "_build_trading_context", fake_build_trading_context)
     monkeypatch.setattr(agent, "_apply_scan_thresholds", lambda candidates: applied_thresholds.extend(dict(c) for c in candidates))
-    monkeypatch.setattr("trading.kis_api.get_buying_power", fake_buying_power)
+    monkeypatch.setattr(agent._broker_adapter, "get_buying_power", fake_buying_power)
     monkeypatch.setattr(agent, "_analyze_and_trade", fake_analyze_and_trade)
     monkeypatch.setattr("util.time_util.now_kst", lambda: _kst_time(9, 7))
 
@@ -337,7 +345,7 @@ async def test_run_trading_cycle_skips_buy_candidate_when_cash_is_blocked(monkey
         analyze_called = True
         return {"executed": False}
 
-    async def fail_buying_power(_symbol: str) -> dict:
+    async def fail_buying_power(_symbol: str, price: float | None = None, market=None) -> BuyingPowerInfo:
         raise AssertionError("buying power should not be checked when buy_blocked is true")
 
     monkeypatch.setattr("agent.trading_agent.llm_factory.start_session", lambda: None)
@@ -354,7 +362,7 @@ async def test_run_trading_cycle_skips_buy_candidate_when_cash_is_blocked(monkey
     monkeypatch.setattr(agent, "_build_market_context", lambda _scan_result: "market-context")
     monkeypatch.setattr(agent, "_build_trading_context", fake_build_trading_context)
     monkeypatch.setattr(agent, "_apply_scan_thresholds", lambda _candidates: None)
-    monkeypatch.setattr("trading.kis_api.get_buying_power", fail_buying_power)
+    monkeypatch.setattr(agent._broker_adapter, "get_buying_power", fail_buying_power)
     monkeypatch.setattr(agent, "_analyze_and_trade", fake_analyze_and_trade)
     monkeypatch.setattr("util.time_util.now_kst", lambda: _kst_time(9, 8))
 
@@ -399,8 +407,8 @@ async def test_run_trading_cycle_skips_buy_candidate_when_buying_power_is_too_lo
     async def fake_build_trading_context() -> str:
         return "trade-context"
 
-    async def fake_buying_power(_symbol: str) -> dict:
-        return {"success": True, "max_qty": 0}
+    async def fake_buying_power(_symbol: str, price: float | None = None, market=None) -> BuyingPowerInfo:
+        return BuyingPowerInfo(success=True, max_qty=0, available_cash=0)
 
     async def fake_analyze_and_trade(*args, **kwargs) -> dict:
         nonlocal analyze_called
@@ -421,7 +429,7 @@ async def test_run_trading_cycle_skips_buy_candidate_when_buying_power_is_too_lo
     monkeypatch.setattr(agent, "_build_market_context", lambda _scan_result: "market-context")
     monkeypatch.setattr(agent, "_build_trading_context", fake_build_trading_context)
     monkeypatch.setattr(agent, "_apply_scan_thresholds", lambda _candidates: None)
-    monkeypatch.setattr("trading.kis_api.get_buying_power", fake_buying_power)
+    monkeypatch.setattr(agent._broker_adapter, "get_buying_power", fake_buying_power)
     monkeypatch.setattr(agent, "_analyze_and_trade", fake_analyze_and_trade)
     monkeypatch.setattr("util.time_util.now_kst", lambda: _kst_time(9, 9))
 

@@ -11,6 +11,7 @@ from trading.adapters.base import (
 from trading.enums import BrokerProvider, Market, OrderSession
 from trading.models import (
     AccountBalance,
+    BuyingPowerInfo,
     BrokerCapabilities,
     Candle,
     CurrentPrice,
@@ -149,6 +150,26 @@ class KiwoomBrokerAdapter(BrokerAdapter):
         market: Market = Market.KRX,
     ) -> OrderResult:
         return await self._require_order_executor().cancel(order_id, market=market.value)
+
+    async def get_buying_power(
+        self,
+        symbol: str,
+        price: float | None = None,
+        market: Market = Market.KRX,
+    ) -> BuyingPowerInfo:
+        resolved_price = float(price or 0.0)
+        if resolved_price <= 0:
+            quote = await self.get_current_price(symbol, market=market)
+            resolved_price = float(quote.price or 0.0)
+
+        balance = await self.get_balance()
+        available_cash = max(float(balance.cash or 0.0), 0.0)
+        max_qty = int(available_cash // resolved_price) if resolved_price > 0 else 0
+        return BuyingPowerInfo(
+            success=resolved_price > 0,
+            max_qty=max_qty,
+            available_cash=available_cash,
+        )
 
     async def get_order_status(self, order_id: str) -> OrderStatusInfo | None:
         pending_orders = await self.get_pending_orders()

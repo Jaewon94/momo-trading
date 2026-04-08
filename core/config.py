@@ -24,9 +24,11 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "DEBUG"
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:8000"]
 
-    # === KIS MCP 서버 ===
+    # === Broker Runtime ===
+    # 기본값은 로컬 실사용 기준으로 Kiwoom을 우선한다.
+    # 배포/테스트 환경에서는 .env 또는 runtime setting으로 override 가능하다.
     KIS_MCP_URL: str = "http://localhost:3100/sse"
-    BROKER_PROVIDER: str = "KIS"
+    BROKER_PROVIDER: str = "KIWOOM"
 
     # === Kiwoom REST API ===
     KIWOOM_APP_KEY: str = ""
@@ -181,6 +183,18 @@ class Settings(BaseSettings):
     def is_paper_trading(self) -> bool:
         return self.KIS_ACCOUNT_TYPE.upper() == "VIRTUAL"
 
+    @property
+    def normalized_broker_provider(self) -> str:
+        return self.BROKER_PROVIDER.upper().strip()
+
+    @property
+    def uses_kis_broker(self) -> bool:
+        return self.normalized_broker_provider == "KIS"
+
+    @property
+    def uses_kiwoom_broker(self) -> bool:
+        return self.normalized_broker_provider == "KIWOOM"
+
     def validate_on_startup(self) -> None:
         """시작 시 필수 설정 검증 — 누락된 키에 대해 경고 로그"""
         llm_providers = {
@@ -208,7 +222,7 @@ class Settings(BaseSettings):
                 "CODEX_PATH를 설정하거나 codex CLI를 설치하세요."
             )
 
-        broker_provider = self.BROKER_PROVIDER.upper()
+        broker_provider = self.normalized_broker_provider
         if broker_provider == "KIS":
             if not self.KIS_APP_KEY and not self.KIS_PAPER_APP_KEY:
                 logger.warning(

@@ -138,3 +138,10 @@ class PendingOrderInfo(BaseModel):
     remaining_qty: int      # 미체결수량
     order_price: float      # 주문단가
     order_time: str         # 주문시각
+
+
+class BuyingPowerInfo(BaseModel):
+    """주문 가능 수량/현금 정보"""
+    success: bool
+    max_qty: int = 0
+    available_cash: float = 0.0

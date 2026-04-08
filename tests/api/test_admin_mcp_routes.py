@@ -7,13 +7,17 @@ async def test_admin_mcp_reconnect_route_reconnects_runtime_client(client, monke
 
     async def fake_ensure_connected(force_reconnect: bool = False) -> bool:
         calls.append(force_reconnect)
-        monkeypatch.setattr("api.routes.admin.mcp_client._post_client", object(), raising=False)
-        monkeypatch.setattr("api.routes.admin.mcp_client._session_id", "/messages/?session_id=test", raising=False)
+        monkeypatch.setattr("trading.mcp_client.mcp_client._post_client", object(), raising=False)
+        monkeypatch.setattr("trading.mcp_client.mcp_client._session_id", "/messages/?session_id=test", raising=False)
         return True
 
-    monkeypatch.setattr("api.routes.admin.mcp_client.ensure_connected", fake_ensure_connected)
-    monkeypatch.setattr("api.routes.admin.mcp_client._post_client", None, raising=False)
-    monkeypatch.setattr("api.routes.admin.mcp_client._session_id", None, raising=False)
+    monkeypatch.setattr(
+        "services.broker_runtime_service.BrokerRuntimeService.mcp_required",
+        property(lambda self: True),
+    )
+    monkeypatch.setattr("trading.mcp_client.mcp_client.ensure_connected", fake_ensure_connected)
+    monkeypatch.setattr("trading.mcp_client.mcp_client._post_client", None, raising=False)
+    monkeypatch.setattr("trading.mcp_client.mcp_client._session_id", None, raising=False)
 
     response = await client.post("/api/v1/admin/mcp/reconnect")
 
@@ -35,8 +39,14 @@ async def test_system_status_marks_mcp_as_optional_for_kiwoom(client, monkeypatc
     monkeypatch.setattr("api.routes.admin.settings.MANUAL_LLM_FALLBACK_PROVIDER", "")
     monkeypatch.setattr("api.routes.admin.settings.NEWS_LLM_PROVIDER", "CODEX")
     monkeypatch.setattr("api.routes.admin.settings.NEWS_LLM_FALLBACK_PROVIDER", "")
-    monkeypatch.setattr("api.routes.admin.mcp_client._post_client", None, raising=False)
-    monkeypatch.setattr("api.routes.admin.mcp_client._session_id", None, raising=False)
+    monkeypatch.setattr(
+        "services.broker_runtime_service.BrokerRuntimeService.mcp_required",
+        property(lambda self: False),
+    )
+    monkeypatch.setattr(
+        "services.broker_runtime_service.BrokerRuntimeService.mcp_connected",
+        property(lambda self: False),
+    )
     monkeypatch.setattr("api.routes.admin.trading_scheduler._running", False)
     monkeypatch.setattr("agent.trading_agent.trading_agent._running", True, raising=False)
 
@@ -71,8 +81,14 @@ async def test_system_status_includes_operations_summary(client, monkeypatch):
     monkeypatch.setattr("api.routes.admin.settings.NEWS_POLL_ENABLED", True)
     monkeypatch.setattr("api.routes.admin.settings.NEWS_LLM_PROVIDER", "OLLAMA")
     monkeypatch.setattr("api.routes.admin.settings.NEWS_LLM_FALLBACK_PROVIDER", "")
-    monkeypatch.setattr("api.routes.admin.mcp_client._post_client", None, raising=False)
-    monkeypatch.setattr("api.routes.admin.mcp_client._session_id", None, raising=False)
+    monkeypatch.setattr(
+        "services.broker_runtime_service.BrokerRuntimeService.mcp_required",
+        property(lambda self: True),
+    )
+    monkeypatch.setattr(
+        "services.broker_runtime_service.BrokerRuntimeService.mcp_connected",
+        property(lambda self: False),
+    )
     async def fake_ollama_available(self):
         return False
     monkeypatch.setattr("api.routes.admin.OllamaProvider.is_available", fake_ollama_available)

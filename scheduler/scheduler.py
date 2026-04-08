@@ -87,33 +87,11 @@ class TradingScheduler:
 
     async def _fetch_current_price(self, symbol: str, market: Market = Market.KRX) -> float:
         """브로커 어댑터 기준 현재가를 조회한다."""
-        if settings.BROKER_PROVIDER.upper() == "KIS":
-            from trading.mcp_client import mcp_client
-            response = await mcp_client.get_current_price(symbol)
-            if not response.success or not response.data:
-                return 0.0
-            return float(response.data.get("price", 0.0) or 0.0)
         quote = await get_broker_adapter().get_current_price(symbol, market)
         return float(quote.price or 0.0)
 
     async def _place_market_sell(self, symbol: str, quantity: int, market: Market = Market.KRX):
         """브로커 어댑터 기준 시장가 매도 주문을 실행한다."""
-        if settings.BROKER_PROVIDER.upper() == "KIS":
-            from trading.mcp_client import mcp_client
-            response = await mcp_client.place_order(
-                symbol=symbol,
-                side="SELL",
-                quantity=quantity,
-                price=None,
-                market=market.value,
-            )
-            data = response.data or {}
-            return type("NormalizedOrderResult", (), {
-                "success": bool(response.success),
-                "order_id": data.get("order_id", ""),
-                "message": data.get("message") or response.error or "",
-                "error": response.error,
-            })()
         request = OrderRequest(
             symbol=symbol,
             market=market,

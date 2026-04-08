@@ -8,7 +8,7 @@ from realtime.event_detector import event_detector
 from realtime.stream_manager import stream_manager
 from trading.broker_factory import get_broker_adapter
 from trading.enums import Market
-from trading.kis_websocket import kis_websocket
+from realtime.stream_backend import get_stream_backend
 
 
 class RealtimeMonitor:
@@ -36,7 +36,7 @@ class RealtimeMonitor:
         """실시간 모니터링 시작"""
         self._running = True
         self._last_ws_data_time = time.monotonic()
-        kis_websocket.set_on_price(self._on_price_update)
+        get_stream_backend().set_on_price(self._on_price_update)
         await stream_manager.start()
         # WebSocket 상태 점검 루프 시작
         self._health_task = asyncio.create_task(self._ws_health_loop())

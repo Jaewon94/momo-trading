@@ -12,6 +12,7 @@ from trading.enums import BrokerProvider, Market, OrderSession
 from trading.mcp_client import mcp_client
 from trading.models import (
     AccountBalance,
+    BuyingPowerInfo,
     BrokerCapabilities,
     Candle,
     CurrentPrice,
@@ -22,6 +23,7 @@ from trading.models import (
     PendingOrderInfo,
 )
 from trading.order_executor import order_executor
+from trading.kis_api import get_buying_power as get_kis_buying_power
 
 
 class KisBrokerAdapter(BrokerAdapter):
@@ -134,6 +136,19 @@ class KisBrokerAdapter(BrokerAdapter):
         market: Market = Market.KOSPI,
     ) -> OrderResult:
         return await self._order_executor.cancel(order_id, market=market.value)
+
+    async def get_buying_power(
+        self,
+        symbol: str,
+        price: float | None = None,
+        market: Market = Market.KRX,
+    ) -> BuyingPowerInfo:
+        result = await get_kis_buying_power(symbol, price=int(price or 0))
+        return BuyingPowerInfo(
+            success=bool(result.get("success")),
+            max_qty=int(result.get("max_qty") or 0),
+            available_cash=float(result.get("available_cash") or 0.0),
+        )
 
     async def get_order_status(self, order_id: str) -> OrderStatusInfo | None:
         response = await mcp_client.get_order_list()

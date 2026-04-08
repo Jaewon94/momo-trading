@@ -41,6 +41,7 @@ from scheduler.jobs import portfolio_sync_job
 from services.activity_logger import activity_logger
 from services.bloomberg_news_service import bloomberg_news_service
 from services.cnbc_news_service import cnbc_news_service
+from services.broker_runtime_service import broker_runtime_service
 from services.error_capture_service import error_capture_service
 from services.investing_news_service import investing_news_service
 from services.krx_kind_disclosure_service import krx_kind_disclosure_service
@@ -61,7 +62,6 @@ from strategy.risk_appetite_insights import build_strategy_insights
 from trading.account_manager import account_manager
 from trading.broker_factory import get_broker_adapter
 from trading.enums import ActivityPhase, ActivityType, LLMTier
-from trading.mcp_client import mcp_client
 from trading.symbols import normalize_krx_symbol
 from scheduler.scheduler import trading_scheduler
 
@@ -1517,12 +1517,12 @@ async def get_system_status(db: AsyncSession = Depends(get_async_db)):
 
     from scheduler.market_calendar import market_calendar
 
-    broker_provider = settings.BROKER_PROVIDER.upper()
+    broker_provider = settings.normalized_broker_provider
     broker_adapter = get_broker_adapter()
     broker_capabilities = broker_adapter.capabilities
     supported_sessions = [session.value for session in broker_capabilities.supported_order_sessions]
-    mcp_required = broker_provider == "KIS"
-    mcp_connected = mcp_client.is_connected
+    mcp_required = broker_runtime_service.mcp_required
+    mcp_connected = broker_runtime_service.mcp_connected
     activity_repo = AgentActivityRepository(db)
     latest_order_error = await activity_repo.get_latest_error(activity_type=ActivityType.ORDER)
     news_runtime = news_runtime_service.get_snapshot(
@@ -1545,21 +1545,21 @@ async def get_system_status(db: AsyncSession = Depends(get_async_db)):
         broker_ops = {
             "status": "OK",
             "label": "브로커 정상",
-            "message": f"{broker_provider}는 MCP 없이 직접 연동합니다. {capability_message}",
+            "message": f"{broker_provider} 브로커는 직접 연동합니다. {capability_message}",
             "supported_sessions": supported_sessions,
         }
     elif mcp_connected:
         broker_ops = {
             "status": "OK",
             "label": "브로커 정상",
-            "message": f"MCP 연결이 살아 있어 브로커 호출 준비가 되어 있습니다. {capability_message}",
+            "message": f"{broker_provider} 브로커 런타임 연결이 준비되어 있습니다. {capability_message}",
             "supported_sessions": supported_sessions,
         }
     else:
         broker_ops = {
             "status": "ERROR",
             "label": "브로커 확인 필요",
-            "message": f"KIS MCP 연결이 끊겨 있어 브로커 호출이 실패할 수 있습니다. {capability_message}",
+            "message": f"{broker_provider} 브로커 런타임 연결이 끊겨 있어 호출이 실패할 수 있습니다. {capability_message}",
             "supported_sessions": supported_sessions,
         }
 
@@ -1688,6 +1688,23 @@ async def get_system_status(db: AsyncSession = Depends(get_async_db)):
 @router.post("/mcp/reconnect")
 async def reconnect_mcp():
     """런타임 MCP 연결 재시도"""
+    if not broker_runtime_service.mcp_required:
+        detail = {
+            "connected": True,
+            "mcp_connected": False,
+            "message": f"{settings.normalized_broker_provider}는 MCP 재연결이 필요하지 않습니다.",
+        }
+        await activity_logger.log(
+            ActivityType.EVENT, ActivityPhase.PROGRESS,
+            "🔌 MCP 재연결 요청 (불필요)",
+            detail=detail,
+        )
+        return SuccessResponse(
+            data=detail,
+            message="현재 브로커는 MCP를 사용하지 않습니다",
+        )
+
+    from trading.mcp_client import mcp_client
     connected = await mcp_client.ensure_connected(force_reconnect=True)
     detail = {
         "connected": connected,

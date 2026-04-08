@@ -733,10 +733,22 @@ async def test_holdings_check_executes_sell_and_triggers_rescan(monkeypatch) -> 
         return [holding]
 
     async def fake_get_current_price(_symbol: str):
-        return SimpleNamespace(success=True, data={"price": 73_000})
+        return CurrentPrice(
+            symbol="005930",
+            market=Market.KRX,
+            price=73_000,
+            change=0.0,
+            change_rate=0.0,
+            volume=0,
+            timestamp=__import__("datetime").datetime.now(),
+        )
 
-    async def fake_place_order(**kwargs):
-        return SimpleNamespace(success=True, data={"order_id": "SELL-HOLDING"}, error=None)
+    class FakeBrokerAdapter:
+        async def get_current_price(self, symbol, market):
+            return await fake_get_current_price(symbol)
+
+        async def place_order(self, request):
+            return OrderResult(success=True, order_id="SELL-HOLDING", message="ok")
 
     async def fake_log(*args, **kwargs) -> None:
         logs.append(args[2])
@@ -759,13 +771,12 @@ async def test_holdings_check_executes_sell_and_triggers_rescan(monkeypatch) -> 
     monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
     monkeypatch.setattr(scheduler, "_update_realtime_subscriptions", fake_update_realtime_subscriptions)
     monkeypatch.setattr("util.time_util.now_kst", lambda: __import__("datetime").datetime(2026, 4, 2, 14, 0))
-    monkeypatch.setattr("trading.mcp_client.mcp_client.get_current_price", fake_get_current_price)
+    monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
     monkeypatch.setattr(
         "realtime.event_detector.event_detector.get_thresholds",
         lambda _symbol: SimpleNamespace(stop_loss=68_000, take_profit=72_000),
     )
     monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
-    monkeypatch.setattr("trading.mcp_client.mcp_client.place_order", fake_place_order)
     monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
     monkeypatch.setattr("agent.trading_agent.trading_agent._acquire_sell", fake_acquire_sell)
     monkeypatch.setattr("agent.trading_agent.trading_agent._release_sell", released.append)
@@ -797,7 +808,19 @@ async def test_holdings_check_logs_disabled_sell_when_trading_is_off(monkeypatch
         return [holding]
 
     async def fake_get_current_price(_symbol: str):
-        return SimpleNamespace(success=True, data={"price": 73_000})
+        return CurrentPrice(
+            symbol="005930",
+            market=Market.KRX,
+            price=73_000,
+            change=0.0,
+            change_rate=0.0,
+            volume=0,
+            timestamp=__import__("datetime").datetime.now(),
+        )
+
+    class FakeBrokerAdapter:
+        async def get_current_price(self, symbol, market):
+            return await fake_get_current_price(symbol)
 
     async def fake_log(*args, **kwargs) -> None:
         logs.append(args[2])
@@ -806,7 +829,7 @@ async def test_holdings_check_logs_disabled_sell_when_trading_is_off(monkeypatch
     monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
     monkeypatch.setattr(scheduler, "_update_realtime_subscriptions", fake_update_realtime_subscriptions)
     monkeypatch.setattr("util.time_util.now_kst", lambda: __import__("datetime").datetime(2026, 4, 2, 14, 0))
-    monkeypatch.setattr("trading.mcp_client.mcp_client.get_current_price", fake_get_current_price)
+    monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
     monkeypatch.setattr(
         "realtime.event_detector.event_detector.get_thresholds",
         lambda _symbol: SimpleNamespace(stop_loss=68_000, take_profit=72_000),
@@ -832,7 +855,19 @@ async def test_holdings_check_logs_when_sell_is_already_in_progress(monkeypatch)
         return [holding]
 
     async def fake_get_current_price(_symbol: str):
-        return SimpleNamespace(success=True, data={"price": 73_000})
+        return CurrentPrice(
+            symbol="005930",
+            market=Market.KRX,
+            price=73_000,
+            change=0.0,
+            change_rate=0.0,
+            volume=0,
+            timestamp=__import__("datetime").datetime.now(),
+        )
+
+    class FakeBrokerAdapter:
+        async def get_current_price(self, symbol, market):
+            return await fake_get_current_price(symbol)
 
     async def fake_log(*args, **kwargs) -> None:
         logs.append(args[2])
@@ -844,7 +879,7 @@ async def test_holdings_check_logs_when_sell_is_already_in_progress(monkeypatch)
     monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
     monkeypatch.setattr(scheduler, "_update_realtime_subscriptions", fake_update_realtime_subscriptions)
     monkeypatch.setattr("util.time_util.now_kst", lambda: __import__("datetime").datetime(2026, 4, 2, 14, 0))
-    monkeypatch.setattr("trading.mcp_client.mcp_client.get_current_price", fake_get_current_price)
+    monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
     monkeypatch.setattr(
         "realtime.event_detector.event_detector.get_thresholds",
         lambda _symbol: SimpleNamespace(stop_loss=68_000, take_profit=72_000),
@@ -1069,7 +1104,11 @@ async def test_force_liquidation_triggers_rescan_after_successful_swing_sell(mon
         return holdings, []
 
     async def fake_place_order(**kwargs):
-        return SimpleNamespace(success=True, data={"order_id": "SELL-1"}, error=None)
+        return None
+
+    class FakeBrokerAdapter:
+        async def place_order(self, request):
+            return OrderResult(success=True, order_id="SELL-1", message="ok")
 
     async def fake_log(*args, **kwargs) -> None:
         logs.append(args[2])
@@ -1099,7 +1138,7 @@ async def test_force_liquidation_triggers_rescan_after_successful_swing_sell(mon
     monkeypatch.setattr("scheduler.scheduler.settings.DAY_TRADING_ONLY", False)
     monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
     monkeypatch.setattr(scheduler, "_smart_liquidation", fake_smart_liquidation)
-    monkeypatch.setattr("trading.mcp_client.mcp_client.place_order", fake_place_order)
+    monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
     monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
     monkeypatch.setattr("agent.trading_agent.trading_agent._acquire_sell", fake_acquire_sell)
     monkeypatch.setattr("agent.trading_agent.trading_agent._release_sell", fake_release_sell)
@@ -1201,11 +1240,15 @@ async def test_collect_holdings_data_marks_symbol_for_fallback_when_price_lookup
             return None
 
     async def fake_get_current_price(_symbol: str):
-        return SimpleNamespace(success=False, data=None)
+        raise RuntimeError("price lookup failed")
+
+    class FakeBrokerAdapter:
+        async def get_current_price(self, symbol, market):
+            return await fake_get_current_price(symbol)
 
     monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
     monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
-    monkeypatch.setattr("trading.mcp_client.mcp_client.get_current_price", fake_get_current_price)
+    monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
 
     holdings_data, holdings_map, fallback_sell = await scheduler._collect_holdings_data([holding])
 
@@ -1241,11 +1284,23 @@ async def test_collect_holdings_data_builds_prompt_payload_for_valid_holding(mon
             return trade_result
 
     async def fake_get_current_price(_symbol: str):
-        return SimpleNamespace(success=True, data={"price": 73_000})
+        return CurrentPrice(
+            symbol="005930",
+            market=Market.KRX,
+            price=73_000,
+            change=0.0,
+            change_rate=0.0,
+            volume=0,
+            timestamp=__import__("datetime").datetime.now(),
+        )
+
+    class FakeBrokerAdapter:
+        async def get_current_price(self, symbol, market):
+            return await fake_get_current_price(symbol)
 
     monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
     monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
-    monkeypatch.setattr("trading.mcp_client.mcp_client.get_current_price", fake_get_current_price)
+    monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
     monkeypatch.setattr(
         "realtime.event_detector.event_detector.get_thresholds",
         lambda _symbol: SimpleNamespace(stop_loss=68_500, take_profit=74_500),
@@ -1363,11 +1418,12 @@ async def test_force_liquidation_retries_failed_orders_once(monkeypatch) -> None
     async def fake_smart_liquidation(_sellable):
         return [holding], []
 
-    async def fake_place_order(**kwargs):
-        place_order_calls.append(kwargs["symbol"])
-        if len(place_order_calls) == 1:
-            return SimpleNamespace(success=False, data=None, error="temporary fail")
-        return SimpleNamespace(success=True, data={"order_id": "SELL-RETRY"}, error=None)
+    class FakeBrokerAdapter:
+        async def place_order(self, request):
+            place_order_calls.append(request.symbol)
+            if len(place_order_calls) == 1:
+                return OrderResult(success=False, order_id=None, message="temporary fail")
+            return OrderResult(success=True, order_id="SELL-RETRY", message="ok")
 
     async def fake_log(*args, **kwargs) -> None:
         logs.append(args[2])
@@ -1383,7 +1439,7 @@ async def test_force_liquidation_retries_failed_orders_once(monkeypatch) -> None
     monkeypatch.setattr("scheduler.scheduler.settings.DAY_TRADING_ONLY", False)
     monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
     monkeypatch.setattr(scheduler, "_smart_liquidation", fake_smart_liquidation)
-    monkeypatch.setattr("trading.mcp_client.mcp_client.place_order", fake_place_order)
+    monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
     monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
     monkeypatch.setattr("asyncio.sleep", fake_sleep)
     monkeypatch.setattr("agent.trading_agent.trading_agent._acquire_sell", fake_acquire_sell)
@@ -1596,7 +1652,11 @@ async def test_intraday_holdings_review_sells_position_and_triggers_rescan(monke
         )
 
     async def fake_place_order(**kwargs):
-        return SimpleNamespace(success=True, data={"order_id": "SELL-REVIEW"}, error=None)
+        return None
+
+    class FakeBrokerAdapter:
+        async def place_order(self, request):
+            return OrderResult(success=True, order_id="SELL-REVIEW", message="ok")
 
     async def fake_log(*args, **kwargs) -> None:
         logs.append(args[2])
@@ -1630,7 +1690,7 @@ async def test_intraday_holdings_review_sells_position_and_triggers_rescan(monke
             ]
         },
     )
-    monkeypatch.setattr("trading.mcp_client.mcp_client.place_order", fake_place_order)
+    monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
     monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
     monkeypatch.setattr("agent.trading_agent.trading_agent._market_regime", "BULLISH")
     monkeypatch.setattr("agent.trading_agent.trading_agent._market_context", "강세 유지")
@@ -1869,7 +1929,19 @@ async def test_check_overnight_positions_restores_thresholds_and_warns_on_max_ho
 
     async def fake_get_current_price(symbol: str):
         assert symbol == "035720"
-        return SimpleNamespace(success=True, data={"price": 48_000})
+        return CurrentPrice(
+            symbol=symbol,
+            market=Market.KRX,
+            price=48_000,
+            change=0.0,
+            change_rate=0.0,
+            volume=0,
+            timestamp=__import__("datetime").datetime.now(),
+        )
+
+    class FakeBrokerAdapter:
+        async def get_current_price(self, symbol, market):
+            return await fake_get_current_price(symbol)
 
     async def fake_log(*args, **kwargs) -> None:
         logs.append(args[2])
@@ -1877,7 +1949,7 @@ async def test_check_overnight_positions_restores_thresholds_and_warns_on_max_ho
     monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: session)
     monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
     monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
-    monkeypatch.setattr("trading.mcp_client.mcp_client.get_current_price", fake_get_current_price)
+    monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
     monkeypatch.setattr("realtime.event_detector.event_detector.set_thresholds", lambda symbol, **kwargs: restored_thresholds.append((symbol, kwargs)))
     monkeypatch.setattr("strategy.holding_policy._calc_hold_days", lambda tr: 6 if tr.stock_symbol == "005930" else 2)
     monkeypatch.setattr("strategy.holding_policy._get_max_hold_days", lambda _strategy, _settings: 5)
@@ -1961,7 +2033,11 @@ async def test_intraday_holdings_review_records_sell_failure_message(monkeypatch
         )
 
     async def fake_place_order(**kwargs):
-        return SimpleNamespace(success=False, data=None, error="broker reject")
+        return None
+
+    class FakeBrokerAdapter:
+        async def place_order(self, request):
+            return OrderResult(success=False, order_id=None, message="broker reject")
 
     async def fake_log(*args, **kwargs) -> None:
         logs.append(args[2])
@@ -1980,7 +2056,7 @@ async def test_intraday_holdings_review_records_sell_failure_message(monkeypatch
         "core.json_utils.parse_llm_json",
         lambda text: {"decisions": [{"symbol": "005930", "action": "SELL", "reason": "추세 이탈", "confidence": 0.59}]},
     )
-    monkeypatch.setattr("trading.mcp_client.mcp_client.place_order", fake_place_order)
+    monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
     monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
     monkeypatch.setattr("agent.trading_agent.trading_agent._market_regime", "RANGE")
     monkeypatch.setattr("agent.trading_agent.trading_agent._market_context", "변동성 확대")
@@ -2021,10 +2097,22 @@ async def test_check_overnight_gap_executes_sell_on_stop_loss(monkeypatch) -> No
         return [holding]
 
     async def fake_get_current_price(_symbol: str):
-        return SimpleNamespace(success=True, data={"price": 67_000})
+        return CurrentPrice(
+            symbol="005930",
+            market=Market.KRX,
+            price=67_000,
+            change=0.0,
+            change_rate=0.0,
+            volume=0,
+            timestamp=__import__("datetime").datetime.now(),
+        )
 
-    async def fake_place_order(**kwargs):
-        return SimpleNamespace(success=True, data={"order_id": "SELL-GAP"}, error=None)
+    class FakeBrokerAdapter:
+        async def get_current_price(self, symbol, market):
+            return await fake_get_current_price(symbol)
+
+        async def place_order(self, request):
+            return OrderResult(success=True, order_id="SELL-GAP", message="ok")
 
     async def fake_log(*args, **kwargs) -> None:
         logs.append(args[2])
@@ -2038,8 +2126,7 @@ async def test_check_overnight_gap_executes_sell_on_stop_loss(monkeypatch) -> No
     monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
     monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
     monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
-    monkeypatch.setattr("trading.mcp_client.mcp_client.get_current_price", fake_get_current_price)
-    monkeypatch.setattr("trading.mcp_client.mcp_client.place_order", fake_place_order)
+    monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
     monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
     monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
     monkeypatch.setattr("agent.trading_agent.trading_agent._acquire_sell", fake_acquire_sell)
@@ -2081,7 +2168,19 @@ async def test_check_overnight_gap_logs_disabled_target_profit_sell(monkeypatch)
         return [holding]
 
     async def fake_get_current_price(_symbol: str):
-        return SimpleNamespace(success=True, data={"price": 76_000})
+        return CurrentPrice(
+            symbol="005930",
+            market=Market.KRX,
+            price=76_000,
+            change=0.0,
+            change_rate=0.0,
+            volume=0,
+            timestamp=__import__("datetime").datetime.now(),
+        )
+
+    class FakeBrokerAdapter:
+        async def get_current_price(self, symbol, market):
+            return await fake_get_current_price(symbol)
 
     async def fake_log(*args, **kwargs) -> None:
         logs.append(args[2])
@@ -2089,7 +2188,7 @@ async def test_check_overnight_gap_logs_disabled_target_profit_sell(monkeypatch)
     monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
     monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
     monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
-    monkeypatch.setattr("trading.mcp_client.mcp_client.get_current_price", fake_get_current_price)
+    monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
     monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
     monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", False)
 

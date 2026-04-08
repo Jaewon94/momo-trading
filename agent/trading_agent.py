@@ -296,15 +296,14 @@ class TradingAgent:
                     if direction != "SELL" and not is_holding:
                         if buy_blocked:
                             return {"skipped": True, "reason": "현금 부족 (매수 차단)"}
-                        from trading.kis_api import get_buying_power
-                        bp = await get_buying_power(symbol)
-                        if bp["success"] and bp["max_qty"] < min_qty:
+                        bp = await self._broker_adapter.get_buying_power(symbol)
+                        if bp.success and bp.max_qty < min_qty:
                             logger.info(
                                 "[{}] 매수가능수량 부족으로 스킵: {}주 < 최소 {}주",
-                                symbol, bp["max_qty"], min_qty,
+                                symbol, bp.max_qty, min_qty,
                             )
-                            return {"skipped": True, "reason": f"매수가능수량 부족 ({bp['max_qty']}주)"}
-                        stock_info["_buying_power"] = bp
+                            return {"skipped": True, "reason": f"매수가능수량 부족 ({bp.max_qty}주)"}
+                        stock_info["_buying_power"] = bp.model_dump()
 
                     r = await self._analyze_and_trade(
                         stock_info, cycle_id,
@@ -508,6 +507,7 @@ class TradingAgent:
         portfolio_snapshot: dict | None = None,
         executed_count_ref: Callable | None = None,
         manual_provider_override: str | None = None,
+        manual_model_override: str | None = None,
     ) -> dict:
         """개별 종목 분석 → 전략 평가 → 매매 결정"""
         symbol = stock_info.get("symbol", "")
@@ -648,6 +648,7 @@ class TradingAgent:
             trading_context=self._trading_context,
             cycle_id=cycle_id,
             manual_provider_override=manual_provider_override,
+            manual_model_override=manual_model_override,
         )
         t1_elapsed = activity_logger.elapsed_ms(t1_timer)
 
@@ -841,6 +842,7 @@ class TradingAgent:
             portfolio_snapshot=portfolio_snapshot,
             cycle_id=cycle_id,
             manual_provider_override=manual_provider_override,
+            manual_model_override=manual_model_override,
         )
         t2_elapsed = activity_logger.elapsed_ms(t2_timer)
 
@@ -1073,10 +1075,13 @@ class TradingAgent:
             min_qty = (
                 (dynamic_limits or {}).get("min_buy_quantity", settings.MIN_BUY_QUANTITY)
             )
-            from trading.kis_api import get_buying_power
-            bp = await get_buying_power(symbol)
-            if bp["success"]:
-                max_qty = bp["max_qty"]
+            bp = await self._broker_adapter.get_buying_power(
+                symbol,
+                price=current_price,
+                market=Market(stock_info.get("market", "KRX")),
+            )
+            if bp.success:
+                max_qty = bp.max_qty
                 if max_qty < min_qty:
                     logger.info(
                         "[{}] 매수가능수량 부족으로 주문 포기: {}주 < 최소 {}주",
@@ -1095,7 +1100,7 @@ class TradingAgent:
                         symbol, signal.suggested_quantity, max_qty,
                     )
                     signal.suggested_quantity = max_qty
-            # bp 실패 시 → 기존 수량 유지, KIS가 최종 판단
+            # 조회 실패 시 → 기존 수량 유지, 브로커가 최종 판단
 
             # 매수 주문 실행 정책 적용 (시장가/슬리피지 가드 지정가)
             self._apply_buy_execution_policy(signal=signal, current_price=current_price)

@@ -5,6 +5,7 @@ from typing import Protocol
 from trading.enums import BrokerProvider, Market
 from trading.models import (
     AccountBalance,
+    BuyingPowerInfo,
     BrokerCapabilities,
     Candle,
     CurrentPrice,
@@ -89,6 +90,14 @@ class BrokerAdapter(ABC):
         order_id: str,
         market: Market = Market.KOSPI,
     ) -> OrderResult: ...
+
+    @abstractmethod
+    async def get_buying_power(
+        self,
+        symbol: str,
+        price: float | None = None,
+        market: Market = Market.KRX,
+    ) -> BuyingPowerInfo: ...
 
     async def get_order_status(self, order_id: str) -> OrderStatusInfo | None:
         return None

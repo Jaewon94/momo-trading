@@ -15,8 +15,8 @@ from exceptions.common import ServiceException
 from middleware.request_id import RequestIDMiddleware
 from models import Base  # noqa: F401 - 모든 모델 import하여 metadata에 등록
 from schemas.common import BasicErrorResponse
+from services.broker_runtime_service import broker_runtime_service
 from services.runtime_settings_service import runtime_settings_service
-from trading.mcp_client import mcp_client
 from util.time_util import now_kst
 
 
@@ -36,16 +36,10 @@ async def lifespan(app: FastAPI):
     # 이벤트 버스 시작
     await event_bus.start()
 
-    # MCP 클라이언트 연결: KIS 브로커에서만 필요
-    if settings.BROKER_PROVIDER.upper() == "KIS":
-        try:
-            await mcp_client.connect()
-            tools = await mcp_client.list_tools()
-            logger.info("MCP 도구 목록 ({}개): {}", len(tools), [t.get("name") for t in tools])
-        except Exception as e:
-            logger.warning("MCP 서버 연결 실패 (나중에 재시도): {}", str(e))
-    else:
-        logger.debug("BROKER_PROVIDER={} → MCP 초기화 건너뜀", settings.BROKER_PROVIDER)
+    try:
+        await broker_runtime_service.startup()
+    except Exception as e:
+        logger.warning("브로커 런타임 시작 실패 (나중에 재시도): {}", str(e))
 
     # 실시간 모니터 시작 (WebSocket, 실패해도 서버 기동)
     from realtime.monitor import realtime_monitor
@@ -85,7 +79,7 @@ async def lifespan(app: FastAPI):
         await realtime_monitor.stop()
     except Exception:
         pass
-    await mcp_client.disconnect()
+    await broker_runtime_service.shutdown()
     await event_bus.stop()
     logger.info("애플리케이션 종료")
 
