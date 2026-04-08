@@ -371,6 +371,77 @@ async def test_kiwoom_account_client_clamps_total_asset_when_snapshot_is_lower_t
 
 
 @pytest.mark.asyncio
+async def test_kiwoom_account_client_retries_transient_balance_delay(monkeypatch) -> None:
+    import httpx
+
+    attempt = {"count": 0}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth2/token":
+            return httpx.Response(
+                200,
+                json={
+                    "token": "token",
+                    "expires_dt": "20991231235959",
+                    "token_type": "Bearer",
+                    "return_code": 0,
+                    "return_msg": "정상적으로 처리되었습니다",
+                },
+            )
+
+        if request.headers.get("api-id") == "kt00017":
+            attempt["count"] += 1
+            if attempt["count"] == 1:
+                return httpx.Response(
+                    200,
+                    json={
+                        "return_code": -1,
+                        "return_msg": "[2000](RC9002:모의투자 서비스가 지연되고 있습니다. 잠시후 재시도 바랍니다.)",
+                    },
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "tot_evlt_amt": "215000",
+                    "tot_evlt_pl": "15000",
+                    "tot_prft_rt": "7.50",
+                    "prsm_dpst_aset_amt": "500000",
+                    "acnt_evlt_remn_indv_tot": [],
+                    "return_code": 0,
+                    "return_msg": "정상적으로 처리되었습니다",
+                },
+            )
+
+        return httpx.Response(404, json={"return_code": -1, "return_msg": "not found"})
+
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr("trading.kiwoom_clients.settings.BROKER_BALANCE_RETRY_COUNT", 2)
+    monkeypatch.setattr("trading.kiwoom_clients.settings.BROKER_BALANCE_RETRY_DELAY_MS", 700)
+    monkeypatch.setattr("asyncio.sleep", fake_sleep)
+
+    client = KiwoomRESTClient(
+        app_key="real-key",
+        secret_key="real-secret",
+        paper_app_key="paper-key",
+        paper_secret_key="paper-secret",
+        account_type="VIRTUAL",
+        transport=httpx.MockTransport(handler),
+        token_cache_path=None,
+    )
+    account_client = KiwoomAccountClient(client)
+
+    balance = await account_client.get_balance()
+
+    assert attempt["count"] == 2
+    assert sleep_calls == [0.7]
+    assert balance.total_asset == 500000.0
+
+
+@pytest.mark.asyncio
 async def test_kiwoom_order_executor_submits_order() -> None:
     transport, requests = build_transport()
     client = KiwoomRESTClient(

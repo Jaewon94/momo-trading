@@ -86,3 +86,32 @@ async def test_yonhap_news_service_fetch_and_ingest_returns_summary():
     urls = {item.url for item in items}
     assert "https://www.yonhapnewstv.co.kr/news/AKR20260406000100001" in urls
     assert "https://www.yonhapnewstv.co.kr/news/AKR20260406000100002" in urls
+
+
+@pytest.mark.asyncio
+async def test_yonhap_news_service_sends_browser_like_headers():
+    import httpx
+
+    from services.yonhap_news_service import YonhapNewsService
+
+    captured_headers = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_headers["user-agent"] = request.headers.get("user-agent")
+        captured_headers["accept"] = request.headers.get("accept")
+        captured_headers["accept-language"] = request.headers.get("accept-language")
+        captured_headers["referer"] = request.headers.get("referer")
+        return httpx.Response(
+            200,
+            text=RSS_XML,
+            headers={"Content-Type": "application/rss+xml; charset=UTF-8"},
+        )
+
+    async with TestAsyncSessionLocal() as session:
+        service = YonhapNewsService(transport=httpx.MockTransport(handler))
+        await service.fetch_recent_news(session, limit=1)
+
+    assert "Mozilla/5.0" in str(captured_headers["user-agent"])
+    assert "application/rss+xml" in str(captured_headers["accept"])
+    assert "ko-KR" in str(captured_headers["accept-language"])
+    assert captured_headers["referer"] == "https://www.yonhapnewstv.co.kr/"

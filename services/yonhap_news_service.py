@@ -31,6 +31,12 @@ class YonhapNewsService:
             transport=self._transport,
             timeout=httpx.Timeout(20.0, connect=5.0),
             follow_redirects=True,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0 Safari/537.36",
+                "Accept": "application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8",
+                "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.7,en;q=0.6",
+                "Referer": "https://www.yonhapnewstv.co.kr/",
+            },
         ) as client:
             response = await client.get(self.FEED_URL)
             response.raise_for_status()

@@ -41,6 +41,22 @@ INVESTING_RSS_NONSTANDARD_DATE = """<?xml version="1.0" encoding="UTF-8"?>
 </rss>
 """
 
+INVESTING_RSS_MALFORMED = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Investing.com Stock Market News</title>
+    <item>
+      <title>Chip stocks & AI names climb</title>
+      <link>https://www.investing.com/news/stock-market-news/chip-stocks-400004</link>
+      <description>Markets & sentiment improved.</description>
+      <pubDate>Sun, 05 Apr 2026 16:10:00 GMT</pubDate>
+      <guid>investing-4</guid>
+    </item>
+  </channel>
+</rss>
+<!-- trailing junk
+"""
+
 
 @pytest.mark.asyncio
 async def test_investing_news_service_fetches_rss_items():
@@ -112,3 +128,24 @@ async def test_investing_news_service_accepts_nonstandard_datetime_format():
 
     assert len(items) == 1
     assert items[0]["published_at"].startswith("2026-04-06T")
+
+
+@pytest.mark.asyncio
+async def test_investing_news_service_sanitizes_malformed_xml():
+    import httpx
+
+    from services.investing_news_service import InvestingNewsService
+
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            text=INVESTING_RSS_MALFORMED,
+            headers={"Content-Type": "application/rss+xml; charset=UTF-8"},
+        )
+    )
+
+    service = InvestingNewsService(transport=transport)
+    items = await service.fetch_recent_news(limit=5)
+
+    assert len(items) == 1
+    assert items[0]["title"] == "Chip stocks & AI names climb"

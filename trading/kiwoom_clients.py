@@ -5,6 +5,7 @@ from typing import Any
 
 from loguru import logger
 
+from core.config import settings
 from trading.enums import Market, OrderType
 from trading.kiwoom_rest_client import KiwoomAPIResponse, KiwoomRESTClient
 from trading.models import (
@@ -112,11 +113,7 @@ class KiwoomAccountClient:
             if cached is not None:
                 return cached
 
-            response = await self._rest_client.request(
-                api_id="kt00017",
-                endpoint="/api/dostk/acnt",
-                body={"qry_tp": "1", "dmst_stex_tp": "KRX"},
-            )
+            response = await self._request_account_snapshot_with_retry()
             if self._should_use_mock_cash_fallback(response.body):
                 # Kiwoom 모의투자에서는 계좌평가 잔고 TR이 막히는 경우가 있어
                 # mock cash seed 값을 주는 응답으로 한 번만 폴백한다.
@@ -129,6 +126,37 @@ class KiwoomAccountClient:
                 self._account_snapshot = response.body
                 self._account_snapshot_cached_at = datetime.now()
             return response.body
+
+    async def _request_account_snapshot_with_retry(self) -> KiwoomAPIResponse:
+        retry_count = max(int(settings.BROKER_BALANCE_RETRY_COUNT or 1), 1)
+        retry_delay_sec = max(int(settings.BROKER_BALANCE_RETRY_DELAY_MS or 0), 0) / 1000
+        last_response: KiwoomAPIResponse | None = None
+
+        for attempt in range(retry_count):
+            response = await self._rest_client.request(
+                api_id="kt00017",
+                endpoint="/api/dostk/acnt",
+                body={"qry_tp": "1", "dmst_stex_tp": "KRX"},
+            )
+            last_response = response
+            if not self._should_retry_account_snapshot(response.body):
+                return response
+            if attempt >= retry_count - 1:
+                return response
+            logger.warning(
+                "키움 잔고 조회 지연 감지 — {:,.1f}초 후 재시도 ({}/{})",
+                retry_delay_sec,
+                attempt + 1,
+                retry_count,
+            )
+            if retry_delay_sec > 0:
+                await asyncio.sleep(retry_delay_sec)
+
+        return last_response or await self._rest_client.request(
+            api_id="kt00017",
+            endpoint="/api/dostk/acnt",
+            body={"qry_tp": "1", "dmst_stex_tp": "KRX"},
+        )
 
     def _get_cached_account_snapshot(self) -> dict[str, Any] | None:
         if self._account_snapshot is None or self._account_snapshot_cached_at is None:
@@ -149,6 +177,13 @@ class KiwoomAccountClient:
         if _return_code(data) == 0:
             return False
         return "RC9000" in str(data.get("return_msg", ""))
+
+    @staticmethod
+    def _should_retry_account_snapshot(data: dict[str, Any]) -> bool:
+        if _return_code(data) == 0:
+            return False
+        message = str(data.get("return_msg", "") or "")
+        return "RC9002" in message or "지연" in message
 
 
 class KiwoomMarketDataClient:

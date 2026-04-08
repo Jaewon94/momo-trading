@@ -18,6 +18,7 @@
 ※ DAY_TRADING_ONLY=false: 스윙 모드 — 유망 종목 오버나이트 보유 (스마트 청산)
 """
 import asyncio
+import copy
 import time as _time
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -872,6 +873,7 @@ class TradingScheduler:
             from trading.account_manager import account_manager
 
             holdings = await account_manager.get_holdings()
+            pending_orders = await account_manager.get_pending_orders()
             if not holdings:
                 await activity_logger.log(
                     ActivityType.SCHEDULE, ActivityPhase.PROGRESS,
@@ -879,7 +881,42 @@ class TradingScheduler:
                 )
                 return
 
-            sellable = [h for h in holdings if h.quantity > 0]
+            pending_sell_qty_by_symbol: dict[str, int] = {}
+            for order in pending_orders or []:
+                if str(getattr(order, "side", "")) != "매도":
+                    continue
+                symbol = str(getattr(order, "symbol", "") or "")
+                remaining_qty = max(int(getattr(order, "remaining_qty", 0) or 0), 0)
+                if not symbol or remaining_qty <= 0:
+                    continue
+                pending_sell_qty_by_symbol[symbol] = pending_sell_qty_by_symbol.get(symbol, 0) + remaining_qty
+
+            adjusted_sellable = []
+            for holding in holdings:
+                quantity = int(getattr(holding, "quantity", 0) or 0)
+                if quantity <= 0:
+                    continue
+                pending_sell_qty = pending_sell_qty_by_symbol.get(getattr(holding, "symbol", ""), 0)
+                available_qty = max(quantity - pending_sell_qty, 0)
+                if available_qty <= 0:
+                    logger.info(
+                        "청산 스킵: {}({}) — 미체결 매도 {}주 대기 중",
+                        holding.name, holding.symbol, pending_sell_qty,
+                    )
+                    continue
+                if available_qty != quantity:
+                    logger.info(
+                        "청산 수량 보정: {}({}) {}주 → {}주 (미체결 매도 {}주 제외)",
+                        holding.name, holding.symbol, quantity, available_qty, pending_sell_qty,
+                    )
+                if hasattr(holding, "model_copy"):
+                    adjusted = holding.model_copy(update={"quantity": available_qty})
+                else:
+                    adjusted = copy.copy(holding)
+                    setattr(adjusted, "quantity", available_qty)
+                adjusted_sellable.append(adjusted)
+
+            sellable = adjusted_sellable
             if not sellable:
                 return
 

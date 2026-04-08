@@ -1,4 +1,5 @@
 import pytest
+from util.time_util import now_kst
 import httpx
 
 
@@ -283,6 +284,7 @@ async def test_admin_news_items_route_supports_archive_filters(client):
 
 @pytest.mark.asyncio
 async def test_admin_news_overview_route_returns_ingestion_and_performance_summary(client, monkeypatch):
+    now = now_kst()
     async def fake_build_summary(_db, *, days: int):
         assert days == 30
         return {
@@ -345,14 +347,14 @@ async def test_admin_news_overview_route_returns_ingestion_and_performance_summa
                 {
                     "source_code": "DART",
                     "title": "삼성전자 신규 투자 공시",
-                    "published_at": "2026-04-06T09:11:00+09:00",
+                    "published_at": now.isoformat(),
                     "symbols": ["005930"],
                     "url": "https://dart.fss.or.kr/example/overview-1",
                 },
                 {
                     "source_code": "REUTERS",
                     "title": "Memory prices outlook improves",
-                    "published_at": "2026-04-05T22:30:00+09:00",
+                    "published_at": now.isoformat(),
                     "symbols": ["005930"],
                     "url": "https://www.reuters.com/example/overview-2",
                 },

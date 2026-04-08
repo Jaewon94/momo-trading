@@ -75,6 +75,8 @@ MUTABLE_SETTINGS = [
     "NEWS_TRANSLATION_CONCURRENCY",
     "NEWS_CLAUDE_SHARE_SESSION",
     "NEWS_RECHECK_COOLDOWN_SEC",
+    "BROKER_BALANCE_RETRY_COUNT",
+    "BROKER_BALANCE_RETRY_DELAY_MS",
     "NEWS_SHADOW_ENABLED",
     "NEWS_ROLLOUT_MIN_SAMPLE_SIZE",
     "NEWS_ROLLOUT_MIN_PROFIT_FACTOR",
@@ -102,12 +104,16 @@ def coerce_runtime_setting_value(key: str, value: Any) -> Any:
             "NEWS_FETCH_CONCURRENCY",
             "NEWS_TRANSLATION_CONCURRENCY",
             "NEWS_SOURCE_FAILURE_THRESHOLD",
+            "BROKER_BALANCE_RETRY_COUNT",
         }:
             if normalized_int < 1 or normalized_int > 8:
                 raise HTTPException(status_code=400, detail=f"{key} must be between 1 and 8")
         if key == "NEWS_SOURCE_FAILURE_COOLDOWN_MIN":
             if normalized_int < 1 or normalized_int > 240:
                 raise HTTPException(status_code=400, detail=f"{key} must be between 1 and 240")
+        if key == "BROKER_BALANCE_RETRY_DELAY_MS":
+            if normalized_int < 100 or normalized_int > 5000:
+                raise HTTPException(status_code=400, detail=f"{key} must be between 100 and 5000")
         return normalized_int
 
     if isinstance(current, float):

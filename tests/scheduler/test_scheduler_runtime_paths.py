@@ -1140,6 +1140,9 @@ async def test_force_liquidation_triggers_rescan_after_successful_swing_sell(mon
     async def fake_get_holdings() -> list:
         return [holding]
 
+    async def fake_get_pending_orders() -> list:
+        return []
+
     async def fake_smart_liquidation(holdings):
         return holdings, []
 
@@ -1177,6 +1180,7 @@ async def test_force_liquidation_triggers_rescan_after_successful_swing_sell(mon
     monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
     monkeypatch.setattr("scheduler.scheduler.settings.DAY_TRADING_ONLY", False)
     monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
+    monkeypatch.setattr("trading.account_manager.account_manager.get_pending_orders", fake_get_pending_orders)
     monkeypatch.setattr(scheduler, "_smart_liquidation", fake_smart_liquidation)
     monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
     monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
@@ -1391,9 +1395,13 @@ async def test_force_liquidation_returns_when_no_positive_quantity_exists(monkey
         smart_called = True
         return [], []
 
+    async def fake_get_pending_orders() -> list:
+        return []
+
     monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_holiday", lambda: False)
     monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
     monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
+    monkeypatch.setattr("trading.account_manager.account_manager.get_pending_orders", fake_get_pending_orders)
     monkeypatch.setattr(scheduler, "_smart_liquidation", fake_smart_liquidation)
 
     await scheduler._force_liquidation()
@@ -1427,10 +1435,14 @@ async def test_force_liquidation_day_trading_mode_skips_smart_liquidation(monkey
     async def fake_acquire_sell(_symbol: str) -> bool:
         return False
 
+    async def fake_get_pending_orders() -> list:
+        return []
+
     monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_holiday", lambda: False)
     monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
     monkeypatch.setattr("scheduler.scheduler.settings.DAY_TRADING_ONLY", True)
     monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
+    monkeypatch.setattr("trading.account_manager.account_manager.get_pending_orders", fake_get_pending_orders)
     monkeypatch.setattr(scheduler, "_smart_liquidation", fake_smart_liquidation)
     monkeypatch.setattr("trading.mcp_client.mcp_client.place_order", fake_place_order)
     monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
@@ -1474,10 +1486,14 @@ async def test_force_liquidation_retries_failed_orders_once(monkeypatch) -> None
     async def fake_acquire_sell(_symbol: str) -> bool:
         return True
 
+    async def fake_get_pending_orders() -> list:
+        return []
+
     monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_holiday", lambda: False)
     monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
     monkeypatch.setattr("scheduler.scheduler.settings.DAY_TRADING_ONLY", False)
     monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
+    monkeypatch.setattr("trading.account_manager.account_manager.get_pending_orders", fake_get_pending_orders)
     monkeypatch.setattr(scheduler, "_smart_liquidation", fake_smart_liquidation)
     monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
     monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
@@ -1515,10 +1531,14 @@ async def test_force_liquidation_continues_when_order_task_raises(monkeypatch) -
     async def fake_acquire_sell(_symbol: str) -> bool:
         return True
 
+    async def fake_get_pending_orders() -> list:
+        return []
+
     monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_holiday", lambda: False)
     monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
     monkeypatch.setattr("scheduler.scheduler.settings.DAY_TRADING_ONLY", False)
     monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
+    monkeypatch.setattr("trading.account_manager.account_manager.get_pending_orders", fake_get_pending_orders)
     monkeypatch.setattr(scheduler, "_smart_liquidation", fake_smart_liquidation)
     monkeypatch.setattr("trading.mcp_client.mcp_client.place_order", fake_place_order)
     monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
@@ -1529,6 +1549,46 @@ async def test_force_liquidation_continues_when_order_task_raises(monkeypatch) -
     await scheduler._force_liquidation()
 
     assert any("스마트 청산 완료: 0건 매도" in message for message in logs)
+
+
+@pytest.mark.asyncio
+async def test_force_liquidation_subtracts_pending_sell_quantity(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    place_calls: list[tuple[str, int]] = []
+    holding = SimpleNamespace(symbol="215790", name="이노인스트루먼트", quantity=100, pnl_rate=-3.2, current_price=1450)
+    pending_order = SimpleNamespace(symbol="215790", side="매도", remaining_qty=60)
+
+    async def fake_get_holdings() -> list:
+        return [holding]
+
+    async def fake_get_pending_orders() -> list:
+        return [pending_order]
+
+    async def fake_place_market_sell(symbol: str, quantity: int, market=None):
+        place_calls.append((symbol, quantity))
+        return SimpleNamespace(success=True, order_id="SELL-1", error=None)
+
+    async def fake_log(*args, **kwargs):
+        return None
+
+    async def fake_acquire_sell(_symbol: str) -> bool:
+        return True
+
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_holiday", lambda: False)
+    monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr("scheduler.scheduler.settings.DAY_TRADING_ONLY", True)
+    monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
+    monkeypatch.setattr("trading.account_manager.account_manager.get_pending_orders", fake_get_pending_orders)
+    monkeypatch.setattr(scheduler, "_place_market_sell", fake_place_market_sell)
+    monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.trading_agent.trading_agent._acquire_sell", fake_acquire_sell)
+    monkeypatch.setattr("agent.trading_agent.trading_agent._release_sell", lambda _symbol: None)
+    monkeypatch.setattr("agent.decision_maker.decision_maker.confirm_and_record", lambda **kwargs: __import__("asyncio").sleep(0, result=None))
+    monkeypatch.setattr("realtime.event_detector.event_detector.remove_levels", lambda _symbol: None)
+
+    await scheduler._force_liquidation()
+
+    assert place_calls == [("215790", 40)]
 
 
 @pytest.mark.asyncio
@@ -2325,6 +2385,9 @@ async def test_force_liquidation_uses_broker_adapter_for_kiwoom_sell_path(monkey
     async def fake_get_holdings() -> list:
         return [holding]
 
+    async def fake_get_pending_orders() -> list:
+        return []
+
     async def fake_smart_liquidation(holdings):
         return holdings, []
 
@@ -2345,6 +2408,7 @@ async def test_force_liquidation_uses_broker_adapter_for_kiwoom_sell_path(monkey
     monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
     monkeypatch.setattr("scheduler.scheduler.settings.DAY_TRADING_ONLY", False)
     monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
+    monkeypatch.setattr("trading.account_manager.account_manager.get_pending_orders", fake_get_pending_orders)
     monkeypatch.setattr(scheduler, "_smart_liquidation", fake_smart_liquidation)
     monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
     monkeypatch.setattr("trading.mcp_client.mcp_client.place_order", fail_place_order)
@@ -2353,7 +2417,7 @@ async def test_force_liquidation_uses_broker_adapter_for_kiwoom_sell_path(monkey
     monkeypatch.setattr("agent.trading_agent.trading_agent._release_sell", lambda _symbol: None)
     monkeypatch.setattr("agent.decision_maker.decision_maker.confirm_and_record", fake_confirm_and_record)
     monkeypatch.setattr("realtime.event_detector.event_detector.remove_levels", lambda _symbol: None)
-    monkeypatch.setattr(scheduler, "_trigger_rescan_after_sell", lambda: None)
+    monkeypatch.setattr(scheduler, "_trigger_rescan_after_sell", lambda: __import__("asyncio").sleep(0))
     monkeypatch.setattr("asyncio.create_task", lambda coro: (coro.close(), object())[1] if hasattr(coro, "close") else object())
 
     await scheduler._force_liquidation()
@@ -2440,3 +2504,11 @@ async def test_check_overnight_gap_uses_broker_adapter_for_kiwoom_sell_path(monk
     assert adapter_orders[0].side == OrderSide.SELL
     assert adapter_orders[0].order_type == OrderType.MARKET
     assert adapter_orders[0].market == Market.KRX
+    async def fake_get_pending_orders() -> list:
+        return []
+
+    async def fake_get_pending_orders() -> list:
+        return []
+
+    async def fake_get_pending_orders() -> list:
+        return []

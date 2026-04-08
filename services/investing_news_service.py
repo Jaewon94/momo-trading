@@ -1,6 +1,7 @@
 """Investing.com Stock Market News RSS 수집 서비스."""
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -14,6 +15,8 @@ from util.time_util import KST, now_kst
 
 class InvestingNewsService:
     RSS_URL = "https://www.investing.com/rss/news_25.rss"
+    _BARE_AMPERSAND_RE = re.compile(r"&(?!#?\w+;)")
+    _INVALID_XML_RE = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F]")
 
     def __init__(self, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self._transport = transport
@@ -36,7 +39,10 @@ class InvestingNewsService:
         return await news_ingest_service.ingest_items(db, items)
 
     def _parse_rss(self, xml_text: str) -> list[dict[str, Any]]:
-        root = ElementTree.fromstring(xml_text)
+        try:
+            root = ElementTree.fromstring(xml_text)
+        except ElementTree.ParseError:
+            root = ElementTree.fromstring(self._sanitize_xml(xml_text))
         items: list[dict[str, Any]] = []
 
         for node in root.findall("./channel/item"):
@@ -62,6 +68,18 @@ class InvestingNewsService:
                 },
             })
         return items
+
+    @classmethod
+    def _sanitize_xml(cls, xml_text: str) -> str:
+        text = str(xml_text or "").strip()
+        if not text:
+            raise ElementTree.ParseError("empty xml")
+        closing_index = text.rfind("</rss>")
+        if closing_index >= 0:
+            text = text[: closing_index + len("</rss>")]
+        text = cls._INVALID_XML_RE.sub("", text)
+        text = cls._BARE_AMPERSAND_RE.sub("&amp;", text)
+        return text
 
     @staticmethod
     def _parse_published_at(value: str | None) -> datetime:
