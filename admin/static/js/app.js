@@ -1811,17 +1811,17 @@ function renderPortfolioQuickStats(balance, holdings, pendingOrders, trades) {
     <div class="portfolio-stat portfolio-stat-hero">
       <div class="portfolio-stat-label">총자산</div>
       <div class="portfolio-stat-value">${formatKRW(stats.totalAsset)}</div>
-      <div class="portfolio-stat-meta">현금 ${formatKRW(stats.cash)} · 주식 ${formatKRW(stats.stockValue)}</div>
+      <div class="portfolio-stat-meta">현재 계좌 기준 · 현금 ${formatKRW(stats.cash)} · 주식 ${formatKRW(stats.stockValue)}</div>
     </div>
     <div class="portfolio-stat">
-      <div class="portfolio-stat-label">평가손익</div>
+      <div class="portfolio-stat-label">보유 평가손익</div>
       <div class="portfolio-stat-value ${unrealizedClass}">${unrealizedLabel}</div>
-      <div class="portfolio-stat-meta">${Number.isFinite(stats.unrealizedPnlRate) ? `${stats.unrealizedPnlRate >= 0 ? '+' : ''}${stats.unrealizedPnlRate.toFixed(2)}%` : '-'}</div>
+      <div class="portfolio-stat-meta">현재 들고 있는 종목 기준 · ${Number.isFinite(stats.unrealizedPnlRate) ? `${stats.unrealizedPnlRate >= 0 ? '+' : ''}${stats.unrealizedPnlRate.toFixed(2)}%` : '-'}</div>
     </div>
     <div class="portfolio-stat">
       <div class="portfolio-stat-label">당일 실현손익</div>
       <div class="portfolio-stat-value ${realizedClass}">${realizedLabel}</div>
-      <div class="portfolio-stat-meta">${realizedMeta}</div>
+      <div class="portfolio-stat-meta">오늘 청산 완료 기준 · ${realizedMeta}</div>
     </div>
     <div class="portfolio-stat">
       <div class="portfolio-stat-label">포지션 / 미체결</div>
