@@ -8,7 +8,7 @@ from typing import Any
 
 from loguru import logger
 
-from core.database import AsyncSessionLocal
+from core.database import AsyncSessionLocal, run_sqlite_write_with_retry
 from models.error_event import ErrorEvent
 from models.error_incident import ErrorIncident
 from repositories.error_event_repository import ErrorEventRepository
@@ -69,37 +69,40 @@ class ErrorCaptureService:
         )
 
         try:
-            async with AsyncSessionLocal() as session:
-                async with session.begin():
-                    await ErrorEventRepository(session).create(event)
-                    incident_repo = ErrorIncidentRepository(session)
-                    incident = await incident_repo.get_by_fingerprint(fingerprint)
-                    if incident is None:
-                        incident = ErrorIncident(
-                            fingerprint=fingerprint,
-                            title=_truncate(f"{component} · {operation} · {exception_type}", 200) or component,
-                            component=component,
-                            operation=operation,
-                            severity=severity,
-                            status="OPEN",
-                            first_seen_at=now,
-                            last_seen_at=now,
-                            occurrence_count=1,
-                            exception_type=exception_type,
-                            last_message=exception_message,
-                            last_symbol=symbol,
-                            last_provider=provider,
-                        )
-                        await incident_repo.create(incident)
-                    else:
-                        incident.severity = severity
-                        incident.last_seen_at = now
-                        incident.occurrence_count = int(incident.occurrence_count or 0) + 1
-                        incident.exception_type = exception_type
-                        incident.last_message = exception_message
-                        incident.last_symbol = symbol
-                        incident.last_provider = provider
-                        await incident_repo.update(incident)
+            async def _persist() -> None:
+                async with AsyncSessionLocal() as session:
+                    async with session.begin():
+                        await ErrorEventRepository(session).create(event)
+                        incident_repo = ErrorIncidentRepository(session)
+                        incident = await incident_repo.get_by_fingerprint(fingerprint)
+                        if incident is None:
+                            incident = ErrorIncident(
+                                fingerprint=fingerprint,
+                                title=_truncate(f"{component} · {operation} · {exception_type}", 200) or component,
+                                component=component,
+                                operation=operation,
+                                severity=severity,
+                                status="OPEN",
+                                first_seen_at=now,
+                                last_seen_at=now,
+                                occurrence_count=1,
+                                exception_type=exception_type,
+                                last_message=exception_message,
+                                last_symbol=symbol,
+                                last_provider=provider,
+                            )
+                            await incident_repo.create(incident)
+                        else:
+                            incident.severity = severity
+                            incident.last_seen_at = now
+                            incident.occurrence_count = int(incident.occurrence_count or 0) + 1
+                            incident.exception_type = exception_type
+                            incident.last_message = exception_message
+                            incident.last_symbol = symbol
+                            incident.last_provider = provider
+                            await incident_repo.update(incident)
+
+            await run_sqlite_write_with_retry(_persist)
             return {
                 "fingerprint": fingerprint,
                 "exception_type": exception_type,

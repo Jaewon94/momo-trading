@@ -15,7 +15,7 @@ from typing import Any
 from loguru import logger
 
 from core.config import settings
-from core.database import AsyncSessionLocal
+from core.database import AsyncSessionLocal, run_sqlite_write_with_retry
 from models.execution_metric import ExecutionMetric
 from models.resource_snapshot import ResourceSnapshot
 from repositories.execution_metric_repository import ExecutionMetricRepository
@@ -238,9 +238,12 @@ class ObservabilityService:
             detail=self._serialize_detail(detail),
         )
         try:
-            async with AsyncSessionLocal() as session:
-                async with session.begin():
-                    await ExecutionMetricRepository(session).create(entry)
+            async def _persist() -> None:
+                async with AsyncSessionLocal() as session:
+                    async with session.begin():
+                        await ExecutionMetricRepository(session).create(entry)
+
+            await run_sqlite_write_with_retry(_persist)
             return entry
         except Exception as exc:
             logger.debug("실행 메트릭 저장 실패: {}", str(exc))
@@ -344,9 +347,12 @@ class ObservabilityService:
             detail=self._serialize_detail(detail),
         )
         try:
-            async with AsyncSessionLocal() as session:
-                async with session.begin():
-                    await ResourceSnapshotRepository(session).create(entry)
+            async def _persist() -> None:
+                async with AsyncSessionLocal() as session:
+                    async with session.begin():
+                        await ResourceSnapshotRepository(session).create(entry)
+
+            await run_sqlite_write_with_retry(_persist)
             return entry
         except Exception as exc:
             logger.debug("리소스 스냅샷 저장 실패: {}", str(exc))

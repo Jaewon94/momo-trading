@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "local"  # local | staging | production
 
     DATABASE_URL: str = DEFAULT_DATABASE_URL
+    SQLITE_BUSY_TIMEOUT_MS: int = 5000
+    SQLITE_WRITE_RETRY_COUNT: int = 3
+    SQLITE_WRITE_RETRY_DELAY_MS: int = 150
     LOG_LEVEL: str = "DEBUG"
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:8000"]
 
