@@ -51,7 +51,7 @@ async def test_cnbc_news_service_fetches_rss_items():
 
 
 @pytest.mark.asyncio
-async def test_cnbc_news_service_fetch_and_ingest_translates_items(monkeypatch):
+async def test_cnbc_news_service_fetch_and_ingest_marks_items_pending_translation():
     import httpx
 
     from repositories.news_item_repository import NewsItemRepository
@@ -65,24 +65,6 @@ async def test_cnbc_news_service_fetch_and_ingest_translates_items(monkeypatch):
         )
     )
 
-    async def fake_translate_items(items):
-        enriched = []
-        for item in items:
-            copied = dict(item)
-            copied["metadata"] = {
-                **dict(item.get("metadata") or {}),
-                "translated_title": "AI 메모리 수요 확대로 삼성 공급망 강세",
-                "translated_summary": "CNBC 기사 한글 요약",
-                "translation_provider": "OLLAMA",
-            }
-            enriched.append(copied)
-        return enriched
-
-    monkeypatch.setattr(
-        "services.cnbc_news_service.news_translation_service.translate_items",
-        fake_translate_items,
-    )
-
     async with TestAsyncSessionLocal() as session:
         service = CNBCNewsService(transport=transport)
         summary = await service.fetch_and_ingest(session, limit=5)
@@ -91,5 +73,9 @@ async def test_cnbc_news_service_fetch_and_ingest_translates_items(monkeypatch):
 
     assert summary["received"] == 2
     assert summary["created"] == 2
-    assert len(items) == 2
-    assert "translated_title" in (items[0].metadata_json or "")
+    matched = [item for item in items if item.url in {
+        "https://www.cnbc.com/2026/04/05/samsung-suppliers-rise.html",
+        "https://www.cnbc.com/2026/04/05/oil-retreats.html",
+    }]
+    assert len(matched) == 2
+    assert all('"translation_status": "PENDING"' in (item.metadata_json or "") for item in matched)

@@ -1,4 +1,5 @@
 import pytest
+from types import SimpleNamespace
 
 
 @pytest.mark.asyncio
@@ -46,6 +47,17 @@ async def test_system_status_marks_mcp_as_optional_for_kiwoom(client, monkeypatc
     monkeypatch.setattr(
         "services.broker_runtime_service.BrokerRuntimeService.mcp_connected",
         property(lambda self: False),
+    )
+    monkeypatch.setattr(
+        "api.routes.admin.get_broker_adapter",
+        lambda: SimpleNamespace(
+            capabilities=SimpleNamespace(
+                supports_nxt_quotes=False,
+                supports_after_hours_orders=False,
+                supports_after_hours_automation=False,
+                supported_order_sessions=[SimpleNamespace(value="REGULAR")],
+            )
+        ),
     )
     monkeypatch.setattr("api.routes.admin.trading_scheduler._running", False)
     monkeypatch.setattr("agent.trading_agent.trading_agent._running", True, raising=False)
@@ -125,3 +137,39 @@ async def test_system_status_includes_operations_summary(client, monkeypatch):
     assert operations["ollama"]["status"] == "WARN"
     assert operations["orders"]["status"] == "WARN"
     assert operations["orders"]["message"] == "주문 한도 초과"
+
+
+@pytest.mark.asyncio
+async def test_system_status_warns_when_news_sources_are_effectively_limited(client, monkeypatch):
+    monkeypatch.setattr("api.routes.admin.settings.BROKER_PROVIDER", "KIWOOM")
+    monkeypatch.setattr("api.routes.admin.settings.NEWS_POLL_ENABLED", True)
+    monkeypatch.setattr("api.routes.admin.settings.NEWS_INCLUDE_FOREIGN", False)
+    monkeypatch.setattr("api.routes.admin.settings.NEWS_DOMESTIC_MEDIA_ENABLED", False)
+    monkeypatch.setattr(
+        "services.broker_runtime_service.BrokerRuntimeService.mcp_required",
+        property(lambda self: False),
+    )
+    monkeypatch.setattr(
+        "services.broker_runtime_service.BrokerRuntimeService.mcp_connected",
+        property(lambda self: False),
+    )
+    monkeypatch.setattr("api.routes.admin.trading_scheduler._running", True)
+    monkeypatch.setattr("agent.trading_agent.trading_agent._running", True, raising=False)
+    monkeypatch.setattr(
+        "api.routes.admin.news_runtime_service.get_snapshot",
+        lambda *, include_foreign: {
+            "overall": {
+                "last_status": "SKIPPED",
+                "last_message": "NEWS_INCLUDE_FOREIGN disabled",
+                "last_run_at": "2026-04-08T09:50:00+09:00",
+            },
+            "sources": {},
+        },
+    )
+
+    response = await client.get("/api/v1/admin/system/status")
+
+    assert response.status_code == 200
+    operations = response.json()["data"]["operations"]
+    assert operations["news_polling"]["status"] == "WARN"
+    assert operations["news_polling"]["label"] == "뉴스 소스 제한됨"

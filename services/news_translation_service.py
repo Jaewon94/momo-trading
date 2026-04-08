@@ -15,6 +15,14 @@ from trading.enums import LLMTier
 
 
 class NewsTranslationService:
+    async def translate_item(
+        self,
+        item: dict[str, Any],
+        *,
+        news_selection=None,
+    ) -> dict[str, Any]:
+        return await self._translate_item(item, news_selection=news_selection)
+
     async def translate_items(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         translated: list[dict[str, Any] | None] = [None] * len(items)
         news_selection = resolve_news_selection()

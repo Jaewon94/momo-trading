@@ -64,6 +64,8 @@ async def test_news_reporting_service_returns_empty_storage_snapshot_when_table_
     assert overview["recent_items"] == []
     assert overview["ingestion"]["total_count"] == 0
     assert overview["ingestion"]["recent_24h_count"] == 0
+    assert overview["health"]["status"] == "WARN"
+    assert "최근 24시간 신규 적재 0건" in overview["health"]["alerts"]
     assert overview["runtime"]["overall"]["last_status"] == "IDLE"
     assert "news_items" in overview["storage"]["message"]
     assert overview["performance"]["rollout"]["status"] == "HOLDOUT"

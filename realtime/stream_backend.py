@@ -1,4 +1,5 @@
 """브로커별 실시간 스트림 백엔드 선택"""
+import asyncio
 from functools import lru_cache
 from typing import Any, Protocol
 
@@ -73,7 +74,7 @@ class NullStreamBackend:
         return None
 
     async def listen(self) -> None:
-        return None
+        await asyncio.sleep(1)
 
     @property
     def subscription_count(self) -> int:

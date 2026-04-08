@@ -62,7 +62,7 @@ async def test_bloomberg_news_service_fetches_sitemap_items():
 
 
 @pytest.mark.asyncio
-async def test_bloomberg_news_service_fetch_and_ingest_translates_foreign_items(monkeypatch):
+async def test_bloomberg_news_service_fetch_and_ingest_marks_foreign_items_pending_translation():
     import httpx
 
     from repositories.news_item_repository import NewsItemRepository
@@ -76,24 +76,6 @@ async def test_bloomberg_news_service_fetch_and_ingest_translates_foreign_items(
         )
     )
 
-    async def fake_translate_items(items):
-        enriched = []
-        for item in items:
-            copied = dict(item)
-            copied["metadata"] = {
-                **dict(item.get("metadata") or {}),
-                "translated_title": "반도체 사이클 개선에 삼성·LG 강세",
-                "translated_summary": "블룸버그 기사 한글 요약",
-                "translation_provider": "CODEX",
-            }
-            enriched.append(copied)
-        return enriched
-
-    monkeypatch.setattr(
-        "services.bloomberg_news_service.news_translation_service.translate_items",
-        fake_translate_items,
-    )
-
     async with TestAsyncSessionLocal() as session:
         service = BloombergNewsService(transport=transport)
         summary = await service.fetch_and_ingest(session, limit=5)
@@ -105,4 +87,4 @@ async def test_bloomberg_news_service_fetch_and_ingest_translates_foreign_items(
     urls = {item.url for item in items}
     assert "https://www.bloomberg.com/news/articles/2026-04-05/example-one" in urls
     assert "https://www.bloomberg.com/news/articles/2026-04-05/example-two" in urls
-    assert any("translated_title" in (item.metadata_json or "") for item in items)
+    assert all('"translation_status": "PENDING"' in (item.metadata_json or "") for item in items)

@@ -9,7 +9,6 @@ from xml.etree import ElementTree
 import httpx
 
 from services.news_ingest_service import news_ingest_service
-from services.news_translation_service import news_translation_service
 from util.time_util import KST, now_kst
 
 
@@ -38,8 +37,7 @@ class BloombergNewsService:
 
     async def fetch_and_ingest(self, db, *, limit: int = 30) -> dict[str, int]:
         items = await self.fetch_recent_news(limit=limit)
-        translated = await news_translation_service.translate_items(items)
-        return await news_ingest_service.ingest_items(db, translated)
+        return await news_ingest_service.ingest_items(db, items)
 
     def _parse_sitemap(self, xml_text: str) -> list[dict[str, Any]]:
         root = ElementTree.fromstring(xml_text)

@@ -1564,6 +1564,7 @@ async def get_system_status(db: AsyncSession = Depends(get_async_db)):
         }
 
     news_last_status = str(news_overall.get("last_status") or "IDLE").upper()
+    news_sources_limited = not settings.NEWS_INCLUDE_FOREIGN and not settings.NEWS_DOMESTIC_MEDIA_ENABLED
     if news_error_sources:
         news_ops = {
             "status": "ERROR",
@@ -1576,6 +1577,20 @@ async def get_system_status(db: AsyncSession = Depends(get_async_db)):
             "status": "ERROR",
             "label": "뉴스 폴링 오류",
             "message": str(news_overall.get("last_message") or "최근 뉴스 수집이 실패했습니다."),
+            "last_run_at": news_overall.get("last_run_at"),
+        }
+    elif news_sources_limited:
+        news_ops = {
+            "status": "WARN",
+            "label": "뉴스 소스 제한됨",
+            "message": "해외 뉴스와 국내 언론 소스가 모두 꺼져 있어 공시 위주로만 동작합니다.",
+            "last_run_at": news_overall.get("last_run_at"),
+        }
+    elif news_last_status == "SKIPPED":
+        news_ops = {
+            "status": "WARN",
+            "label": "뉴스 폴링 스킵",
+            "message": str(news_overall.get("last_message") or "최근 뉴스 폴링이 스킵되었습니다."),
             "last_run_at": news_overall.get("last_run_at"),
         }
     elif not settings.NEWS_POLL_ENABLED:

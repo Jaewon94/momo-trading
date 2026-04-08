@@ -78,6 +78,7 @@ class NewsReportingService:
         return {
             "baseline": performance.get("baseline") or {},
             "settings": self._build_settings_snapshot(),
+            "health": self._build_health_snapshot(ingestion),
             "storage": storage,
             "sources": {
                 "enabled_count": len(source_catalog),
@@ -128,6 +129,23 @@ class NewsReportingService:
             "rollout_max_drawdown_krw": float(settings.NEWS_ROLLOUT_MAX_DRAWDOWN_KRW or 0.0),
         }
 
+    @staticmethod
+    def _build_health_snapshot(ingestion: dict) -> dict:
+        alerts: list[str] = []
+        if not settings.NEWS_POLL_ENABLED:
+            alerts.append("자동 뉴스 폴링 비활성")
+        if not settings.NEWS_INCLUDE_FOREIGN and not settings.NEWS_DOMESTIC_MEDIA_ENABLED:
+            alerts.append("해외 뉴스와 국내 언론 소스가 모두 비활성")
+        if int(ingestion.get("recent_24h_count") or 0) == 0:
+            alerts.append("최근 24시간 신규 적재 0건")
+        if int(ingestion.get("translation_pending_count") or 0) > 0:
+            alerts.append(f"번역 대기 {int(ingestion.get('translation_pending_count') or 0)}건")
+        status = "WARN" if alerts else "OK"
+        return {
+            "status": status,
+            "alerts": alerts,
+        }
+
     async def _fetch_recent_items(
         self,
         session: AsyncSession,
@@ -159,6 +177,8 @@ class NewsReportingService:
                 "recent_7d_count": 0,
                 "latest_published_at": None,
                 "by_source_24h": [],
+                "translation_pending_count": 0,
+                "translation_failed_count": 0,
             }
 
         now = now_kst().replace(tzinfo=None)
@@ -188,12 +208,22 @@ class NewsReportingService:
             .group_by(NewsItem.source_code)
             .order_by(func.count(NewsItem.id).desc(), NewsItem.source_code.asc())
         )
+        translation_pending_stmt = select(func.count(NewsItem.id)).where(
+            NewsItem.source_code.in_(sorted(allowed_codes)),
+            NewsItem.metadata_json.like('%"translation_status"%PENDING%'),
+        )
+        translation_failed_stmt = select(func.count(NewsItem.id)).where(
+            NewsItem.source_code.in_(sorted(allowed_codes)),
+            NewsItem.metadata_json.like('%"translation_status"%FAILED%'),
+        )
 
         total_count = int((await session.execute(total_stmt)).scalar() or 0)
         recent_24h = int((await session.execute(recent_24h_stmt)).scalar() or 0)
         recent_7d = int((await session.execute(recent_7d_stmt)).scalar() or 0)
         latest_published_at = (await session.execute(latest_stmt)).scalar()
         by_source_rows = (await session.execute(by_source_stmt)).all()
+        translation_pending_count = int((await session.execute(translation_pending_stmt)).scalar() or 0)
+        translation_failed_count = int((await session.execute(translation_failed_stmt)).scalar() or 0)
 
         return {
             "total_count": total_count,
@@ -207,6 +237,8 @@ class NewsReportingService:
                 }
                 for source_code, count in by_source_rows
             ],
+            "translation_pending_count": translation_pending_count,
+            "translation_failed_count": translation_failed_count,
         }
 
 

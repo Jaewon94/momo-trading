@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import or_, select
+from sqlalchemy import not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.news_item import NewsItem
@@ -57,6 +57,22 @@ class NewsItemRepository(AsyncBaseRepository[NewsItem]):
         stmt = (
             stmt.order_by(NewsItem.published_at.desc(), NewsItem.created_at.desc())
             .offset(offset)
+            .limit(limit)
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_translation_backlog(self, *, limit: int = 50) -> list[NewsItem]:
+        stmt = (
+            select(NewsItem)
+            .where(
+                not_(NewsItem.language.like("ko%")),
+                or_(
+                    NewsItem.metadata_json.is_(None),
+                    NewsItem.metadata_json.like('%"translation_status"%PENDING%'),
+                ),
+            )
+            .order_by(NewsItem.published_at.asc(), NewsItem.created_at.asc())
             .limit(limit)
         )
         result = await self.db.execute(stmt)

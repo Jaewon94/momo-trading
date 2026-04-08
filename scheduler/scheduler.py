@@ -28,6 +28,7 @@ from core.events import Event, EventType, event_bus
 from services.observability_maintenance_service import observability_maintenance_service
 from services.observability_service import observability_service
 from services.error_capture_service import error_capture_service
+from services.news_translation_backfill_service import news_translation_backfill_service
 from trading.broker_factory import get_broker_adapter
 from trading.enums import ActivityPhase, ActivityType, Market, OrderSide, OrderType
 from trading.models import OrderRequest
@@ -44,6 +45,28 @@ class TradingScheduler:
         self._last_event_news_poll_by_symbol: dict[str, float] = {}
         self._event_handlers_registered = False
         self._register_news_event_handlers()
+
+    def _spawn_background_task(
+        self,
+        coro,
+        *,
+        task_name: str,
+        delay_seconds: float = 0.25,
+    ) -> None:
+        async def _runner() -> None:
+            try:
+                if delay_seconds > 0:
+                    await asyncio.sleep(delay_seconds)
+                await coro
+            except Exception as exc:
+                logger.warning("백그라운드 시작 작업 실패 ({}): {}", task_name, str(exc))
+                await error_capture_service.capture_exception(
+                    component="scheduler",
+                    operation=f"startup_task:{task_name}",
+                    exc=exc,
+                )
+
+        asyncio.create_task(_runner())
 
     @staticmethod
     def _build_scheduler() -> AsyncIOScheduler:
@@ -133,9 +156,19 @@ class TradingScheduler:
 
         # 서버 기동 시 현재 상태에 맞는 초기 작업 실행
         if trading_jobs_enabled:
-            await self._on_startup()
+            self._spawn_background_task(
+                self._on_startup(),
+                task_name="trading_startup",
+            )
         if news_jobs_enabled:
-            await self._news_poll()
+            self._spawn_background_task(
+                self._news_poll(),
+                task_name="initial_news_poll",
+            )
+            self._spawn_background_task(
+                self._news_translation_backfill(),
+                task_name="initial_news_translation_backfill",
+            )
 
     async def stop(self) -> None:
         if self._running:
@@ -230,6 +263,13 @@ class TradingScheduler:
                 id="news_poll_off_hours",
                 name="장외 뉴스 폴링",
                 kwargs={"market_hours": False},
+            )
+            self.scheduler.add_job(
+                self._news_translation_backfill,
+                "interval",
+                minutes=5,
+                id="news_translation_backfill",
+                name="뉴스 번역 백로그 처리",
             )
 
         if bool(getattr(settings, "METRICS_RESOURCE_SAMPLING_ENABLED", True)):
@@ -601,6 +641,37 @@ class TradingScheduler:
                     "trigger_reason": trigger_reason,
                     "market_hours": actual_market_hours,
                 },
+            )
+
+    async def _news_translation_backfill(self) -> None:
+        if not settings.NEWS_LLM_ENABLED:
+            return
+
+        from core.database import AsyncSessionLocal
+        from scheduler.market_calendar import market_calendar
+
+        actual_market_hours = market_calendar.is_krx_trading_hours()
+        try:
+            async with AsyncSessionLocal() as session:
+                summary = await news_translation_backfill_service.process_pending(
+                    session,
+                    market_hours=actual_market_hours,
+                )
+                await session.commit()
+            await observability_service.record_execution_metric(
+                metric_type="JOB",
+                metric_name="NEWS_TRANSLATION_BACKFILL",
+                status=str(summary.get("status") or "IDLE"),
+                elapsed_ms=0,
+                detail=summary,
+            )
+        except Exception as e:
+            logger.warning("뉴스 번역 백로그 처리 오류: {}", str(e))
+            await error_capture_service.capture_exception(
+                component="scheduler",
+                operation="news_translation_backfill",
+                exc=e,
+                detail={"market_hours": actual_market_hours},
             )
 
     async def _holdings_check(self) -> None:

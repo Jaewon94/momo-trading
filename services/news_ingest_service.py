@@ -508,6 +508,10 @@ class NewsIngestService:
         published_at = self._parse_datetime(raw.get("published_at"))
         symbols = self._normalize_symbols(raw.get("symbols"))
         metadata = raw.get("metadata") or {}
+        metadata = self._initialize_translation_metadata(
+            metadata,
+            language=str(raw.get("language") or source.language or "ko"),
+        )
         external_id = str(raw.get("external_id") or "").strip() or None
         url = str(raw.get("url") or "").strip() or None
         dedupe_hash = self._build_dedupe_hash(
@@ -561,6 +565,26 @@ class NewsIngestService:
         except (TypeError, ValueError):
             return {}
         return payload if isinstance(payload, dict) else {}
+
+    @staticmethod
+    def _initialize_translation_metadata(
+        metadata: dict[str, Any],
+        *,
+        language: str,
+    ) -> dict[str, Any]:
+        payload = dict(metadata or {})
+        normalized_language = str(language or "").lower()
+        if payload.get("translated_title") or payload.get("translated_summary"):
+            payload.setdefault("translation_status", "SUCCESS")
+            return payload
+        if payload.get("translation_status"):
+            return payload
+        if normalized_language.startswith("ko"):
+            payload["translation_status"] = "SKIPPED"
+            return payload
+        payload["translation_status"] = "PENDING"
+        payload.setdefault("translation_attempts", 0)
+        return payload
 
     @staticmethod
     def _parse_datetime(value: Any) -> datetime:

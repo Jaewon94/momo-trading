@@ -67,29 +67,11 @@ async def test_investing_news_service_fetches_rss_items():
 
 
 @pytest.mark.asyncio
-async def test_investing_news_service_fetch_and_ingest_translates_items(monkeypatch):
+async def test_investing_news_service_fetch_and_ingest_marks_items_pending_translation():
     import httpx
 
     from repositories.news_item_repository import NewsItemRepository
     from services.investing_news_service import InvestingNewsService
-
-    async def fake_translate_items(items):
-        enriched = []
-        for item in items:
-            copied = dict(item)
-            copied["metadata"] = {
-                **dict(item.get("metadata") or {}),
-                "translated_title": "AI 지출 강세에 반도체주 상승",
-                "translated_summary": "Investing.com 기사 한글 요약",
-                "translation_provider": "OLLAMA",
-            }
-            enriched.append(copied)
-        return enriched
-
-    monkeypatch.setattr(
-        "services.investing_news_service.news_translation_service.translate_items",
-        fake_translate_items,
-    )
 
     transport = httpx.MockTransport(
         lambda request: httpx.Response(
@@ -108,7 +90,7 @@ async def test_investing_news_service_fetch_and_ingest_translates_items(monkeypa
     assert summary["received"] == 2
     assert summary["created"] == 2
     assert len(items) == 2
-    assert "translated_title" in (items[0].metadata_json or "")
+    assert '"translation_status": "PENDING"' in (items[0].metadata_json or "")
 
 
 @pytest.mark.asyncio

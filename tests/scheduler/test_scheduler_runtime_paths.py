@@ -43,7 +43,9 @@ async def test_scheduler_start_runs_news_jobs_when_trading_disabled(monkeypatch)
     scheduler = TradingScheduler()
     startup_called = False
     news_poll_called = False
+    news_translation_called = False
     job_ids: list[str] = []
+    created_tasks: list[object] = []
 
     async def fake_on_startup() -> None:
         nonlocal startup_called
@@ -53,6 +55,10 @@ async def test_scheduler_start_runs_news_jobs_when_trading_disabled(monkeypatch)
         nonlocal news_poll_called
         news_poll_called = True
 
+    async def fake_news_translation_backfill() -> None:
+        nonlocal news_translation_called
+        news_translation_called = True
+
     class FakeScheduler:
         def start(self) -> None:
             return None
@@ -60,18 +66,31 @@ async def test_scheduler_start_runs_news_jobs_when_trading_disabled(monkeypatch)
         def add_job(self, _func, _trigger, **kwargs) -> None:
             job_ids.append(kwargs["id"])
 
+    class DummyTask:
+        pass
+
+    def fake_create_task(coro):
+        created_tasks.append(coro)
+        return DummyTask()
+
     monkeypatch.setattr("scheduler.scheduler.settings.SCHEDULER_ENABLED", False)
     monkeypatch.setattr("scheduler.scheduler.settings.NEWS_POLL_ENABLED", True)
     monkeypatch.setattr(scheduler, "_on_startup", fake_on_startup)
     monkeypatch.setattr(scheduler, "_news_poll", fake_news_poll)
+    monkeypatch.setattr(scheduler, "_news_translation_backfill", fake_news_translation_backfill)
     monkeypatch.setattr(scheduler, "_build_scheduler", lambda: FakeScheduler())
+    monkeypatch.setattr("asyncio.create_task", fake_create_task)
 
     await scheduler.start()
+
+    for coro in created_tasks:
+        await coro
 
     assert scheduler.is_running is True
     assert startup_called is False
     assert news_poll_called is True
-    assert set(job_ids) == {"news_poll_trading", "news_poll_off_hours", "resource_snapshot", "observability_maintenance"}
+    assert news_translation_called is True
+    assert set(job_ids) == {"news_poll_trading", "news_poll_off_hours", "news_translation_backfill", "resource_snapshot", "observability_maintenance"}
 
 
 @pytest.mark.asyncio
@@ -79,7 +98,9 @@ async def test_scheduler_start_runs_news_poll_once_on_startup_when_trading_enabl
     scheduler = TradingScheduler()
     startup_called = False
     news_poll_called = False
+    news_translation_called = False
     job_ids: list[str] = []
+    created_tasks: list[object] = []
 
     async def fake_on_startup() -> None:
         nonlocal startup_called
@@ -89,6 +110,10 @@ async def test_scheduler_start_runs_news_poll_once_on_startup_when_trading_enabl
         nonlocal news_poll_called
         news_poll_called = True
 
+    async def fake_news_translation_backfill() -> None:
+        nonlocal news_translation_called
+        news_translation_called = True
+
     class FakeScheduler:
         def start(self) -> None:
             return None
@@ -96,19 +121,33 @@ async def test_scheduler_start_runs_news_poll_once_on_startup_when_trading_enabl
         def add_job(self, _func, _trigger, **kwargs) -> None:
             job_ids.append(kwargs["id"])
 
+    class DummyTask:
+        pass
+
+    def fake_create_task(coro):
+        created_tasks.append(coro)
+        return DummyTask()
+
     monkeypatch.setattr("scheduler.scheduler.settings.SCHEDULER_ENABLED", True)
     monkeypatch.setattr("scheduler.scheduler.settings.NEWS_POLL_ENABLED", True)
     monkeypatch.setattr(scheduler, "_on_startup", fake_on_startup)
     monkeypatch.setattr(scheduler, "_news_poll", fake_news_poll)
+    monkeypatch.setattr(scheduler, "_news_translation_backfill", fake_news_translation_backfill)
     monkeypatch.setattr(scheduler, "_build_scheduler", lambda: FakeScheduler())
+    monkeypatch.setattr("asyncio.create_task", fake_create_task)
 
     await scheduler.start()
+
+    for coro in created_tasks:
+        await coro
 
     assert scheduler.is_running is True
     assert startup_called is True
     assert news_poll_called is True
+    assert news_translation_called is True
     assert "news_poll_trading" in job_ids
     assert "news_poll_off_hours" in job_ids
+    assert "news_translation_backfill" in job_ids
     assert "resource_snapshot" in job_ids
     assert "observability_maintenance" in job_ids
 
@@ -222,6 +261,7 @@ def test_scheduler_setup_jobs_registers_expected_job_ids() -> None:
         "intraday_rescan",
         "news_poll_trading",
         "news_poll_off_hours",
+        "news_translation_backfill",
         "resource_snapshot",
         "observability_maintenance",
         "holdings_check",
