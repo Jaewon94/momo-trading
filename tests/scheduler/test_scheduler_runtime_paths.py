@@ -278,6 +278,7 @@ def test_scheduler_setup_jobs_registers_expected_job_ids() -> None:
 async def test_scheduler_news_poll_calls_service_with_market_hours(monkeypatch) -> None:
     scheduler = TradingScheduler()
     observed = {}
+    committed = False
 
     async def fake_poll_sources(_session, *, market_hours: bool, mode: str | None = None):
         observed["market_hours"] = market_hours
@@ -286,10 +287,14 @@ async def test_scheduler_news_poll_calls_service_with_market_hours(monkeypatch) 
 
     class FakeSession:
         async def __aenter__(self):
-            return object()
+            return self
 
         async def __aexit__(self, exc_type, exc, tb):
             return False
+
+        async def commit(self):
+            nonlocal committed
+            committed = True
 
     monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_trading_hours", lambda: True)
     monkeypatch.setattr("scheduler.scheduler.settings.NEWS_POLL_ENABLED", True)
@@ -300,6 +305,7 @@ async def test_scheduler_news_poll_calls_service_with_market_hours(monkeypatch) 
 
     assert observed["market_hours"] is True
     assert observed["mode"] == "AUTO_TRADING"
+    assert committed is True
 
 
 @pytest.mark.asyncio

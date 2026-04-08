@@ -621,6 +621,7 @@ class TradingScheduler:
                         market_hours=actual_market_hours,
                         mode=runtime_mode,
                     )
+                    await session.commit()
             if summary.get("skipped"):
                 logger.debug("뉴스 폴링 스킵: {}", summary.get("reason", "unknown"))
             if summary.get("created"):
