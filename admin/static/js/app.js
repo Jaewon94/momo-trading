@@ -40,7 +40,11 @@ import {
   buildCodexAuthLabel,
   buildCodexUsageCopy,
 } from './llm_usage_state.js';
-import { buildTradePanelState, buildTradeSummaryCounts } from './trade_state.js';
+import {
+  buildPortfolioQuickStatsModel,
+  buildTradePanelState,
+  buildTradeSummaryCounts,
+} from './trade_state.js';
 import { buildTradeCenterState } from './trade_center_state.js';
 import {
   buildManualTradeSupportViewModel,
@@ -1670,29 +1674,35 @@ function refreshVisibleActivityMeta() {
 function renderAccountBalance(data) {
   const el = document.getElementById('account-info');
   if (!el || !data) {
-    if (el) el.innerHTML = '<div class="text-gray-600">계좌 미연결</div>';
+    if (el) el.innerHTML = '<div class="account-balance-empty">계좌 미연결</div>';
     return;
   }
-  const pnlColor = data.total_pnl >= 0 ? 'text-green-400' : 'text-red-400';
-  const cashRatio = data.total_asset > 0
-    ? ((data.cash / data.total_asset) * 100).toFixed(1)
-    : '0.0';
+  const stats = buildPortfolioQuickStatsModel(data, latestAccountSnapshot?.holdings, latestAccountSnapshot?.pendingOrders, latestAccountSnapshot?.trades);
+  const pnlColor = stats.unrealizedPnl >= 0 ? 'text-emerald-300' : 'text-rose-300';
+  const cashRatio = Number.isFinite(stats.cashRatio) ? stats.cashRatio.toFixed(1) : '0.0';
   el.innerHTML = `
-    <div class="flex justify-between">
-      <span class="text-gray-400">총자산</span>
-      <span class="text-white font-medium">${formatKRW(data.total_asset)}</span>
+    <div class="account-balance-summary">
+      <div>
+        <div class="account-balance-label">현금</div>
+        <div class="account-balance-value">${formatKRW(stats.cash)}</div>
+      </div>
+      <div class="account-balance-align-right">
+        <div class="account-balance-label">현금 비중</div>
+        <div class="account-balance-value">${cashRatio}%</div>
+      </div>
     </div>
-    <div class="flex justify-between">
-      <span class="text-gray-400">현금</span>
-      <span>${formatKRW(data.cash)} <span class="text-gray-600">(${cashRatio}%)</span></span>
+    <div class="account-balance-bar">
+      <div class="account-balance-bar-fill cash" style="width:${Math.max(0, Math.min(100, stats.cashRatio))}%"></div>
     </div>
-    <div class="flex justify-between">
-      <span class="text-gray-400">주식</span>
-      <span>${formatKRW(data.stock_value)}</span>
-    </div>
-    <div class="flex justify-between">
-      <span class="text-gray-400">손익</span>
-      <span class="${pnlColor}">${data.total_pnl >= 0 ? '+' : ''}${formatKRW(data.total_pnl)} (${data.total_pnl_rate >= 0 ? '+' : ''}${data.total_pnl_rate.toFixed(2)}%)</span>
+    <div class="account-balance-summary mt-2">
+      <div>
+        <div class="account-balance-label">평가금액</div>
+        <div class="account-balance-value">${formatKRW(stats.stockValue)}</div>
+      </div>
+      <div class="account-balance-align-right">
+        <div class="account-balance-label">평가손익</div>
+        <div class="account-balance-value ${pnlColor}">${stats.unrealizedPnl >= 0 ? '+' : ''}${formatKRW(stats.unrealizedPnl)}</div>
+      </div>
     </div>`;
 }
 
@@ -1749,7 +1759,8 @@ function renderPendingOrders(data) {
   el.innerHTML = data.map(o => {
     const sideColor = o.side === '매수' ? 'text-red-400' : 'text-blue-400';
     const borderColor = o.side === '매수' ? 'border-yellow-700/60' : 'border-yellow-700/60';
-    const orderAmt = o.order_price * o.remaining_qty;
+    const isMarketOrder = Number(o.order_price || 0) <= 0;
+    const orderAmt = isMarketOrder ? null : o.order_price * o.remaining_qty;
     const timeStr = o.order_time ? o.order_time.slice(0,2) + ':' + o.order_time.slice(2,4) + ':' + o.order_time.slice(4,6) : '';
     const action = buildPendingOrderAction(o, symbolMap);
     return `<div class="border ${borderColor} bg-yellow-900/10 rounded p-1.5 space-y-0.5">
@@ -1759,10 +1770,10 @@ function renderPendingOrders(data) {
       </div>
       <div class="flex justify-between text-gray-500">
         <span>미체결 ${o.remaining_qty}주 / ${o.order_qty}주</span>
-        <span>${Number(o.order_price).toLocaleString()}원</span>
+        <span>${isMarketOrder ? '시장가' : `${Number(o.order_price).toLocaleString()}원`}</span>
       </div>
       <div class="flex justify-between text-gray-500">
-        <span>${formatKRW(orderAmt)}</span>
+        <span>${isMarketOrder ? '예상금액 계산 대기' : formatKRW(orderAmt)}</span>
         <span>${timeStr}</span>
       </div>
       <div class="flex items-center justify-between gap-2 pt-1">
@@ -1788,33 +1799,35 @@ function renderPortfolioQuickStats(balance, holdings, pendingOrders, trades) {
   const el = document.getElementById('portfolio-quick-stats');
   if (!el) return;
 
-  const totalAsset = balance?.total_asset || 0;
-  const totalPnl = Number(balance?.total_pnl || 0);
-  const pnlRate = Number(balance?.total_pnl_rate || 0);
-  const holdingCount = holdings?.length || 0;
-  const pendingCount = pendingOrders?.length || 0;
-  const tradeCounts = buildTradeSummaryCounts(trades);
-  const openedCount = Array.isArray(trades?.opened) ? trades.opened.length : 0;
-  const totalPnlLabel = `${totalPnl >= 0 ? '+' : ''}${formatKRW(totalPnl)}`;
-  const totalPnlClass = totalPnl >= 0 ? 'text-green-300' : 'text-red-300';
+  const stats = buildPortfolioQuickStatsModel(balance, holdings, pendingOrders, trades);
+  const unrealizedLabel = `${stats.unrealizedPnl >= 0 ? '+' : ''}${formatKRW(stats.unrealizedPnl)}`;
+  const unrealizedClass = stats.unrealizedPnl >= 0 ? 'is-positive' : 'is-negative';
+  const realizedLabel = `${stats.realizedTodayPnl >= 0 ? '+' : ''}${formatKRW(stats.realizedTodayPnl)}`;
+  const realizedClass = stats.realizedTodayPnl >= 0 ? 'is-positive' : 'is-negative';
+  const realizedMeta = stats.unmatchedSellExecutions > 0
+    ? `매도 체결 ${stats.sellExecutionCount}건 · 손익 반영 대기 ${stats.unmatchedSellExecutions}건`
+    : `오늘 청산 ${stats.completedCount}건`;
 
   el.innerHTML = `
-    <div class="portfolio-stat">
+    <div class="portfolio-stat portfolio-stat-hero">
       <div class="portfolio-stat-label">총자산</div>
-      <div class="portfolio-stat-value">${formatKRW(totalAsset)}</div>
+      <div class="portfolio-stat-value">${formatKRW(stats.totalAsset)}</div>
+      <div class="portfolio-stat-meta">현금 ${formatKRW(stats.cash)} · 주식 ${formatKRW(stats.stockValue)}</div>
     </div>
     <div class="portfolio-stat">
-      <div class="portfolio-stat-label">현재 손익</div>
-      <div class="portfolio-stat-value ${totalPnlClass}">${totalPnlLabel}</div>
-      <div class="mt-1 text-[11px] text-gray-500">${Number.isFinite(pnlRate) ? `${pnlRate >= 0 ? '+' : ''}${pnlRate.toFixed(2)}%` : '-'}</div>
+      <div class="portfolio-stat-label">평가손익</div>
+      <div class="portfolio-stat-value ${unrealizedClass}">${unrealizedLabel}</div>
+      <div class="portfolio-stat-meta">${Number.isFinite(stats.unrealizedPnlRate) ? `${stats.unrealizedPnlRate >= 0 ? '+' : ''}${stats.unrealizedPnlRate.toFixed(2)}%` : '-'}</div>
     </div>
     <div class="portfolio-stat">
-      <div class="portfolio-stat-label">보유 / 미체결</div>
-      <div class="portfolio-stat-value">${holdingCount} / ${pendingCount}</div>
+      <div class="portfolio-stat-label">당일 실현손익</div>
+      <div class="portfolio-stat-value ${realizedClass}">${realizedLabel}</div>
+      <div class="portfolio-stat-meta">${realizedMeta}</div>
     </div>
     <div class="portfolio-stat">
-      <div class="portfolio-stat-label">오늘 진입 / 매도 체결</div>
-      <div class="portfolio-stat-value">${openedCount} / ${tradeCounts.sellExecutionCount}</div>
+      <div class="portfolio-stat-label">포지션 / 미체결</div>
+      <div class="portfolio-stat-value">${stats.holdingCount} / ${stats.pendingCount}</div>
+      <div class="portfolio-stat-meta">오늘 진입 ${stats.openedCount}건</div>
     </div>
   `;
 }

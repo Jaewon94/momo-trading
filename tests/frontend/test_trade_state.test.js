@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  buildPortfolioQuickStatsModel,
   buildTradePanelState,
   buildTradeSummaryCounts,
 } from "../../admin/static/js/trade_state.js";
@@ -31,6 +32,39 @@ describe("trade_state", () => {
       todayTradeCount: 4,
       pendingConfirmCount: 1,
       sellExecutionCount: 1,
+    });
+  });
+
+  test("builds portfolio quick stats with separate unrealized and today's realized pnl", () => {
+    expect(
+      buildPortfolioQuickStatsModel(
+        {
+          total_asset: 1000000,
+          total_pnl: 120000,
+          total_pnl_rate: 12,
+          cash: 250000,
+          stock_value: 750000,
+        },
+        [{}, {}],
+        [{}],
+        {
+          opened: [{}, {}],
+          sell_executions: [{}],
+          completed: [{ pnl: 30000 }, { pnl: -5000 }],
+        },
+      ),
+    ).toMatchObject({
+      totalAsset: 1000000,
+      unrealizedPnl: 120000,
+      unrealizedPnlRate: 12,
+      realizedTodayPnl: 25000,
+      cashRatio: 25,
+      holdingCount: 2,
+      pendingCount: 1,
+      openedCount: 2,
+      sellExecutionCount: 1,
+      completedCount: 2,
+      unmatchedSellExecutions: 0,
     });
   });
 });

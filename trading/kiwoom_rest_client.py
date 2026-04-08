@@ -1,6 +1,7 @@
 """Kiwoom REST API 저수준 클라이언트"""
 import asyncio
 import json
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -32,6 +33,9 @@ class KiwoomRESTClient:
 
     REAL_BASE_URL = "https://api.kiwoom.com"
     MOCK_BASE_URL = "https://mockapi.kiwoom.com"
+    REAL_RATE_LIMIT_PER_SEC = 5
+    PAPER_RATE_LIMIT_PER_SEC = 3
+    RATE_LIMIT_WINDOW_SEC = 1.0
 
     def __init__(
         self,
@@ -62,6 +66,8 @@ class KiwoomRESTClient:
             timeout=httpx.Timeout(15.0, connect=10.0),
             follow_redirects=True,
         )
+        self._request_timestamps: list[float] = []
+        self._rate_lock = asyncio.Lock()
 
     @property
     def base_url(self) -> str:
@@ -87,6 +93,7 @@ class KiwoomRESTClient:
         rate_limit_retries = 0
 
         while True:
+            await self._respect_rate_limit()
             token = await self.get_access_token()
             try:
                 response = await self._client.post(
@@ -127,6 +134,23 @@ class KiwoomRESTClient:
                 },
                 status_code=response.status_code,
             )
+
+    async def _respect_rate_limit(self) -> None:
+        limit = self.PAPER_RATE_LIMIT_PER_SEC if self.is_paper_trading else self.REAL_RATE_LIMIT_PER_SEC
+        if limit <= 0:
+            return
+
+        async with self._rate_lock:
+            while True:
+                now = time.monotonic()
+                cutoff = now - self.RATE_LIMIT_WINDOW_SEC
+                self._request_timestamps = [ts for ts in self._request_timestamps if ts > cutoff]
+                if len(self._request_timestamps) < limit:
+                    self._request_timestamps.append(now)
+                    return
+
+                wait = max(self.RATE_LIMIT_WINDOW_SEC - (now - self._request_timestamps[0]), 0.05)
+                await asyncio.sleep(wait)
 
     async def get_access_token(self) -> str:
         if self._token and self._token.expires_at > datetime.now() + timedelta(minutes=1):

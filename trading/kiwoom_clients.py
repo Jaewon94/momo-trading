@@ -156,10 +156,17 @@ class KiwoomMarketDataClient:
 
     def __init__(self, rest_client: KiwoomRESTClient) -> None:
         self._rest_client = rest_client
+        self._quote_cache: dict[tuple[str, str], tuple[datetime, MCPResponse]] = {}
+        self._quote_cache_ttl = timedelta(seconds=1)
 
     async def get_current_price(self, symbol: str, market: str = "KRX") -> MCPResponse:
         if not _is_domestic_market(market):
             return MCPResponse(success=False, error="Kiwoom은 국내주식만 지원합니다")
+
+        cache_key = (symbol, market)
+        cached = self._quote_cache.get(cache_key)
+        if cached and datetime.now() - cached[0] <= self._quote_cache_ttl:
+            return cached[1]
 
         response = await self._rest_client.request(
             api_id="ka10001",
@@ -170,7 +177,7 @@ class KiwoomMarketDataClient:
         if _return_code(data) != 0:
             return MCPResponse(success=False, error=data.get("return_msg", "현재가 조회 실패"))
 
-        return MCPResponse(success=True, data={
+        normalized = MCPResponse(success=True, data={
             **data,
             "price": _abs_float(data.get("cur_prc")),
             "current_price": _abs_float(data.get("cur_prc")),
@@ -178,6 +185,8 @@ class KiwoomMarketDataClient:
             "change_rate": _signed_float(data.get("flu_rt")),
             "volume": _signed_int(data.get("trde_qty")),
         })
+        self._quote_cache[cache_key] = (datetime.now(), normalized)
+        return normalized
 
     async def get_daily_price(
         self,

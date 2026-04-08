@@ -820,6 +820,56 @@
     }
     .portfolio-stat-label { font-size: 11px; color: #6b7280; margin-bottom: 4px; }
     .portfolio-stat-value { font-size: 14px; color: #f3f4f6; font-weight: 600; }
+    .portfolio-stat-meta { margin-top: 6px; font-size: 11px; color: #94a3b8; }
+    .portfolio-stat-hero {
+      background:
+        linear-gradient(180deg, rgba(18,24,43,0.96), rgba(12,18,32,0.9)),
+        radial-gradient(circle at top left, rgba(56,189,248,0.18), transparent 42%);
+      border-color: rgba(71,85,105,0.9);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+    }
+    .portfolio-stat-value.is-positive { color: #86efac; }
+    .portfolio-stat-value.is-negative { color: #fda4af; }
+    .account-summary-card {
+      border: 1px solid rgba(71,85,105,0.65);
+      border-radius: 14px;
+      background:
+        linear-gradient(180deg, rgba(15,23,42,0.94), rgba(15,16,33,0.8)),
+        radial-gradient(circle at top right, rgba(56,189,248,0.12), transparent 44%);
+      padding: 12px;
+    }
+    .account-summary-kicker {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #64748b;
+      margin-bottom: 8px;
+    }
+    .account-balance-summary {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      align-items: end;
+    }
+    .account-balance-label { font-size: 11px; color: #94a3b8; }
+    .account-balance-value { margin-top: 4px; font-size: 13px; font-weight: 600; color: #f8fafc; }
+    .account-balance-align-right { text-align: right; }
+    .account-balance-bar {
+      margin-top: 10px;
+      height: 8px;
+      border-radius: 999px;
+      background: rgba(30,41,59,0.88);
+      overflow: hidden;
+    }
+    .account-balance-bar-fill {
+      height: 100%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, rgba(56,189,248,0.85), rgba(34,197,94,0.8));
+    }
+    .account-balance-empty {
+      font-size: 12px;
+      color: #64748b;
+    }
     .trade-mini-group-title { font-size: 11px; font-weight: 600; color: #9ca3af; margin-bottom: 8px; }
     .trade-mini-card {
       border: 1px solid #374151; border-radius: 10px; background: rgba(15,16,33,0.72);
@@ -1258,17 +1308,10 @@
             </div>
           </div>
 
-          <div class="sidebar-section" id="section-account">
-            <div class="sidebar-section-header" onclick="toggleSidebarSection('account')">
-              <span>&#x1f4b0; &#xacc4;&#xc88c; &#xc794;&#xace0;</span>
-              <span class="sidebar-section-arrow collapsed" id="arrow-account">&#x25BC;</span>
-            </div>
-            <div class="sidebar-section-body" id="body-account">
-              <div class="px-3 pb-2">
-                <div id="account-info" class="text-xs space-y-1">
-                  <div class="text-gray-600">&#xb85c;&#xb529; &#xc911;...</div>
-                </div>
-              </div>
+          <div class="account-summary-card">
+            <div class="account-summary-kicker">Asset Mix</div>
+            <div id="account-info" class="text-xs">
+              <div class="account-balance-empty">&#xb85c;&#xb529; &#xc911;...</div>
             </div>
           </div>
 
