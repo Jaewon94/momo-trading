@@ -92,6 +92,17 @@ def test_codex_provider_reports_cooldown_status_details(monkeypatch) -> None:
     assert status["disabled_for_sec"] > 0
 
 
+def test_codex_provider_reads_runtime_timeout_by_tier(monkeypatch) -> None:
+    monkeypatch.setattr("analysis.llm.codex_provider.settings.CODEX_TIMEOUT_SEC_TIER1", 90)
+    monkeypatch.setattr("analysis.llm.codex_provider.settings.CODEX_TIMEOUT_SEC_TIER2", 180)
+
+    tier1 = CodexProvider(LLMTier.TIER1)
+    tier2 = CodexProvider(LLMTier.TIER2)
+
+    assert tier1._timeout_sec() == 90
+    assert tier2._timeout_sec() == 180
+
+
 @pytest.mark.asyncio
 async def test_codex_provider_timeout_enters_failure_cooldown(monkeypatch) -> None:
     provider = CodexProvider(LLMTier.TIER1)

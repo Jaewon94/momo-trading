@@ -67,4 +67,74 @@ describe("trade_state", () => {
       unmatchedSellExecutions: 0,
     });
   });
+
+  test("uses session metrics for day-session asset and unrealized movement", () => {
+    expect(
+      buildPortfolioQuickStatsModel(
+        {
+          total_asset: 1000000,
+          total_pnl: 120000,
+          total_pnl_rate: 12,
+          cash: 230000,
+          stock_value: 770000,
+          session_metrics: {
+            available: true,
+            baseline_total_asset: 980000,
+            asset_delta: 20000,
+            asset_delta_rate: 2.04,
+            realized_today_pnl: 25000,
+            daily_unrealized_delta: -5000,
+            intraday_high_asset: 1015000,
+            intraday_low_asset: 972000,
+          },
+        },
+        [{}],
+        [],
+        {
+          completed: [{ pnl: 999999 }],
+        },
+      ),
+    ).toMatchObject({
+      totalAsset: 1000000,
+      assetDelta: 20000,
+      assetDeltaRate: 2.04,
+      assetDeltaAvailable: true,
+      dailyUnrealizedDelta: -5000,
+      dailyUnrealizedAvailable: true,
+      realizedTodayPnl: 25000,
+      intradayHighAsset: 1015000,
+      intradayLowAsset: 972000,
+    });
+  });
+
+  test("falls back safely when session metrics are unavailable", () => {
+    expect(
+      buildPortfolioQuickStatsModel(
+        {
+          total_asset: 1000000,
+          total_pnl: 120000,
+          total_pnl_rate: 12,
+          cash: 250000,
+          stock_value: 750000,
+          session_metrics: {
+            available: false,
+          },
+        },
+        [],
+        [],
+        {
+          completed: [{ pnl: 30000 }, { pnl: -5000 }],
+        },
+      ),
+    ).toMatchObject({
+      assetDelta: 0,
+      assetDeltaRate: 0,
+      assetDeltaAvailable: false,
+      dailyUnrealizedDelta: 0,
+      dailyUnrealizedAvailable: false,
+      realizedTodayPnl: 25000,
+      intradayHighAsset: 1000000,
+      intradayLowAsset: 1000000,
+    });
+  });
 });

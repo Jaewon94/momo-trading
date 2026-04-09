@@ -167,3 +167,39 @@ async def test_admin_settings_rejects_invalid_news_concurrency_range(client, mon
 
     assert settings_response.status_code == 200
     assert settings_response.json()["data"]["NEWS_FETCH_CONCURRENCY"] == 4
+
+
+@pytest.mark.asyncio
+async def test_admin_settings_rejects_invalid_llm_concurrency_range(client, monkeypatch):
+    monkeypatch.setattr("api.routes.admin.settings.LLM_TIER1_CONCURRENCY", 2)
+
+    response = await client.put(
+        "/api/v1/admin/settings",
+        json={"LLM_TIER1_CONCURRENCY": 0},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "LLM_TIER1_CONCURRENCY must be between 1 and 8"
+
+    settings_response = await client.get("/api/v1/admin/settings")
+
+    assert settings_response.status_code == 200
+    assert settings_response.json()["data"]["LLM_TIER1_CONCURRENCY"] == 2
+
+
+@pytest.mark.asyncio
+async def test_admin_settings_rejects_invalid_codex_timeout_range(client, monkeypatch):
+    monkeypatch.setattr("api.routes.admin.settings.CODEX_TIMEOUT_SEC_TIER1", 90)
+
+    response = await client.put(
+        "/api/v1/admin/settings",
+        json={"CODEX_TIMEOUT_SEC_TIER1": 20},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "CODEX_TIMEOUT_SEC_TIER1 must be between 30 and 300"
+
+    settings_response = await client.get("/api/v1/admin/settings")
+
+    assert settings_response.status_code == 200
+    assert settings_response.json()["data"]["CODEX_TIMEOUT_SEC_TIER1"] == 90

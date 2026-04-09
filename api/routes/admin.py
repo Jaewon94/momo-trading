@@ -56,6 +56,7 @@ from services.news_runtime_service import news_runtime_service
 from services.error_incident_service import error_incident_service
 from services.observability_reporting_service import observability_reporting_service
 from services.performance_reporting_service import performance_reporting_service
+from services.account_equity_service import account_equity_service
 from services.runtime_settings_service import runtime_settings_service
 from services.runtime_backup_service import runtime_backup_service
 from services.seeking_alpha_news_service import seeking_alpha_news_service
@@ -154,6 +155,31 @@ def _coerce_float(value):
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _build_balance_payload_fallback(balance) -> dict[str, object]:
+    return {
+        "total_asset": float(getattr(balance, "total_asset", 0.0) or 0.0),
+        "cash": float(getattr(balance, "cash", 0.0) or 0.0),
+        "stock_value": float(getattr(balance, "stock_value", 0.0) or 0.0),
+        "total_pnl": float(getattr(balance, "total_pnl", 0.0) or 0.0),
+        "total_pnl_rate": float(getattr(balance, "total_pnl_rate", 0.0) or 0.0),
+        "session_metrics": {
+            "available": False,
+            "reason": "metrics_unavailable",
+            "trading_date": None,
+            "baseline_at": None,
+            "baseline_total_asset": 0.0,
+            "asset_delta": 0.0,
+            "asset_delta_rate": 0.0,
+            "realized_today_pnl": 0.0,
+            "daily_unrealized_delta": 0.0,
+            "intraday_high_asset": float(getattr(balance, "total_asset", 0.0) or 0.0),
+            "intraday_low_asset": float(getattr(balance, "total_asset", 0.0) or 0.0),
+            "latest_snapshot_at": None,
+            "is_stale": False,
+        },
+    }
 
 
 def _normalize_contributors(value):
@@ -888,13 +914,12 @@ async def get_account_balance():
     """계좌 잔고 조회"""
     try:
         balance = await get_broker_adapter().get_balance()
-        return SuccessResponse(data={
-            "total_asset": balance.total_asset,
-            "cash": balance.cash,
-            "stock_value": balance.stock_value,
-            "total_pnl": balance.total_pnl,
-            "total_pnl_rate": balance.total_pnl_rate,
-        })
+        try:
+            payload = await account_equity_service.build_balance_payload(balance)
+        except Exception as metrics_exc:
+            logger.warning("계좌 세션 메트릭 조회 실패: {}", str(metrics_exc))
+            payload = _build_balance_payload_fallback(balance)
+        return SuccessResponse(data=payload)
     except Exception as e:
         logger.error("계좌 잔고 조회 실패: {}", str(e))
         await _capture_admin_api_error(
@@ -1811,14 +1836,8 @@ async def trigger_agent_cycle():
     )
 
     # 비동기로 실행 (즉시 응답)
-    manual_provider_override = settings.MANUAL_LLM_PROVIDER
-    manual_model_override = settings.MANUAL_LLM_MODEL
-    asyncio.create_task(
-        trading_agent.run_cycle(
-            manual_provider_override=manual_provider_override,
-            manual_model_override=manual_model_override,
-        )
-    )
+    # 장중 종목 분석은 tier 설정을 사용해야 하므로 manual override를 주입하지 않는다.
+    asyncio.create_task(trading_agent.run_cycle())
     return SuccessResponse(message="에이전트 사이클이 트리거되었습니다")
 
 

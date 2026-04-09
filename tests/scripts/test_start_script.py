@@ -227,6 +227,45 @@ def test_start_script_enables_reload_only_with_explicit_flag(tmp_path: Path) -> 
     assert "--reload" in lines
 
 
+def test_start_script_prefers_venv_python_when_env_override_is_absent(tmp_path: Path) -> None:
+    env, _, _ = _build_test_env(tmp_path, "KIWOOM")
+    venv_python = Path(env["MOMO_VENV_DIR"]) / "bin" / "python"
+    path_python = tmp_path / "python"
+    venv_log = tmp_path / "venv-python.log"
+    path_log = tmp_path / "path-python.log"
+
+    _write_executable(
+        venv_python,
+        f"""#!/bin/sh
+printf '%s\\n' "$@" >> '{venv_log}'
+exit 0
+""",
+    )
+    _write_executable(
+        path_python,
+        f"""#!/bin/sh
+printf '%s\\n' "$@" >> '{path_log}'
+exit 0
+""",
+    )
+
+    env.pop("MOMO_PYTHON_BIN", None)
+    env["PATH"] = f"{tmp_path}:{env['PATH']}"
+
+    result = subprocess.run(
+        ["bash", str(START_SCRIPT)],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert venv_log.exists() is True
+    assert path_log.exists() is False
+
+
 def test_start_script_blocks_start_when_target_port_is_already_in_use(tmp_path: Path) -> None:
     env, docker_log, python_log = _build_test_env(tmp_path, "KIWOOM")
 
@@ -344,3 +383,104 @@ def test_start_script_check_news_calls_news_helper_without_starting_server(tmp_p
     assert "뉴스 파이프라인 점검" in result.stdout
     assert docker_log.exists() is False
     assert _read_lines(python_log) == ["scripts/dev/check_news_pipeline.py"]
+
+
+def test_start_script_stop_terminates_orphan_momo_process_without_pid_file(tmp_path: Path) -> None:
+    env, _, _ = _build_test_env(tmp_path, "KIWOOM")
+    sleeper = subprocess.Popen(["sleep", "30"])
+
+    ps_bin = tmp_path / "ps"
+    _write_executable(
+        ps_bin,
+        f"""#!/bin/sh
+case "$*" in
+  "-axo pid=,command=")
+    printf '{sleeper.pid} python -m uvicorn main:app --host 0.0.0.0 --port 9000 --log-level info\\n'
+    ;;
+  "-o command= -p {sleeper.pid}")
+    printf 'python -m uvicorn main:app --host 0.0.0.0 --port 9000 --log-level info\\n'
+    ;;
+  "-o ppid= -p {sleeper.pid}")
+    printf '1\\n'
+    ;;
+  "-o pid= --ppid {sleeper.pid}")
+    ;;
+esac
+exit 0
+""",
+    )
+    env["PATH"] = f"{tmp_path}:{env['PATH']}"
+
+    try:
+        result = subprocess.run(
+            ["bash", str(START_SCRIPT), "stop"],
+            cwd=REPO_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode == 0
+        assert "고아 프로세스 정리" in result.stdout
+        sleeper.wait(timeout=3)
+        assert sleeper.returncode is not None
+    finally:
+        if sleeper.poll() is None:
+            sleeper.kill()
+            sleeper.wait(timeout=3)
+
+
+def test_start_script_stop_force_kills_stubborn_orphan_momo_process(tmp_path: Path) -> None:
+    env, _, _ = _build_test_env(tmp_path, "KIWOOM")
+    stubborn_script = tmp_path / "stubborn.sh"
+    _write_executable(
+        stubborn_script,
+        """#!/bin/sh
+trap '' TERM
+while true; do
+  sleep 1
+done
+""",
+    )
+    stubborn = subprocess.Popen([str(stubborn_script)])
+
+    ps_bin = tmp_path / "ps"
+    _write_executable(
+        ps_bin,
+        f"""#!/bin/sh
+case "$*" in
+  "-axo pid=,command=")
+    printf '{stubborn.pid} python -m uvicorn main:app --host 0.0.0.0 --port 9000 --log-level info\\n'
+    ;;
+  "-o command= -p {stubborn.pid}")
+    printf 'python -m uvicorn main:app --host 0.0.0.0 --port 9000 --log-level info\\n'
+    ;;
+  "-o ppid= -p {stubborn.pid}")
+    printf '1\\n'
+    ;;
+  "-o pid= --ppid {stubborn.pid}")
+    ;;
+esac
+exit 0
+""",
+    )
+    env["PATH"] = f"{tmp_path}:{env['PATH']}"
+
+    try:
+        result = subprocess.run(
+            ["bash", str(START_SCRIPT), "stop"],
+            cwd=REPO_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode == 0
+        stubborn.wait(timeout=3)
+        assert stubborn.returncode is not None
+    finally:
+        if stubborn.poll() is None:
+            stubborn.kill()
+            stubborn.wait(timeout=3)

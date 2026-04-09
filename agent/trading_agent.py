@@ -275,7 +275,7 @@ class TradingAgent:
             # 스크리닝 맥락은 self._market_context로 프롬프트에 전달됨
             paused_sid = llm_factory.pause_session()
 
-            semaphore = asyncio.Semaphore(3)
+            semaphore = asyncio.Semaphore(llm_factory.analysis_concurrency_limit())
             executed_count = 0
 
             holding_syms = {
@@ -2028,15 +2028,23 @@ class TradingAgent:
             last_result_text = ""
             last_provider = None
             for attempt in range(2):
-                result_text, provider = await llm_factory.generate_manual(
-                    prompt,
-                    system_prompt=STOCK_ANALYSIS_SYSTEM,
-                    default_tier=LLMTier.TIER1,
-                    symbol=symbol,
-                    cycle_id=cycle_id,
-                    manual_provider_override=manual_provider_override,
-                    manual_model_override=manual_model_override,
-                )
+                if manual_provider_override or manual_model_override:
+                    result_text, provider = await llm_factory.generate_manual(
+                        prompt,
+                        system_prompt=STOCK_ANALYSIS_SYSTEM,
+                        default_tier=LLMTier.TIER1,
+                        symbol=symbol,
+                        cycle_id=cycle_id,
+                        manual_provider_override=manual_provider_override,
+                        manual_model_override=manual_model_override,
+                    )
+                else:
+                    result_text, provider = await llm_factory.generate_tier1(
+                        prompt,
+                        system_prompt=STOCK_ANALYSIS_SYSTEM,
+                        symbol=symbol,
+                        cycle_id=cycle_id,
+                    )
                 last_result_text = result_text
                 last_provider = provider
                 parsed = self._parse_json(result_text)
@@ -2118,15 +2126,23 @@ class TradingAgent:
         )
 
         try:
-            result_text, provider = await llm_factory.generate_manual(
-                prompt,
-                system_prompt=FINAL_REVIEW_SYSTEM,
-                default_tier=LLMTier.TIER2,
-                symbol=symbol,
-                cycle_id=cycle_id,
-                manual_provider_override=manual_provider_override,
-                manual_model_override=manual_model_override,
-            )
+            if manual_provider_override or manual_model_override:
+                result_text, provider = await llm_factory.generate_manual(
+                    prompt,
+                    system_prompt=FINAL_REVIEW_SYSTEM,
+                    default_tier=LLMTier.TIER2,
+                    symbol=symbol,
+                    cycle_id=cycle_id,
+                    manual_provider_override=manual_provider_override,
+                    manual_model_override=manual_model_override,
+                )
+            else:
+                result_text, provider = await llm_factory.generate_tier2(
+                    prompt,
+                    system_prompt=FINAL_REVIEW_SYSTEM,
+                    symbol=symbol,
+                    cycle_id=cycle_id,
+                )
             parsed = self._parse_json(result_text)
             if parsed:
                 parsed["provider"] = provider

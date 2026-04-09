@@ -1799,24 +1799,40 @@ function renderPortfolioQuickStats(balance, holdings, pendingOrders, trades) {
   if (!el) return;
 
   const stats = buildPortfolioQuickStatsModel(balance, holdings, pendingOrders, trades);
-  const unrealizedLabel = `${stats.unrealizedPnl >= 0 ? '+' : ''}${formatKRW(stats.unrealizedPnl)}`;
-  const unrealizedClass = stats.unrealizedPnl >= 0 ? 'is-positive' : 'is-negative';
+  const cumulativeUnrealizedLabel = `${stats.unrealizedPnl >= 0 ? '+' : ''}${formatKRW(stats.unrealizedPnl)}`;
+  const cumulativeUnrealizedClass = stats.unrealizedPnl >= 0 ? 'is-positive' : 'is-negative';
+  const dailyUnrealizedLabel = `${stats.dailyUnrealizedDelta >= 0 ? '+' : ''}${formatKRW(stats.dailyUnrealizedDelta)}`;
+  const dailyUnrealizedClass = stats.dailyUnrealizedDelta >= 0 ? 'is-positive' : 'is-negative';
   const realizedLabel = `${stats.realizedTodayPnl >= 0 ? '+' : ''}${formatKRW(stats.realizedTodayPnl)}`;
   const realizedClass = stats.realizedTodayPnl >= 0 ? 'is-positive' : 'is-negative';
   const realizedMeta = stats.unmatchedSellExecutions > 0
     ? `매도 체결 ${stats.sellExecutionCount}건 · 손익 반영 대기 ${stats.unmatchedSellExecutions}건`
     : `오늘 청산 ${stats.completedCount}건`;
+  const assetDeltaLabel = `${stats.assetDelta >= 0 ? '+' : ''}${formatKRW(stats.assetDelta)}`;
+  const assetDeltaRateLabel = `${stats.assetDeltaRate >= 0 ? '+' : ''}${stats.assetDeltaRate.toFixed(2)}%`;
+  const totalAssetMeta = stats.assetDeltaAvailable
+    ? `장시작 대비 ${assetDeltaLabel} / ${assetDeltaRateLabel} · 현금 ${formatKRW(stats.cash)} · 주식 ${formatKRW(stats.stockValue)}`
+    : `장시작 기준선 대기 · 현금 ${formatKRW(stats.cash)} · 주식 ${formatKRW(stats.stockValue)}`;
+  const totalAssetRangeMeta = stats.assetDeltaAvailable
+    ? `금일 고점 ${formatKRW(stats.intradayHighAsset)} · 저점 ${formatKRW(stats.intradayLowAsset)}`
+    : '현재 계좌 기준';
+  const unrealizedMeta = stats.dailyUnrealizedAvailable
+    ? `당일 평가변동 · 누적 ${cumulativeUnrealizedLabel} · ${Number.isFinite(stats.unrealizedPnlRate) ? `${stats.unrealizedPnlRate >= 0 ? '+' : ''}${stats.unrealizedPnlRate.toFixed(2)}%` : '-'}`
+    : `당일 기준선 대기 · 누적 ${cumulativeUnrealizedLabel} · ${Number.isFinite(stats.unrealizedPnlRate) ? `${stats.unrealizedPnlRate >= 0 ? '+' : ''}${stats.unrealizedPnlRate.toFixed(2)}%` : '-'}`;
+  const unrealizedValue = stats.dailyUnrealizedAvailable ? dailyUnrealizedLabel : cumulativeUnrealizedLabel;
+  const unrealizedValueClass = stats.dailyUnrealizedAvailable ? dailyUnrealizedClass : cumulativeUnrealizedClass;
 
   el.innerHTML = `
     <div class="portfolio-stat portfolio-stat-hero">
       <div class="portfolio-stat-label">총자산</div>
       <div class="portfolio-stat-value">${formatKRW(stats.totalAsset)}</div>
-      <div class="portfolio-stat-meta">현재 계좌 기준 · 현금 ${formatKRW(stats.cash)} · 주식 ${formatKRW(stats.stockValue)}</div>
+      <div class="portfolio-stat-meta">${totalAssetMeta}</div>
+      <div class="portfolio-stat-meta">${totalAssetRangeMeta}</div>
     </div>
     <div class="portfolio-stat">
       <div class="portfolio-stat-label">보유 평가손익</div>
-      <div class="portfolio-stat-value ${unrealizedClass}">${unrealizedLabel}</div>
-      <div class="portfolio-stat-meta">현재 들고 있는 종목 기준 · ${Number.isFinite(stats.unrealizedPnlRate) ? `${stats.unrealizedPnlRate >= 0 ? '+' : ''}${stats.unrealizedPnlRate.toFixed(2)}%` : '-'}</div>
+      <div class="portfolio-stat-value ${unrealizedValueClass}">${unrealizedValue}</div>
+      <div class="portfolio-stat-meta">${unrealizedMeta}</div>
     </div>
     <div class="portfolio-stat">
       <div class="portfolio-stat-label">당일 실현손익</div>

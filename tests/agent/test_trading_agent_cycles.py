@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 import inspect
 from types import SimpleNamespace
@@ -268,6 +269,91 @@ async def test_run_trading_cycle_caches_scan_metadata_before_analysis(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_run_trading_cycle_respects_configured_analysis_concurrency(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    active = 0
+    max_active = 0
+    entered = 0
+    first_entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_publish(_event) -> None:
+        return None
+
+    async def fake_log(*args, **kwargs) -> None:
+        return None
+
+    async def fake_build_portfolio_snapshot() -> dict:
+        return {
+            "cash": 1_000_000,
+            "total_asset": 2_000_000,
+            "holding_count": 0,
+            "today_trade_count": 0,
+            "holding_symbols": [],
+        }
+
+    async def fake_scan(*args, **kwargs) -> dict:
+        return {
+            "selected": [
+                {"symbol": "005930", "name": "삼성전자", "market": "KRX", "direction": "BUY"},
+                {"symbol": "000660", "name": "SK하이닉스", "market": "KRX", "direction": "BUY"},
+                {"symbol": "035420", "name": "NAVER", "market": "KRX", "direction": "BUY"},
+            ],
+            "market_regime": "RANGE",
+        }
+
+    async def fake_build_trading_context() -> str:
+        return "trade-context"
+
+    async def fake_buying_power(_symbol: str, price: float | None = None, market=None) -> BuyingPowerInfo:
+        return BuyingPowerInfo(success=True, max_qty=10, available_cash=1_000_000)
+
+    async def fake_analyze_and_trade(*args, **kwargs) -> dict:
+        nonlocal active, max_active, entered
+        entered += 1
+        active += 1
+        max_active = max(max_active, active)
+        if entered == 1:
+            first_entered.set()
+        await release.wait()
+        active -= 1
+        return {"signal": False, "executed": False}
+
+    monkeypatch.setattr("agent.trading_agent.llm_factory.start_session", lambda: None)
+    monkeypatch.setattr("agent.trading_agent.llm_factory.pause_session", lambda: None)
+    monkeypatch.setattr("agent.trading_agent.llm_factory.end_session", lambda: "session-end")
+    monkeypatch.setattr("agent.trading_agent.llm_factory.analysis_concurrency_limit", lambda: 1)
+    monkeypatch.setattr("agent.trading_agent.activity_logger.start_cycle", lambda: "cycle-concurrency")
+    monkeypatch.setattr("agent.trading_agent.activity_logger.timer", lambda: object())
+    monkeypatch.setattr("agent.trading_agent.activity_logger.elapsed_ms", lambda _timer: 20)
+    monkeypatch.setattr("agent.trading_agent.settings.AI_RISK_TUNING_ENABLED", False)
+    monkeypatch.setattr("agent.trading_agent.event_bus.publish", fake_publish)
+    monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.trading_agent.market_scanner.scan", fake_scan)
+    monkeypatch.setattr(agent, "_build_portfolio_snapshot", fake_build_portfolio_snapshot)
+    monkeypatch.setattr(agent, "_build_market_context", lambda _scan_result: "market-context")
+    monkeypatch.setattr(agent, "_build_trading_context", fake_build_trading_context)
+    monkeypatch.setattr(agent, "_apply_scan_thresholds", lambda _candidates: None)
+    monkeypatch.setattr(agent._broker_adapter, "get_buying_power", fake_buying_power)
+    monkeypatch.setattr(agent, "_analyze_and_trade", fake_analyze_and_trade)
+    monkeypatch.setattr("util.time_util.now_kst", lambda: _kst_time(9, 10))
+
+    task = asyncio.create_task(agent._run_trading_cycle())
+    await first_entered.wait()
+    await asyncio.sleep(0.05)
+
+    assert entered == 1
+    assert max_active == 1
+
+    release.set()
+    result = await task
+
+    assert result["scanned"] == 3
+    assert result["analyzed"] == 3
+    assert max_active == 1
+
+
+@pytest.mark.asyncio
 async def test_tier1_analysis_retries_once_when_first_response_is_unparseable(monkeypatch) -> None:
     agent = TradingAgent(broker_adapter=StubBrokerAdapter())
     responses = iter([
@@ -276,7 +362,7 @@ async def test_tier1_analysis_retries_once_when_first_response_is_unparseable(mo
     ])
     parse_calls = []
 
-    async def fake_generate_manual(*args, **kwargs):
+    async def fake_generate_tier1(*args, **kwargs):
         return next(responses)
 
     def fake_parse_json(text: str):
@@ -291,7 +377,7 @@ async def test_tier1_analysis_retries_once_when_first_response_is_unparseable(mo
             "stop_loss_price": 11000,
         }
 
-    monkeypatch.setattr("agent.trading_agent.llm_factory.generate_manual", fake_generate_manual)
+    monkeypatch.setattr("agent.trading_agent.llm_factory.generate_tier1", fake_generate_tier1)
     monkeypatch.setattr(agent, "_parse_json", fake_parse_json)
     monkeypatch.setattr(agent, "_validate_llm_prices", lambda parsed, _price: parsed)
 
@@ -307,6 +393,127 @@ async def test_tier1_analysis_retries_once_when_first_response_is_unparseable(mo
     assert result["recommendation"] == "BUY"
     assert result["provider"] == "CODEX"
     assert parse_calls == ["not-json", '{"recommendation":"BUY","confidence":0.7,"reason":"ok","target_price":12000,"stop_loss_price":11000}']
+
+
+@pytest.mark.asyncio
+async def test_tier1_analysis_uses_manual_provider_override_when_present(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    captured = {}
+
+    async def fake_generate_manual(*args, **kwargs):
+        captured["provider_override"] = kwargs.get("manual_provider_override")
+        captured["model_override"] = kwargs.get("manual_model_override")
+        return '{"recommendation":"BUY","confidence":0.7,"reason":"ok","target_price":12000,"stop_loss_price":11000}', "CLAUDE_CODE"
+
+    async def fail_generate_tier1(*args, **kwargs):
+        raise AssertionError("generate_tier1 should not be used when manual override is provided")
+
+    monkeypatch.setattr("agent.trading_agent.llm_factory.generate_manual", fake_generate_manual)
+    monkeypatch.setattr("agent.trading_agent.llm_factory.generate_tier1", fail_generate_tier1)
+    monkeypatch.setattr(agent, "_parse_json", lambda _text: {
+        "recommendation": "BUY",
+        "confidence": 0.7,
+        "reason": "ok",
+        "target_price": 12000,
+        "stop_loss_price": 11000,
+    })
+    monkeypatch.setattr(agent, "_validate_llm_prices", lambda parsed, _price: parsed)
+
+    result = await agent._tier1_analysis(
+        symbol="005930",
+        name="삼성전자",
+        current_price=11500.0,
+        chart_result=SimpleNamespace(indicators_text="", patterns_text="", trend_text=""),
+        price_data={},
+        manual_provider_override="CLAUDE_CODE",
+        manual_model_override="haiku",
+    )
+
+    assert result is not None
+    assert result["provider"] == "CLAUDE_CODE"
+    assert captured == {
+        "provider_override": "CLAUDE_CODE",
+        "model_override": "haiku",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tier2_review_uses_tier_provider_without_manual_override(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    captured = {}
+
+    async def fake_generate_tier2(*args, **kwargs):
+        captured["symbol"] = kwargs.get("symbol")
+        captured["cycle_id"] = kwargs.get("cycle_id")
+        return '{"approved":true,"reason":"ok","suggested_quantity":10}', "CLAUDE_CODE"
+
+    async def fail_generate_manual(*args, **kwargs):
+        raise AssertionError("generate_manual should not be used without manual override")
+
+    monkeypatch.setattr("agent.trading_agent.llm_factory.generate_tier2", fake_generate_tier2)
+    monkeypatch.setattr("agent.trading_agent.llm_factory.generate_manual", fail_generate_manual)
+    monkeypatch.setattr(agent, "_parse_json", lambda _text: {
+        "approved": True,
+        "reason": "ok",
+        "suggested_quantity": 10,
+    })
+    monkeypatch.setattr(agent, "_validate_llm_prices", lambda parsed, _price: parsed)
+
+    result = await agent._tier2_review(
+        symbol="005930",
+        name="삼성전자",
+        current_price=11500.0,
+        strategy_type="STABLE_SHORT",
+        tier1_analysis={"recommendation": "BUY"},
+        cycle_id="cycle-tier2",
+    )
+
+    assert result is not None
+    assert result["provider"] == "CLAUDE_CODE"
+    assert captured == {
+        "symbol": "005930",
+        "cycle_id": "cycle-tier2",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tier2_review_uses_manual_provider_override_when_present(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    captured = {}
+
+    async def fake_generate_manual(*args, **kwargs):
+        captured["provider_override"] = kwargs.get("manual_provider_override")
+        captured["model_override"] = kwargs.get("manual_model_override")
+        return '{"approved":true,"reason":"ok","suggested_quantity":10}', "CODEX"
+
+    async def fail_generate_tier2(*args, **kwargs):
+        raise AssertionError("generate_tier2 should not be used when manual override is provided")
+
+    monkeypatch.setattr("agent.trading_agent.llm_factory.generate_manual", fake_generate_manual)
+    monkeypatch.setattr("agent.trading_agent.llm_factory.generate_tier2", fail_generate_tier2)
+    monkeypatch.setattr(agent, "_parse_json", lambda _text: {
+        "approved": True,
+        "reason": "ok",
+        "suggested_quantity": 10,
+    })
+    monkeypatch.setattr(agent, "_validate_llm_prices", lambda parsed, _price: parsed)
+
+    result = await agent._tier2_review(
+        symbol="005930",
+        name="삼성전자",
+        current_price=11500.0,
+        strategy_type="STABLE_SHORT",
+        tier1_analysis={"recommendation": "BUY"},
+        manual_provider_override="CODEX",
+        manual_model_override="gpt-5-codex",
+    )
+
+    assert result is not None
+    assert result["provider"] == "CODEX"
+    assert captured == {
+        "provider_override": "CODEX",
+        "model_override": "gpt-5-codex",
+    }
 
 
 @pytest.mark.asyncio

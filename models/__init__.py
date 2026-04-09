@@ -18,3 +18,5 @@ from models.resource_hourly_rollup import ResourceHourlyRollup
 from models.execution_metric_hourly_rollup import ExecutionMetricHourlyRollup
 from models.error_event import ErrorEvent
 from models.error_incident import ErrorIncident
+from models.account_day_baseline import AccountDayBaseline
+from models.account_equity_snapshot import AccountEquitySnapshot

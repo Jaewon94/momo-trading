@@ -19,6 +19,8 @@ export function buildPortfolioQuickStatsModel(
   const totalAsset = Number(balance?.total_asset || 0);
   const unrealizedPnl = Number(balance?.total_pnl || 0);
   const unrealizedPnlRate = Number(balance?.total_pnl_rate || 0);
+  const sessionMetrics = balance?.session_metrics || {};
+  const sessionAvailable = sessionMetrics?.available === true;
   const cash = Number(balance?.cash || 0);
   const stockValue = Number(balance?.stock_value || 0);
   const cashRatio = totalAsset > 0 ? (cash / totalAsset) * 100 : 0;
@@ -27,13 +29,28 @@ export function buildPortfolioQuickStatsModel(
   const opened = Array.isArray(trades?.opened) ? trades.opened : [];
   const sellExecutions = Array.isArray(trades?.sell_executions) ? trades.sell_executions : [];
   const completed = Array.isArray(trades?.completed) ? trades.completed : [];
-  const realizedTodayPnl = completed.reduce((sum, item) => sum + Number(item?.pnl || 0), 0);
+  const fallbackRealizedTodayPnl = completed.reduce((sum, item) => sum + Number(item?.pnl || 0), 0);
+  const realizedTodayPnl = sessionAvailable
+    ? Number(sessionMetrics?.realized_today_pnl || 0)
+    : fallbackRealizedTodayPnl;
   const tradeCounts = buildTradeSummaryCounts(trades);
 
   return {
     totalAsset,
     unrealizedPnl,
     unrealizedPnlRate,
+    assetDelta: sessionAvailable ? Number(sessionMetrics?.asset_delta || 0) : 0,
+    assetDeltaRate: sessionAvailable ? Number(sessionMetrics?.asset_delta_rate || 0) : 0,
+    assetDeltaAvailable: sessionAvailable,
+    dailyUnrealizedDelta: sessionAvailable ? Number(sessionMetrics?.daily_unrealized_delta || 0) : 0,
+    dailyUnrealizedAvailable: sessionAvailable,
+    intradayHighAsset: sessionAvailable
+      ? Number(sessionMetrics?.intraday_high_asset || totalAsset)
+      : totalAsset,
+    intradayLowAsset: sessionAvailable
+      ? Number(sessionMetrics?.intraday_low_asset || totalAsset)
+      : totalAsset,
+    baselineTotalAsset: sessionAvailable ? Number(sessionMetrics?.baseline_total_asset || 0) : 0,
     realizedTodayPnl,
     cash,
     stockValue,

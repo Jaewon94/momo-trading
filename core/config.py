@@ -74,7 +74,11 @@ class Settings(BaseSettings):
     CODEX_MODEL: str = DEFAULT_LLM_MODEL  # 기본값: CLI vendor default
     CODEX_MODEL_TIER1: str = DEFAULT_LLM_MODEL  # Tier1 override
     CODEX_MODEL_TIER2: str = DEFAULT_LLM_MODEL  # Tier2 override
+    CODEX_TIMEOUT_SEC_TIER1: int = 90
+    CODEX_TIMEOUT_SEC_TIER2: int = 120
     CODEX_PATH: str = ""  # 비어있으면 자동 탐색 (예: /opt/homebrew/bin/codex)
+    LLM_TIER1_CONCURRENCY: int = 2
+    LLM_TIER2_CONCURRENCY: int = 1
     MANUAL_LLM_PROVIDER: str = "CLAUDE_CODE"  # CLAUDE_CODE | CODEX | OLLAMA
     MANUAL_LLM_MODEL: str = DEFAULT_LLM_MODEL
     MANUAL_LLM_FALLBACK_PROVIDER: str = ""

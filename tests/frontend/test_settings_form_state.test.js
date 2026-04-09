@@ -21,9 +21,13 @@ describe("settings_form_state", () => {
       "set-mode",
       "set-risk-appetite",
       "set-llm-tier1-provider",
+      "set-llm-tier1-concurrency",
       "set-llm-tier2-provider",
+      "set-llm-tier2-concurrency",
       "set-llm-tier1-fallback",
       "set-llm-tier2-fallback",
+      "set-codex-timeout-tier1",
+      "set-codex-timeout-tier2",
       "set-manual-llm-provider",
       "set-manual-llm-model",
       "set-manual-llm-fallback-provider",
@@ -50,7 +54,11 @@ describe("settings_form_state", () => {
         RISK_APPETITE: "AGGRESSIVE",
         LLM_PROVIDER: "CLAUDE_CODE",
         LLM_PROVIDER_TIER1: "CODEX",
+        LLM_TIER1_CONCURRENCY: 2,
         LLM_FALLBACK_PROVIDER_TIER1: "OLLAMA",
+        LLM_TIER2_CONCURRENCY: 1,
+        CODEX_TIMEOUT_SEC_TIER1: 90,
+        CODEX_TIMEOUT_SEC_TIER2: 180,
         MANUAL_LLM_PROVIDER: "CODEX",
         MANUAL_LLM_MODEL: "gpt-5.4",
         MANUAL_LLM_FALLBACK_PROVIDER: "CLAUDE_CODE",
@@ -76,9 +84,13 @@ describe("settings_form_state", () => {
     expect(root.elements["set-mode"].value).toBe("AUTONOMOUS");
     expect(root.elements["set-risk-appetite"].value).toBe("AGGRESSIVE");
     expect(root.elements["set-llm-tier1-provider"].value).toBe("CODEX");
+    expect(root.elements["set-llm-tier1-concurrency"].value).toBe("2");
     expect(root.elements["set-llm-tier2-provider"].value).toBe("CLAUDE_CODE");
+    expect(root.elements["set-llm-tier2-concurrency"].value).toBe("1");
     expect(root.elements["set-llm-tier1-fallback"].value).toBe("OLLAMA");
     expect(root.elements["set-llm-tier2-fallback"].value).toBe("");
+    expect(root.elements["set-codex-timeout-tier1"].value).toBe("90");
+    expect(root.elements["set-codex-timeout-tier2"].value).toBe("180");
     expect(root.elements["set-manual-llm-provider"].value).toBe("CODEX");
     expect(root.elements["set-manual-llm-model"].value).toBe("gpt-5.4");
     expect(root.elements["set-manual-llm-fallback-provider"].value).toBe("CLAUDE_CODE");

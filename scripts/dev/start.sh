@@ -24,7 +24,13 @@ ENV_FILE="${MOMO_ENV_FILE:-$APP_DIR/.env}"
 HOST="${MOMO_HOST:-0.0.0.0}"
 PORT="${MOMO_PORT:-9000}"
 DOCKER_BIN="${MOMO_DOCKER_BIN:-docker}"
-PYTHON_BIN="${MOMO_PYTHON_BIN:-python}"
+if [ -n "${MOMO_PYTHON_BIN:-}" ]; then
+    PYTHON_BIN="$MOMO_PYTHON_BIN"
+elif [ -x "$VENV_DIR/bin/python" ]; then
+    PYTHON_BIN="$VENV_DIR/bin/python"
+else
+    PYTHON_BIN="python"
+fi
 LSOF_BIN="${MOMO_LSOF_BIN:-lsof}"
 STARTUP_WAIT_SEC="${MOMO_STARTUP_WAIT_SEC:-1}"
 AUTO_BACKUP_ON_STOP="${MOMO_AUTO_BACKUP_ON_STOP:-0}"
@@ -101,6 +107,18 @@ get_listening_pids() {
     ' || true
 }
 
+get_momo_server_pids() {
+    if ! has_command ps; then
+        return
+    fi
+
+    ps -axo pid=,command= 2>/dev/null | awk '
+        /uvicorn main:app/ {
+            print $1
+        }
+    ' || true
+}
+
 get_child_pids() {
     local parent_pid="$1"
 
@@ -121,6 +139,26 @@ get_parent_pid() {
     ps -o ppid= -p "$pid" 2>/dev/null | awk '{print $1}' || true
 }
 
+terminate_process() {
+    local pid="$1"
+
+    if ! kill -0 "$pid" 2>/dev/null; then
+        return
+    fi
+
+    kill "$pid" 2>/dev/null || true
+
+    local _attempt
+    for _attempt in 1 2 3 4 5; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            return
+        fi
+        sleep 0.1
+    done
+
+    kill -9 "$pid" 2>/dev/null || true
+}
+
 kill_process_tree() {
     local pid="$1"
     local child
@@ -129,9 +167,7 @@ kill_process_tree() {
         kill_process_tree "$child"
     done
 
-    if kill -0 "$pid" 2>/dev/null; then
-        kill "$pid" 2>/dev/null || true
-    fi
+    terminate_process "$pid"
 }
 
 kill_parent_chain() {
@@ -146,7 +182,7 @@ kill_parent_chain() {
         if ! is_momo_process "$parent"; then
             break
         fi
-        kill "$parent" 2>/dev/null || true
+        terminate_process "$parent"
         parent="$(get_parent_pid "$parent")"
     done
 }
@@ -183,6 +219,18 @@ is_momo_process() {
 stop_momo_processes() {
     local stopped=0
     local pid
+    local handled_pids=""
+
+    mark_handled() {
+        handled_pids="$handled_pids $1"
+    }
+
+    is_handled() {
+        case " $handled_pids " in
+            *" $1 "*) return 0 ;;
+            *) return 1 ;;
+        esac
+    }
 
     if [ -f "$PID_FILE" ]; then
         pid="$(cat "$PID_FILE")"
@@ -190,6 +238,7 @@ stop_momo_processes() {
             echo "🛑 momo-trading 종료 (PID: $pid)"
             kill_process_tree "$pid"
             stopped=1
+            mark_handled "$pid"
         else
             echo "프로세스가 이미 종료됨 (stale PID: $pid)"
         fi
@@ -200,11 +249,31 @@ stop_momo_processes() {
         if ! kill -0 "$pid" 2>/dev/null; then
             continue
         fi
+        if is_handled "$pid"; then
+            continue
+        fi
         if is_momo_process "$pid"; then
             echo "🧹 포트 점유 잔여 프로세스 정리 (PID: $pid)"
             kill_parent_chain "$pid"
             kill_process_tree "$pid"
             stopped=1
+            mark_handled "$pid"
+        fi
+    done
+
+    for pid in $(get_momo_server_pids); do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            continue
+        fi
+        if is_handled "$pid"; then
+            continue
+        fi
+        if is_momo_process "$pid"; then
+            echo "🧹 고아 프로세스 정리 (PID: $pid)"
+            kill_parent_chain "$pid"
+            kill_process_tree "$pid"
+            stopped=1
+            mark_handled "$pid"
         fi
     done
 

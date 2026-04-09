@@ -19,8 +19,6 @@ class CodexProvider:
     """
 
     _FAILURE_COOLDOWN_SEC = 300
-    _TIER1_TIMEOUT_SEC = 60.0
-    _TIER2_TIMEOUT_SEC = 120.0
 
     def __init__(self, tier: LLMTier = LLMTier.TIER1, model_override: str | None = None):
         self._tier = tier
@@ -116,7 +114,9 @@ class CodexProvider:
         ]
 
     def _timeout_sec(self) -> float:
-        return self._TIER1_TIMEOUT_SEC if self._tier == LLMTier.TIER1 else self._TIER2_TIMEOUT_SEC
+        if self._tier == LLMTier.TIER1:
+            return float(settings.CODEX_TIMEOUT_SEC_TIER1)
+        return float(settings.CODEX_TIMEOUT_SEC_TIER2)
 
     def status_snapshot(self) -> dict:
         path = self._find_codex()

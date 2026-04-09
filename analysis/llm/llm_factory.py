@@ -41,6 +41,26 @@ class LLMFactory:
                 LLMProvider.OLLAMA: OllamaProvider(LLMTier.TIER2),
             },
         }
+        self._tier_semaphores: dict[LLMTier, asyncio.Semaphore] = {}
+        self._tier_semaphore_limits: dict[LLMTier, int] = {}
+
+    @staticmethod
+    def _tier_concurrency_limit(tier: LLMTier) -> int:
+        configured = settings.LLM_TIER1_CONCURRENCY if tier == LLMTier.TIER1 else settings.LLM_TIER2_CONCURRENCY
+        return max(int(configured or 1), 1)
+
+    def _tier_semaphore(self, tier: LLMTier) -> asyncio.Semaphore:
+        limit = self._tier_concurrency_limit(tier)
+        if self._tier_semaphore_limits.get(tier) != limit:
+            self._tier_semaphores[tier] = asyncio.Semaphore(limit)
+            self._tier_semaphore_limits[tier] = limit
+        return self._tier_semaphores[tier]
+
+    def analysis_concurrency_limit(self) -> int:
+        return max(
+            self._tier_concurrency_limit(LLMTier.TIER1),
+            self._tier_concurrency_limit(LLMTier.TIER2),
+        )
 
     def _provider_chain(self, tier: LLMTier) -> list[LLMProvider]:
         selection = resolve_tier_selection(tier)
@@ -154,145 +174,146 @@ class LLMFactory:
         Returns:
             (생성 텍스트, 사용된 provider 이름)
         """
-        last_error = None
-        attempted_providers: set[LLMProvider] = set()
-        active_chain: list[LLMProvider] = list(provider_chain) if provider_chain else self._provider_chain(tier)
-        active_overrides = provider_model_overrides
+        async with self._tier_semaphore(tier):
+            last_error = None
+            attempted_providers: set[LLMProvider] = set()
+            active_chain: list[LLMProvider] = list(provider_chain) if provider_chain else self._provider_chain(tier)
+            active_overrides = provider_model_overrides
 
-        while True:
-            if provider_selection_resolver is not None:
-                active_chain, active_overrides = provider_selection_resolver()
-            else:
-                active_chain = list(provider_chain) if provider_chain else self._provider_chain(tier)
-                active_overrides = provider_model_overrides
-            next_candidate = next(
-                (
-                    (index, provider_key)
-                    for index, provider_key in enumerate(active_chain)
-                    if provider_key not in attempted_providers
-                ),
-                None,
-            )
-            if next_candidate is None:
-                break
-
-            index, provider_key = next_candidate
-            attempted_providers.add(provider_key)
-            fallback_model = self._fallback_model_for_tier(tier) if index > 0 else None
-            explicit_model_override = None
-            if active_overrides:
-                explicit_model_override = active_overrides.get(provider_key)
-            provider = self._build_provider(
-                tier,
-                provider_key,
-                explicit_model_override if explicit_model_override is not None else fallback_model,
-            )
-            if not await provider.is_available():
-                runtime = provider.status_snapshot() if hasattr(provider, "status_snapshot") else {}
-                if runtime.get("cooldown_active"):
-                    last_error = RuntimeError(
-                        f"{provider.provider.value} 최근 호출 실패로 비활성화 "
-                        f"({runtime.get('disabled_for_sec', 0)}s 남음): "
-                        f"{runtime.get('last_failure_reason', 'unknown')}"
-                    )
-                    logger.warning(
-                        "{} 사용 불가 (cooldown {}s, reason: {}), 다음 provider 확인",
-                        provider.provider.value,
-                        runtime.get("disabled_for_sec", 0),
-                        runtime.get("last_failure_reason", "unknown"),
-                    )
+            while True:
+                if provider_selection_resolver is not None:
+                    active_chain, active_overrides = provider_selection_resolver()
                 else:
-                    last_error = RuntimeError(f"{provider.provider.value} CLI를 찾을 수 없습니다 (PATH 확인)")
-                    logger.warning("{} 사용 불가, 다음 provider 확인", provider.provider.value)
-                continue
-
-            for attempt in range(2):
-                try:
-                    start = time.time()
-                    result = await provider.generate(prompt, system_prompt)
-                    elapsed_ms = int((time.time() - start) * 1000)
-                    provider_name = provider.provider.value
-                    model_id = provider.model_id
-
-                    logger.debug(
-                        "LLM 생성 완료: {} / {} ({}ms)",
-                        provider_name, model_id, elapsed_ms,
-                    )
-
-                    await self._log_llm_conversation(
-                        tier=tier,
-                        provider=provider_name,
-                        model=model_id,
-                        system_prompt=system_prompt,
-                        prompt=prompt,
-                        response=result,
-                        elapsed_ms=elapsed_ms,
-                        symbol=symbol,
-                        cycle_id=cycle_id,
-                    )
-                    await observability_service.record_llm_call(
-                        status="SUCCESS",
-                        provider=provider_name,
-                        model=model_id,
-                        tier=tier.value,
-                        elapsed_ms=elapsed_ms,
-                        prompt_chars=len(prompt),
-                        response_chars=len(result),
-                        retry_count=attempt,
-                        fallback_used=index > 0,
-                        cycle_id=cycle_id,
-                        symbol=symbol,
-                        detail={
-                            "provider_chain": [item.value for item in active_chain],
-                            "selected_provider_index": index,
-                            "system_prompt_chars": len(system_prompt or ""),
-                        },
-                    )
-
-                    return result, provider_name
-                except Exception as e:
-                    last_error = e
-                    should_retry = attempt == 0 and await provider.is_available()
-                    if should_retry:
-                        logger.warning("{} 호출 실패, 재시도: {}", provider.provider.value, str(e)[:100])
-                        await asyncio.sleep(2)
-                        continue
+                    active_chain = list(provider_chain) if provider_chain else self._provider_chain(tier)
+                    active_overrides = provider_model_overrides
+                next_candidate = next(
+                    (
+                        (index, provider_key)
+                        for index, provider_key in enumerate(active_chain)
+                        if provider_key not in attempted_providers
+                    ),
+                    None,
+                )
+                if next_candidate is None:
                     break
-            logger.warning("{} 호출 실패, fallback provider 확인", provider.provider.value)
 
-        await observability_service.record_llm_call(
-            status="ERROR",
-            provider=None,
-            model=None,
-            tier=tier.value,
-            elapsed_ms=None,
-            prompt_chars=len(prompt),
-            response_chars=None,
-            retry_count=0,
-            fallback_used=len(active_chain) > 1,
-            cycle_id=cycle_id,
-            symbol=symbol,
-            detail={
-                "provider_chain": [item.value for item in active_chain],
-                "system_prompt_chars": len(system_prompt or ""),
-                "error": str(last_error)[:200] if last_error else "unknown",
-            },
-        )
-        if last_error is not None:
-            await error_capture_service.capture_exception(
-                component="llm_factory",
-                operation="generate",
-                exc=last_error,
+                index, provider_key = next_candidate
+                attempted_providers.add(provider_key)
+                fallback_model = self._fallback_model_for_tier(tier) if index > 0 else None
+                explicit_model_override = None
+                if active_overrides:
+                    explicit_model_override = active_overrides.get(provider_key)
+                provider = self._build_provider(
+                    tier,
+                    provider_key,
+                    explicit_model_override if explicit_model_override is not None else fallback_model,
+                )
+                if not await provider.is_available():
+                    runtime = provider.status_snapshot() if hasattr(provider, "status_snapshot") else {}
+                    if runtime.get("cooldown_active"):
+                        last_error = RuntimeError(
+                            f"{provider.provider.value} 최근 호출 실패로 비활성화 "
+                            f"({runtime.get('disabled_for_sec', 0)}s 남음): "
+                            f"{runtime.get('last_failure_reason', 'unknown')}"
+                        )
+                        logger.warning(
+                            "{} 사용 불가 (cooldown {}s, reason: {}), 다음 provider 확인",
+                            provider.provider.value,
+                            runtime.get("disabled_for_sec", 0),
+                            runtime.get("last_failure_reason", "unknown"),
+                        )
+                    else:
+                        last_error = RuntimeError(f"{provider.provider.value} CLI를 찾을 수 없습니다 (PATH 확인)")
+                        logger.warning("{} 사용 불가, 다음 provider 확인", provider.provider.value)
+                    continue
+
+                for attempt in range(2):
+                    try:
+                        start = time.time()
+                        result = await provider.generate(prompt, system_prompt)
+                        elapsed_ms = int((time.time() - start) * 1000)
+                        provider_name = provider.provider.value
+                        model_id = provider.model_id
+
+                        logger.debug(
+                            "LLM 생성 완료: {} / {} ({}ms)",
+                            provider_name, model_id, elapsed_ms,
+                        )
+
+                        await self._log_llm_conversation(
+                            tier=tier,
+                            provider=provider_name,
+                            model=model_id,
+                            system_prompt=system_prompt,
+                            prompt=prompt,
+                            response=result,
+                            elapsed_ms=elapsed_ms,
+                            symbol=symbol,
+                            cycle_id=cycle_id,
+                        )
+                        await observability_service.record_llm_call(
+                            status="SUCCESS",
+                            provider=provider_name,
+                            model=model_id,
+                            tier=tier.value,
+                            elapsed_ms=elapsed_ms,
+                            prompt_chars=len(prompt),
+                            response_chars=len(result),
+                            retry_count=attempt,
+                            fallback_used=index > 0,
+                            cycle_id=cycle_id,
+                            symbol=symbol,
+                            detail={
+                                "provider_chain": [item.value for item in active_chain],
+                                "selected_provider_index": index,
+                                "system_prompt_chars": len(system_prompt or ""),
+                            },
+                        )
+
+                        return result, provider_name
+                    except Exception as e:
+                        last_error = e
+                        should_retry = attempt == 0 and await provider.is_available()
+                        if should_retry:
+                            logger.warning("{} 호출 실패, 재시도: {}", provider.provider.value, str(e)[:100])
+                            await asyncio.sleep(2)
+                            continue
+                        break
+                logger.warning("{} 호출 실패, fallback provider 확인", provider.provider.value)
+
+            await observability_service.record_llm_call(
+                status="ERROR",
+                provider=None,
+                model=None,
+                tier=tier.value,
+                elapsed_ms=None,
+                prompt_chars=len(prompt),
+                response_chars=None,
+                retry_count=0,
+                fallback_used=len(active_chain) > 1,
                 cycle_id=cycle_id,
                 symbol=symbol,
                 detail={
-                    "tier": tier.value,
                     "provider_chain": [item.value for item in active_chain],
                     "system_prompt_chars": len(system_prompt or ""),
-                    "prompt_chars": len(prompt or ""),
+                    "error": str(last_error)[:200] if last_error else "unknown",
                 },
             )
-        raise last_error or RuntimeError("사용 가능한 LLM provider가 없습니다")
+            if last_error is not None:
+                await error_capture_service.capture_exception(
+                    component="llm_factory",
+                    operation="generate",
+                    exc=last_error,
+                    cycle_id=cycle_id,
+                    symbol=symbol,
+                    detail={
+                        "tier": tier.value,
+                        "provider_chain": [item.value for item in active_chain],
+                        "system_prompt_chars": len(system_prompt or ""),
+                        "prompt_chars": len(prompt or ""),
+                    },
+                )
+            raise last_error or RuntimeError("사용 가능한 LLM provider가 없습니다")
 
     async def _log_llm_conversation(
         self, *, tier: LLMTier, provider: str, model: str,

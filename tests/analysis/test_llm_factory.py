@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from analysis.llm.llm_factory import LLMFactory
@@ -65,6 +67,26 @@ class FakeMutatingFailingProvider(FakeProvider):
         self._available = False
         self._on_generate()
         raise RuntimeError("provider failed")
+
+
+class BlockingProvider(FakeProvider):
+    def __init__(self, provider: LLMProvider) -> None:
+        super().__init__(provider, available=True, result="ok")
+        self.started = 0
+        self.active = 0
+        self.max_active = 0
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def generate(self, prompt: str, system_prompt: str = "") -> str:
+        self.calls.append((prompt, system_prompt))
+        self.started += 1
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        self.entered.set()
+        await self.release.wait()
+        self.active -= 1
+        return self._result
 
 
 @pytest.mark.asyncio
@@ -398,6 +420,39 @@ async def test_llm_factory_records_observability_metric_on_failure(monkeypatch) 
 
     assert observed["status"] == "ERROR"
     assert observed["fallback_used"] is False
+
+
+@pytest.mark.asyncio
+async def test_llm_factory_limits_concurrent_generation_per_tier(monkeypatch) -> None:
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_TIER1_CONCURRENCY", 1)
+
+    async def fake_record_llm_call(**kwargs):
+        return None
+
+    factory = LLMFactory()
+    provider = BlockingProvider(LLMProvider.OLLAMA)
+    factory._providers[LLMTier.TIER1] = {LLMProvider.OLLAMA: provider}
+    monkeypatch.setattr("analysis.llm.llm_factory.observability_service.record_llm_call", fake_record_llm_call)
+
+    first = asyncio.create_task(
+        factory.generate("first", LLMTier.TIER1, provider_chain=[LLMProvider.OLLAMA]),
+    )
+    await provider.entered.wait()
+
+    second = asyncio.create_task(
+        factory.generate("second", LLMTier.TIER1, provider_chain=[LLMProvider.OLLAMA]),
+    )
+    await asyncio.sleep(0.05)
+
+    assert provider.started == 1
+    assert provider.max_active == 1
+
+    provider.release.set()
+    await first
+    await second
+
+    assert provider.started == 2
+    assert provider.max_active == 1
 
 
 async def test_llm_factory_re_resolves_default_chain_after_primary_failure(monkeypatch) -> None:

@@ -25,7 +25,7 @@ async def test_manual_report_generation_passes_manual_provider(client, monkeypat
     assert captured["manual_model_override"] == "gpt-5.4"
 
 
-async def test_manual_cycle_trigger_captures_manual_provider(client, monkeypatch):
+async def test_manual_cycle_trigger_uses_default_cycle_routing(client, monkeypatch):
     monkeypatch.setattr("api.routes.admin.settings.MANUAL_LLM_PROVIDER", "CLAUDE_CODE", raising=False)
     monkeypatch.setattr("api.routes.admin.settings.MANUAL_LLM_MODEL", "claude-sonnet-4-6", raising=False)
 
@@ -50,5 +50,5 @@ async def test_manual_cycle_trigger_captures_manual_provider(client, monkeypatch
     await asyncio.sleep(0)
 
     assert response.status_code == 200
-    assert captured["manual_provider_override"] == "CLAUDE_CODE"
-    assert captured["manual_model_override"] == "claude-sonnet-4-6"
+    assert captured["manual_provider_override"] is None
+    assert captured["manual_model_override"] is None

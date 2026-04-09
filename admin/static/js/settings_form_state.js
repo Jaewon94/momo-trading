@@ -18,8 +18,16 @@ const SETTINGS_CONTROL_BINDINGS = [
     getValue: (settings) => settings.LLM_PROVIDER_TIER1 || settings.LLM_PROVIDER || 'CLAUDE_CODE',
   },
   {
+    elementId: 'set-llm-tier1-concurrency',
+    getValue: (settings) => stringifyNullable(settings.LLM_TIER1_CONCURRENCY),
+  },
+  {
     elementId: 'set-llm-tier2-provider',
     getValue: (settings) => settings.LLM_PROVIDER_TIER2 || settings.LLM_PROVIDER || 'CLAUDE_CODE',
+  },
+  {
+    elementId: 'set-llm-tier2-concurrency',
+    getValue: (settings) => stringifyNullable(settings.LLM_TIER2_CONCURRENCY),
   },
   {
     elementId: 'set-llm-tier1-fallback',
@@ -28,6 +36,14 @@ const SETTINGS_CONTROL_BINDINGS = [
   {
     elementId: 'set-llm-tier2-fallback',
     getValue: (settings) => settings.LLM_FALLBACK_PROVIDER_TIER2 || '',
+  },
+  {
+    elementId: 'set-codex-timeout-tier1',
+    getValue: (settings) => stringifyNullable(settings.CODEX_TIMEOUT_SEC_TIER1),
+  },
+  {
+    elementId: 'set-codex-timeout-tier2',
+    getValue: (settings) => stringifyNullable(settings.CODEX_TIMEOUT_SEC_TIER2),
   },
   {
     key: 'MANUAL_LLM_PROVIDER',

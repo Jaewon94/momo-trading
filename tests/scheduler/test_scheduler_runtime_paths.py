@@ -153,6 +153,7 @@ async def test_scheduler_start_runs_news_poll_once_on_startup_when_trading_enabl
     assert "news_translation_backfill" in job_ids
     assert "resource_snapshot" in job_ids
     assert "observability_maintenance" in job_ids
+    assert "account_equity_snapshot" in job_ids
 
 
 @pytest.mark.asyncio
@@ -308,6 +309,7 @@ def test_scheduler_setup_jobs_registers_expected_job_ids() -> None:
         "news_translation_backfill",
         "resource_snapshot",
         "observability_maintenance",
+        "account_equity_snapshot",
         "holdings_check",
         "intraday_holdings_review",
         "force_liquidation",
@@ -507,6 +509,26 @@ async def test_scheduler_observability_maintenance_records_error_metric(monkeypa
 
     assert observed["metric_name"] == "OBSERVABILITY_MAINTENANCE"
     assert observed["status"] == "ERROR"
+
+
+@pytest.mark.asyncio
+async def test_scheduler_account_equity_snapshot_delegates_to_service(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    observed = {}
+
+    async def fake_capture_and_record_current(**kwargs):
+        observed.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        "scheduler.scheduler.account_equity_service.capture_and_record_current",
+        fake_capture_and_record_current,
+    )
+
+    await scheduler._account_equity_snapshot()
+
+    assert observed["session_phase"] == "INTRADAY"
+    assert observed["detail"]["reason"] == "scheduler_interval"
 
 
 @pytest.mark.asyncio

@@ -20,6 +20,14 @@ describe("settings_action_state", () => {
       id: "set-news-fetch-concurrency",
       value: "5",
     });
+    const tier1ConcurrencyChange = resolveDirectSettingChange({
+      id: "set-llm-tier1-concurrency",
+      value: "2",
+    });
+    const tier1TimeoutChange = resolveDirectSettingChange({
+      id: "set-codex-timeout-tier1",
+      value: "90",
+    });
     const sessionChange = resolveDirectSettingChange({
       id: "set-news-claude-share-session",
       checked: false,
@@ -28,6 +36,14 @@ describe("settings_action_state", () => {
     expect(fetchChange).toEqual({
       key: "NEWS_FETCH_CONCURRENCY",
       value: "5",
+    });
+    expect(tier1ConcurrencyChange).toEqual({
+      key: "LLM_TIER1_CONCURRENCY",
+      value: "2",
+    });
+    expect(tier1TimeoutChange).toEqual({
+      key: "CODEX_TIMEOUT_SEC_TIER1",
+      value: "90",
     });
     expect(sessionChange).toEqual({
       key: "NEWS_CLAUDE_SHARE_SESSION",

@@ -29,6 +29,7 @@ from core.config import settings
 from core.events import Event, EventType, event_bus
 from services.observability_maintenance_service import observability_maintenance_service
 from services.observability_service import observability_service
+from services.account_equity_service import account_equity_service
 from services.error_capture_service import error_capture_service
 from services.news_translation_backfill_service import news_translation_backfill_service
 from trading.broker_factory import get_broker_adapter
@@ -205,6 +206,12 @@ class TradingScheduler:
     async def _resource_snapshot(self) -> None:
         await observability_service.record_resource_snapshot()
 
+    async def _account_equity_snapshot(self) -> None:
+        await account_equity_service.capture_and_record_current(
+            session_phase="INTRADAY",
+            detail={"reason": "scheduler_interval"},
+        )
+
     async def _observability_maintenance(self) -> None:
         started_at = _time.perf_counter()
         try:
@@ -316,6 +323,17 @@ class TradingScheduler:
             )
 
         if include_trading_jobs:
+            self.scheduler.add_job(
+                self._account_equity_snapshot,
+                "cron",
+                minute="*/5",
+                hour="9-15",
+                day_of_week="mon-fri",
+                id="account_equity_snapshot",
+                name="계좌 자산 스냅샷",
+                misfire_grace_time=300,
+            )
+
             # ── 장중 보유종목 점검 (1시간 간격, 09:00~15:00) — WebSocket 보완용 안전망 ──
             self.scheduler.add_job(
                 self._holdings_check,

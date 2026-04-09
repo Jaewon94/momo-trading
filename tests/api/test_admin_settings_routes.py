@@ -17,6 +17,10 @@ async def test_admin_settings_exposes_manual_llm_provider(client):
     assert "CODEX_MODEL" in payload["data"]
     assert "CODEX_MODEL_TIER1" in payload["data"]
     assert "CODEX_MODEL_TIER2" in payload["data"]
+    assert "CODEX_TIMEOUT_SEC_TIER1" in payload["data"]
+    assert "CODEX_TIMEOUT_SEC_TIER2" in payload["data"]
+    assert "LLM_TIER1_CONCURRENCY" in payload["data"]
+    assert "LLM_TIER2_CONCURRENCY" in payload["data"]
     assert "NEWS_LLM_ENABLED" in payload["data"]
     assert "NEWS_LLM_PROVIDER" in payload["data"]
     assert "MANUAL_LLM_FALLBACK_PROVIDER" in payload["data"]
@@ -173,6 +177,29 @@ async def test_admin_settings_updates_provider_models_and_default_mode(client):
     assert payload["CODEX_MODEL_TIER2"] == "gpt-5.4"
     assert payload["LLM_FALLBACK_MODEL_TIER1"] == "claude-opus-4-6"
     assert payload["LLM_FALLBACK_MODEL_TIER2"] == "DEFAULT"
+
+
+async def test_admin_settings_updates_llm_runtime_controls(client):
+    response = await client.put(
+        "/api/v1/admin/settings",
+        json={
+            "LLM_TIER1_CONCURRENCY": 2,
+            "LLM_TIER2_CONCURRENCY": 1,
+            "CODEX_TIMEOUT_SEC_TIER1": 90,
+            "CODEX_TIMEOUT_SEC_TIER2": 180,
+        },
+    )
+
+    assert response.status_code == 200
+
+    settings_response = await client.get("/api/v1/admin/settings")
+
+    assert settings_response.status_code == 200
+    payload = settings_response.json()["data"]
+    assert payload["LLM_TIER1_CONCURRENCY"] == 2
+    assert payload["LLM_TIER2_CONCURRENCY"] == 1
+    assert payload["CODEX_TIMEOUT_SEC_TIER1"] == 90
+    assert payload["CODEX_TIMEOUT_SEC_TIER2"] == 180
 
 
 async def test_admin_settings_persists_across_runtime_reload(client):

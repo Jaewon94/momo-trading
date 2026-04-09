@@ -1,4 +1,9 @@
 from trading.models import AccountBalance, HoldingInfo, PendingOrderInfo
+from util.time_util import KST
+
+
+def _dt(hour: int, minute: int = 0):
+    return __import__("datetime").datetime(2026, 4, 9, hour, minute, tzinfo=KST)
 
 
 class FakeBrokerAdapter:
@@ -52,6 +57,96 @@ async def test_admin_balance_route_uses_broker_adapter(client, monkeypatch):
     payload = response.json()
     assert payload["data"]["cash"] == 500000
     assert payload["data"]["total_asset"] == 1000000
+
+
+async def test_admin_balance_route_includes_session_metrics(client, monkeypatch):
+    from models.trade_result import TradeResult
+    from services.account_equity_service import AccountEquityService
+    from tests.conftest import TestAsyncSessionLocal
+
+    service = AccountEquityService(
+        session_factory=TestAsyncSessionLocal,
+        now_func=lambda: _dt(13, 30),
+    )
+
+    await service.ensure_day_baseline(
+        service.build_state(
+            AccountBalance(
+                total_asset=980_000,
+                cash=280_000,
+                stock_value=700_000,
+                total_pnl=95_000,
+                total_pnl_rate=10.74,
+            ),
+            captured_at=_dt(9, 0),
+        ),
+        baseline_source="MARKET_OPEN",
+    )
+    await service.record_snapshot(
+        service.build_state(
+            AccountBalance(
+                total_asset=1_015_000,
+                cash=230_000,
+                stock_value=785_000,
+                total_pnl=130_000,
+                total_pnl_rate=14.69,
+            ),
+            captured_at=_dt(10, 0),
+        ),
+        session_phase="INTRADAY",
+    )
+
+    async with TestAsyncSessionLocal() as session:
+        session.add(TradeResult(
+            stock_symbol="005930",
+            stock_name="삼성전자",
+            side="BUY",
+            strategy_type="STABLE_SHORT",
+            entry_price=70_000,
+            exit_price=73_000,
+            quantity=10,
+            pnl=25_000,
+            return_pct=3.57,
+            is_win=True,
+            status="CONFIRMED",
+            entry_at=_dt(9, 5),
+            exit_at=_dt(12, 10),
+        ))
+        await session.commit()
+
+    monkeypatch.setattr("api.routes.admin.account_equity_service", service)
+    monkeypatch.setattr(
+        "api.routes.admin.get_broker_adapter",
+        lambda: FakeBrokerAdapter(),
+    )
+
+    response = await client.get("/api/v1/admin/account/balance")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["data"]["session_metrics"]["available"] is True
+    assert payload["data"]["session_metrics"]["baseline_total_asset"] == 980000
+    assert payload["data"]["session_metrics"]["asset_delta"] == 20000
+    assert payload["data"]["session_metrics"]["daily_unrealized_delta"] == -5000
+
+
+async def test_admin_balance_route_preserves_balance_when_session_metrics_fail(client, monkeypatch):
+    class FailingMetricsService:
+        async def build_balance_payload(self, balance, *, captured_at=None):
+            raise RuntimeError("metrics unavailable")
+
+    monkeypatch.setattr("api.routes.admin.account_equity_service", FailingMetricsService())
+    monkeypatch.setattr(
+        "api.routes.admin.get_broker_adapter",
+        lambda: FakeBrokerAdapter(),
+    )
+
+    response = await client.get("/api/v1/admin/account/balance")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["data"]["total_asset"] == 1000000
+    assert payload["data"]["session_metrics"]["available"] is False
 
 
 async def test_admin_holdings_route_uses_broker_adapter(client, monkeypatch):
