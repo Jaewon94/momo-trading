@@ -9,6 +9,7 @@ from analysis.llm.claude_code_provider import ClaudeCodeProvider
 from analysis.llm.codex_provider import CodexProvider
 from analysis.llm.ollama_provider import OllamaProvider
 from analysis.llm.selection_policy import (
+    NewsSelection,
     model_for_status,
     provider_from_name,
     resolve_manual_selection,
@@ -89,9 +90,11 @@ class LLMFactory:
         return _resolve
 
     @staticmethod
-    def _news_selection_resolver() -> Callable[[], tuple[list[LLMProvider], dict[LLMProvider, str] | None]]:
+    def _news_selection_resolver(
+        news_selection: NewsSelection | None = None,
+    ) -> Callable[[], tuple[list[LLMProvider], dict[LLMProvider, str] | None]]:
         def _resolve() -> tuple[list[LLMProvider], dict[LLMProvider, str] | None]:
-            selection = resolve_news_selection()
+            selection = news_selection or resolve_news_selection()
             return list(selection.provider_chain), selection.provider_model_overrides
 
         return _resolve
@@ -392,6 +395,7 @@ class LLMFactory:
         *,
         symbol: str | None = None,
         cycle_id: str | None = None,
+        news_selection: NewsSelection | None = None,
     ) -> tuple[str, str]:
         """뉴스 전용 LLM 생성.
 
@@ -403,7 +407,7 @@ class LLMFactory:
             system_prompt,
             symbol=symbol,
             cycle_id=cycle_id,
-            provider_selection_resolver=self._news_selection_resolver(),
+            provider_selection_resolver=self._news_selection_resolver(news_selection),
         )
 
     def get_llm_status(self) -> dict:

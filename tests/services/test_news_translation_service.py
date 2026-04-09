@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from services.news_translation_service import NewsTranslationService
@@ -63,6 +64,78 @@ async def test_news_translation_service_adds_korean_translation_metadata(monkeyp
     assert metadata["translation_provider"] == "CODEX"
     assert items[0]["sentiment_label"] == "POSITIVE"
     assert items[0]["sentiment_score"] == pytest.approx(0.72)
+
+
+@pytest.mark.asyncio
+async def test_news_translation_service_translate_item_skips_when_selection_disabled(monkeypatch):
+    service = NewsTranslationService()
+
+    async def fail_generate_news(*args, **kwargs):
+        raise AssertionError("generate_news should not be called when news selection is disabled")
+
+    monkeypatch.setattr(
+        "services.news_translation_service.llm_factory.generate_news",
+        fail_generate_news,
+    )
+
+    item = {
+        "source_code": "CNBC",
+        "language": "en",
+        "title": "Chip stocks rise on demand recovery",
+        "summary": "Demand improved",
+        "metadata": {"existing": "value"},
+    }
+
+    translated = await service.translate_item(
+        item,
+        news_selection=SimpleNamespace(
+            enabled=False,
+            provider="CODEX",
+            provider_chain=(),
+            provider_model_overrides=None,
+        ),
+    )
+
+    assert translated == item
+
+
+@pytest.mark.asyncio
+async def test_news_translation_service_passes_resolved_selection_to_llm_factory(monkeypatch):
+    service = NewsTranslationService()
+    captured = {}
+
+    async def fake_generate_news(prompt, tier, system_prompt="", *, news_selection=None, **kwargs):
+        captured["news_selection"] = news_selection
+        return (
+            '{"translated_title":"현대차 상승","translated_summary":"현지 판매 호조 기대","sentiment_label":"POSITIVE","sentiment_score":0.61}',
+            "CODEX",
+        )
+
+    selection = SimpleNamespace(
+        enabled=True,
+        provider="CODEX",
+        provider_chain=(),
+        provider_model_overrides=None,
+    )
+
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_ENABLED", True)
+    monkeypatch.setattr(
+        "services.news_translation_service.llm_factory.generate_news",
+        fake_generate_news,
+    )
+
+    translated = await service.translate_item(
+        {
+            "source_code": "INVESTING",
+            "language": "en",
+            "title": "Hyundai shares rise on stronger outlook",
+            "summary": "Investors cheered the stronger guidance.",
+        },
+        news_selection=selection,
+    )
+
+    assert captured["news_selection"] is selection
+    assert translated["metadata"]["translation_provider"] == "CODEX"
 
 
 @pytest.mark.asyncio

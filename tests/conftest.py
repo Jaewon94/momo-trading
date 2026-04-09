@@ -1,4 +1,6 @@
 import copy
+import sys
+import asyncio as _asyncio
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -21,6 +23,8 @@ test_async_engine = create_async_engine(
 TestAsyncSessionLocal = async_sessionmaker(
     test_async_engine, expire_on_commit=False
 )
+ORIGINAL_ASYNCIO_CREATE_TASK = _asyncio.create_task
+ORIGINAL_ASYNCIO_SHIELD = _asyncio.shield
 
 
 async def override_get_async_db():
@@ -35,9 +39,17 @@ async def override_get_async_db_with_transaction():
 
 
 async def _clear_all_tables() -> None:
-    async with test_async_engine.begin() as conn:
-        for table in reversed(Base.metadata.sorted_tables):
-            await conn.execute(delete(table))
+    current_create_task = _asyncio.create_task
+    current_shield = _asyncio.shield
+    _asyncio.create_task = ORIGINAL_ASYNCIO_CREATE_TASK
+    _asyncio.shield = ORIGINAL_ASYNCIO_SHIELD
+    try:
+        async with test_async_engine.begin() as conn:
+            for table in reversed(Base.metadata.sorted_tables):
+                await conn.execute(delete(table))
+    finally:
+        _asyncio.create_task = current_create_task
+        _asyncio.shield = current_shield
 
 
 def _restore_settings(snapshot: dict) -> None:
@@ -49,8 +61,30 @@ def _clear_cached_singletons() -> None:
     from realtime.stream_backend import get_stream_backend
     from trading.broker_factory import get_broker_adapter
 
-    get_stream_backend.cache_clear()
-    get_broker_adapter.cache_clear()
+    if hasattr(get_stream_backend, "cache_clear"):
+        get_stream_backend.cache_clear()
+    if hasattr(get_broker_adapter, "cache_clear"):
+        get_broker_adapter.cache_clear()
+
+
+def _patch_async_session_aliases(monkeypatch: pytest.MonkeyPatch) -> None:
+    import core.database as database_module
+
+    monkeypatch.setattr(database_module, "AsyncSessionLocal", TestAsyncSessionLocal)
+
+    prefixes = (
+        "agent.",
+        "analysis.",
+        "api.",
+        "scheduler.",
+        "services.",
+        "strategy.",
+    )
+    for module_name, module in list(sys.modules.items()):
+        if module is None or not module_name.startswith(prefixes):
+            continue
+        if hasattr(module, "AsyncSessionLocal"):
+            monkeypatch.setattr(module, "AsyncSessionLocal", TestAsyncSessionLocal, raising=False)
 
 
 @pytest.fixture()
@@ -89,8 +123,9 @@ async def create_tables():
 
 
 @pytest.fixture(autouse=True)
-async def isolate_test_state():
+async def isolate_test_state(monkeypatch):
     settings_snapshot = copy.deepcopy(settings.model_dump())
+    _patch_async_session_aliases(monkeypatch)
     _clear_cached_singletons()
     await _clear_all_tables()
 

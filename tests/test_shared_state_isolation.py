@@ -35,3 +35,11 @@ def test_test_settings_isolation_mutates_global_settings() -> None:
 
 def test_test_settings_isolation_restores_global_settings() -> None:
     assert settings.NEWS_DOMESTIC_MEDIA_ENABLED == ORIGINAL_NEWS_DOMESTIC_MEDIA_ENABLED
+
+
+def test_async_session_aliases_use_test_db() -> None:
+    import services.runtime_settings_service as runtime_settings_service_module
+    import strategy.trading_guard as trading_guard_module
+
+    assert runtime_settings_service_module.AsyncSessionLocal is TestAsyncSessionLocal
+    assert trading_guard_module.AsyncSessionLocal is TestAsyncSessionLocal

@@ -157,8 +157,7 @@ def _build_explicit_selection(
         fallback_provider = provider_from_name(normalized_fallback_provider)
         if fallback_provider != provider:
             chain.append(fallback_provider)
-            if normalized_fallback_model != DEFAULT_LLM_MODEL:
-                overrides[fallback_provider] = normalized_fallback_model
+            overrides[fallback_provider] = normalized_fallback_model
         else:
             normalized_fallback_provider = ""
 

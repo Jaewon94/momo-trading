@@ -3,6 +3,8 @@ import asyncio
 import pytest
 
 from analysis.llm.llm_factory import LLMFactory
+from analysis.llm.selection_policy import NewsSelection, resolve_news_selection
+from core.config import DEFAULT_LLM_MODEL
 from trading.enums import LLMProvider, LLMTier
 
 
@@ -524,5 +526,48 @@ async def test_llm_factory_re_resolves_news_chain_after_primary_failure(monkeypa
     with pytest.raises(RuntimeError, match="provider failed"):
         await factory.generate_news("hello")
 
+    assert codex.calls == [("hello", "")]
+    assert claude.calls == []
+
+
+def test_resolve_news_selection_preserves_default_fallback_model_override(monkeypatch) -> None:
+    monkeypatch.setattr("analysis.llm.selection_policy.settings.NEWS_LLM_PROVIDER", "CODEX")
+    monkeypatch.setattr("analysis.llm.selection_policy.settings.NEWS_LLM_MODEL", "DEFAULT")
+    monkeypatch.setattr("analysis.llm.selection_policy.settings.NEWS_LLM_FALLBACK_PROVIDER", "CLAUDE_CODE")
+    monkeypatch.setattr("analysis.llm.selection_policy.settings.NEWS_LLM_FALLBACK_MODEL", "DEFAULT")
+
+    selection = resolve_news_selection()
+
+    assert selection.provider_model_overrides is not None
+    assert selection.provider_model_overrides[LLMProvider.CLAUDE_CODE] == DEFAULT_LLM_MODEL
+
+
+@pytest.mark.asyncio
+async def test_llm_factory_generate_news_uses_provided_selection_over_runtime_settings(monkeypatch) -> None:
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.NEWS_LLM_PROVIDER", "CLAUDE_CODE")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.NEWS_LLM_FALLBACK_PROVIDER", "")
+
+    factory = LLMFactory()
+    codex = FakeProvider(LLMProvider.CODEX, available=True, result="codex-result")
+    claude = FakeProvider(LLMProvider.CLAUDE_CODE, available=True, result="claude-result")
+    factory._providers[LLMTier.TIER1] = {
+        LLMProvider.CODEX: codex,
+        LLMProvider.CLAUDE_CODE: claude,
+    }
+
+    selection = NewsSelection(
+        enabled=True,
+        provider="CODEX",
+        model=DEFAULT_LLM_MODEL,
+        fallback_provider="",
+        fallback_model=DEFAULT_LLM_MODEL,
+        provider_chain=(LLMProvider.CODEX,),
+        provider_model_overrides=None,
+    )
+
+    result, provider = await factory.generate_news("hello", news_selection=selection)
+
+    assert result == "codex-result"
+    assert provider == "CODEX"
     assert codex.calls == [("hello", "")]
     assert claude.calls == []

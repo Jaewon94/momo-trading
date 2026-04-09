@@ -31,6 +31,7 @@ class ClaudeCodeProvider:
     _active_session_id: str | None = None
     _session_initialized: bool = False  # 첫 호출 완료 여부
     _session_lock: asyncio.Lock | None = None
+    _session_lock_loop: asyncio.AbstractEventLoop | None = None
 
     # 클래스 레벨 누적 사용량
     cumulative_usage: dict = {
@@ -64,8 +65,13 @@ class ClaudeCodeProvider:
     @classmethod
     def _get_lock(cls) -> asyncio.Lock:
         """세션 락 (resume 호출 직렬화)"""
-        if cls._session_lock is None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if cls._session_lock is None or cls._session_lock_loop is not loop:
             cls._session_lock = asyncio.Lock()
+            cls._session_lock_loop = loop
         return cls._session_lock
 
     # ── 세션 관리 ──

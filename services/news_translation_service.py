@@ -78,6 +78,9 @@ class NewsTranslationService:
         summary = str(item.get("summary") or "").strip()
         if not title:
             return item
+        selected_news = news_selection or resolve_news_selection()
+        if not selected_news.enabled:
+            return item
 
         prompt = f"""Translate the following financial news into Korean for a Korean stock trading dashboard.
 
@@ -102,12 +105,12 @@ Summary: {summary}
 
         copied = dict(item)
         metadata = dict(item.get("metadata") or {})
-        selected_news = news_selection or resolve_news_selection()
         try:
             result, provider = await llm_factory.generate_news(
                 prompt,
                 LLMTier.TIER1,
                 "",
+                news_selection=selected_news,
             )
             start = result.find("{")
             end = result.rfind("}") + 1
