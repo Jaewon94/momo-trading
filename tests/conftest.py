@@ -1,8 +1,11 @@
+import copy
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import StaticPool, delete
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from core.config import settings
 from core.database import get_async_db, get_async_db_with_transaction
 import models  # noqa: F401
 from models.base import Base
@@ -29,6 +32,25 @@ async def override_get_async_db_with_transaction():
     async with TestAsyncSessionLocal() as session:
         async with session.begin():
             yield session
+
+
+async def _clear_all_tables() -> None:
+    async with test_async_engine.begin() as conn:
+        for table in reversed(Base.metadata.sorted_tables):
+            await conn.execute(delete(table))
+
+
+def _restore_settings(snapshot: dict) -> None:
+    for key, value in snapshot.items():
+        setattr(settings, key, copy.deepcopy(value))
+
+
+def _clear_cached_singletons() -> None:
+    from realtime.stream_backend import get_stream_backend
+    from trading.broker_factory import get_broker_adapter
+
+    get_stream_backend.cache_clear()
+    get_broker_adapter.cache_clear()
 
 
 @pytest.fixture()
@@ -64,6 +86,19 @@ async def create_tables():
     yield
     async with test_async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+
+
+@pytest.fixture(autouse=True)
+async def isolate_test_state():
+    settings_snapshot = copy.deepcopy(settings.model_dump())
+    _clear_cached_singletons()
+    await _clear_all_tables()
+
+    yield
+
+    await _clear_all_tables()
+    _restore_settings(settings_snapshot)
+    _clear_cached_singletons()
 
 
 @pytest.fixture()
