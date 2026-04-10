@@ -14,7 +14,7 @@ class FakeBrokerAdapter:
         supports_overseas_stocks=False,
         supports_paper_trading=True,
         supports_live_trading=True,
-        supports_realtime_quotes=True,
+        supports_realtime_quotes=False,
         supports_order_cancellation=False,
     )
 
