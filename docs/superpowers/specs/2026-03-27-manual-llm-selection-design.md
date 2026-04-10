@@ -2,9 +2,18 @@
 
 **Date:** 2026-03-27
 
+## Status Update (2026-04-10)
+
+- Manual selection is implemented for:
+  - Admin Q&A
+  - Manual daily report generation
+- Manual selection is intentionally **not** applied to stock-analysis cycle execution anymore.
+  - Automatic cycles and `/api/v1/admin/agent/trigger` both use the configured Tier1/Tier2 routing.
+  - This avoids divergence between "manual trigger" and "automatic trigger" for the same trading-analysis path.
+
 ## Goal
 
-Admin 화면에서 수동 AI 작업을 실행하기 전에 사용자가 `Claude Code` 또는 `Codex`를 선택할 수 있게 한다. `.env`에는 두 provider를 모두 등록해 두고, 자동 파이프라인용 기본 설정과 수동 작업용 선택 설정을 분리한다.
+Admin 화면에서 수동 AI 작업을 실행하기 전에 사용자가 `Claude Code` 또는 `Codex`를 선택할 수 있게 한다. `.env`에는 두 provider를 모두 등록해 두고, 자동 파이프라인용 Tier 설정과 별개로 수동 보조 작업용 선택 설정을 분리한다.
 
 ## In Scope
 
@@ -13,13 +22,13 @@ Admin 화면에서 수동 AI 작업을 실행하기 전에 사용자가 `Claude 
 - 수동 작업에만 적용되는 서버 측 override
 - 대상 작업
   - Q&A
-  - 수동 사이클 실행
   - 수동 일일 리포트 생성
 - activity log와 응답 payload에 사용 provider가 드러나게 개선
 
 ## Out Of Scope
 
 - 자동 스캐닝/분석/최종검토 파이프라인의 provider 선택
+- 수동 사이클 트리거의 종목 분석 provider 선택
 - Tier1/Tier2 자동 라우팅 정책의 제거
 - Claude/Codex 세부 모델명을 UI에서 직접 수정하는 기능
 - provider별 프롬프트 튜닝 변경
@@ -30,9 +39,9 @@ Admin 화면에서 수동 AI 작업을 실행하기 전에 사용자가 `Claude 
 - `LLMFactory`는 현재 Tier 기반 provider chain만 해석한다.
 - Admin 설정 UI는 런타임 mutable settings를 직접 `settings` 객체에 반영한다.
 - 수동 AI 작업은 `api/routes/admin.py`에 모여 있다.
-  - `POST /api/v1/admin/agent/trigger`
   - `POST /api/v1/admin/reports/generate`
   - `POST /api/v1/admin/qa/ask`
+- 수동 사이클 트리거는 존재하지만, 종목 분석 경로는 자동 사이클과 같은 Tier 설정을 사용한다.
 
 ## Design Principles
 
@@ -80,7 +89,7 @@ Admin 사이드바 `설정` 영역에 새 섹션을 추가한다.
 
 1. 사용자가 화면에서 수동 작업 AI를 선택한다.
 2. 선택값은 런타임 설정 API로 저장된다.
-3. 사용자가 `Q&A`, `수동 사이클 실행`, `리포트 생성` 중 하나를 실행한다.
+3. 사용자가 `Q&A` 또는 `리포트 생성`을 실행한다.
 4. 서버는 현재 수동 작업 override를 읽는다.
 5. override가 `AUTOMATIC`이면 기존 Tier 규칙을 사용한다.
 6. override가 특정 provider면 해당 작업의 LLM 호출은 그 provider를 우선 사용한다.
@@ -137,9 +146,9 @@ Admin 사이드바 `설정` 영역에 새 섹션을 추가한다.
 
 ### 수동 사이클 실행
 
-- 수동 사이클은 비동기 task로 실행된다.
-- trigger 시점의 선택값이 작업 시작 순간에 캡처되어야 한다.
-- 따라서 `run_cycle()` 진입 전에 override 컨텍스트를 인자로 넘기거나, 수동 실행 전용 entrypoint를 만든다.
+- `/admin/agent/trigger`는 "수동으로 자동 사이클을 한 번 실행"하는 의미로 유지한다.
+- 따라서 이 경로의 종목 분석과 최종 검토는 자동 사이클과 동일하게 Tier1/Tier2 설정을 사용한다.
+- `MANUAL_LLM_*` 설정은 이 경로에 주입하지 않는다.
 
 ## Logging And Observability
 
@@ -205,14 +214,14 @@ References:
 
 ## Risks
 
-- 수동 사이클은 내부적으로 여러 Tier 호출을 포함하므로, "수동 작업에서 Codex 선택"이 Tier2 최종검토까지 모두 덮는지 명확히 정의해야 한다.
-- trigger 후 비동기 실행이므로 선택값을 전역 mutable state로 늦게 읽으면 다른 사용자의 선택 변경이 섞일 수 있다.
-- 따라서 수동 사이클은 "실행 시작 시점 snapshot"이 필수다.
+- "수동 작업 AI"라는 라벨이 수동 사이클까지 덮는 것으로 오해될 수 있다.
+- 따라서 UI/문서에서 Q&A/리포트 전용 설정임을 계속 명시해야 한다.
+- 자동/수동 사이클과 수동 보조 작업의 경계가 다시 섞이지 않도록 라우팅 테스트를 유지해야 한다.
 
 ## Final Decision
 
-1. 수동 작업 범위만 우선 지원한다.
+1. 수동 작업 범위는 Q&A와 수동 리포트 생성에 우선 적용한다.
 2. 선택 방식은 Admin 화면에서 미리 고르는 사전 선택형으로 한다.
-3. 자동 작업 Tier 설정은 그대로 유지한다.
+3. 자동 작업 Tier 설정은 그대로 유지하며, 수동 사이클 트리거도 동일 정책을 따른다.
 4. 수동 작업은 별도 override를 통해 provider를 결정한다.
 5. 구현은 TDD로 진행한다.

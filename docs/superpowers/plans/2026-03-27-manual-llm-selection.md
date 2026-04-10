@@ -2,11 +2,25 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Admin에서 수동 AI 작업 실행 전에 `자동/Claude Code/Codex`를 선택하고, 그 선택이 `Q&A`, `수동 사이클 실행`, `리포트 생성`에만 적용되도록 만든다.
+**Goal:** Admin에서 수동 AI 작업 실행 전에 `자동/Claude Code/Codex`를 선택하고, 그 선택이 `Q&A`와 `리포트 생성` 같은 수동 보조 작업에만 적용되도록 만든다.
 
-**Architecture:** 자동 파이프라인용 Tier 설정과 별개로 수동 작업 전용 runtime override를 추가한다. UI는 설정 조회/변경만 담당하고, 실제 provider 해석은 서버의 작은 해석 계층과 `LLMFactory`가 담당한다. 수동 사이클은 실행 시점 snapshot을 받아 비동기 실행 중 설정 경합을 피한다.
+**Architecture:** 자동 파이프라인용 Tier 설정과 별개로 수동 작업 전용 runtime override를 추가한다. UI는 설정 조회/변경만 담당하고, 실제 provider 해석은 서버의 작은 해석 계층과 `LLMFactory`가 담당한다. 종목 분석을 수행하는 자동/수동 사이클 실행은 모두 동일한 Tier1/Tier2 라우팅을 사용하고, 수동 override는 Q&A와 리포트 생성 같은 보조 작업에만 적용한다.
 
 **Tech Stack:** FastAPI, Pydantic Settings, pytest/pytest-asyncio, vanilla JS Admin UI, existing Claude Code/Codex CLI providers
+
+## Status Update (2026-04-10)
+
+- Implemented:
+  - manual provider/model runtime settings
+  - `LLMFactory.generate_manual(...)`
+  - Admin Q&A manual-provider routing
+  - manual daily-report override threading
+  - `/admin/llm/status` manual selection exposure
+  - Admin settings UI and related tests
+- Superseded by later routing policy:
+  - The original Task 5 assumed `/admin/agent/trigger` should capture `MANUAL_LLM_*`.
+  - Current behavior intentionally does **not** do that. Manual and automatic cycle execution both use Tier1/Tier2 settings for stock analysis and final review.
+  - `MANUAL_LLM_*` is reserved for manual support actions such as Q&A and report generation.
 
 ---
 
