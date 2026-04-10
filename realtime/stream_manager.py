@@ -3,9 +3,8 @@ import asyncio
 
 from loguru import logger
 
-from core.config import settings
-from realtime.stream_backend import get_stream_backend
-from trading.enums import BrokerProvider
+from realtime.adapters.base import RealtimeAdapter
+from realtime.realtime_factory import get_realtime_adapter
 
 
 class StreamManager:
@@ -16,26 +15,20 @@ class StreamManager:
     - 끊김 시 자동 재연결
     """
 
-    def __init__(self):
+    def __init__(self, realtime_adapter: RealtimeAdapter | None = None):
         self._priority_symbols: dict[str, str] = {}  # symbol -> market
         self._running = False
         self._listen_task: asyncio.Task | None = None
-        self._stream_backend = get_stream_backend()
+        self._realtime_adapter = realtime_adapter or get_realtime_adapter()
 
-    @staticmethod
-    def _supports_kis_streams() -> bool:
-        provider = (settings.BROKER_PROVIDER or BrokerProvider.KIS.value).upper()
-        return provider == BrokerProvider.KIS.value
+    def set_on_price(self, callback) -> None:
+        self._realtime_adapter.set_on_price(callback)
 
     async def start(self) -> None:
         """스트림 관리 시작"""
-        if not self._supports_kis_streams():
-            logger.debug("BROKER_PROVIDER={} → KIS WebSocket 스트림 비활성", settings.BROKER_PROVIDER)
-            return
-
         self._running = True
         try:
-            await self._stream_backend.start()
+            await self._realtime_adapter.start()
             self._listen_task = asyncio.create_task(self._run_listener())
             logger.debug("스트림 매니저 시작")
         except Exception as e:
@@ -50,38 +43,27 @@ class StreamManager:
                 await self._listen_task
             except asyncio.CancelledError:
                 pass
-        await self._stream_backend.stop()
+        await self._realtime_adapter.stop()
         logger.debug("스트림 매니저 중지")
 
     async def subscribe_symbols(self, symbols: list[tuple[str, str]]) -> None:
         """종목 리스트 구독 (symbol, market) 쌍"""
-        if not self._supports_kis_streams():
-            return
-
         for symbol, market in symbols:
-            if self._stream_backend.subscription_count >= 41:
+            if self._realtime_adapter.subscription_count >= 41:
                 logger.warning("구독 한도 도달 (41종목), 우선순위 낮은 종목 해제 필요")
                 break
-            success = await self._stream_backend.subscribe(symbol, market)
+            success = await self._realtime_adapter.subscribe(symbol, market)
             if success:
                 self._priority_symbols[symbol] = market
 
     async def unsubscribe_symbols(self, symbols: list[str]) -> None:
         """종목 구독 해제"""
-        if not self._supports_kis_streams():
-            self._priority_symbols.clear()
-            return
-
         for symbol in symbols:
             market = self._priority_symbols.pop(symbol, "KRX")
-            await self._stream_backend.unsubscribe(symbol, market)
+            await self._realtime_adapter.unsubscribe(symbol, market)
 
     async def update_subscriptions(self, new_symbols: list[tuple[str, str]]) -> None:
         """AI가 선정한 새 종목으로 구독 목록 업데이트"""
-        if not self._supports_kis_streams():
-            self._priority_symbols.clear()
-            return
-
         new_set = {s[0] for s in new_symbols}
         current_set = set(self._priority_symbols.keys())
 
@@ -99,7 +81,7 @@ class StreamManager:
         """WebSocket 수신 루프 (재연결 포함)"""
         while self._running:
             try:
-                await self._stream_backend.listen()
+                await self._realtime_adapter.listen()
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -108,24 +90,20 @@ class StreamManager:
                     logger.debug("5초 후 재연결 시도...")
                     await asyncio.sleep(5)
                     try:
-                        await self._stream_backend.start()
+                        await self._realtime_adapter.start()
                         # 기존 구독 복원
                         for symbol, market in self._priority_symbols.items():
-                            await self._stream_backend.subscribe(symbol, market)
+                            await self._realtime_adapter.subscribe(symbol, market)
                     except Exception as re:
                         logger.error("재연결 실패: {}", str(re))
 
     @property
     def subscription_count(self) -> int:
-        if not self._supports_kis_streams():
-            return 0
-        return self._stream_backend.subscription_count
+        return self._realtime_adapter.subscription_count
 
     @property
     def is_connected(self) -> bool:
-        if not self._supports_kis_streams():
-            return False
-        return self._stream_backend.is_connected
+        return self._realtime_adapter.is_connected
 
 
 stream_manager = StreamManager()
