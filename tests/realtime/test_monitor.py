@@ -1,11 +1,10 @@
 from datetime import datetime
+from types import SimpleNamespace
 
 import asyncio
 import pytest
 
-from core.config import settings
 from realtime.monitor import RealtimeMonitor
-from realtime.stream_manager import StreamManager
 from trading.enums import Market
 from trading.models import CurrentPrice, HoldingInfo
 
@@ -66,12 +65,50 @@ async def test_realtime_monitor_polls_prices_via_broker_adapter(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
-async def test_realtime_monitor_start_skips_kis_websocket_in_kiwoom_mode(monkeypatch) -> None:
+async def test_realtime_monitor_start_uses_streams_when_realtime_is_supported(monkeypatch) -> None:
+    monitor = RealtimeMonitor()
+    observed: list[str] = []
+
+    def fake_set_on_price(callback) -> None:
+        observed.append("set_on_price")
+        assert callback == monitor._on_price_update
+
+    async def fake_stream_start() -> None:
+        observed.append("stream_start")
+
+    async def fake_stream_stop() -> None:
+        observed.append("stream_stop")
+
+    async def fake_health_loop() -> None:
+        observed.append("health_loop")
+
+    monkeypatch.setattr(
+        "realtime.monitor.get_broker_adapter",
+        lambda: SimpleNamespace(
+            capabilities=SimpleNamespace(supports_realtime_quotes=True),
+        ),
+    )
+    monkeypatch.setattr("realtime.monitor.stream_manager.set_on_price", fake_set_on_price)
+    monkeypatch.setattr("realtime.monitor.stream_manager.start", fake_stream_start)
+    monkeypatch.setattr("realtime.monitor.stream_manager.stop", fake_stream_stop)
+    monkeypatch.setattr(monitor, "_ws_health_loop", fake_health_loop)
+
+    await monitor.start()
+    await asyncio.sleep(0)
+    await monitor.stop()
+
+    assert monitor.is_running is False
+    assert monitor.is_polling is False
+    assert observed == ["set_on_price", "stream_start", "health_loop", "stream_stop"]
+
+
+@pytest.mark.asyncio
+async def test_realtime_monitor_start_uses_polling_when_realtime_is_not_supported(monkeypatch) -> None:
     monitor = RealtimeMonitor()
     observed: list[str] = []
 
     async def fail_stream_start() -> None:
-        raise AssertionError("KIS websocket should not start in KIWOOM mode")
+        raise AssertionError("Realtime stream should not start for polling-only brokers")
 
     async def fake_poll_loop() -> None:
         observed.append("poll_loop")
@@ -79,9 +116,18 @@ async def test_realtime_monitor_start_skips_kis_websocket_in_kiwoom_mode(monkeyp
     async def fake_health_loop() -> None:
         observed.append("health_loop")
 
-    monkeypatch.setattr(settings, "BROKER_PROVIDER", "KIWOOM")
+    async def fake_stream_stop() -> None:
+        observed.append("stream_stop")
+
+    monkeypatch.setattr(
+        "realtime.monitor.get_broker_adapter",
+        lambda: SimpleNamespace(
+            capabilities=SimpleNamespace(supports_realtime_quotes=False),
+        ),
+    )
     monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_trading_hours", lambda: True)
     monkeypatch.setattr("realtime.monitor.stream_manager.start", fail_stream_start)
+    monkeypatch.setattr("realtime.monitor.stream_manager.stop", fake_stream_stop)
     monkeypatch.setattr(monitor, "_poll_loop", fake_poll_loop)
     monkeypatch.setattr(monitor, "_ws_health_loop", fake_health_loop)
 
@@ -91,19 +137,4 @@ async def test_realtime_monitor_start_skips_kis_websocket_in_kiwoom_mode(monkeyp
 
     assert monitor.is_running is False
     assert monitor.is_polling is False
-    assert observed == ["poll_loop", "health_loop"]
-
-
-@pytest.mark.asyncio
-async def test_stream_manager_skips_kis_subscriptions_in_kiwoom_mode(monkeypatch) -> None:
-    manager = StreamManager()
-
-    async def fail_subscribe(_symbol: str, _market: str = "KRX") -> bool:
-        raise AssertionError("KIS websocket subscription should not run in KIWOOM mode")
-
-    monkeypatch.setattr(settings, "BROKER_PROVIDER", "KIWOOM")
-    monkeypatch.setattr(manager._stream_backend, "subscribe", fail_subscribe)
-
-    await manager.update_subscriptions([("005930", "KRX")])
-
-    assert manager.subscription_count == 0
+    assert observed == ["poll_loop", "health_loop", "stream_stop"]

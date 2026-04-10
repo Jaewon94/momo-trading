@@ -4,13 +4,10 @@ import time
 
 from loguru import logger
 
-from core.config import settings
 from realtime.event_detector import event_detector
 from realtime.stream_manager import stream_manager
 from trading.broker_factory import get_broker_adapter
-from trading.enums import BrokerProvider
 from trading.enums import Market
-from realtime.stream_backend import get_stream_backend
 
 
 class RealtimeMonitor:
@@ -35,9 +32,11 @@ class RealtimeMonitor:
         self._poll_task: asyncio.Task | None = None
 
     @staticmethod
-    def _uses_kis_websocket() -> bool:
-        provider = (settings.BROKER_PROVIDER or BrokerProvider.KIS.value).upper()
-        return provider == BrokerProvider.KIS.value
+    def _supports_realtime_quotes() -> bool:
+        try:
+            return bool(get_broker_adapter().capabilities.supports_realtime_quotes)
+        except Exception:
+            return False
 
     def _start_polling_task(self) -> None:
         self._polling_active = True
@@ -57,14 +56,14 @@ class RealtimeMonitor:
         self._running = True
         self._last_ws_data_time = time.monotonic()
 
-        if self._uses_kis_websocket():
-            get_stream_backend().set_on_price(self._on_price_update)
+        if self._supports_realtime_quotes():
+            stream_manager.set_on_price(self._on_price_update)
             await stream_manager.start()
-            logger.debug("실시간 모니터 시작 (WebSocket, 실패해도 서버 기동)")
+            logger.debug("실시간 모니터 시작 (realtime adapter, 실패해도 서버 기동)")
         else:
             if market_calendar.is_krx_trading_hours():
                 self._start_polling_task()
-            logger.debug("실시간 모니터 시작 ({} 폴링 모드)", settings.BROKER_PROVIDER)
+            logger.debug("실시간 모니터 시작 (polling fallback 모드)")
         self._health_task = asyncio.create_task(self._ws_health_loop())
 
     async def stop(self) -> None:
@@ -101,9 +100,9 @@ class RealtimeMonitor:
                         logger.debug("장외 시간 → 폴링 폴백 비활성화")
                     continue
 
-                if not self._uses_kis_websocket():
+                if not self._supports_realtime_quotes():
                     if not self._polling_active:
-                        logger.debug("{} 모드 → 폴링 폴백 활성화", settings.BROKER_PROVIDER)
+                        logger.debug("실시간 미지원 브로커 → 폴링 폴백 활성화")
                         self._start_polling_task()
                     continue
 
