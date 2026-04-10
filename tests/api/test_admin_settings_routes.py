@@ -258,6 +258,39 @@ async def test_admin_scheduler_routes_persist_enabled_flag(client, monkeypatch):
         settings.SCHEDULER_ENABLED = original
 
 
+async def test_admin_settings_apply_route_returns_reconfiguration_summary(client, monkeypatch):
+    captured = {}
+
+    async def fake_apply_settings(updates):
+        captured["updates"] = updates
+        return {
+            "changed": {
+                "LLM_TIER1_CONCURRENCY": {"old": 2, "new": 3},
+            },
+            "reconfiguration": {
+                "scheduler_restarted": True,
+                "agent_idle": True,
+                "scheduler_idle": True,
+            },
+        }
+
+    monkeypatch.setattr(
+        "api.routes.admin.runtime_reconfiguration_service.apply_settings",
+        fake_apply_settings,
+    )
+
+    response = await client.post(
+        "/api/v1/admin/settings/apply",
+        json={"LLM_TIER1_CONCURRENCY": 3},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert captured["updates"] == {"LLM_TIER1_CONCURRENCY": 3}
+    assert payload["changed"]["LLM_TIER1_CONCURRENCY"]["new"] == 3
+    assert payload["reconfiguration"]["scheduler_restarted"] is True
+
+
 async def test_llm_status_includes_manual_selection(client):
     response = await client.get("/api/v1/admin/llm/status")
 

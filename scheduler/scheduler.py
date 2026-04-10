@@ -203,6 +203,22 @@ class TradingScheduler:
             self.scheduler = self._build_scheduler()
             logger.info("스케줄러 중지")
 
+    async def wait_until_idle(
+        self,
+        *,
+        timeout_sec: float = 60.0,
+        poll_interval_sec: float = 0.1,
+    ) -> bool:
+        deadline = _time.perf_counter() + max(float(timeout_sec), 0.0)
+        interval = max(float(poll_interval_sec), 0.01)
+
+        while True:
+            if not self._news_poll_lock.locked() and not self._background_tasks:
+                return True
+            if _time.perf_counter() >= deadline:
+                return False
+            await asyncio.sleep(interval)
+
     async def _resource_snapshot(self) -> None:
         await observability_service.record_resource_snapshot()
 

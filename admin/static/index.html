@@ -1417,8 +1417,9 @@
         <div>
           <div class="text-xs uppercase tracking-[0.12em] text-gray-500">Settings Center</div>
           <div class="text-lg font-semibold text-white">설정 센터</div>
+          <div class="mt-1 text-[11px] text-gray-500">이 창에서 바꾼 값은 저장을 눌러야 한 번에 적용됩니다.</div>
         </div>
-        <button onclick="closeSettingsModal()"
+        <button id="settings-modal-close" onclick="closeSettingsModal()"
           class="rounded-md border border-gray-600 px-3 py-1.5 text-sm text-gray-200 transition hover:border-blue-400 hover:text-white">
           닫기
         </button>
@@ -1448,11 +1449,11 @@
             </button>
           </div>
         </div>
-        <div class="min-h-0 h-full flex-1 overflow-y-auto p-5">
+        <fieldset id="settings-form-fieldset" class="min-h-0 h-full flex-1 overflow-y-auto border-0 p-5 disabled:opacity-60">
           <section id="settings-panel-operating" class="settings-tab-panel space-y-4">
             <div>
               <div class="text-sm font-medium text-white">운영 제어</div>
-              <div class="mt-1 text-xs text-gray-500">실시간 운영 중 바로 바꾸는 값만 여기에 둡니다.</div>
+              <div class="mt-1 text-xs text-gray-500">여기서 바꾼 운영값도 저장을 눌러야 적용됩니다. 긴급 제어는 대시보드 운영 버튼을 사용하세요.</div>
             </div>
 
             <label class="flex items-center justify-between gap-3 rounded-xl border border-gray-700 bg-dark-900/60 p-4">
@@ -1845,7 +1846,7 @@
                     <div class="text-sm font-medium text-white">리포트·수동 작업용 AI</div>
                     <span class="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-200">추천: 문장 품질과 안정성이 좋은 요약형 모델</span>
                   </div>
-                  <div class="text-[11px] text-gray-500 mt-1">Q&A, 수동 사이클, 장마감 리뷰, 일일 리포트 생성에 쓰는 1순위와 풀백 AI를 설정합니다.</div>
+                  <div class="text-[11px] text-gray-500 mt-1">Q&amp;A, 장마감 리뷰, 일일 리포트 생성 같은 수동 작업에 쓰는 1순위와 풀백 AI를 설정합니다.</div>
                 </div>
                 <span class="settings-accordion-arrow">&#x25BC;</span>
               </summary>
@@ -1858,7 +1859,7 @@
                   <option value="OLLAMA">Ollama</option>
                 </select>
                 <div class="text-[11px] text-gray-500 mt-1">
-                  Q&amp;A / 수동 사이클 / 장마감 리뷰 / 리포트 생성에 적용합니다.
+                  Q&amp;A / 장마감 리뷰 / 리포트 생성 같은 수동 작업에 적용합니다.
                 </div>
                 <label class="text-xs block mt-3 mb-1 text-gray-500">1순위 모델 / 버전</label>
                 <select id="set-manual-llm-model"
@@ -1996,6 +1997,24 @@
               </div>
             </div>
           </section>
+        </fieldset>
+      </div>
+      <div class="border-t border-gray-700 px-5 py-4">
+        <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div class="min-w-0">
+            <div id="settings-apply-summary" class="text-sm font-medium text-white">저장되지 않은 변경 없음</div>
+            <div id="settings-apply-detail" class="mt-1 text-xs leading-5 text-gray-500">값을 바꾼 뒤 저장을 누르면 새 작업을 멈추고, 현재 작업 종료를 최대 60초까지 기다린 뒤 한 번에 적용합니다.</div>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="settings-apply-reset" onclick="resetSettingsDraft()"
+              class="rounded-md border border-gray-600 px-3 py-1.5 text-sm text-gray-200 transition hover:border-gray-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-50">
+              되돌리기
+            </button>
+            <button id="settings-apply-save" onclick="applySettingsDraft()"
+              class="rounded-md border border-blue-500/60 bg-blue-500/15 px-3 py-1.5 text-sm font-medium text-blue-100 transition hover:border-blue-400 hover:bg-blue-500/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-50">
+              저장
+            </button>
+          </div>
         </div>
       </div>
     </div>

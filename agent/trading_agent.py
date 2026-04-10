@@ -1,6 +1,7 @@
 """AI Trading Agent 메인 루프 - 장중: 스캔→판단→분석→매매 / 장외: 성과 리뷰→피드백 학습"""
 import asyncio
 import json
+import time as _time
 from collections.abc import Callable
 
 import pandas as pd
@@ -20,6 +21,7 @@ from core.events import Event, EventType, event_bus
 from realtime.event_detector import event_detector
 from scheduler.market_calendar import market_calendar
 from services.activity_logger import activity_logger
+from services.runtime_reconfiguration_service import runtime_reconfiguration_service
 from strategy.aggressive_short import AggressiveShortStrategy
 from strategy.risk_manager import risk_manager
 from strategy.signal import TradeSignal
@@ -117,6 +119,10 @@ class TradingAgent:
         manual_model_override: str | None = None,
     ) -> dict:
         """에이전트 1회 실행 사이클 — 장중이면 매매, 장외면 리뷰"""
+        if runtime_reconfiguration_service.is_reconfiguring():
+            logger.warning("런타임 설정 적용 중 — 신규 사이클 트리거 무시")
+            return {"skipped": True, "reason": "runtime_reconfiguring"}
+
         if self._cycle_lock.locked():
             logger.warning("사이클 이미 실행 중 — 중복 트리거 무시")
             return {"skipped": True, "reason": "cycle_already_running"}
@@ -147,6 +153,22 @@ class TradingAgent:
                     manual_provider_override=manual_provider_override,
                     manual_model_override=manual_model_override,
                 )
+
+    async def wait_until_idle(
+        self,
+        *,
+        timeout_sec: float = 60.0,
+        poll_interval_sec: float = 0.1,
+    ) -> bool:
+        deadline = _time.time() + max(float(timeout_sec), 0.0)
+        interval = max(float(poll_interval_sec), 0.01)
+
+        while True:
+            if not self._cycle_lock.locked() and not self._analyzing and not self._selling:
+                return True
+            if _time.time() >= deadline:
+                return False
+            await asyncio.sleep(interval)
 
     async def _run_trading_cycle(
         self,
@@ -2156,6 +2178,8 @@ class TradingAgent:
         """실시간 시장 이벤트 → 즉시 해당 종목 분석/매매"""
         if not self._running:
             return
+        if runtime_reconfiguration_service.is_reconfiguring():
+            return
 
         # 장외 시간: 매매 불가이므로 이벤트 분석 스킵
         from scheduler.market_calendar import market_calendar
@@ -2266,6 +2290,8 @@ class TradingAgent:
     async def _on_news_item(self, event: Event) -> None:
         """신규 뉴스 유입 → 보유/감시 종목만 증분 재검증"""
         if not self._running:
+            return
+        if runtime_reconfiguration_service.is_reconfiguring():
             return
 
         from scheduler.market_calendar import market_calendar

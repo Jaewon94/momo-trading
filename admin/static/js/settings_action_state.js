@@ -1,3 +1,5 @@
+import { getTierModelSettingKey } from "./settings_llm_state.js";
+
 const DIRECT_SETTING_BINDINGS = [
   bindChecked('set-trading', 'TRADING_ENABLED'),
   bindValue('set-mode', 'AUTONOMY_MODE'),
@@ -54,6 +56,20 @@ export function resolveDirectSettingChange(target) {
   return {
     key: binding.key,
     value: binding.readValue(target),
+  };
+}
+
+export function resolveTierModelSettingChange({
+  tier,
+  provider,
+  value,
+  mode = "primary",
+}) {
+  if (!tier) return null;
+  const key = getTierModelSettingKey(provider, tier, mode);
+  return {
+    key,
+    value: value ?? "DEFAULT",
   };
 }
 

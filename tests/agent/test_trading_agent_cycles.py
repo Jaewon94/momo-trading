@@ -60,6 +60,20 @@ async def test_run_cycle_skips_new_buys_after_cutoff_in_day_trading_mode(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_run_cycle_skips_when_runtime_reconfiguration_is_active(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+
+    monkeypatch.setattr(
+        "agent.trading_agent.runtime_reconfiguration_service.is_reconfiguring",
+        lambda: True,
+    )
+
+    result = await agent.run_cycle()
+
+    assert result == {"skipped": True, "reason": "runtime_reconfiguring"}
+
+
+@pytest.mark.asyncio
 async def test_run_cycle_dispatches_trading_cycle_during_market_hours(monkeypatch) -> None:
     agent = TradingAgent(broker_adapter=StubBrokerAdapter())
     observed: dict[str, str | None] = {}

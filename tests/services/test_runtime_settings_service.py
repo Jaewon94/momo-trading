@@ -1,5 +1,8 @@
+import pytest
+
 from core.config import settings
 from services.runtime_settings_service import runtime_settings_service
+from fastapi import HTTPException
 
 
 async def test_runtime_settings_service_persists_and_reloads_values(
@@ -90,3 +93,20 @@ async def test_runtime_settings_service_normalizes_default_model(
         assert settings.CODEX_MODEL_TIER1 == "DEFAULT"
     finally:
         settings.CODEX_MODEL_TIER1 = original_codex_model
+
+
+async def test_runtime_settings_service_validates_all_updates_before_mutating_settings(
+    override_runtime_settings_session,
+    reset_runtime_settings,
+):
+    original_provider = settings.LLM_PROVIDER_TIER1
+    original_timeout = settings.CODEX_TIMEOUT_SEC_TIER1
+
+    with pytest.raises(HTTPException):
+        await runtime_settings_service.update_settings({
+            "LLM_PROVIDER_TIER1": "CODEX",
+            "CODEX_TIMEOUT_SEC_TIER1": 20,
+        })
+
+    assert settings.LLM_PROVIDER_TIER1 == original_provider
+    assert settings.CODEX_TIMEOUT_SEC_TIER1 == original_timeout

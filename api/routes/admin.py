@@ -58,6 +58,7 @@ from services.observability_reporting_service import observability_reporting_ser
 from services.performance_reporting_service import performance_reporting_service
 from services.account_equity_service import account_equity_service
 from services.runtime_settings_service import runtime_settings_service
+from services.runtime_reconfiguration_service import runtime_reconfiguration_service
 from services.runtime_backup_service import runtime_backup_service
 from services.seeking_alpha_news_service import seeking_alpha_news_service
 from services.system_preflight_service import system_preflight_service
@@ -1522,6 +1523,17 @@ async def update_settings(updates: dict):
         )
 
     return SuccessResponse(data=changed, message=f"{len(changed)}개 설정 변경됨")
+
+
+@router.post("/settings/apply")
+async def apply_settings(updates: dict):
+    """런타임 설정 배치 적용 — 신규 작업을 멈추고 현재 작업이 끝난 뒤 반영"""
+    result = await runtime_reconfiguration_service.apply_settings(updates)
+    changed = result.get("changed", {})
+    return SuccessResponse(
+        data=result,
+        message=f"{len(changed)}개 설정 적용 완료",
+    )
 
 
 # ── Claude Code 사용량 ──

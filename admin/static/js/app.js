@@ -21,13 +21,18 @@ import {
   getMcpBadgeState,
 } from './runtime_state.js';
 import { SETTINGS_TABS, normalizeSettingsTab } from './settings_modal_state.js';
-import { resolveDirectSettingChange } from './settings_action_state.js';
+import { resolveDirectSettingChange, resolveTierModelSettingChange } from './settings_action_state.js';
+import {
+  buildMergedSettings,
+  buildSettingsApplyViewModel,
+  reconcileSettingsDraft,
+  updateSettingsDraft,
+} from './settings_apply_state.js';
 import { applySettingsToForm } from './settings_form_state.js';
 import {
   getStandaloneModelSelectorState,
   getTierProviderElementId,
   resolveTierModelState,
-  getTierModelSettingKey,
 } from './settings_llm_state.js';
 import {
   buildProviderModelEntries,
@@ -95,6 +100,8 @@ let llmUsageSnapshot = null;
 let llmCatalog = null;
 let runtimeControlPending = false;
 let activeSettingsTab = 'operating';
+let settingsDraft = {};
+let settingsApplyPending = false;
 let activePositionSymbol = null;
 let activePositionDetailState = null;
 let activePositionDetailPayload = null;
@@ -595,6 +602,7 @@ function openSettingsModal(tab = 'operating') {
 }
 
 function closeSettingsModal() {
+  if (settingsApplyPending) return;
   const overlay = document.getElementById('settings-modal-overlay');
   if (!overlay) return;
   overlay.classList.remove('open');
@@ -602,12 +610,14 @@ function closeSettingsModal() {
 }
 
 function closeSettingsModalOnBackdrop(event) {
+  if (settingsApplyPending) return;
   if (event.target?.id === 'settings-modal-overlay') {
     closeSettingsModal();
   }
 }
 
 function switchSettingsTab(tab) {
+  if (settingsApplyPending) return;
   activeSettingsTab = normalizeSettingsTab(tab);
   renderSettingsModal();
 }
@@ -617,9 +627,94 @@ function renderSettingsModal() {
     document.getElementById(`settings-tab-${tab}`)?.classList.toggle('active', tab === activeSettingsTab);
     document.getElementById(`settings-panel-${tab}`)?.classList.toggle('active', tab === activeSettingsTab);
   });
+  renderSettingsDraftState();
+}
+
+function getSettingsFormSettings() {
+  return buildMergedSettings(runtimeSettings || {}, settingsDraft);
+}
+
+function stageSettingsDraftChange(change) {
+  if (!change?.key) return;
+  settingsDraft = updateSettingsDraft(settingsDraft, change, runtimeSettings || {});
+  renderSettingsDraftState();
+}
+
+function resetSettingsDraft() {
+  if (settingsApplyPending) return;
+  settingsDraft = {};
+  renderSettingsDraftState();
+  setStatus('runtime', '설정 초안을 되돌렸습니다.');
+}
+
+function renderSettingsApplyBar() {
+  const summaryEl = document.getElementById('settings-apply-summary');
+  const detailEl = document.getElementById('settings-apply-detail');
+  const saveButton = document.getElementById('settings-apply-save');
+  const resetButton = document.getElementById('settings-apply-reset');
+  const closeButton = document.getElementById('settings-modal-close');
+  const fieldset = document.getElementById('settings-form-fieldset');
+  const viewModel = buildSettingsApplyViewModel({
+    draft: settingsDraft,
+    applying: settingsApplyPending,
+  });
+
+  if (summaryEl) {
+    summaryEl.textContent = viewModel.summaryText;
+    summaryEl.className = `text-sm font-medium ${
+      viewModel.tone === 'info'
+        ? 'text-blue-200'
+        : viewModel.tone === 'dirty'
+          ? 'text-amber-200'
+          : 'text-white'
+    }`;
+  }
+  if (detailEl) {
+    detailEl.textContent = viewModel.detailText;
+    detailEl.className = `mt-1 text-xs leading-5 ${
+      viewModel.tone === 'info'
+        ? 'text-blue-300'
+        : viewModel.tone === 'dirty'
+          ? 'text-amber-300'
+          : 'text-gray-500'
+    }`;
+  }
+  if (saveButton) {
+    saveButton.disabled = viewModel.saveDisabled;
+    saveButton.textContent = viewModel.saveLabel;
+  }
+  if (resetButton) {
+    resetButton.disabled = viewModel.resetDisabled;
+  }
+  if (closeButton) {
+    closeButton.disabled = viewModel.closeDisabled;
+    closeButton.classList.toggle('opacity-50', viewModel.closeDisabled);
+    closeButton.classList.toggle('cursor-not-allowed', viewModel.closeDisabled);
+  }
+  if (fieldset) {
+    fieldset.disabled = viewModel.formDisabled;
+  }
+  SETTINGS_TABS.forEach((tab) => {
+    const tabButton = document.getElementById(`settings-tab-${tab}`);
+    if (!tabButton) return;
+    tabButton.disabled = viewModel.formDisabled;
+    tabButton.classList.toggle('opacity-50', viewModel.formDisabled);
+    tabButton.classList.toggle('cursor-not-allowed', viewModel.formDisabled);
+  });
+}
+
+function renderSettingsDraftState() {
+  const formSettings = getSettingsFormSettings();
+  applySettingsToForm(formSettings);
+  renderTierModelSelectors(formSettings);
+  renderStandaloneModelSelectors(formSettings);
+  renderSettingGuidance(formSettings);
+  renderStrategyInsightsPanel(formSettings);
+  renderSettingsApplyBar();
 }
 
 function handleSettingsModalKeydown(event) {
+  if (settingsApplyPending) return;
   if (event.key === 'Escape') {
     const newsArchiveOverlay = document.getElementById('news-archive-detail-overlay');
     if (newsArchiveOverlay?.classList.contains('open')) {
@@ -1267,7 +1362,7 @@ document.addEventListener('input', (event) => {
 document.addEventListener('change', (event) => {
   const directSettingChange = resolveDirectSettingChange(event.target);
   if (directSettingChange) {
-    updateSetting(directSettingChange.key, directSettingChange.value);
+    stageSettingsDraftChange(directSettingChange);
     return;
   }
 
@@ -5007,15 +5102,12 @@ async function loadSettings() {
     const s = json.data;
     if (!s) return;
     runtimeSettings = s;
-    applySettingsToForm(s);
-    renderTierModelSelectors();
-    renderStandaloneModelSelectors();
+    settingsDraft = reconcileSettingsDraft(runtimeSettings, settingsDraft);
+    renderSettingsDraftState();
     updateBadge('badge-trading', s.TRADING_ENABLED ? '매매:ON' : '매매:OFF', s.TRADING_ENABLED ? 'green' : 'red');
     updateBadge('badge-mode', formatAutonomyModeLabel(s.AUTONOMY_MODE), 'purple');
-    renderSettingGuidance();
     renderSidebarSettingSummaries();
     renderNewsOverviewPanels();
-    renderStrategyInsightsPanel();
     renderRuntimeControls();
     refreshStockCardActions();
     if (latestAccountSnapshot) {
@@ -5053,6 +5145,59 @@ async function updateSetting(key, value) {
     console.error('Setting update error:', err);
     setStatus('error', `설정 변경 실패: ${err.message}`);
     return false;
+  }
+}
+
+function buildSettingsApplySuccessMessage(result) {
+  const changedCount = Object.keys(result?.changed || {}).length;
+  const reconfiguration = result?.reconfiguration || {};
+  if (!changedCount) {
+    return '변경된 설정이 없습니다.';
+  }
+  if (reconfiguration.scheduler_restarted) {
+    return `설정 ${changedCount}건 적용 완료 · 새 설정 기준으로 재구성됨`;
+  }
+  if (reconfiguration.scheduler_was_running) {
+    return `설정 ${changedCount}건 적용 완료 · 스케줄러는 정지 상태로 유지됨`;
+  }
+  return `설정 ${changedCount}건 적용 완료`;
+}
+
+async function applySettingsDraft() {
+  if (settingsApplyPending) return;
+  const draftPayload = { ...settingsDraft };
+  if (!Object.keys(draftPayload).length) {
+    setStatus('runtime', '적용할 설정 변경이 없습니다.');
+    return;
+  }
+
+  settingsApplyPending = true;
+  renderSettingsApplyBar();
+  setStatus('runtime', '설정 적용 중... 새 작업을 멈추고 현재 작업 종료를 기다립니다.');
+
+  try {
+    const json = await fetchJson(`${API}/settings/apply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(draftPayload),
+    }, 120000);
+
+    settingsDraft = {};
+    await Promise.all([
+      loadSettings(),
+      loadNewsOverview(),
+      loadSystemStatus(),
+      loadLLMStatus(),
+      loadLLMUsage(),
+    ]);
+
+    setStatus('runtime', buildSettingsApplySuccessMessage(json?.data || {}) || json?.message || '설정 적용 완료');
+  } catch (err) {
+    console.error('Settings apply error:', err);
+    setStatus('error', `설정 적용 실패: ${err.message || '알 수 없는 오류'}`);
+  } finally {
+    settingsApplyPending = false;
+    renderSettingsApplyBar();
   }
 }
 
@@ -5151,8 +5296,8 @@ function renderRuntimeControls() {
   renderSettingGuidance();
 }
 
-function renderSettingGuidance() {
-  const copy = buildRuntimeSettingCopy({ runtimeSettings, runtimeSystemStatus });
+function renderSettingGuidance(settingsOverride = runtimeSettings) {
+  const copy = buildRuntimeSettingCopy({ runtimeSettings: settingsOverride, runtimeSystemStatus });
   const tradingLabelEl = document.getElementById('set-trading-label');
   const tradingHelpEl = document.getElementById('set-trading-help');
   const tradingTipEl = document.getElementById('set-trading-tip');
@@ -5193,11 +5338,11 @@ function renderSidebarSettingSummaries() {
   }
 }
 
-function renderStrategyInsightsPanel() {
+function renderStrategyInsightsPanel(settingsOverride = runtimeSettings) {
   const panelEl = document.getElementById('strategy-insights-panel');
   if (!panelEl) return;
 
-  const viewModel = buildStrategyInsightsViewModel(runtimeSettings || {});
+  const viewModel = buildStrategyInsightsViewModel(settingsOverride || {});
   const selected = viewModel.selected;
 
   if (!selected) {
@@ -5379,12 +5524,18 @@ async function applyRuntimePreset(preset) {
   }
 }
 
-function getTierProvider(tier, mode = 'primary') {
+function getTierProvider(tier, mode = 'primary', settingsOverride = runtimeSettings) {
   const providerEl = document.getElementById(getTierProviderElementId(tier, mode));
-  if (mode === 'fallback') {
-    return providerEl?.value || '';
+  const controlValue = providerEl?.value;
+  if (controlValue) {
+    return controlValue;
   }
-  return providerEl?.value || 'CLAUDE_CODE';
+  if (mode === 'fallback') {
+    return settingsOverride?.[tier === 'tier1' ? 'LLM_FALLBACK_PROVIDER_TIER1' : 'LLM_FALLBACK_PROVIDER_TIER2'] || '';
+  }
+  return settingsOverride?.[tier === 'tier1' ? 'LLM_PROVIDER_TIER1' : 'LLM_PROVIDER_TIER2']
+    || settingsOverride?.LLM_PROVIDER
+    || 'CLAUDE_CODE';
 }
 
 function renderProviderModelSelector({
@@ -5430,27 +5581,27 @@ function renderProviderModelSelector({
   }
 }
 
-function renderTierModelSelectors() {
-  renderTierModelSelector('tier1', 'primary');
-  renderTierModelSelector('tier1', 'fallback');
-  renderTierModelSelector('tier2', 'primary');
-  renderTierModelSelector('tier2', 'fallback');
+function renderTierModelSelectors(settingsOverride = getSettingsFormSettings()) {
+  renderTierModelSelector('tier1', 'primary', settingsOverride);
+  renderTierModelSelector('tier1', 'fallback', settingsOverride);
+  renderTierModelSelector('tier2', 'primary', settingsOverride);
+  renderTierModelSelector('tier2', 'fallback', settingsOverride);
 }
 
-function renderStandaloneModelSelectors() {
-  renderStandaloneModelSelector('manual');
-  renderStandaloneModelSelector('manual', 'fallback');
-  renderStandaloneModelSelector('news');
-  renderStandaloneModelSelector('news', 'fallback');
+function renderStandaloneModelSelectors(settingsOverride = getSettingsFormSettings()) {
+  renderStandaloneModelSelector('manual', 'primary', settingsOverride);
+  renderStandaloneModelSelector('manual', 'fallback', settingsOverride);
+  renderStandaloneModelSelector('news', 'primary', settingsOverride);
+  renderStandaloneModelSelector('news', 'fallback', settingsOverride);
 }
 
-function renderTierModelSelector(tier, mode = 'primary') {
-  if (!runtimeSettings) return;
+function renderTierModelSelector(tier, mode = 'primary', settingsOverride = getSettingsFormSettings()) {
+  if (!settingsOverride) return;
   const state = resolveTierModelState({
-    runtimeSettings,
+    runtimeSettings: settingsOverride,
     tier,
     mode,
-    provider: getTierProvider(tier, mode),
+    provider: getTierProvider(tier, mode, settingsOverride),
   });
   const selectEl = document.getElementById(state.selectId);
   const sourceEl = document.getElementById(state.sourceId);
@@ -5479,15 +5630,20 @@ function renderTierModelSelector(tier, mode = 'primary') {
   });
 }
 
-function renderStandaloneModelSelector(kind, mode = 'primary') {
-  if (!runtimeSettings) return;
+function renderStandaloneModelSelector(kind, mode = 'primary', settingsOverride = getSettingsFormSettings()) {
+  if (!settingsOverride) return;
   const providerElementId = mode === 'fallback'
     ? `set-${kind}-llm-fallback-provider`
     : `set-${kind}-llm-provider`;
+  const providerValue = document.getElementById(providerElementId)?.value
+    || settingsOverride?.[mode === 'fallback'
+      ? (kind === 'news' ? 'NEWS_LLM_FALLBACK_PROVIDER' : 'MANUAL_LLM_FALLBACK_PROVIDER')
+      : (kind === 'news' ? 'NEWS_LLM_PROVIDER' : 'MANUAL_LLM_PROVIDER')]
+    || '';
   const state = getStandaloneModelSelectorState(
     kind,
-    runtimeSettings,
-    document.getElementById(providerElementId)?.value || '',
+    settingsOverride,
+    providerValue,
     mode,
   );
   const selectEl = document.getElementById(state.selectId);
@@ -5555,10 +5711,15 @@ async function refreshLLMCatalog() {
   await loadLLMStatus();
 }
 
-async function updateTierModelSetting(tier, value, mode = 'primary') {
-  const provider = getTierProvider(tier, mode);
-  const key = getTierModelSettingKey(provider, tier, mode);
-  await updateSetting(key, value || 'DEFAULT');
+function updateTierModelSetting(tier, value, mode = 'primary') {
+  const provider = getTierProvider(tier, mode, getSettingsFormSettings());
+  const change = resolveTierModelSettingChange({
+    tier,
+    provider,
+    value: value || 'DEFAULT',
+    mode,
+  });
+  stageSettingsDraftChange(change);
 }
 
 // ── LLM Status ──
@@ -6005,6 +6166,8 @@ Object.assign(window, {
   openSettingsModal,
   closeSettingsModal,
   closeSettingsModalOnBackdrop,
+  applySettingsDraft,
+  resetSettingsDraft,
   openPositionDetailModal,
   closePositionDetailModal,
   closePositionDetailModalOnBackdrop,

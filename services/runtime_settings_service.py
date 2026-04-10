@@ -18,18 +18,21 @@ from repositories.runtime_setting_repository import RuntimeSettingRepository
 class RuntimeSettingsService:
     async def update_settings(self, updates: dict[str, Any]) -> dict[str, dict[str, Any]]:
         changed: dict[str, dict[str, Any]] = {}
+        normalized_updates: dict[str, Any] = {}
+
+        for key, value in updates.items():
+            if key not in MUTABLE_SETTINGS:
+                continue
+
+            normalized = coerce_runtime_setting_value(key, value)
+            if is_skipped_runtime_setting_value(normalized):
+                continue
+            normalized_updates[key] = normalized
 
         async with AsyncSessionLocal() as session:
             async with session.begin():
                 repository = RuntimeSettingRepository(session)
-                for key, value in updates.items():
-                    if key not in MUTABLE_SETTINGS:
-                        continue
-
-                    normalized = coerce_runtime_setting_value(key, value)
-                    if is_skipped_runtime_setting_value(normalized):
-                        continue
-
+                for key, normalized in normalized_updates.items():
                     old = getattr(settings, key, None)
                     setattr(settings, key, normalized)
                     await repository.upsert_value(key, self._serialize_value(normalized))

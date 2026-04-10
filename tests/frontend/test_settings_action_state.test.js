@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 
-import { resolveDirectSettingChange } from "../../admin/static/js/settings_action_state.js";
+import {
+  resolveDirectSettingChange,
+  resolveTierModelSettingChange,
+} from "../../admin/static/js/settings_action_state.js";
 
 describe("settings_action_state", () => {
   test("maps checkbox controls to boolean setting updates", () => {
@@ -73,5 +76,30 @@ describe("settings_action_state", () => {
 
   test("returns null for unmanaged controls", () => {
     expect(resolveDirectSettingChange({ id: "trade-center-sort", value: "latest" })).toBeNull();
+  });
+
+  test("maps tier model controls using the active provider", () => {
+    expect(
+      resolveTierModelSettingChange({
+        tier: "tier1",
+        provider: "CLAUDE_CODE",
+        value: "claude-haiku-4-5-20251001",
+      }),
+    ).toEqual({
+      key: "CLAUDE_CODE_MODEL_TIER1",
+      value: "claude-haiku-4-5-20251001",
+    });
+
+    expect(
+      resolveTierModelSettingChange({
+        tier: "tier2",
+        mode: "fallback",
+        provider: "CODEX",
+        value: "gpt-5.4",
+      }),
+    ).toEqual({
+      key: "LLM_FALLBACK_MODEL_TIER2",
+      value: "gpt-5.4",
+    });
   });
 });

@@ -165,6 +165,11 @@ class LLMFactory:
             return ClaudeCodeProvider.end_session()
         return None
 
+    def reset_runtime_state(self) -> None:
+        self.end_session()
+        self._tier_semaphores.clear()
+        self._tier_semaphore_limits.clear()
+
     async def generate(
         self, prompt: str, tier: LLMTier = LLMTier.TIER1, system_prompt: str = "",
         *, symbol: str | None = None, cycle_id: str | None = None,
