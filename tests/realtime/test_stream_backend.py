@@ -11,7 +11,7 @@ async def test_null_stream_backend_listen_yields_control(monkeypatch) -> None:
     async def fake_sleep(seconds: float) -> None:
         observed.append(seconds)
 
-    monkeypatch.setattr("realtime.stream_backend.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("realtime.adapters.null_realtime_adapter.asyncio.sleep", fake_sleep)
 
     await backend.listen()
 

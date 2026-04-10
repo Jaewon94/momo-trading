@@ -58,9 +58,12 @@ def _restore_settings(snapshot: dict) -> None:
 
 
 def _clear_cached_singletons() -> None:
+    from realtime.realtime_factory import get_realtime_adapter
     from realtime.stream_backend import get_stream_backend
     from trading.broker_factory import get_broker_adapter
 
+    if hasattr(get_realtime_adapter, "cache_clear"):
+        get_realtime_adapter.cache_clear()
     if hasattr(get_stream_backend, "cache_clear"):
         get_stream_backend.cache_clear()
     if hasattr(get_broker_adapter, "cache_clear"):
