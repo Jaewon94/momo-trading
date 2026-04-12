@@ -246,6 +246,159 @@ async def test_admin_position_detail_route_normalizes_a_prefixed_symbol(client, 
 
 
 @pytest.mark.asyncio
+async def test_admin_position_detail_route_treats_buy_with_exit_price_and_partial_exit_note_as_archived_partial_close(client, monkeypatch):
+    trade = SimpleNamespace(
+        id="t-archived-partial",
+        stock_symbol="011930",
+        stock_name="신성이엔지",
+        side="BUY",
+        strategy_type="SWING",
+        entry_price=1500.0,
+        exit_price=1574.0,
+        quantity=1,
+        pnl=74.0,
+        return_pct=4.93,
+        is_win=True,
+        hold_days=0,
+        exit_reason="SIGNAL",
+        ai_recommendation="BUY",
+        ai_confidence=0.7,
+        ai_target_price=None,
+        ai_stop_loss_price=None,
+        entry_rsi=None,
+        entry_pattern=None,
+        market_regime="BULL",
+        notes=json.dumps({
+            "fill_type": "PARTIAL_EXIT",
+            "remaining_open_quantity": 2,
+        }),
+        status="CONFIRMED",
+        entry_at=datetime(2026, 4, 3, 9, 5),
+        exit_at=None,
+        created_at=datetime(2026, 4, 3, 10, 15),
+    )
+
+    class FakeTradeRepo:
+        def __init__(self, _db) -> None:
+            pass
+
+        async def get_by_symbol(self, symbol, limit=50):
+            assert symbol == "011930"
+            return [trade]
+
+        async def get_all_open_buys(self, symbol):
+            assert symbol == "011930"
+            return []
+
+    class FakeActivityRepo:
+        def __init__(self, _db) -> None:
+            pass
+
+        async def get_by_symbol(self, symbol, limit=50):
+            return []
+
+    class EmptyNewsRepo:
+        def __init__(self, _db) -> None:
+            pass
+
+        async def get_recent(self, *, limit=50, offset=0, symbol=None, source_code=None):
+            return []
+
+    class FakeBrokerAdapter:
+        async def get_holdings(self):
+            return []
+
+    monkeypatch.setattr("api.routes.admin.TradeResultRepository", FakeTradeRepo, raising=False)
+    monkeypatch.setattr("api.routes.admin.AgentActivityRepository", FakeActivityRepo, raising=False)
+    monkeypatch.setattr("api.routes.admin.NewsItemRepository", EmptyNewsRepo, raising=False)
+    monkeypatch.setattr("api.routes.admin.get_broker_adapter", lambda: FakeBrokerAdapter(), raising=False)
+
+    response = await client.get("/api/v1/admin/positions/011930")
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["timeline"][0]["title"] == "부분 매도 후 정리"
+    assert payload["timeline"][0]["detail"]["trade_state_kind_label"] == "부분 매도 후 정리"
+    assert payload["timeline"][0]["detail"]["trade_state_badge"] == "PARTIAL_EXIT"
+    assert payload["timeline"][0]["detail"]["trade_state_detail_label"] == "잔량 2주 보유 중"
+
+
+@pytest.mark.asyncio
+async def test_admin_position_detail_route_treats_buy_with_exit_price_only_as_final_close_lot(client, monkeypatch):
+    trade = SimpleNamespace(
+        id="t-archived-final",
+        stock_symbol="011930",
+        stock_name="신성이엔지",
+        side="BUY",
+        strategy_type="SWING",
+        entry_price=1500.0,
+        exit_price=1574.0,
+        quantity=1,
+        pnl=74.0,
+        return_pct=4.93,
+        is_win=True,
+        hold_days=0,
+        exit_reason="SIGNAL",
+        ai_recommendation="BUY",
+        ai_confidence=0.7,
+        ai_target_price=None,
+        ai_stop_loss_price=None,
+        entry_rsi=None,
+        entry_pattern=None,
+        market_regime="BULL",
+        notes=None,
+        status="CONFIRMED",
+        entry_at=datetime(2026, 4, 3, 9, 5),
+        exit_at=None,
+        created_at=datetime(2026, 4, 3, 10, 25),
+    )
+
+    class FakeTradeRepo:
+        def __init__(self, _db) -> None:
+            pass
+
+        async def get_by_symbol(self, symbol, limit=50):
+            assert symbol == "011930"
+            return [trade]
+
+        async def get_all_open_buys(self, symbol):
+            assert symbol == "011930"
+            return []
+
+    class FakeActivityRepo:
+        def __init__(self, _db) -> None:
+            pass
+
+        async def get_by_symbol(self, symbol, limit=50):
+            return []
+
+    class EmptyNewsRepo:
+        def __init__(self, _db) -> None:
+            pass
+
+        async def get_recent(self, *, limit=50, offset=0, symbol=None, source_code=None):
+            return []
+
+    class FakeBrokerAdapter:
+        async def get_holdings(self):
+            return []
+
+    monkeypatch.setattr("api.routes.admin.TradeResultRepository", FakeTradeRepo, raising=False)
+    monkeypatch.setattr("api.routes.admin.AgentActivityRepository", FakeActivityRepo, raising=False)
+    monkeypatch.setattr("api.routes.admin.NewsItemRepository", EmptyNewsRepo, raising=False)
+    monkeypatch.setattr("api.routes.admin.get_broker_adapter", lambda: FakeBrokerAdapter(), raising=False)
+
+    response = await client.get("/api/v1/admin/positions/011930")
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["timeline"][0]["title"] == "최종 청산 lot"
+    assert payload["timeline"][0]["detail"]["trade_state_kind_label"] == "최종 청산 lot"
+    assert payload["timeline"][0]["detail"]["trade_state_badge"] == "FINAL_EXIT"
+    assert payload["timeline"][0]["detail"]["trade_state_detail_label"] == "전체 수량 청산 완료"
+
+
+@pytest.mark.asyncio
 async def test_admin_position_detail_route_survives_holding_timeout(client, monkeypatch):
     trade = SimpleNamespace(
         id="t1",

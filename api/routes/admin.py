@@ -291,11 +291,12 @@ def _build_position_timeline(trades, activities):
     for trade in trades:
         notes = _parse_json_detail(getattr(trade, "notes", None)) or {}
         trade_time = getattr(trade, "exit_at", None) or getattr(trade, "entry_at", None) or getattr(trade, "created_at", None)
-        side = getattr(trade, "side", "")
+        side = str(getattr(trade, "side", "") or "").upper()
         status = str(getattr(trade, "status", "") or "").upper()
+        exit_price = float(getattr(trade, "exit_price", 0.0) or 0.0)
         fill_type = str(notes.get("fill_type") or "").upper()
         remaining_open_quantity = int(notes.get("remaining_open_quantity") or 0)
-        has_exit = getattr(trade, "exit_at", None) is not None
+        has_exit = getattr(trade, "exit_at", None) is not None or (side == "BUY" and status == "CONFIRMED" and exit_price > 0)
 
         if side == "SELL":
             if status == "PENDING_CONFIRM":
@@ -360,7 +361,7 @@ def _build_position_timeline(trades, activities):
             "detail": {
                 "strategy_type": getattr(trade, "strategy_type", ""),
                 "entry_price": getattr(trade, "entry_price", 0.0),
-                "exit_price": getattr(trade, "exit_price", 0.0),
+                "exit_price": exit_price,
                 "pnl": getattr(trade, "pnl", 0.0),
                 "return_pct": getattr(trade, "return_pct", 0.0),
                 "exit_reason": getattr(trade, "exit_reason", ""),
