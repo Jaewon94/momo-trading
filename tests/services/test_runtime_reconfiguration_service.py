@@ -1,4 +1,6 @@
+import asyncio
 from types import SimpleNamespace
+from time import perf_counter
 
 import pytest
 
@@ -78,6 +80,61 @@ async def test_runtime_reconfiguration_service_drains_runtime_before_applying_an
         "scheduler.start",
         "activity.log",
     ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_reconfiguration_service_waits_for_agent_and_scheduler_concurrently():
+    settings_obj = SimpleNamespace(SCHEDULER_ENABLED=False, NEWS_POLL_ENABLED=False)
+
+    class FakeSettingsService:
+        async def update_settings(self, updates):
+            return updates
+
+    class FakeScheduler:
+        def __init__(self):
+            self.is_running = True
+
+        async def stop(self):
+            self.is_running = False
+
+        async def start(self):
+            self.is_running = True
+
+        async def wait_until_idle(self, **_kwargs):
+            await asyncio.sleep(0.05)
+            return True
+
+    class FakeAgent:
+        async def wait_until_idle(self, **_kwargs):
+            await asyncio.sleep(0.05)
+            return True
+
+    class FakeLLMRuntime:
+        def reset_runtime_state(self):
+            return None
+
+    class FakeActivityLogger:
+        async def log(self, *_args, **_kwargs):
+            return None
+
+    service = RuntimeReconfigurationService(
+        settings_service=FakeSettingsService(),
+        scheduler=FakeScheduler(),
+        trading_agent=FakeAgent(),
+        llm_runtime=FakeLLMRuntime(),
+        activity_logger_instance=FakeActivityLogger(),
+        settings_obj=settings_obj,
+        idle_timeout_sec=0.2,
+        poll_interval_sec=0.01,
+    )
+
+    started_at = perf_counter()
+    result = await service.apply_settings({"LLM_TIER1_CONCURRENCY": 3})
+    elapsed = perf_counter() - started_at
+
+    assert result["reconfiguration"]["agent_idle"] is True
+    assert result["reconfiguration"]["scheduler_idle"] is True
+    assert elapsed < 0.09
 
 
 @pytest.mark.asyncio

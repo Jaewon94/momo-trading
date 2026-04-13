@@ -19,6 +19,8 @@ from core.config import settings
 from core.database import AsyncSessionLocal, get_async_db, get_async_db_with_transaction
 from core.runtime_settings import MUTABLE_SETTINGS
 from exceptions.common import ServiceException
+from models.account_day_baseline import AccountDayBaseline
+from models.account_equity_snapshot import AccountEquitySnapshot
 from models.agent_activity import AgentActivityLog
 from models.analysis import AnalysisResult
 from models.daily_report import DailyReport
@@ -811,6 +813,8 @@ async def reset_operational_baseline():
         ("orders", Order),
         ("trade_results", TradeResult),
         ("daily_reports", DailyReport),
+        ("account_day_baselines", AccountDayBaseline),
+        ("account_equity_snapshots", AccountEquitySnapshot),
         ("agent_activity_logs", AgentActivityLog),
         ("news_items", NewsItem),
     ]
@@ -838,6 +842,7 @@ async def reset_operational_baseline():
         "cash": 0.0,
         "stock_value": 0.0,
         "total_pnl": 0.0,
+        "baseline_seeded": False,
         "warning": "",
     }
     try:
@@ -855,8 +860,24 @@ async def reset_operational_baseline():
             "cash": float(getattr(balance, "cash", 0.0) or 0.0),
             "stock_value": float(getattr(balance, "stock_value", 0.0) or 0.0),
             "total_pnl": float(getattr(balance, "total_pnl", 0.0) or 0.0),
+            "baseline_seeded": False,
             "warning": "",
         }
+        try:
+            state = account_equity_service.build_state(
+                balance,
+                holdings=holdings,
+                pending_orders=pending_orders,
+            )
+            await account_equity_service.record_snapshot(
+                state,
+                session_phase="RESET_BASELINE",
+                baseline_source="RESET_BASELINE",
+            )
+            broker_snapshot["baseline_seeded"] = True
+        except Exception as metrics_exc:
+            logger.warning("기준선 리셋 후 계좌 기준선 기록 실패: {}", str(metrics_exc))
+            broker_snapshot["warning"] = str(metrics_exc)[:160]
     except Exception as exc:
         logger.warning("기준선 리셋 후 브로커 스냅샷 재동기화 실패: {}", str(exc))
         broker_snapshot["warning"] = str(exc)[:160]

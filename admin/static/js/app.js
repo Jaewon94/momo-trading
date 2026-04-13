@@ -149,6 +149,7 @@ const sidebarState = {
 };
 
 const FETCH_TIMEOUT_MS = 12000;
+const SETTINGS_APPLY_TIMEOUT_MS = 180000;
 
 async function fetchJson(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) {
   const controller = new AbortController();
@@ -1912,10 +1913,10 @@ function renderPortfolioQuickStats(balance, holdings, pendingOrders, trades) {
     ? `금일 고점 ${formatKRW(stats.intradayHighAsset)} · 저점 ${formatKRW(stats.intradayLowAsset)}`
     : '현재 계좌 기준';
   const unrealizedMeta = stats.dailyUnrealizedAvailable
-    ? `당일 평가변동 · 누적 ${cumulativeUnrealizedLabel} · ${Number.isFinite(stats.unrealizedPnlRate) ? `${stats.unrealizedPnlRate >= 0 ? '+' : ''}${stats.unrealizedPnlRate.toFixed(2)}%` : '-'}`
-    : `당일 기준선 대기 · 누적 ${cumulativeUnrealizedLabel} · ${Number.isFinite(stats.unrealizedPnlRate) ? `${stats.unrealizedPnlRate >= 0 ? '+' : ''}${stats.unrealizedPnlRate.toFixed(2)}%` : '-'}`;
-  const unrealizedValue = stats.dailyUnrealizedAvailable ? dailyUnrealizedLabel : cumulativeUnrealizedLabel;
-  const unrealizedValueClass = stats.dailyUnrealizedAvailable ? dailyUnrealizedClass : cumulativeUnrealizedClass;
+    ? `현재 보유 기준 · 당일 평가변동 ${dailyUnrealizedLabel} · ${Number.isFinite(stats.unrealizedPnlRate) ? `${stats.unrealizedPnlRate >= 0 ? '+' : ''}${stats.unrealizedPnlRate.toFixed(2)}%` : '-'}`
+    : `현재 보유 기준 · ${Number.isFinite(stats.unrealizedPnlRate) ? `${stats.unrealizedPnlRate >= 0 ? '+' : ''}${stats.unrealizedPnlRate.toFixed(2)}%` : '-'}`;
+  const unrealizedValue = cumulativeUnrealizedLabel;
+  const unrealizedValueClass = cumulativeUnrealizedClass;
 
   el.innerHTML = `
     <div class="portfolio-stat portfolio-stat-hero">
@@ -2400,8 +2401,9 @@ function renderOpenPositionCards(openPositions) {
 
 function formatKRW(amount) {
   if (amount == null) return '-';
-  if (Math.abs(amount) >= 100000000) return (amount / 100000000).toFixed(1) + '억';
-  return amount.toLocaleString() + '원';
+  const numeric = Number(amount);
+  if (!Number.isFinite(numeric)) return '-';
+  return numeric.toLocaleString() + '원';
 }
 
 // ══════════════════════════════════════════════════════════
@@ -5180,21 +5182,32 @@ async function applySettingsDraft() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(draftPayload),
-    }, 120000);
+    }, SETTINGS_APPLY_TIMEOUT_MS);
 
     settingsDraft = {};
-    await Promise.all([
-      loadSettings(),
-      loadNewsOverview(),
-      loadSystemStatus(),
-      loadLLMStatus(),
-      loadLLMUsage(),
-    ]);
+    await refreshRuntimePanels();
 
     setStatus('runtime', buildSettingsApplySuccessMessage(json?.data || {}) || json?.message || '설정 적용 완료');
   } catch (err) {
     console.error('Settings apply error:', err);
-    setStatus('error', `설정 적용 실패: ${err.message || '알 수 없는 오류'}`);
+    let appliedDespiteError = false;
+    try {
+      appliedDespiteError = await reconcileSettingsDraftAfterApplyAttempt(draftPayload);
+    } catch (refreshErr) {
+      console.error('Settings apply recovery error:', refreshErr);
+    }
+
+    if (appliedDespiteError) {
+      const isTimeout = String(err?.message || '').includes('요청 시간이 초과되었습니다');
+      setStatus(
+        'runtime',
+        isTimeout
+          ? '설정 적용 응답은 지연됐지만 반영은 확인되었습니다.'
+          : '설정 반영은 확인되었습니다.',
+      );
+    } else {
+      setStatus('error', `설정 적용 실패: ${err.message || '알 수 없는 오류'}`);
+    }
   } finally {
     settingsApplyPending = false;
     renderSettingsApplyBar();
@@ -5209,6 +5222,13 @@ async function refreshRuntimePanels() {
     loadLLMStatus(),
     loadLLMUsage(),
   ]);
+}
+
+async function reconcileSettingsDraftAfterApplyAttempt(draftPayload) {
+  await refreshRuntimePanels();
+  settingsDraft = reconcileSettingsDraft(runtimeSettings || {}, draftPayload || {});
+  renderSettingsDraftState();
+  return Object.keys(settingsDraft).length === 0;
 }
 
 function setControlButtonState(id, { active = false, disabled = false, tone = 'blue' } = {}) {

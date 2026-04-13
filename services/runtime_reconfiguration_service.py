@@ -119,8 +119,10 @@ class RuntimeReconfigurationService:
                 if scheduler_was_running:
                     await scheduler.stop()
 
-                agent_idle = await self._wait_for_agent_idle(trading_agent)
-                scheduler_idle = await self._wait_for_scheduler_idle(scheduler)
+                agent_idle, scheduler_idle = await asyncio.gather(
+                    self._wait_for_agent_idle(trading_agent),
+                    self._wait_for_scheduler_idle(scheduler),
+                )
                 changed = await settings_service.update_settings(updates)
 
                 reset_runtime = getattr(llm_runtime, "reset_runtime_state", None)

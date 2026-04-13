@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import select
 
 
 @pytest.mark.asyncio
@@ -115,6 +116,11 @@ async def test_admin_reconcile_holdings_trades_route_returns_summary(client, mon
 
 @pytest.mark.asyncio
 async def test_admin_reset_operational_baseline_route_returns_summary(client, monkeypatch):
+    from models.account_day_baseline import AccountDayBaseline
+    from models.account_equity_snapshot import AccountEquitySnapshot
+    from services.account_equity_service import AccountEquityService
+    from tests.conftest import TestAsyncSessionLocal
+
     class FakeResult:
         def __init__(self, rowcount):
             self.rowcount = rowcount
@@ -137,12 +143,15 @@ async def test_admin_reset_operational_baseline_route_returns_summary(client, mo
                 "orders": 3,
                 "trade_results": 4,
                 "daily_reports": 5,
-                "agent_activity_logs": 6,
-                "news_items": 7,
+                "account_day_baselines": 6,
+                "account_equity_snapshots": 7,
+                "agent_activity_logs": 8,
+                "news_items": 9,
             }
             return FakeResult(counts[table])
 
     observed = {"reset": 0}
+    service = AccountEquityService(session_factory=TestAsyncSessionLocal)
 
     async def fake_backfill():
         return {"provider": "KIWOOM", "backfilled": 2, "skipped": 0}
@@ -169,6 +178,7 @@ async def test_admin_reset_operational_baseline_route_returns_summary(client, mo
         "scheduler.jobs.portfolio_sync_job._repair_confirmed_zero_entry_prices",
         fake_repair,
     )
+    monkeypatch.setattr("api.routes.admin.account_equity_service", service)
     monkeypatch.setattr("api.routes.admin.account_manager.invalidate_cache", lambda: observed.__setitem__("account_cache", True))
     monkeypatch.setattr(
         "api.routes.admin.get_broker_adapter",
@@ -196,17 +206,33 @@ async def test_admin_reset_operational_baseline_route_returns_summary(client, mo
     payload = response.json()
     assert payload["data"]["backup"]["filename"] == "app-before-reset-20260406-160000.db"
     assert payload["data"]["deleted"]["trade_results"] == 4
-    assert payload["data"]["deleted"]["news_items"] == 7
+    assert payload["data"]["deleted"]["account_day_baselines"] == 6
+    assert payload["data"]["deleted"]["account_equity_snapshots"] == 7
+    assert payload["data"]["deleted"]["news_items"] == 9
     assert payload["data"]["backfill"]["backfilled"] == 2
     assert payload["data"]["baseline_mode"] == "broker_snapshot"
     assert payload["data"]["broker_snapshot"]["synced"] is True
     assert payload["data"]["broker_snapshot"]["holdings_count"] == 2
     assert payload["data"]["broker_snapshot"]["pending_order_count"] == 1
+    assert payload["data"]["broker_snapshot"]["baseline_seeded"] is True
     assert payload["data"]["limitations"]["historical_realized_pnl_restored"] is False
     assert payload["data"]["preserved"]["runtime_settings"] is True
     assert observed["reset"] == 1
     assert observed["account_cache"] is True
     assert observed["broker_cache"] is True
+
+    async with TestAsyncSessionLocal() as session:
+        baselines = (await session.execute(select(AccountDayBaseline))).scalars().all()
+        snapshots = (await session.execute(select(AccountEquitySnapshot))).scalars().all()
+
+    assert len(baselines) == 1
+    assert baselines[0].baseline_total_asset == pytest.approx(527064565.0)
+    assert baselines[0].baseline_holding_count == 2
+    assert baselines[0].baseline_pending_order_count == 1
+    assert baselines[0].baseline_source == "RESET_BASELINE"
+    assert len(snapshots) == 1
+    assert snapshots[0].session_phase == "RESET_BASELINE"
+    assert snapshots[0].total_asset == pytest.approx(527064565.0)
 
 
 @pytest.mark.asyncio
