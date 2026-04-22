@@ -82,3 +82,27 @@ async def test_admin_llm_catalog_route_falls_back_to_seed_payload_when_service_r
     assert payload["data"]["stale"] is True
     assert payload["data"]["fetch_error"] == "upstream timeout"
     assert "fallback" in (payload["message"] or "").lower()
+
+
+async def test_admin_llm_catalog_route_returns_warning_message_for_stale_payload(client, monkeypatch):
+    async def fake_get_catalog(*, force_refresh=False):
+        assert force_refresh is True
+        return {
+            "fetched_at": "2026-04-21T10:01:33+09:00",
+            "stale": True,
+            "fetch_error": "help.openai.com 403",
+            "providers": [],
+        }
+
+    monkeypatch.setattr(
+        "api.routes.admin.model_catalog_service.get_catalog",
+        fake_get_catalog,
+        raising=False,
+    )
+
+    response = await client.get("/api/v1/admin/llm/catalog?force_refresh=true")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["data"]["stale"] is True
+    assert "stale" in (payload["message"] or "").lower()

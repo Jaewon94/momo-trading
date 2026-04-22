@@ -1,7 +1,12 @@
 import httpx
 import pytest
 
-from analysis.llm.model_catalog import ModelCatalogService
+from analysis.llm.model_catalog import (
+    ModelCatalogService,
+    _OPENAI_CODEX_CLI_URL,
+    _OPENAI_CODEX_CONFIG_URL,
+    _OPENAI_MODELS_ALL_URL,
+)
 
 
 class _FakeAsyncClient:
@@ -111,3 +116,72 @@ async def test_build_ollama_catalog_falls_back_when_runtime_unavailable(monkeypa
     assert [entry["value"] for entry in catalog["entries"]] == ["DEFAULT"]
     assert catalog["warnings"]
     assert "unavailable" in catalog["warnings"][0]
+
+
+@pytest.mark.asyncio
+async def test_build_codex_catalog_includes_current_openai_models(monkeypatch):
+    service = ModelCatalogService()
+    docs = {
+        _OPENAI_CODEX_CLI_URL: "Override the model set in configuration (for example `gpt-5.4`).",
+        _OPENAI_CODEX_CONFIG_URL: 'model = "gpt-5.4"',
+        _OPENAI_MODELS_ALL_URL: """
+        gpt-5.4
+        gpt-5.4-mini
+        gpt-5.4-nano
+        gpt-5-codex
+        gpt-5.3-codex
+        gpt-5.2-codex
+        gpt-5.1-codex
+        gpt-5.1-codex-max
+        gpt-5.1-codex-mini
+        codex-mini-latest
+        """,
+    }
+
+    async def fake_fetch_text(url: str) -> str:
+        return docs[url]
+
+    monkeypatch.setattr(service, "_fetch_text", fake_fetch_text)
+
+    catalog = await service._build_codex_catalog()
+    values = {entry["value"] for entry in catalog["entries"]}
+
+    assert _OPENAI_MODELS_ALL_URL in catalog["source_urls"]
+    assert {
+        "DEFAULT",
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.4-nano",
+        "gpt-5-codex",
+        "gpt-5.3-codex",
+        "gpt-5.2-codex",
+        "gpt-5.1-codex",
+        "gpt-5.1-codex-max",
+        "gpt-5.1-codex-mini",
+        "codex-mini-latest",
+    }.issubset(values)
+
+
+@pytest.mark.asyncio
+async def test_build_codex_catalog_tolerates_partial_doc_fetch_failures(monkeypatch):
+    service = ModelCatalogService()
+
+    async def fake_fetch_text(url: str) -> str:
+        if url == _OPENAI_CODEX_CONFIG_URL:
+            raise httpx.HTTPStatusError(
+                "forbidden",
+                request=httpx.Request("GET", url),
+                response=httpx.Response(403, request=httpx.Request("GET", url)),
+            )
+        if url == _OPENAI_MODELS_ALL_URL:
+            return "gpt-5.4 gpt-5.3-codex"
+        return "Override the model set in configuration (for example `gpt-5.4`)."
+
+    monkeypatch.setattr(service, "_fetch_text", fake_fetch_text)
+
+    catalog = await service._build_codex_catalog()
+    values = {entry["value"] for entry in catalog["entries"]}
+
+    assert {"DEFAULT", "gpt-5.4", "gpt-5.3-codex"}.issubset(values)
+    assert catalog["warnings"]
+    assert _OPENAI_CODEX_CONFIG_URL in catalog["warnings"][0]

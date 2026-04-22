@@ -1583,7 +1583,13 @@ async def get_llm_catalog(
 ):
     """공식 문서 기반 LLM 모델 카탈로그"""
     try:
-        return SuccessResponse(data=await model_catalog_service.get_catalog(force_refresh=force_refresh))
+        payload = await model_catalog_service.get_catalog(force_refresh=force_refresh)
+        message = None
+        if payload.get("stale"):
+            message = "LLM catalog refresh returned a stale cache after upstream sync failed"
+        elif any(provider.get("warnings") for provider in payload.get("providers", [])):
+            message = "LLM catalog refreshed with partial upstream warnings"
+        return SuccessResponse(data=payload, message=message)
     except Exception as exc:
         logger.error("LLM 카탈로그 조회 실패: {}", str(exc))
         return SuccessResponse(

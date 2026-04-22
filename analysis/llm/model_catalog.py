@@ -16,8 +16,8 @@ _ANTHROPIC_CONFIG_URL = "https://docs.anthropic.com/en/docs/claude-code/model-co
 _ANTHROPIC_MODELS_URL = "https://docs.anthropic.com/en/docs/about-claude/models/overview"
 _OPENAI_CODEX_CLI_URL = "https://developers.openai.com/codex/cli/reference"
 _OPENAI_CODEX_CONFIG_URL = "https://developers.openai.com/codex/config-reference"
+_OPENAI_MODELS_ALL_URL = "https://developers.openai.com/api/docs/models/all"
 _OPENAI_CODEX_MODEL_URL = "https://developers.openai.com/api/docs/models/gpt-5-codex"
-_OPENAI_CODEX_HELP_URL = "https://help.openai.com/en/articles/11369540-codex-in-chatgpt-faq"
 
 
 class ModelCatalogService:
@@ -115,16 +115,35 @@ class ModelCatalogService:
         }
 
     async def _build_codex_catalog(self) -> dict:
-        cli_html, config_html, model_html, help_html = await asyncio.gather(
-            self._fetch_text(_OPENAI_CODEX_CLI_URL),
-            self._fetch_text(_OPENAI_CODEX_CONFIG_URL),
-            self._fetch_text(_OPENAI_CODEX_MODEL_URL),
-            self._fetch_text(_OPENAI_CODEX_HELP_URL),
+        source_urls = [
+            _OPENAI_CODEX_CLI_URL,
+            _OPENAI_CODEX_CONFIG_URL,
+            _OPENAI_MODELS_ALL_URL,
+            _OPENAI_CODEX_MODEL_URL,
+        ]
+        fetched_docs = await asyncio.gather(
+            *(self._fetch_text(url) for url in source_urls),
+            return_exceptions=True,
         )
+        warnings: list[str] = []
+        doc_texts: list[str] = []
+        for url, payload in zip(source_urls, fetched_docs):
+            if isinstance(payload, Exception):
+                warnings.append(f"{url} unavailable: {payload}")
+                continue
+            doc_texts.append(payload)
+
+        if not doc_texts:
+            raise RuntimeError("OpenAI 공식 문서에서 Codex 모델 카탈로그를 가져오지 못했습니다.")
+
         entries = self._seed_codex_entries()
         seen = {item["value"] for item in entries}
-        pattern = re.compile(r"(?:gpt-5(?:\.\d+)?-codex(?:-(?:max|mini))?(?:-\d{4}-\d{2}-\d{2})?|codex-mini-latest)")
-        combined = "\n".join([cli_html, config_html, model_html, help_html])
+        pattern = re.compile(
+            r"(?:gpt-5(?:\.\d+)?-codex(?:-(?:max|mini))?(?:-\d{4}-\d{2}-\d{2})?|"
+            r"gpt-5(?:\.\d+)?(?:-(?:pro|mini|nano))?|"
+            r"codex-mini-latest)"
+        )
+        combined = "\n".join(doc_texts)
         for value in sorted(set(pattern.findall(combined))):
             if value in seen:
                 continue
@@ -135,23 +154,15 @@ class ModelCatalogService:
                 "kind": "snapshot" if re.search(r"\d{4}-\d{2}-\d{2}$", value) else "alias",
                 "stability": "stable" if re.search(r"\d{4}-\d{2}-\d{2}$", value) else "moving",
                 "source_scope": "official-doc",
-                "source_url": _OPENAI_CODEX_MODEL_URL if "gpt-5-codex" in value or "codex-mini-latest" in value else _OPENAI_CODEX_HELP_URL,
+                "source_url": _OPENAI_MODELS_ALL_URL,
             })
-        warnings: list[str] = []
-        if "GPT-5.1-Codex model family" in help_html and "GPT-5-Codex" in model_html:
-            warnings.append("OpenAI 공식 문서가 ChatGPT Codex와 개발자 모델 문서를 서로 다른 범위로 설명합니다.")
         return {
             "id": "CODEX",
             "name": "Codex CLI",
             "cli_path": settings._find_codex_path() or "",
             "cli_version": self._get_cli_version(settings._find_codex_path(), ["--version"]),
             "custom_value_supported": True,
-            "source_urls": [
-                _OPENAI_CODEX_CLI_URL,
-                _OPENAI_CODEX_CONFIG_URL,
-                _OPENAI_CODEX_MODEL_URL,
-                _OPENAI_CODEX_HELP_URL,
-            ],
+            "source_urls": source_urls,
             "warnings": warnings,
             "entries": entries,
         }
@@ -229,8 +240,8 @@ class ModelCatalogService:
                     "source_urls": [
                         _OPENAI_CODEX_CLI_URL,
                         _OPENAI_CODEX_CONFIG_URL,
+                        _OPENAI_MODELS_ALL_URL,
                         _OPENAI_CODEX_MODEL_URL,
-                        _OPENAI_CODEX_HELP_URL,
                     ],
                     "entries": self._seed_codex_entries(),
                 },
@@ -295,12 +306,20 @@ class ModelCatalogService:
                 "source_url": "",
             },
             {
+                "value": "gpt-5.4",
+                "label": "gpt-5.4",
+                "kind": "alias",
+                "stability": "moving",
+                "source_scope": "official-doc",
+                "source_url": _OPENAI_MODELS_ALL_URL,
+            },
+            {
                 "value": "gpt-5-codex",
                 "label": "gpt-5-codex",
                 "kind": "alias",
                 "stability": "moving",
                 "source_scope": "official-doc",
-                "source_url": _OPENAI_CODEX_MODEL_URL,
+                "source_url": _OPENAI_MODELS_ALL_URL,
             },
             {
                 "value": "codex-mini-latest",
@@ -308,7 +327,7 @@ class ModelCatalogService:
                 "kind": "alias",
                 "stability": "moving",
                 "source_scope": "official-doc",
-                "source_url": _OPENAI_CODEX_MODEL_URL,
+                "source_url": _OPENAI_MODELS_ALL_URL,
             },
         ]
 
