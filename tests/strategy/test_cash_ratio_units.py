@@ -12,6 +12,35 @@ def test_ai_risk_tuner_normalizes_percent_cash_ratio_to_fraction() -> None:
     assert limits["min_cash_ratio"] == pytest.approx(0.30)
 
 
+def test_ai_risk_tuner_applies_absolute_hard_caps(monkeypatch) -> None:
+    monkeypatch.setattr("strategy.ai_risk_tuner.settings.ABS_MAX_DAILY_TRADES", 6)
+    monkeypatch.setattr("strategy.ai_risk_tuner.settings.ABS_MAX_SINGLE_ORDER_KRW", 30_000_000)
+    monkeypatch.setattr("strategy.ai_risk_tuner.settings.ABS_MAX_POSITION_PCT", 12.5)
+
+    limits = AIRiskTuner()._clamp_limits({
+        "max_daily_trades": 999,
+        "max_single_order_krw": 500_000_000,
+        "max_position_pct": 80.0,
+    })
+
+    assert limits["max_daily_trades"] == 6
+    assert limits["max_single_order_krw"] == 30_000_000
+    assert limits["max_position_pct"] == 12.5
+
+
+def test_ai_risk_tuner_replaces_unlimited_values_with_absolute_caps(monkeypatch) -> None:
+    monkeypatch.setattr("strategy.ai_risk_tuner.settings.ABS_MAX_DAILY_TRADES", 5)
+    monkeypatch.setattr("strategy.ai_risk_tuner.settings.ABS_MAX_SINGLE_ORDER_KRW", 25_000_000)
+
+    limits = AIRiskTuner()._clamp_limits({
+        "max_daily_trades": 0,
+        "max_single_order_krw": 0,
+    })
+
+    assert limits["max_daily_trades"] == 5
+    assert limits["max_single_order_krw"] == 25_000_000
+
+
 @pytest.mark.asyncio
 async def test_risk_manager_accepts_percent_style_dynamic_cash_ratio(monkeypatch) -> None:
     async def fake_log(*args, **kwargs) -> None:

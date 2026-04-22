@@ -294,6 +294,40 @@
   - Commit: `feat: add canonical pnl truth summary`
   - Result: findings 갱신 완료. 커밋은 이 작업 검증 후 생성.
 
+### Task 3.1a: AI risk tuner absolute hard cap 추가
+
+**Files:**
+- Modify: `core/config.py`
+- Modify: `strategy/ai_risk_tuner.py`
+- Modify: `analysis/llm/prompts/risk_tuning.py`
+- Test: `tests/strategy/test_cash_ratio_units.py`
+
+- [x] **Step 1: 실패 테스트 작성**
+  - LLM이 과도한 `max_daily_trades`, `max_single_order_krw`, `max_position_pct`를 반환해도 절대 상한으로 내려가는 fixture를 만든다.
+  - `0 = 무제한` 입력도 절대 상한이 있으면 상한값으로 대체되는지 테스트한다.
+  - Result: `tests/strategy/test_cash_ratio_units.py`에 hard cap 테스트 2개를 추가했다.
+
+- [x] **Step 2: 실패 확인**
+  - Run: `./.venv313/bin/python -m pytest tests/strategy/test_cash_ratio_units.py::test_ai_risk_tuner_applies_absolute_hard_caps tests/strategy/test_cash_ratio_units.py::test_ai_risk_tuner_replaces_unlimited_values_with_absolute_caps -q`
+  - Expected: 절대 상한 설정/로직 부재로 실패.
+  - Result: `Settings`에 `ABS_MAX_DAILY_TRADES`가 없어 실패 확인.
+
+- [x] **Step 3: 최소 구현**
+  - `ABS_MAX_DAILY_TRADES`, `ABS_MAX_SINGLE_ORDER_KRW`, `ABS_MAX_POSITION_PCT` 설정을 추가한다.
+  - `_clamp_limits()`와 `_default_limits()`에 절대 상한을 적용한다.
+  - LLM 프롬프트에 시스템 절대 상한과 적용 의미를 명시한다.
+  - Result: 기본값은 일일 8회, 단일 주문 50,000,000원, 단일 포지션 15%로 설정했다.
+
+- [x] **Step 4: 통과 확인**
+  - Run: `./.venv313/bin/python -m pytest tests/strategy -q`
+  - Expected: PASS.
+  - Result: 12 passed.
+
+- [x] **Step 5: 문서/커밋**
+  - Update: F-008.
+  - Commit: `feat: cap ai risk tuner limits`
+  - Result: F-008을 `해결됨`으로 갱신했다. 커밋은 이 작업 검증 후 생성.
+
 ### Task 3.2: account equity 기반 drawdown guard
 
 **Files:**

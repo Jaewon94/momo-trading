@@ -145,6 +145,9 @@ class Settings(BaseSettings):
     MAX_DAILY_TRADES: int = 0  # 0 = 무제한
     MAX_SINGLE_ORDER_KRW: int = 0  # 0 = AI 자율 결정 (시스템 하드 리밋 없음)
     MAX_SINGLE_ORDER_USD: int = 0  # 0 = AI 자율 결정
+    ABS_MAX_DAILY_TRADES: int = 8  # AI/LLM 한도 제안에 항상 적용되는 절대 상한
+    ABS_MAX_SINGLE_ORDER_KRW: int = 50_000_000  # 0이면 절대 주문금액 상한 비활성
+    ABS_MAX_POSITION_PCT: float = 15.0  # 단일 포지션 비중 절대 상한(%)
     BUY_ORDER_EXECUTION_MODE: str = "LIMIT_GUARD"  # LIMIT_GUARD | MARKET
     BUY_SLIPPAGE_GUARD_BPS: int = 20  # LIMIT_GUARD 모드에서 허용 슬리피지 (bp)
     ORDER_RESERVATION_ENFORCEMENT: str = "SHADOW"  # SHADOW | ENFORCE

@@ -157,7 +157,7 @@
 ### F-008: AI risk tuner가 상한 없이 주문/포지션 한도를 완화할 수 있음
 
 - 심각도: `P1`
-- 상태: `확정`
+- 상태: `해결됨`
 - 영역: `리스크 | 자본 배분 | LLM`
 - 현상: `AIRiskTuner._clamp_limits`는 최소값만 강제하고 상한선이 없습니다. `max_single_order_krw=0`은 무제한, `max_daily_trades=0`은 무제한, `max_position_pct`는 최소 5%만 있고 상한은 없습니다.
 - 영향: LLM 또는 fallback 설정이 공격적으로 나오면 시스템 hard cap 없이 주문 금액/포지션 비중이 커질 수 있습니다. 이는 SEC/FINRA식 pre-trade credit/capital threshold 원칙과 맞지 않습니다.
@@ -168,6 +168,7 @@
 - Rollout: 먼저 cap 설정과 로그만 추가하고, 기본 cap은 보수적으로 적용합니다.
 - Rollback: cap 설정을 기존 0/무제한으로 되돌릴 수 있으나, 운영상 rollback은 별도 승인 필요.
 - 분류: `유지하되 harden`
+- 조치: Track 3 Task 3.1a에서 `ABS_MAX_DAILY_TRADES`, `ABS_MAX_SINGLE_ORDER_KRW`, `ABS_MAX_POSITION_PCT`를 추가하고 `AIRiskTuner._clamp_limits`와 기본 fallback 한도에 항상 적용했습니다. LLM 프롬프트에도 절대 상한을 명시했습니다.
 
 ### F-009: kill switch가 실현손익만 보고 평가손실과 총자산 하락을 반영하지 않음
 

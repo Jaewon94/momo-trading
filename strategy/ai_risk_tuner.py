@@ -75,6 +75,9 @@ class AIRiskTuner:
                 performance_summary=performance_summary,
                 risk_guideline=risk_guideline,
                 max_daily_trades=settings.MAX_DAILY_TRADES,
+                abs_max_daily_trades=settings.ABS_MAX_DAILY_TRADES,
+                abs_max_single_order_krw=settings.ABS_MAX_SINGLE_ORDER_KRW,
+                abs_max_position_pct=settings.ABS_MAX_POSITION_PCT,
                 min_buy_quantity=settings.MIN_BUY_QUANTITY,
             )
 
@@ -110,33 +113,60 @@ class AIRiskTuner:
             return self._default_limits()
 
     def _clamp_limits(self, parsed: dict) -> dict:
-        """AI 결정값 정규화 (최소 안전값만 적용, 상한선 없음)"""
+        """AI 결정값 정규화 (최소값 + 시스템 절대 상한 적용)."""
+        max_daily_trades = self._clamp_unlimited_cap(
+            int(parsed.get("max_daily_trades", settings.MAX_DAILY_TRADES)),
+            int(settings.ABS_MAX_DAILY_TRADES),
+        )
+        max_single_order_krw = self._clamp_unlimited_cap(
+            int(parsed.get("max_single_order_krw", settings.MAX_SINGLE_ORDER_KRW)),
+            int(settings.ABS_MAX_SINGLE_ORDER_KRW),
+        )
+        max_position_pct = self._clamp_position_pct(
+            float(parsed.get("max_position_pct", 25.0)),
+            float(settings.ABS_MAX_POSITION_PCT),
+        )
         return {
-            "max_daily_trades": max(
-                int(parsed.get("max_daily_trades", settings.MAX_DAILY_TRADES)), 0
-            ),  # 0 = 무제한
-            "max_single_order_krw": max(
-                int(parsed.get("max_single_order_krw", 0)), 0
-            ),  # 0 = 무제한
+            "max_daily_trades": max_daily_trades,
+            "max_single_order_krw": max_single_order_krw,
             "min_buy_quantity": max(
                 int(parsed.get("min_buy_quantity", settings.MIN_BUY_QUANTITY)), 1
             ),
-            "max_position_pct": max(
-                float(parsed.get("max_position_pct", 25.0)), 5.0
-            ),  # 상한선 없음
+            "max_position_pct": max_position_pct,
             "min_cash_ratio": self._normalize_cash_ratio(
                 float(parsed.get("min_cash_ratio", 0.0))
             ),  # 0 = 제한 없음
             "reasoning": parsed.get("reasoning", ""),
         }
 
+    @staticmethod
+    def _clamp_unlimited_cap(value: int, absolute_cap: int) -> int:
+        """Apply a hard cap; when value is 0(unlimited), use the cap if configured."""
+        normalized = max(int(value), 0)
+        cap = max(int(absolute_cap), 0)
+        if cap <= 0:
+            return normalized
+        if normalized <= 0:
+            return cap
+        return min(normalized, cap)
+
+    @staticmethod
+    def _clamp_position_pct(value: float, absolute_cap: float) -> float:
+        minimum = 5.0
+        cap = max(float(absolute_cap), minimum)
+        return min(max(float(value), minimum), cap)
+
     def _default_limits(self) -> dict:
         """기본 한도값 (AI 실패 시)"""
         return {
-            "max_daily_trades": settings.MAX_DAILY_TRADES,  # 0 = 무제한
-            "max_single_order_krw": settings.MAX_SINGLE_ORDER_KRW,  # 0 = 무제한
+            "max_daily_trades": self._clamp_unlimited_cap(
+                settings.MAX_DAILY_TRADES, settings.ABS_MAX_DAILY_TRADES
+            ),
+            "max_single_order_krw": self._clamp_unlimited_cap(
+                settings.MAX_SINGLE_ORDER_KRW, settings.ABS_MAX_SINGLE_ORDER_KRW
+            ),
             "min_buy_quantity": settings.MIN_BUY_QUANTITY,
-            "max_position_pct": 25.0,
+            "max_position_pct": self._clamp_position_pct(25.0, settings.ABS_MAX_POSITION_PCT),
             "min_cash_ratio": 0.0,
             "reasoning": "AI 한도 결정 실패, 기본값 사용",
         }
