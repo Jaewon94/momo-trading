@@ -191,6 +191,20 @@ def test_llm_factory_includes_provider_runtime_status(monkeypatch) -> None:
     assert codex_status["runtime"]["last_failure_reason"] == "Codex CLI timeout (60s)"
 
 
+def test_llm_factory_reset_runtime_state_rebuilds_provider_instances(monkeypatch) -> None:
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.CODEX_MODEL_TIER1", "gpt-5-codex")
+
+    factory = LLMFactory()
+    stale_codex = factory._providers[LLMTier.TIER1][LLMProvider.CODEX]
+
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.CODEX_MODEL_TIER1", "gpt-5.4")
+    factory.reset_runtime_state()
+    refreshed_codex = factory._providers[LLMTier.TIER1][LLMProvider.CODEX]
+
+    assert refreshed_codex is not stale_codex
+    assert refreshed_codex.model_id == "codex:gpt-5.4"
+
+
 @pytest.mark.asyncio
 async def test_llm_factory_manual_generate_uses_configured_primary_and_fallback(monkeypatch) -> None:
     monkeypatch.setattr("analysis.llm.llm_factory.settings.MANUAL_LLM_PROVIDER", "CODEX")
@@ -443,6 +457,39 @@ async def test_llm_factory_limits_concurrent_generation_per_tier(monkeypatch) ->
 
     second = asyncio.create_task(
         factory.generate("second", LLMTier.TIER1, provider_chain=[LLMProvider.OLLAMA]),
+    )
+    await asyncio.sleep(0.05)
+
+    assert provider.started == 1
+    assert provider.max_active == 1
+
+    provider.release.set()
+    await first
+    await second
+
+    assert provider.started == 2
+    assert provider.max_active == 1
+
+
+@pytest.mark.asyncio
+async def test_llm_factory_serializes_codex_generation_globally(monkeypatch) -> None:
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_TIER1_CONCURRENCY", 3)
+
+    async def fake_record_llm_call(**kwargs):
+        return None
+
+    factory = LLMFactory()
+    provider = BlockingProvider(LLMProvider.CODEX)
+    factory._providers[LLMTier.TIER1] = {LLMProvider.CODEX: provider}
+    monkeypatch.setattr("analysis.llm.llm_factory.observability_service.record_llm_call", fake_record_llm_call)
+
+    first = asyncio.create_task(
+        factory.generate("first", LLMTier.TIER1, provider_chain=[LLMProvider.CODEX]),
+    )
+    await provider.entered.wait()
+
+    second = asyncio.create_task(
+        factory.generate("second", LLMTier.TIER1, provider_chain=[LLMProvider.CODEX]),
     )
     await asyncio.sleep(0.05)
 

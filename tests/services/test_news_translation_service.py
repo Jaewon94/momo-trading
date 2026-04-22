@@ -262,7 +262,7 @@ async def test_news_translation_service_clears_previous_error_on_success(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_news_translation_service_translates_non_korean_items_with_limited_parallelism(monkeypatch):
+async def test_news_translation_service_serializes_codex_translation_requests(monkeypatch):
     from services.news_translation_service import NewsTranslationService
 
     service = NewsTranslationService()
@@ -288,11 +288,8 @@ async def test_news_translation_service_translates_non_korean_items_with_limited
         {"language": "en", "title": "C", "summary": "3"},
     ]))
 
-    async def wait_for_parallel_starts():
-        while len(started) < 3:
-            await asyncio.sleep(0.01)
-
-    await asyncio.wait_for(wait_for_parallel_starts(), timeout=0.2)
+    await asyncio.sleep(0.05)
+    assert started == ["A"]
     release.set()
     translated = await task
 
@@ -335,7 +332,7 @@ async def test_news_translation_service_limits_ollama_to_single_inflight_request
 
 
 @pytest.mark.asyncio
-async def test_news_translation_service_uses_configured_concurrency_for_non_ollama(monkeypatch):
+async def test_news_translation_service_uses_configured_concurrency_for_non_serialized_provider(monkeypatch):
     from services.news_translation_service import NewsTranslationService
 
     service = NewsTranslationService()
@@ -343,7 +340,7 @@ async def test_news_translation_service_uses_configured_concurrency_for_non_olla
     active = {"count": 0, "max": 0}
 
     monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_ENABLED", True)
-    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_PROVIDER", "CODEX")
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_PROVIDER", "CLAUDE_CODE")
     monkeypatch.setattr("services.news_translation_service.settings.NEWS_TRANSLATION_CONCURRENCY", 2)
 
     async def fake_translate_item(item, *, news_selection=None):
@@ -368,6 +365,13 @@ async def test_news_translation_service_uses_configured_concurrency_for_non_olla
     translated = await task
 
     assert len(translated) == 3
+
+
+def test_news_translation_service_serializes_codex_and_ollama_translation() -> None:
+    service = NewsTranslationService()
+
+    assert service._translation_concurrency_limit("CODEX") == 1
+    assert service._translation_concurrency_limit("OLLAMA") == 1
 
 
 @pytest.mark.asyncio

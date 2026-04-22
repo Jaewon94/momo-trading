@@ -153,7 +153,7 @@ Summary: {summary}
 
     def _translation_concurrency_limit(self, provider: str) -> int:
         normalized = str(provider or "CLAUDE_CODE").upper()
-        if normalized == "OLLAMA":
+        if normalized in {"OLLAMA", "CODEX"}:
             return 1
         return max(int(settings.NEWS_TRANSLATION_CONCURRENCY or 1), 1)
 

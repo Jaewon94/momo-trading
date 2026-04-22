@@ -27,6 +27,12 @@ async def lifespan(app: FastAPI):
         applied = await runtime_settings_service.apply_persisted_settings()
         if applied:
             logger.info("영속 런타임 설정 로드 완료 ({}개)", len(applied))
+            try:
+                from analysis.llm.llm_factory import llm_factory
+
+                llm_factory.reset_runtime_state()
+            except Exception as exc:
+                logger.warning("LLM 런타임 재초기화 실패: {}", str(exc))
     except Exception as exc:
         logger.warning("영속 런타임 설정 로드 실패: {}", str(exc))
     settings.validate_on_startup()
