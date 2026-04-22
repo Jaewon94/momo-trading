@@ -44,7 +44,13 @@ class MarketDataClientProtocol(Protocol):
 
 class OrderExecutorProtocol(Protocol):
     async def execute(self, request: OrderRequest) -> OrderResult: ...
-    async def cancel(self, order_id: str, market: str = "KRX") -> OrderResult: ...
+    async def cancel(
+        self,
+        order_id: str,
+        market: str = "KRX",
+        symbol: str | None = None,
+        quantity: int | None = None,
+    ) -> OrderResult: ...
 
 
 class BrokerAdapter(ABC):

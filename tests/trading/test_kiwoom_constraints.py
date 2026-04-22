@@ -7,6 +7,17 @@ from trading.kiwoom_rest_client import KiwoomRESTClient
 from trading.models import MCPResponse, OrderRequest, OrderResult
 
 
+class FakeAccountClient:
+    async def get_balance(self):
+        raise AssertionError("not used")
+
+    async def get_holdings(self):
+        return []
+
+    async def get_pending_orders(self):
+        return []
+
+
 class FakeMarketDataClient:
     async def get_current_price(self, symbol: str, market: str = "KRX") -> MCPResponse:
         if market == "NASDAQ":
@@ -47,20 +58,26 @@ class FakeMarketDataClient:
 
 
 class FakeOrderExecutor:
+    def __init__(self) -> None:
+        self.cancel_requests = []
+
     async def execute(self, request: OrderRequest) -> OrderResult:
         return OrderResult(success=True, order_id="K-1", message="ok")
 
-    async def cancel(self, order_id: str, market: str = "KRX") -> OrderResult:
-        return OrderResult(
-            success=False,
-            order_id=order_id,
-            message="키움 취소주문은 종목코드/원주문번호 매핑 정리 후 구현 예정입니다",
-        )
+    async def cancel(
+        self,
+        order_id: str,
+        market: str = "KRX",
+        symbol: str | None = None,
+        quantity: int | None = None,
+    ) -> OrderResult:
+        self.cancel_requests.append((order_id, market, symbol, quantity))
+        return OrderResult(success=True, order_id="CANCEL-1", message="cancelled")
 
 
 def build_adapter() -> KiwoomBrokerAdapter:
     return KiwoomBrokerAdapter(
-        account_client=None,
+        account_client=FakeAccountClient(),
         market_data_client=FakeMarketDataClient(),
         order_executor=FakeOrderExecutor(),
     )
@@ -94,13 +111,13 @@ async def test_kiwoom_adapter_delegates_rankings_for_domestic_market() -> None:
 
 
 @pytest.mark.asyncio
-async def test_kiwoom_adapter_cancel_order_reports_unsupported_mapping() -> None:
+async def test_kiwoom_adapter_cancel_order_reports_missing_pending_order() -> None:
     adapter = build_adapter()
 
     result = await adapter.cancel_order("ORD-1")
 
     assert result.success is False
-    assert "구현 예정" in result.message
+    assert "미체결 주문" in result.message
 
 
 @pytest.mark.asyncio

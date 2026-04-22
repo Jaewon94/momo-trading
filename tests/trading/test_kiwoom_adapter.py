@@ -123,6 +123,7 @@ class FakeMarketDataClient:
 class FakeOrderExecutor:
     def __init__(self) -> None:
         self.requests: list[OrderRequest] = []
+        self.cancel_requests: list[dict] = []
 
     async def execute(self, request: OrderRequest) -> OrderResult:
         self.requests.append(request)
@@ -134,7 +135,19 @@ class FakeOrderExecutor:
             filled_price=request.price or 0,
         )
 
-    async def cancel(self, order_id: str, market: str = "KRX") -> OrderResult:
+    async def cancel(
+        self,
+        order_id: str,
+        market: str = "KRX",
+        symbol: str | None = None,
+        quantity: int | None = None,
+    ) -> OrderResult:
+        self.cancel_requests.append({
+            "order_id": order_id,
+            "market": market,
+            "symbol": symbol,
+            "quantity": quantity,
+        })
         return OrderResult(success=True, order_id=order_id, message="cancelled")
 
 
@@ -174,9 +187,44 @@ async def test_kiwoom_adapter_exposes_provider_and_capabilities() -> None:
     assert adapter.capabilities.supports_overseas_stocks is False
     assert adapter.capabilities.supports_paper_trading is True
     assert adapter.capabilities.supports_realtime_quotes is False
+    assert adapter.capabilities.supports_order_cancellation is True
     assert adapter.capabilities.supports_nxt_quotes is False
     assert adapter.capabilities.supports_after_hours_orders is False
     assert adapter.capabilities.supported_order_sessions == [OrderSession.REGULAR]
+
+
+@pytest.mark.asyncio
+async def test_kiwoom_adapter_cancels_order_with_pending_order_context() -> None:
+    order_executor = FakeOrderExecutor()
+    adapter = KiwoomBrokerAdapter(
+        account_client=MutableAccountClient(
+            pending_orders=[
+                PendingOrderInfo(
+                    order_id="0086997",
+                    symbol="A092220",
+                    name="KEC",
+                    side="매수",
+                    order_qty=7552,
+                    filled_qty=0,
+                    remaining_qty=7552,
+                    order_price=1660,
+                    order_time="102553",
+                )
+            ]
+        ),
+        market_data_client=FakeMarketDataClient(),
+        order_executor=order_executor,
+    )
+
+    result = await adapter.cancel_order("0086997", market=Market.KRX)
+
+    assert result.success is True
+    assert order_executor.cancel_requests == [{
+        "order_id": "0086997",
+        "market": "KRX",
+        "symbol": "092220",
+        "quantity": 7552,
+    }]
 
 
 @pytest.mark.asyncio

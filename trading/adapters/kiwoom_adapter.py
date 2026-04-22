@@ -34,7 +34,7 @@ class KiwoomBrokerAdapter(BrokerAdapter):
         supports_paper_trading=True,
         supports_live_trading=True,
         supports_realtime_quotes=False,
-        supports_order_cancellation=False,
+        supports_order_cancellation=True,
         supports_nxt_quotes=False,
         supports_after_hours_orders=False,
         supports_after_hours_automation=False,
@@ -149,7 +149,19 @@ class KiwoomBrokerAdapter(BrokerAdapter):
         order_id: str,
         market: Market = Market.KRX,
     ) -> OrderResult:
-        return await self._require_order_executor().cancel(order_id, market=market.value)
+        pending = await self._find_pending_order(order_id)
+        if pending is None:
+            return OrderResult(
+                success=False,
+                order_id=order_id,
+                message="대상 미체결 주문을 찾을 수 없어 키움 취소주문을 보낼 수 없습니다",
+            )
+        return await self._require_order_executor().cancel(
+            order_id,
+            market=market.value,
+            symbol=normalize_krx_symbol(pending.symbol),
+            quantity=int(pending.remaining_qty or 0),
+        )
 
     async def get_buying_power(
         self,
@@ -251,6 +263,13 @@ class KiwoomBrokerAdapter(BrokerAdapter):
     async def _get_holding_quantity(self, symbol: str) -> int:
         holding = await self._get_holding(symbol)
         return holding.quantity if holding is not None else 0
+
+    async def _find_pending_order(self, order_id: str) -> PendingOrderInfo | None:
+        pending_orders = await self.get_pending_orders()
+        for order in pending_orders:
+            if str(getattr(order, "order_id", "")) == str(order_id):
+                return order
+        return None
 
     @staticmethod
     def _normalize_candles(data: dict, time_key_field: str) -> list[Candle]:

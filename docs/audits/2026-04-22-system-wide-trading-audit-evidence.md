@@ -918,7 +918,7 @@ Admin API에서 확인한 쓰기/거래성 endpoint:
 | `POST /api/v1/admin/trades/reconcile-pending` | PENDING_CONFIRM 복구 |
 | `POST /api/v1/admin/trades/reconcile-holdings` | 보유 기준 TradeResult 복구 |
 | `POST /api/v1/admin/account/holdings/{symbol}/sell` | 보유 종목 즉시 시장가 매도 |
-| `POST /api/v1/admin/account/pending-orders/{order_id}/cancel-buy` | 미체결 매수 취소 |
+| `POST /api/v1/admin/account/pending-orders/{order_id}/cancel-buy` | 미체결 매수 취소. Kiwoom은 `kt10003` 취소주문 매핑 구현 후 서버 재시작 필요 |
 | `POST /api/v1/admin/account/pending-orders/{order_id}/cancel-and-sell` | 미체결 매도 취소 후 시장가 재매도 |
 
 관찰:

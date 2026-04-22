@@ -369,11 +369,34 @@ class KiwoomOrderExecutor:
             filled_price=_abs_float(data.get("ord_uv")),
         )
 
-    async def cancel(self, order_id: str, market: str = "KRX") -> OrderResult:
+    async def cancel(
+        self,
+        order_id: str,
+        market: str = "KRX",
+        symbol: str | None = None,
+        quantity: int | None = None,
+    ) -> OrderResult:
+        if not _is_domestic_market(market):
+            return OrderResult(success=False, order_id=order_id, message="Kiwoom은 국내주식만 지원합니다")
+        if not symbol:
+            return OrderResult(success=False, order_id=order_id, message="키움 취소주문에는 종목코드가 필요합니다")
+
+        response = await self._rest_client.request(
+            api_id="kt10003",
+            endpoint="/api/dostk/ordr",
+            body={
+                "dmst_stex_tp": _to_exchange(Market(market)),
+                "orig_ord_no": str(order_id),
+                "stk_cd": str(symbol),
+                "cncl_qty": str(int(quantity or 0)),
+            },
+        )
+        data = response.body
+        success = _return_code(data) == 0 and bool(data.get("ord_no"))
         return OrderResult(
-            success=False,
-            order_id=order_id,
-            message="키움 취소주문은 종목코드/원주문번호 매핑 정리 후 구현 예정입니다",
+            success=success,
+            order_id=data.get("ord_no") or str(order_id),
+            message=data.get("return_msg", "취소주문 완료" if success else "취소주문 실패"),
         )
 
 

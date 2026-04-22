@@ -194,6 +194,44 @@
   - Commit: `feat: add stale pending cleanup action`
   - Result: findings에 수동 cleanup endpoint, DRY_RUN 기본값, SELL pending skip 정책을 반영했다. 커밋은 이 작업 검증 후 생성.
 
+### Task 2.1b: Kiwoom 미체결 취소주문 매핑 구현
+
+**Files:**
+- Modify: `trading/kiwoom_clients.py`
+- Modify: `trading/adapters/kiwoom_adapter.py`
+- Modify: `trading/adapters/base.py`
+- Test: `tests/trading/test_kiwoom_clients.py`
+- Test: `tests/trading/test_kiwoom_adapter.py`
+- Test: `tests/trading/test_kiwoom_constraints.py`
+
+- [x] **Step 1: 실패 테스트 작성**
+  - `KiwoomOrderExecutor.cancel()`이 `kt10003`으로 `dmst_stex_tp`, `orig_ord_no`, `stk_cd`, `cncl_qty`를 보내는지 테스트한다.
+  - `KiwoomBrokerAdapter.cancel_order()`가 미체결 목록에서 종목코드/잔량을 찾아 executor에 넘기는지 테스트한다.
+  - 미체결 주문이 없으면 취소주문을 보내지 않고 실패하는지 테스트한다.
+  - Result: Kiwoom 취소주문 테스트 3개를 추가했다.
+
+- [x] **Step 2: 실패 확인**
+  - Run: `./.venv313/bin/python -m pytest tests/trading/test_kiwoom_clients.py::test_kiwoom_order_executor_cancels_order_with_original_order_mapping tests/trading/test_kiwoom_adapter.py::test_kiwoom_adapter_cancels_order_with_pending_order_context tests/trading/test_kiwoom_constraints.py::test_kiwoom_adapter_cancel_order_reports_missing_pending_order -q`
+  - Expected: executor가 `symbol`을 받지 못하고 adapter가 미체결 컨텍스트 없이 취소를 호출해 실패.
+  - Result: 3개 테스트 모두 실패 확인.
+
+- [x] **Step 3: 최소 구현**
+  - `OrderExecutorProtocol.cancel()`에 선택 인자 `symbol`, `quantity`를 추가한다.
+  - `KiwoomBrokerAdapter.cancel_order()`는 현재 미체결 주문을 조회해 대상 주문의 종목/잔량을 확인한 뒤 취소 executor로 전달한다.
+  - `KiwoomOrderExecutor.cancel()`은 `kt10003` + `/api/dostk/ordr`로 취소주문을 보낸다.
+  - `supports_order_cancellation=True`로 capability를 실제 구현과 맞춘다.
+  - Result: Kiwoom 미체결 취소주문 매핑을 구현했다.
+
+- [x] **Step 4: 통과 확인**
+  - Run: `./.venv313/bin/python -m pytest tests/trading/test_kiwoom_clients.py tests/trading/test_kiwoom_adapter.py tests/trading/test_kiwoom_constraints.py tests/services/test_manual_trade_service.py tests/api/test_admin_account_routes.py -q`
+  - Expected: PASS.
+  - Result: 49 passed.
+
+- [x] **Step 5: 문서/커밋**
+  - 운영 적용 전 실제 취소 실행은 서버 재시작 후 사용자 확인을 거쳐 별도 수행한다.
+  - Commit: `feat: implement kiwoom cancel order`
+  - Result: 공식 Kiwoom REST 가이드의 `kt10003` 취소주문 TR과 생성 스펙의 payload 필드 계약을 기준으로 문서화했다.
+
 ### Task 2.2: cycle-local cash reservation ledger
 
 **Files:**

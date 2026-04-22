@@ -201,6 +201,18 @@ def build_transport() -> tuple[httpx.MockTransport, list[tuple[str, str, dict]]]
                 },
             )
 
+        if request.headers.get("api-id") == "kt10003":
+            return httpx.Response(
+                200,
+                json={
+                    "ord_no": "0539056",
+                    "base_orig_ord_no": "0539055",
+                    "cncl_qty": "0",
+                    "return_code": 0,
+                    "return_msg": "KRX 취소주문이 완료되었습니다.",
+                },
+            )
+
         return httpx.Response(404, json={"return_code": -1, "return_msg": "not found"})
 
     return httpx.MockTransport(handler), requests
@@ -505,6 +517,35 @@ async def test_kiwoom_order_executor_submits_market_order_with_string_fields() -
     assert requests[-1][2]["ord_qty"] == "900"
     assert requests[-1][2]["ord_uv"] == ""
     assert requests[-1][2]["trde_tp"] == "3"
+
+
+@pytest.mark.asyncio
+async def test_kiwoom_order_executor_cancels_order_with_original_order_mapping() -> None:
+    transport, requests = build_transport()
+    client = KiwoomRESTClient(
+        app_key="real-key",
+        secret_key="real-secret",
+        paper_app_key="paper-key",
+        paper_secret_key="paper-secret",
+        account_type="VIRTUAL",
+        transport=transport,
+        token_cache_path=None,
+    )
+    executor = KiwoomOrderExecutor(client)
+
+    result = await executor.cancel("0539055", market="KRX", symbol="005930")
+
+    assert result.success is True
+    assert result.order_id == "0539056"
+    assert "취소주문" in result.message
+    assert requests[-1][0] == "/api/dostk/ordr"
+    assert requests[-1][1] == "kt10003"
+    assert requests[-1][2] == {
+        "dmst_stex_tp": "KRX",
+        "orig_ord_no": "0539055",
+        "stk_cd": "005930",
+        "cncl_qty": "0",
+    }
 
 
 @pytest.mark.asyncio
