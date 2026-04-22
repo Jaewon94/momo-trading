@@ -491,6 +491,96 @@
 - Rollback: source별 runtime flag를 기존 값으로 복구.
 - 분류: `실험`
 
+### F-031: 주문 생성 경로의 세션 가드가 자동매매 지원 세션보다 넓음
+
+- 심각도: `P1`
+- 상태: `확정`
+- 영역: `스케줄러 | 주문 | 실시간 이벤트`
+- 현상: `market_calendar.supports_automated_trading()`은 `KRX_NXT` 세션만 자동매매 지원으로 보지만, `holdings_check`, `intraday_holdings_review`, `event_detector`, `realtime_monitor` 등 주문/이벤트 생성 경로는 `is_krx_trading_hours()`를 사용합니다. 이 함수는 09:00~15:30을 true로 반환합니다.
+- 영향: 15:20~15:30 `KRX_CLOSE` 구간에서도 이벤트/재평가/매도 트리거가 열릴 수 있어, Admin status의 `market_session_auto_trading` 의미와 실제 주문 경계가 불일치합니다.
+- 증거: `scheduler/market_calendar.py:is_krx_trading_hours`, `scheduler/market_calendar.py:supports_automated_trading`, `scheduler/scheduler.py:_holdings_check`, `scheduler/scheduler.py:_intraday_holdings_review`, `realtime/event_detector.py:on_price_update`.
+- 재현/검증: 15:25 KST fixture에서 `get_market_session()`은 `KRX_CLOSE`, `supports_automated_trading()`은 false, `is_krx_trading_hours()`는 true입니다.
+- 권고: 주문 생성 가능 경로는 `is_automated_trading_session()` 같은 단일 guard로 통일하고, 가격 모니터링과 주문 실행 가능 여부를 분리합니다.
+- 구현 전 테스트: `tests/scheduler/test_market_calendar.py`, `tests/realtime/test_event_detector.py`, `tests/scheduler/test_scheduler_runtime_paths.py`에 KRX_CLOSE에서는 실주문/agent trigger가 막히는 테스트 추가.
+- Rollout: 먼저 guard를 read-only warning으로 기록하고, 다음 단계에서 SELL/BUY 실행 경로에 hard block 적용.
+- Rollback: runtime flag로 기존 `is_krx_trading_hours` guard를 임시 허용.
+- 분류: `유지하되 harden`
+
+### F-032: 강제 청산 재시도 성공이 TradeResult에 기록되지 않을 수 있음
+
+- 심각도: `P1`
+- 상태: `확정`
+- 영역: `스케줄러 | 주문 | PnL`
+- 현상: `_force_liquidation()`의 1차 매도 성공은 `decision_maker.confirm_and_record()`를 호출하지만, 5초 후 재시도 성공은 `sold_count`와 로그만 갱신합니다.
+- 영향: 브로커에는 매도 주문이 접수됐는데 DB에는 청산 SELL이 기록되지 않아 open position, realized PnL, 일일 리포트, 후속 risk 계산이 틀어질 수 있습니다.
+- 증거: `scheduler/scheduler.py:_force_liquidation` 1차 성공 분기와 retry success 분기 비교.
+- 재현/검증: 첫 주문 실패, retry 성공 fake adapter fixture에서 `confirm_and_record` 호출 횟수가 0이어야 하는 현재 동작을 재현할 수 있습니다.
+- 권고: retry success도 1차 success와 동일한 기록 경로를 사용하도록 `_record_liquidation_sell()` helper로 추출합니다.
+- 구현 전 테스트: `tests/scheduler/test_scheduler_force_liquidation.py`에 retry success 시 `confirm_and_record`가 호출되는 실패 테스트 추가.
+- Rollout: 기록 경로만 추가하므로 실주문 방식은 유지. 중복 기록 방지를 위해 `order_id` idempotency 확인을 함께 둡니다.
+- Rollback: helper 적용 전 코드로 되돌릴 수 있으나, 기록 누락 위험이 재발합니다.
+- 분류: `수정 필요`
+
+### F-033: 스마트 청산이 데이터 수집 실패를 즉시 SELL로 해석함
+
+- 심각도: `P1`
+- 상태: `확정`
+- 영역: `스케줄러 | 리스크 | 전략`
+- 현상: `_collect_holdings_data()`는 현재가 조회 실패, open BUY `TradeResult` 없음, 예외 발생 시 해당 보유종목을 `fallback_sell`에 넣고, `_smart_liquidation()`은 이를 곧바로 `to_sell`에 추가합니다.
+- 영향: 일시적인 quote 장애나 DB 정합성 오류가 “위험 회피”가 아니라 실제 시장가 매도로 이어질 수 있습니다. 특히 `DAY_TRADING_ONLY=false`인 스윙 모드에서는 의도치 않은 포지션 청산이 발생할 수 있습니다.
+- 증거: `scheduler/scheduler.py:_collect_holdings_data`, `scheduler/scheduler.py:_smart_liquidation`.
+- 재현/검증: `get_current_price`가 0을 반환하거나 open BUY가 없는 fixture에서 해당 보유종목이 LLM/룰 판단 없이 `to_sell`에 들어갑니다.
+- 권고: 데이터 실패는 `UNKNOWN`/`REVIEW_REQUIRED`로 분리하고, 청산 전 재시도/브로커 스냅샷/수동 확인 또는 설정 기반 conservative action을 거치게 합니다.
+- 구현 전 테스트: `tests/scheduler/test_scheduler_smart_liquidation.py`에 quote failure/open BUY missing이 즉시 SELL이 되지 않는 테스트 추가.
+- Rollout: 초기에는 `SMART_LIQUIDATION_DATA_FAILURE_ACTION=HOLD_AND_ALERT` 기본값으로 도입하고, 기존 즉시 SELL은 명시 설정으로만 허용.
+- Rollback: 설정값을 `SELL`로 되돌릴 수 있게 하되 기본값은 안전 모드 유지.
+- 분류: `수정 필요`
+
+### F-034: Admin 고위험 거래/DB 액션에 서버 측 transaction authorization 단계가 없음
+
+- 심각도: `P1`
+- 상태: `확정`
+- 영역: `Admin | 보안 | 운영`
+- 현상: Admin route에는 운영 DB reset, pending 복구, 보유 즉시 매도, 미체결 취소, 취소 후 시장가 재매도 같은 고위험 endpoint가 있습니다. 서비스 내부에서 일부 안전 조건은 확인하지만 route 레벨 auth dependency, re-auth, 2-step confirmation token, idempotency key가 보이지 않습니다.
+- 영향: 브라우저 세션 오남용, 실수 클릭, CSRF/XSS, 로컬 포트 노출 상황에서 운영 데이터 삭제나 실주문이 실행될 수 있습니다.
+- 증거: `api/routes/admin.py`의 `reset_operational_baseline`, `sell_account_holding`, `cancel_pending_buy_order`, `cancel_pending_sell_and_resubmit`; `main.py`의 Admin static mount와 router include.
+- 재현/검증: 기존 API 테스트는 해당 endpoint가 바로 service에 delegate되는 것을 확인하지만 별도 confirmation/auth 단계는 검증하지 않습니다.
+- 권고: OWASP Transaction Authorization 기준에 맞춰 고위험 endpoint에 서버 생성 confirmation challenge, 짧은 TTL, idempotency key, request audit hash, 필요 시 re-auth를 추가합니다.
+- 구현 전 테스트: `tests/api/test_admin_manual_actions.py`, `tests/api/test_admin_trade_routes.py`에 confirmation token 없이는 409/428을 반환하는 실패 테스트 추가.
+- Rollout: 먼저 `ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED=false` compatibility flag로 도입하고, UI가 지원되면 기본 true로 전환.
+- Rollback: runtime flag로 confirmation requirement를 임시 비활성화.
+- 분류: `유지하되 harden`
+
+### F-035: Observability maintenance job이 provider/model NULL 때문에 반복 실패함
+
+- 심각도: `P1`
+- 상태: `확정`
+- 영역: `관측성 | 운영`
+- 현상: `OBSERVABILITY_MAINTENANCE` job이 당일 10회 모두 실패했습니다. 오류는 `'< not supported between instances of 'str' and 'NoneType'`입니다.
+- 영향: hourly rollup과 raw retention 정리가 실행되지 않아, 장기 운영 시 관측성 데이터가 부정확해지고 DB가 커질 수 있습니다. 운영 UI에서는 오류가 보이지만 preflight의 핵심 차단 항목으로는 반영되지 않습니다.
+- 증거: `execution_metrics`의 `JOB/OBSERVABILITY_MAINTENANCE ERROR 10`, `services/observability_maintenance_service.py:_build_execution_rollups`, 당일 `execution_metrics`에 provider/model NULL row 52건.
+- 재현/검증: provider/model이 NULL인 metric과 문자열 provider/model metric을 함께 넣고 maintenance를 실행하면 tuple sort에서 실패합니다.
+- 권고: rollup grouping/sort key에서 `None`을 `""` 또는 `"UNKNOWN"`으로 normalize하고, maintenance failure를 preflight/overview alert에 명확히 노출합니다.
+- 구현 전 테스트: `tests/services/test_observability_maintenance_service.py`에 NULL provider/model 혼합 fixture 추가.
+- Rollout: normalize는 backward-compatible. 기존 NULL row는 migration 없이 처리 가능.
+- Rollback: 코드 revert 가능하지만 maintenance 실패가 재발합니다.
+- 분류: `수정 필요`
+
+### F-036: 실시간 구독 41개 초과 시 우선순위/폴백 정책이 없음
+
+- 심각도: `P2`
+- 상태: `확정`
+- 영역: `실시간 | 이벤트 | 리스크`
+- 현상: `StreamManager.subscribe_symbols()`는 adapter subscription count가 41 이상이면 경고 후 추가 구독을 중단합니다. 보유종목, 손절선이 있는 종목, 신규 후보 간 우선순위 eviction이 없습니다.
+- 영향: 후보/보유 종목이 많아지면 중요한 보유종목 이벤트가 실시간 감시에서 빠질 수 있고, 손절/익절은 polling fallback 주기 5분에 의존할 수 있습니다.
+- 증거: `realtime/stream_manager.py:subscribe_symbols`, `realtime/monitor.py:POLL_INTERVAL_SEC=300`.
+- 재현/검증: 42개 이상 symbol 업데이트 fixture에서 후순위 종목은 구독되지 않고, 어떤 종목이 빠졌는지 운영 상태에 명확히 남지 않습니다.
+- 권고: 구독 priority를 `held_position > pending_order > active_threshold > new_candidate`로 정의하고, 한도 초과 시 낮은 우선순위를 eviction하거나 polling watchlist에 강제 편입합니다.
+- 구현 전 테스트: `tests/realtime/test_stream_manager.py`에 41개 초과 priority eviction/fallback 테스트 추가.
+- Rollout: 우선순위 로그와 Admin status 노출부터 추가하고, eviction은 다음 단계에서 적용.
+- Rollback: 기존 append-only 구독 정책으로 되돌릴 수 있습니다.
+- 분류: `유지하되 harden`
+
 ## Open Questions
 
 - 감사 기간에 `TRADING_ENABLED=true`를 유지할지, 아니면 `SELL_ONLY`/`READ_ONLY`에 가까운 별도 운영 모드를 만들지 결정해야 합니다.
@@ -503,3 +593,4 @@
 - 뉴스 재개 시 첫 단계는 `POLL_ONLY`로 할지 `SHADOW_ONLY`까지 같이 켤지 결정해야 합니다.
 - Tier1 LLM을 계속 Codex `gpt-5.4`로 둘지, latency-sensitive 모델/Claude/Ollama 후보를 실험할지 결정해야 합니다.
 - `.env`와 shell history까지 시크릿 스캔 범위를 확장할지는 tracked files + runtime logs 점검 후 결정합니다.
+- Admin 고위험 endpoint의 confirmation token을 로컬 단일 사용자 환경에서도 기본 적용할지 결정해야 합니다.

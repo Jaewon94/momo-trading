@@ -830,4 +830,182 @@ Phase 5 결론상 구현 후보는 다음 dataset을 먼저 쌓아야 합니다.
 
 ## Phase 8: 스케줄러, 실시간 이벤트, 운영/보안/Admin
 
-> 아직 시작하지 않았습니다.
+### 현재 Runtime 상태
+
+2026-04-22 11:30~11:40 KST 기준 Admin API와 프로세스 확인:
+
+| 항목 | 값 |
+|---|---|
+| 앱 프로세스 | `python -m uvicorn main:app --host 0.0.0.0 --port 9000` |
+| 앱 가동 시간 | 약 1일 |
+| `broker_provider` | `KIWOOM` |
+| `TRADING_ENABLED` | `true` |
+| `AUTONOMY_MODE` | `SEMI_AUTO` |
+| `scheduler_running` | `true` |
+| `agent_running` | `true` |
+| `last_cycle_time` | `2026-04-22T11:00:24.948077+09:00` |
+| `market_session` | `KRX_NXT` |
+| `market_session_auto_trading` | `true` |
+| `NEWS_POLL_ENABLED` | `false` |
+| `NEWS_GATE_ENABLED` | `false` |
+| `NEWS_LLM_ENABLED` | `false` |
+
+Preflight 결과:
+
+| 영역 | 상태 | 관찰 |
+|---|---|---|
+| broker | `OK` | balance/holdings/pending_orders/quote 조회 성공 |
+| account | `WARN` | 총자산 523,633,869원, 현금 181,724,859원, 주식평가 341,909,010원, 총손익 -7,942,186원, 손익률 -2.29% |
+| holdings | `OK` | 6종목 |
+| pending_orders | `OK` | 2건 |
+| news | `WARN` | 자동 뉴스 수집 비활성, domestic/foreign media 모두 비활성 |
+| ollama | `WARN` | 로컬 Ollama 사용 불가. 현재 active LLM 경로가 아니므로 매매 차단 요인은 아님 |
+
+### 스케줄러와 주문 생성 경로
+
+`scheduler/scheduler.py`의 주요 작업:
+
+| 작업 | 스케줄/트리거 | 주문 가능성 |
+|---|---|---|
+| `market_open_scan` | 09:05 | `trading_agent.run_cycle()`로 신규 BUY 후보 생성 가능 |
+| `intraday_rescan` | 11:00, 13:00 | BUY cutoff 전이면 신규 BUY 후보 생성 가능 |
+| `holdings_check` | 09~14시 15분 간격 | 손절/익절/보유일 조건에서 실매도 가능 |
+| `intraday_holdings_review` | 09~14시 30분 간격 | LLM SELL이면 실매도 가능, ADD_BUY면 분석 파이프라인 재진입 |
+| `force_liquidation` | `FORCE_LIQUIDATION_HOUR/MINUTE` | 설정에 따라 전량/스마트 매도 |
+| `portfolio_sync` | 16:00 | 체결/포지션 정합성 복구 |
+
+관찰:
+
+- `holdings_check`, `intraday_holdings_review`, realtime event detector는 `market_calendar.is_krx_trading_hours()`를 세션 가드로 사용합니다.
+- `is_krx_trading_hours()`는 09:00~15:30을 true로 봅니다.
+- 반면 `market_calendar.supports_automated_trading()`은 `KRX_NXT` 즉 09:00~15:20만 자동매매 지원 세션으로 봅니다.
+- 따라서 주문 생성 경로가 `supports_automated_trading`이 아니라 더 넓은 `is_krx_trading_hours`를 기준으로 열릴 수 있는 설계 불일치가 있습니다.
+
+### 강제/스마트 청산 경로
+
+`_force_liquidation()` 관찰:
+
+- `TRADING_ENABLED=false`이면 청산을 스킵합니다.
+- 미체결 매도 수량을 보유수량에서 차감한 뒤 매도 가능 수량만 시장가 매도합니다.
+- 1차 매도 성공은 `decision_maker.confirm_and_record(... exit_reason="FORCE_LIQUIDATION")`로 기록합니다.
+- 1차 실패 후 5초 뒤 재시도합니다.
+- 재시도 성공은 `sold_count`와 로그만 갱신하고 `confirm_and_record`를 호출하지 않습니다.
+
+`_smart_liquidation()` 관찰:
+
+- `DAY_TRADING_ONLY=false`이면 `_collect_holdings_data()`로 보유 데이터와 open BUY `TradeResult`를 모읍니다.
+- 현재가 조회 실패, open BUY `TradeResult` 없음, 예외 발생 시 해당 종목을 `fallback_sell`에 넣습니다.
+- `_smart_liquidation()`은 `fallback_sell`을 곧바로 `to_sell`에 추가합니다.
+
+### 실시간 이벤트와 구독
+
+`realtime/monitor.py`, `realtime/stream_manager.py`, `realtime/event_detector.py` 관찰:
+
+- Kiwoom 현재 설정은 realtime quote 미지원이면 polling fallback으로 보유종목 현재가를 5분마다 조회합니다.
+- Event detector는 장중에 `PRICE_UPDATE`, `VOLUME_SPIKE`, `PRICE_SURGE`, `PRICE_DROP`, `STOP_LOSS_HIT`, `TAKE_PROFIT_HIT` 이벤트를 발행합니다.
+- 같은 종목/이벤트 dedup은 60초입니다.
+- `StreamManager`는 구독 한도 41개에 도달하면 경고 후 추가 구독을 중단합니다.
+- 41개 초과 시 보유/고위험/신규 후보 우선순위에 따른 eviction 또는 fallback 보장이 없습니다.
+
+### Admin 고위험 액션
+
+Admin API에서 확인한 쓰기/거래성 endpoint:
+
+| endpoint | 동작 |
+|---|---|
+| `POST /api/v1/admin/system/reset-operational-baseline` | 운영 이력 테이블 삭제 후 백업/보유 기준선 재구성 |
+| `POST /api/v1/admin/system/backup-operational-db` | DB 백업 생성 |
+| `POST /api/v1/admin/trades/reconcile-pending` | PENDING_CONFIRM 복구 |
+| `POST /api/v1/admin/trades/reconcile-holdings` | 보유 기준 TradeResult 복구 |
+| `POST /api/v1/admin/account/holdings/{symbol}/sell` | 보유 종목 즉시 시장가 매도 |
+| `POST /api/v1/admin/account/pending-orders/{order_id}/cancel-buy` | 미체결 매수 취소 |
+| `POST /api/v1/admin/account/pending-orders/{order_id}/cancel-and-sell` | 미체결 매도 취소 후 시장가 재매도 |
+
+관찰:
+
+- `ManualTradeService`는 `TRADING_ENABLED`와 정규장/브로커 regular order support를 확인합니다.
+- 동일 종목 pending sell이 있으면 수동 즉시 매도는 conflict로 막습니다.
+- 수동 매도/취소/재매도는 activity log와 `confirm_and_record`를 남깁니다.
+- 다만 FastAPI route 자체에는 별도 auth dependency, re-auth, 2-step confirmation token, idempotency key가 보이지 않습니다.
+- OWASP Transaction Authorization 기준은 민감 거래에 대해 서버 측 승인, 사용자가 중요 거래 데이터를 확인할 수 있는 transaction authorization, 각 실행 전 승인 검증을 요구합니다. 현재 Admin route는 운영 편의성은 높지만 이 기준과는 거리가 있습니다.
+
+참고:
+
+- OWASP Transaction Authorization Cheat Sheet: https://cheatsheetseries.owasp.org/cheatsheets/Transaction_Authorization_Cheat_Sheet.html
+- OWASP Authentication Cheat Sheet, sensitive feature re-authentication: https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html
+
+### Observability/운영 유지보수
+
+Admin observability overview:
+
+| 항목 | 값 |
+|---|---:|
+| latest resource snapshot | `2026-04-22T11:33:06+09:00` |
+| memory percent | 76.93% |
+| disk used percent | 93.68% |
+| 24h LLM calls | 1,099 |
+| 24h LLM success rate | 70.2% |
+| 24h LLM fallback rate | 4.1% |
+| 24h LLM avg elapsed | 25,679ms |
+| 24h LLM p95 elapsed | 48,462ms |
+
+`execution_metrics` 당일 운영 오류:
+
+| metric | status | count | latest |
+|---|---|---:|---|
+| `JOB/OBSERVABILITY_MAINTENANCE` | `ERROR` | 10 | `2026-04-22 10:55:39` |
+| `LLM_CALL/LLM_GENERATE` | `ERROR` | 42 | `2026-04-22 11:01:46` |
+
+`OBSERVABILITY_MAINTENANCE` 최신 오류:
+
+```text
+'<' not supported between instances of 'str' and 'NoneType'
+```
+
+원인 후보:
+
+- `ObservabilityMaintenanceService._build_execution_rollups()`는 `(bucket, metric_type, metric_name, provider, model)` tuple을 key로 만들고 `sorted(grouped.items(), key=lambda item: item[0])`로 정렬합니다.
+- 당일 `execution_metrics`에는 `provider/model`이 모두 NULL인 LLM error row가 42건 있고, 성공 row는 `CODEX`/`CLAUDE_CODE` 문자열입니다.
+- Python tuple 정렬에서 같은 위치에 `None`과 `str`이 섞이면 위 오류가 재현될 수 있습니다.
+
+### 시크릿/로그 점검
+
+범위:
+
+- tracked files: `git grep -l -I -i -E "(api[_-]?key|app[_-]?key|appsecret|secret|token|password|passwd|authorization|bearer|access[_-]?token|refresh[_-]?token|account)"`
+- runtime/logs: `rg -l -i ... logs runtime`
+
+결과:
+
+- tracked files에는 설정명, 테스트 fixture, 문서, 코드 상수 등 secret-like 키워드 파일이 다수 있습니다.
+- runtime log 파일은 `.gitkeep`만 확인됐고 secret-like hit는 없습니다.
+- 이번 Phase에서는 실제 값 노출 여부를 line-by-line로 확장하지 않았습니다. `.env`와 shell history는 기본 범위 밖이라 읽지 않았습니다.
+
+### Phase 8 Verification
+
+```bash
+./.venv313/bin/python -m pytest tests/scheduler/test_scheduler_runtime_paths.py tests/realtime/test_stream_manager.py tests/realtime/test_monitor.py tests/api/test_admin_account_routes.py tests/api/test_admin_trade_routes.py tests/api/test_admin_system_preflight_routes.py tests/api/test_admin_observability_routes.py tests/api/test_admin_observability_incident_routes.py
+```
+
+결과:
+
+- 85 tests passed.
+- 확인 범위: scheduler runtime paths, realtime stream/monitor, Admin account/manual trade/reset/preflight/observability routes.
+
+```bash
+pnpm vitest run tests/frontend/test_event_radar_state.test.js tests/frontend/test_performance_page_state.test.js tests/frontend/test_manual_trade_action_state.test.js tests/frontend/test_observability_state.test.js tests/frontend/test_settings_action_state.test.js
+```
+
+결과:
+
+- 5 test files passed.
+- 17 tests passed.
+- 확인 범위: Admin event radar, performance page, manual trade action state, observability state, settings action state.
+
+```bash
+git diff --check
+```
+
+결과:
+
+- whitespace error 없음.

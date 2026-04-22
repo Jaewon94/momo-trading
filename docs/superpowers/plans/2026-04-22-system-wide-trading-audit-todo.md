@@ -308,18 +308,32 @@
 - Read: `tests/api/test_admin_*`
 - Update: audit evidence/findings docs
 
-- [ ] **Step 1: scheduler job timeline 작성**
+- [x] **Step 1: scheduler job timeline 작성**
   - 정기 스캔, 이벤트 기반 분석, 뉴스 수집, 번역 backfill, 포트폴리오 sync, daily report가 겹치는지 기록한다.
+  - 결과: `market_open_scan`, `intraday_rescan`, `holdings_check`, `intraday_holdings_review`, `force_liquidation`, `portfolio_sync`, news jobs를 Phase 8 evidence에 정리했다.
+  - 추가 발견: 주문 가능 경로 일부가 `supports_automated_trading`보다 넓은 `is_krx_trading_hours`를 사용한다. F-031로 기록.
 
-- [ ] **Step 2: 운영 상태 신뢰도 점검**
+- [x] **Step 2: 운영 상태 신뢰도 점검**
   - PID, logs, incidents, health, broker runtime, Admin dashboard가 같은 사실을 보여주는지 확인한다.
+  - 결과: 앱 프로세스, Admin status, settings, preflight, observability overview, DB `execution_metrics`/`error_incidents`를 대조했다.
+  - 추가 발견: `OBSERVABILITY_MAINTENANCE` job이 provider/model NULL row 때문에 반복 실패한다. F-035로 기록.
 
-- [ ] **Step 3: 보안/시크릿 점검**
+- [x] **Step 3: 보안/시크릿 점검**
   - 승인된 범위 안에서 `.env.example`, tracked files, runtime logs의 secret-like pattern을 확인한다.
   - 토큰/계좌번호가 발견되면 값은 문서에 쓰지 않고 위치와 조치만 기록한다.
+  - 결과: tracked files는 secret-like 키워드 파일 목록만 확인했고, runtime logs에는 `.gitkeep` 외 실로그/secret-like hit가 없었다.
+  - 제외: `.env`와 shell history는 기본 범위 밖이라 열람하지 않았다.
 
-- [ ] **Step 4: Admin 수동 제어 안전성 점검**
+- [x] **Step 4: Admin 수동 제어 안전성 점검**
   - 읽기 전용 action과 위험 action이 분리되는지, pending 주문 취소/대체/매도 action이 중복을 막는지 확인한다.
+  - 결과: 수동 매도/취소/재매도는 service 내부에서 `TRADING_ENABLED`, 정규장, pending sell 중복을 확인한다.
+  - 추가 발견: route 레벨 transaction authorization, re-auth, confirmation token, idempotency key가 없다. F-034로 기록.
+
+### Phase 8 결과
+
+- 신규 Findings: F-031~F-036.
+- 핵심 위험: 자동매매 세션 guard 불일치, 청산 retry 기록 누락, 데이터 실패 즉시 SELL, Admin 고위험 액션 confirmation 부재, 관측성 maintenance 실패, realtime 구독 한도 정책 부재.
+- Verification: targeted backend/API/frontend state tests 실행 후 이 Phase 커밋에 포함한다.
 
 ## Phase 9: Findings 리뷰와 구현 로드맵 작성
 
