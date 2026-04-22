@@ -38,6 +38,7 @@ describe("settings_form_state", () => {
       "set-news-llm-fallback-provider",
       "set-news-llm-fallback-model",
       "set-news-include-foreign",
+      "set-news-translate-foreign-enabled",
       "set-news-negative-threshold",
       "set-news-poll-interval-trading",
       "set-news-fetch-concurrency",
@@ -69,6 +70,7 @@ describe("settings_form_state", () => {
         NEWS_LLM_FALLBACK_PROVIDER: "CODEX",
         NEWS_LLM_FALLBACK_MODEL: "gpt-5.4",
         NEWS_INCLUDE_FOREIGN: true,
+        NEWS_TRANSLATE_FOREIGN_ENABLED: false,
         NEWS_NEGATIVE_BLOCK_THRESHOLD: 0.65,
         NEWS_POLL_INTERVAL_MIN_TRADING: 3,
         NEWS_FETCH_CONCURRENCY: 5,
@@ -101,6 +103,7 @@ describe("settings_form_state", () => {
     expect(root.elements["set-news-llm-fallback-provider"].value).toBe("CODEX");
     expect(root.elements["set-news-llm-fallback-model"].value).toBe("gpt-5.4");
     expect(root.elements["set-news-include-foreign"].checked).toBe(true);
+    expect(root.elements["set-news-translate-foreign-enabled"].checked).toBe(false);
     expect(root.elements["set-news-negative-threshold"].value).toBe("0.65");
     expect(root.elements["set-news-poll-interval-trading"].value).toBe("3");
     expect(root.elements["set-news-fetch-concurrency"].value).toBe("5");

@@ -90,6 +90,7 @@ class Settings(BaseSettings):
     NEWS_LLM_FALLBACK_MODEL: str = DEFAULT_LLM_MODEL
     NEWS_DOMESTIC_MEDIA_ENABLED: bool = False
     NEWS_INCLUDE_FOREIGN: bool = True
+    NEWS_TRANSLATE_FOREIGN_ENABLED: bool = True
     NEWS_NASDAQ_ENABLED: bool = False
     NEWS_GATE_ENABLED: bool = True
     NEWS_LOOKBACK_HOURS: int = 24

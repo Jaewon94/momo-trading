@@ -93,6 +93,11 @@ const SETTINGS_CONTROL_BINDINGS = [
     type: 'checked',
   },
   {
+    elementId: 'set-news-translate-foreign-enabled',
+    getValue: (settings) => Boolean(settings.NEWS_TRANSLATE_FOREIGN_ENABLED),
+    type: 'checked',
+  },
+  {
     elementId: 'set-news-nasdaq-enabled',
     getValue: (settings) => Boolean(settings.NEWS_NASDAQ_ENABLED),
     type: 'checked',

@@ -51,3 +51,16 @@ async def test_news_translation_backfill_service_skips_when_llm_disabled(monkeyp
 
     assert summary["status"] == "SKIPPED"
     assert summary["reason"] == "NEWS_LLM_ENABLED disabled"
+
+
+@pytest.mark.asyncio
+async def test_news_translation_backfill_service_skips_when_foreign_translation_disabled(monkeypatch):
+    monkeypatch.setattr("services.news_translation_backfill_service.settings.NEWS_LLM_ENABLED", True)
+    monkeypatch.setattr("services.news_translation_backfill_service.settings.NEWS_TRANSLATE_FOREIGN_ENABLED", False)
+
+    async with TestAsyncSessionLocal() as session:
+        service = NewsTranslationBackfillService()
+        summary = await service.process_pending(session, market_hours=False)
+
+    assert summary["status"] == "SKIPPED"
+    assert summary["reason"] == "NEWS_TRANSLATE_FOREIGN_ENABLED disabled"

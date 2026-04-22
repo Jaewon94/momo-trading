@@ -11,6 +11,7 @@ const DIRECT_SETTING_BINDINGS = [
   bindValue('set-news-llm-fallback-model', 'NEWS_LLM_FALLBACK_MODEL'),
   bindChecked('set-news-llm-enabled', 'NEWS_LLM_ENABLED'),
   bindChecked('set-news-include-foreign', 'NEWS_INCLUDE_FOREIGN'),
+  bindChecked('set-news-translate-foreign-enabled', 'NEWS_TRANSLATE_FOREIGN_ENABLED'),
   bindChecked('set-news-nasdaq-enabled', 'NEWS_NASDAQ_ENABLED'),
   bindChecked('set-news-domestic-media-enabled', 'NEWS_DOMESTIC_MEDIA_ENABLED'),
   bindChecked('set-news-gate-enabled', 'NEWS_GATE_ENABLED'),

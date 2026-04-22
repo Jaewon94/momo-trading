@@ -37,7 +37,11 @@ class NewsTranslationService:
         try:
             for index, item in enumerate(items):
                 language = str(item.get("language") or "").lower()
-                if not settings.NEWS_LLM_ENABLED or language.startswith("ko"):
+                if (
+                    not settings.NEWS_LLM_ENABLED
+                    or not settings.NEWS_TRANSLATE_FOREIGN_ENABLED
+                    or language.startswith("ko")
+                ):
                     translated[index] = item
                     continue
                 tasks.append(asyncio.create_task(
@@ -79,7 +83,7 @@ class NewsTranslationService:
         if not title:
             return item
         selected_news = news_selection or resolve_news_selection()
-        if not selected_news.enabled:
+        if not selected_news.enabled or not settings.NEWS_TRANSLATE_FOREIGN_ENABLED:
             return item
 
         prompt = f"""Translate the following financial news into Korean for a Korean stock trading dashboard.

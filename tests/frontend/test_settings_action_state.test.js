@@ -35,6 +35,10 @@ describe("settings_action_state", () => {
       id: "set-news-claude-share-session",
       checked: false,
     });
+    const translateForeignChange = resolveDirectSettingChange({
+      id: "set-news-translate-foreign-enabled",
+      checked: false,
+    });
 
     expect(fetchChange).toEqual({
       key: "NEWS_FETCH_CONCURRENCY",
@@ -50,6 +54,10 @@ describe("settings_action_state", () => {
     });
     expect(sessionChange).toEqual({
       key: "NEWS_CLAUDE_SHARE_SESSION",
+      value: false,
+    });
+    expect(translateForeignChange).toEqual({
+      key: "NEWS_TRANSLATE_FOREIGN_ENABLED",
       value: false,
     });
   });

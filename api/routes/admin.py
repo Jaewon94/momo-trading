@@ -1097,6 +1097,7 @@ async def get_news_sources():
         "llm": {
             "enabled": bool(settings.NEWS_LLM_ENABLED),
             "provider": settings.NEWS_LLM_PROVIDER,
+            "translate_foreign_enabled": bool(settings.NEWS_TRANSLATE_FOREIGN_ENABLED),
         },
         "sources": news_ingest_service.get_source_catalog(
             include_foreign=bool(settings.NEWS_INCLUDE_FOREIGN)

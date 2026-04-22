@@ -26,6 +26,14 @@ class NewsTranslationBackfillService:
                 "translated": 0,
                 "failed": 0,
             }
+        if not settings.NEWS_TRANSLATE_FOREIGN_ENABLED:
+            return {
+                "status": "SKIPPED",
+                "reason": "NEWS_TRANSLATE_FOREIGN_ENABLED disabled",
+                "candidate_count": 0,
+                "translated": 0,
+                "failed": 0,
+            }
 
         repo = NewsItemRepository(session)
         batch_size = self.TRADING_HOURS_BATCH_SIZE if market_hours else self.OFF_HOURS_BATCH_SIZE

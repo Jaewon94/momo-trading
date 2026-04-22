@@ -100,6 +100,33 @@ async def test_news_translation_service_translate_item_skips_when_selection_disa
 
 
 @pytest.mark.asyncio
+async def test_news_translation_service_skips_foreign_items_when_translation_disabled(monkeypatch):
+    service = NewsTranslationService()
+
+    async def fail_generate_news(*args, **kwargs):
+        raise AssertionError("generate_news should not be called when foreign translation is disabled")
+
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_ENABLED", True)
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_TRANSLATE_FOREIGN_ENABLED", False)
+    monkeypatch.setattr(
+        "services.news_translation_service.llm_factory.generate_news",
+        fail_generate_news,
+    )
+
+    item = {
+        "source_code": "CNBC",
+        "language": "en",
+        "title": "Chip stocks rise on demand recovery",
+        "summary": "Demand improved",
+        "metadata": {"existing": "value"},
+    }
+
+    translated = await service.translate_items([item])
+
+    assert translated == [item]
+
+
+@pytest.mark.asyncio
 async def test_news_translation_service_passes_resolved_selection_to_llm_factory(monkeypatch):
     service = NewsTranslationService()
     captured = {}

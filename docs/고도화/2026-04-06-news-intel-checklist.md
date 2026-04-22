@@ -135,6 +135,12 @@
   - 호라이즌/전략별 성과, 주간/월간 버킷, 뉴스 운영 수치 한 화면 노출
 
 ## 운영 체크
+- [ ] 뉴스 인텔 고도화 메모 반영 여부 확인
+  - `docs/고도화/2026-04-22-news-intel-upgrade-notes.md`
+  - 기본 방향: Nasdaq 기본 off, 해외 번역 off, 뉴스는 성과 검증 전 shadow/report-only 중심
+- [ ] AI 비용 절감 로드맵 반영 여부 확인
+  - `docs/고도화/2026-04-23-ai-cost-reduction-roadmap.md`
+  - 기본 방향: Tier1/Tier2는 유지하되 명확한 공시/가격/세션/비용 판단은 deterministic reason code로 선처리해 AI 입력 품질과 비용 효율을 개선
 - [ ] `OPEN_DART_API_KEY` 실제 운영키 유지
 - [ ] `NEWS_DOMESTIC_MEDIA_ENABLED` 켜기 전 소스 이용조건 확인
 - [ ] `Bloomberg`/해외 소스 이용조건 및 호출 안정성 확인

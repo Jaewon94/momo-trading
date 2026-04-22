@@ -11,9 +11,12 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.config import settings
 from models.news_item import NewsItem
 from models.stock import Stock
 from repositories.news_item_repository import NewsItemRepository
+from services.news_risk_classifier import news_risk_classifier
+from services.news_topic_mapper import news_topic_mapper
 from trading.symbols import normalize_krx_symbol
 from util.time_util import KST, ensure_kst, now_kst
 
@@ -289,6 +292,14 @@ class NewsIngestService:
             copied = dict(item)
             existing_symbols = self._normalize_symbols(copied.get("symbols"))
             metadata = dict(copied.get("metadata") or {})
+            topic_mapping = news_topic_mapper.map_item(copied)
+            mapped_categories = list(topic_mapping.categories) if topic_mapping else []
+            if topic_mapping:
+                metadata["topic_mapper"] = {
+                    "reason_codes": topic_mapping.reason_codes,
+                    "matched_keywords": topic_mapping.matched_keywords,
+                    "matched_categories": topic_mapping.categories,
+                }
             if existing_symbols:
                 copied["symbols"] = existing_symbols
                 metadata = self._enrich_symbol_metadata(
@@ -296,7 +307,7 @@ class NewsIngestService:
                     source_code=str(copied.get("source_code") or ""),
                     symbols=existing_symbols,
                     matched_names=[],
-                    matched_categories=[],
+                    matched_categories=mapped_categories,
                     stock_by_symbol=stock_by_symbol,
                     category_to_symbols=category_to_symbols,
                 )
@@ -347,6 +358,11 @@ class NewsIngestService:
             matched_categories: list[str] = []
             seen_categories: set[str] = set()
             occupied_ranges: list[tuple[int, int]] = []
+            for category in mapped_categories:
+                if category in seen_categories or category not in category_to_symbols:
+                    continue
+                matched_categories.append(category)
+                seen_categories.add(category)
             for position, _, category in matched_category_candidates:
                 if category in seen_categories:
                     continue
@@ -572,6 +588,12 @@ class NewsIngestService:
             metadata,
             language=str(raw.get("language") or source.language or "ko"),
         )
+        risk_classification = news_risk_classifier.classify({**raw, "metadata": metadata})
+        if risk_classification:
+            metadata["risk_classifier"] = {
+                "reason_codes": risk_classification.reason_codes,
+                "matched_keywords": risk_classification.matched_keywords,
+            }
         external_id = str(raw.get("external_id") or "").strip() or None
         url = str(raw.get("url") or "").strip() or None
         dedupe_hash = self._build_dedupe_hash(
@@ -595,9 +617,22 @@ class NewsIngestService:
             "url": url,
             "external_id": external_id,
             "published_at": published_at,
-            "sentiment_label": raw.get("sentiment_label"),
-            "sentiment_score": float(raw.get("sentiment_score", 0.5) or 0.5),
-            "impact_score": float(raw.get("impact_score", 0.0) or 0.0),
+            "sentiment_label": (
+                raw.get("sentiment_label")
+                or (risk_classification.sentiment_label if risk_classification else None)
+            ),
+            "sentiment_score": float(
+                raw.get(
+                    "sentiment_score",
+                    risk_classification.sentiment_score if risk_classification else 0.5,
+                ) or 0.5
+            ),
+            "impact_score": float(
+                raw.get(
+                    "impact_score",
+                    risk_classification.impact_score if risk_classification else 0.0,
+                ) or 0.0
+            ),
             "trust_score": float(raw.get("trust_score", source.trust_score) or source.trust_score),
             "symbols_csv": self._symbols_to_csv(symbols),
             "metadata_json": json.dumps(metadata, ensure_ascii=False) if metadata else None,
@@ -641,6 +676,10 @@ class NewsIngestService:
             return payload
         if normalized_language.startswith("ko"):
             payload["translation_status"] = "SKIPPED"
+            return payload
+        if not settings.NEWS_TRANSLATE_FOREIGN_ENABLED:
+            payload["translation_status"] = "SKIPPED"
+            payload["translation_skipped_reason"] = "NEWS_TRANSLATE_FOREIGN_ENABLED disabled"
             return payload
         payload["translation_status"] = "PENDING"
         payload.setdefault("translation_attempts", 0)

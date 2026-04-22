@@ -119,6 +119,7 @@ class NewsReportingService:
             "llm_provider": str(settings.NEWS_LLM_PROVIDER or "CLAUDE_CODE"),
             "domestic_media_enabled": bool(settings.NEWS_DOMESTIC_MEDIA_ENABLED),
             "include_foreign": bool(settings.NEWS_INCLUDE_FOREIGN),
+            "translate_foreign_enabled": bool(settings.NEWS_TRANSLATE_FOREIGN_ENABLED),
             "nasdaq_enabled": bool(settings.NEWS_NASDAQ_ENABLED),
             "gate_enabled": bool(settings.NEWS_GATE_ENABLED),
             "poll_enabled": bool(settings.NEWS_POLL_ENABLED),
