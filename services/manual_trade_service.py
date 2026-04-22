@@ -2,6 +2,7 @@
 
 from agent.decision_maker import decision_maker
 from core.config import settings
+from core.order_submission import decide_order_submission
 from exceptions.common import ServiceException
 from services.activity_logger import activity_logger
 from services.error_capture_service import error_capture_service
@@ -50,6 +51,12 @@ class ManualTradeService:
     async def _ensure_trading_enabled(self) -> None:
         if not settings.TRADING_ENABLED:
             raise ServiceException.bad_request("실주문이 비활성화되어 있습니다 (TRADING_ENABLED=false)")
+
+    async def _ensure_order_submission_allowed(self, side: str) -> None:
+        await self._ensure_trading_enabled()
+        decision = decide_order_submission(side)
+        if not decision.allowed:
+            raise ServiceException.bad_request(f"실주문이 비활성화되어 있습니다 ({decision.reason})")
 
     async def _ensure_regular_session_sell_supported(self) -> None:
         session_info = market_calendar.get_market_session_info()
@@ -101,7 +108,7 @@ class ManualTradeService:
     async def sell_position(self, symbol: str) -> dict:
         normalized_symbol = self._normalize_symbol(symbol)
         try:
-            await self._ensure_trading_enabled()
+            await self._ensure_order_submission_allowed("SELL")
             await self._ensure_regular_session_sell_supported()
             holding = await self._find_holding(normalized_symbol)
             pending_orders = await self._get_pending_orders()
@@ -176,7 +183,7 @@ class ManualTradeService:
 
     async def cancel_pending_buy(self, order_id: str) -> dict:
         try:
-            await self._ensure_trading_enabled()
+            await self._ensure_order_submission_allowed("CANCEL")
             order = await self._find_pending_order(order_id)
             if str(getattr(order, "side", "")) != "매수":
                 raise ServiceException.bad_request("미체결 매수 주문만 취소할 수 있습니다")
@@ -225,7 +232,7 @@ class ManualTradeService:
     async def replace_pending_sell_with_market_order(self, order_id: str) -> dict:
         order = None
         try:
-            await self._ensure_trading_enabled()
+            await self._ensure_order_submission_allowed("SELL")
             await self._ensure_regular_session_sell_supported()
             order = await self._find_pending_order(order_id)
             if str(getattr(order, "side", "")) != "매도":

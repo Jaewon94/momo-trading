@@ -49,6 +49,19 @@ async def test_admin_settings_exposes_manual_llm_provider(client):
     assert "OLLAMA_MODEL_TIER1" in payload["data"]
     assert "OLLAMA_MODEL_TIER2" in payload["data"]
     assert "strategy_insights" in payload["data"]
+    assert "ORDER_SUBMISSION_MODE" in payload["data"]
+
+
+async def test_admin_system_status_exposes_effective_order_submission_mode(client, monkeypatch):
+    monkeypatch.setattr("api.routes.admin.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr("api.routes.admin.settings.ORDER_SUBMISSION_MODE", "SELL_ONLY", raising=False)
+
+    response = await client.get("/api/v1/admin/system/status")
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["effective_order_submission_mode"] == "SELL_ONLY"
+    assert payload["runtime_override_active"] is True
 
 
 async def test_admin_settings_updates_manual_llm_provider(client):

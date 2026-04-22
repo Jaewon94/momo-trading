@@ -9,6 +9,10 @@ const SETTINGS_CONTROL_BINDINGS = [
     elementId: 'set-mode',
   },
   {
+    key: 'ORDER_SUBMISSION_MODE',
+    elementId: 'set-order-submission-mode',
+  },
+  {
     key: 'RISK_APPETITE',
     elementId: 'set-risk-appetite',
     shouldApply: (value) => Boolean(value),

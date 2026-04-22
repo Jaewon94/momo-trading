@@ -17,6 +17,7 @@ from analysis.llm.model_catalog import model_catalog_service
 from analysis.llm.ollama_provider import OllamaProvider
 from core.config import settings
 from core.database import AsyncSessionLocal, get_async_db, get_async_db_with_transaction
+from core.order_submission import effective_order_submission_mode, runtime_order_override_active
 from core.runtime_settings import MUTABLE_SETTINGS
 from exceptions.common import ServiceException
 from models.account_day_baseline import AccountDayBaseline
@@ -1759,6 +1760,9 @@ async def get_system_status(db: AsyncSession = Depends(get_async_db)):
         "mcp_required": mcp_required,
         "trading_enabled": settings.TRADING_ENABLED,
         "autonomy_mode": settings.AUTONOMY_MODE,
+        "order_submission_mode": settings.ORDER_SUBMISSION_MODE,
+        "effective_order_submission_mode": effective_order_submission_mode(),
+        "runtime_override_active": runtime_order_override_active(),
         "mcp_connected": mcp_connected,
         "scheduler_running": trading_scheduler.is_running,
         "agent_running": trading_agent._running,

@@ -74,6 +74,18 @@ describe("settings_action_state", () => {
     });
   });
 
+  test("maps order submission mode control", () => {
+    const change = resolveDirectSettingChange({
+      id: "set-order-submission-mode",
+      value: "READ_ONLY",
+    });
+
+    expect(change).toEqual({
+      key: "ORDER_SUBMISSION_MODE",
+      value: "READ_ONLY",
+    });
+  });
+
   test("returns null for unmanaged controls", () => {
     expect(resolveDirectSettingChange({ id: "trade-center-sort", value: "latest" })).toBeNull();
   });

@@ -66,6 +66,12 @@ class FakeTradeResultRecord:
         self.id = kwargs.get("id")
 
 
+@pytest.fixture(autouse=True)
+def _default_order_submission_mode(monkeypatch) -> None:
+    monkeypatch.setattr("agent.decision_maker.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr("agent.decision_maker.settings.ORDER_SUBMISSION_MODE", "FULL")
+
+
 def build_signal(
     *,
     action: SignalAction = SignalAction.BUY,
@@ -114,6 +120,49 @@ async def test_decision_maker_execute_routes_to_autonomous_mode(monkeypatch) -> 
         "analysis_context": {"source": "test"},
         "has_on_settled": True,
     }
+
+
+@pytest.mark.asyncio
+async def test_decision_maker_read_only_mode_blocks_autonomous_order_submission(monkeypatch) -> None:
+    adapter = FakeBrokerAdapter(OrderResult(success=False, order_id="", message="should not submit"))
+    decision_maker = DecisionMaker(broker_adapter=adapter)
+    logs = []
+
+    async def fake_log(*args, **kwargs):
+        logs.append((args, kwargs))
+
+    monkeypatch.setattr("agent.decision_maker.settings.AUTONOMY_MODE", "AUTONOMOUS")
+    monkeypatch.setattr("agent.decision_maker.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr("agent.decision_maker.settings.ORDER_SUBMISSION_MODE", "READ_ONLY", raising=False)
+    monkeypatch.setattr("agent.decision_maker.activity_logger.log", fake_log)
+
+    result = await decision_maker.execute(build_signal(), cycle_id="cycle-read-only")
+
+    assert result["success"] is False
+    assert result["order_id"] == ""
+    assert result["data"]["order_submission_mode"] == "READ_ONLY"
+    assert adapter.requests == []
+    assert logs
+
+
+@pytest.mark.asyncio
+async def test_decision_maker_sell_only_mode_blocks_autonomous_buy_submission(monkeypatch) -> None:
+    adapter = FakeBrokerAdapter(OrderResult(success=False, order_id="", message="should not submit"))
+    decision_maker = DecisionMaker(broker_adapter=adapter)
+
+    async def fake_log(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("agent.decision_maker.settings.AUTONOMY_MODE", "AUTONOMOUS")
+    monkeypatch.setattr("agent.decision_maker.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr("agent.decision_maker.settings.ORDER_SUBMISSION_MODE", "SELL_ONLY", raising=False)
+    monkeypatch.setattr("agent.decision_maker.activity_logger.log", fake_log)
+
+    result = await decision_maker.execute(build_signal(action=SignalAction.BUY), cycle_id="cycle-sell-only")
+
+    assert result["success"] is False
+    assert result["data"]["order_submission_mode"] == "SELL_ONLY"
+    assert adapter.requests == []
 
 
 @pytest.mark.asyncio

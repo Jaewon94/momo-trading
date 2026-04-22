@@ -5,9 +5,10 @@ from typing import Any
 from fastapi import HTTPException
 
 from core.config import normalize_llm_model_value, settings
+from core.order_submission import VALID_ORDER_SUBMISSION_MODES, normalize_order_submission_mode
 
 MUTABLE_SETTINGS = [
-    "TRADING_ENABLED", "AUTONOMY_MODE",
+    "TRADING_ENABLED", "ORDER_SUBMISSION_MODE", "AUTONOMY_MODE",
     "RECOMMENDATION_EXPIRE_MIN",
     "SCHEDULER_ENABLED",
     "RISK_APPETITE",
@@ -164,6 +165,12 @@ def coerce_runtime_setting_value(key: str, value: Any) -> Any:
     if key == "BUY_ORDER_EXECUTION_MODE":
         normalized = str(value).upper()
         if normalized not in {"LIMIT_GUARD", "MARKET"}:
+            return _SKIP
+        return normalized
+
+    if key == "ORDER_SUBMISSION_MODE":
+        normalized = normalize_order_submission_mode(value)
+        if normalized not in VALID_ORDER_SUBMISSION_MODES:
             return _SKIP
         return normalized
 

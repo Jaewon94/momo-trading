@@ -57,26 +57,32 @@
 - Test: `tests/services/test_manual_trade_service.py`
 - Test: `tests/api/test_admin_settings_routes.py`
 
-- [ ] **Step 1: 실패 테스트 작성**
+- [x] **Step 1: 실패 테스트 작성**
   - `ORDER_SUBMISSION_MODE=READ_ONLY`이면 신규 BUY, scheduler SELL, force liquidation, manual sell이 모두 broker `place_order`를 호출하지 않는 테스트를 추가한다.
   - `ORDER_SUBMISSION_MODE=SELL_ONLY`이면 BUY는 차단하고 SELL 계열만 허용하는 테스트를 추가한다.
+  - 추가: Admin settings/status 노출 테스트와 frontend settings action binding 테스트를 추가했다.
 
-- [ ] **Step 2: 실패 확인**
+- [x] **Step 2: 실패 확인**
   - Run: `./.venv313/bin/python -m pytest tests/agent/test_decision_maker.py tests/scheduler/test_scheduler_runtime_paths.py tests/services/test_manual_trade_service.py tests/api/test_admin_settings_routes.py -q`
   - Expected: `ORDER_SUBMISSION_MODE` 설정/분기 부재로 실패.
+  - Result: 7 failed, 111 passed, 6 errors. 실패 원인은 `ORDER_SUBMISSION_MODE` 설정과 주문 gate 부재.
 
-- [ ] **Step 3: 최소 구현**
+- [x] **Step 3: 최소 구현**
   - `ORDER_SUBMISSION_MODE=READ_ONLY|SELL_ONLY|FULL` runtime setting을 추가한다.
   - `TRADING_ENABLED=false`는 모든 실주문 차단, `READ_ONLY`는 모든 주문 차단, `SELL_ONLY`는 SELL만 허용, `FULL`은 기존 동작으로 정의한다.
   - Admin status에 `effective_order_submission_mode`와 `runtime_override_active`를 노출한다.
+  - Result: `core/order_submission.py` 공통 gate, DecisionMaker/scheduler/manual trade 적용, Admin settings/status와 설정 UI 바인딩 추가.
 
-- [ ] **Step 4: 통과 확인**
+- [x] **Step 4: 통과 확인**
   - Run: `./.venv313/bin/python -m pytest tests/agent/test_decision_maker.py tests/scheduler/test_scheduler_runtime_paths.py tests/services/test_manual_trade_service.py tests/api/test_admin_settings_routes.py -q`
   - Expected: PASS.
+  - Result: 118 passed.
+  - UI check: `pnpm vitest run tests/frontend/test_settings_action_state.test.js` -> 1 file passed, 6 tests passed.
 
-- [ ] **Step 5: 문서/커밋**
+- [x] **Step 5: 문서/커밋**
   - Update: `docs/audits/2026-04-22-system-wide-trading-audit-findings.md`에서 F-001/F-005/F-010 상태 갱신.
   - Commit: `feat: add explicit order submission mode`
+  - Result: 문서 갱신 완료. 커밋은 이 작업 검증 후 생성.
 
 ### Task 1.2: 자동매매 세션 guard 통일
 

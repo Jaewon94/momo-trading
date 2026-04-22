@@ -3,6 +3,7 @@ import { getTierModelSettingKey } from "./settings_llm_state.js";
 const DIRECT_SETTING_BINDINGS = [
   bindChecked('set-trading', 'TRADING_ENABLED'),
   bindValue('set-mode', 'AUTONOMY_MODE'),
+  bindValue('set-order-submission-mode', 'ORDER_SUBMISSION_MODE'),
   bindValue('set-risk-appetite', 'RISK_APPETITE'),
   bindValue('set-news-llm-provider', 'NEWS_LLM_PROVIDER'),
   bindValue('set-news-llm-model', 'NEWS_LLM_MODEL'),

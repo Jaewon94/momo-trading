@@ -134,6 +134,7 @@ class Settings(BaseSettings):
 
     # === Trading Safety ===
     TRADING_ENABLED: bool = True
+    ORDER_SUBMISSION_MODE: str = "FULL"  # FULL | SELL_ONLY | READ_ONLY
     DAY_TRADING_ONLY: bool = False  # True=당일 청산 필수, False=스윙 (유망 종목 오버나이트 보유)
     BUY_CUTOFF_HOUR: int = 14  # 신규 매수 마감 시각 (14시 이후 매수 차단)
     BUY_CUTOFF_MINUTE: int = 30

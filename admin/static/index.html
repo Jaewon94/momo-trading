@@ -1478,6 +1478,17 @@
               </select>
               <div id="set-mode-help" class="text-xs text-gray-500 mt-1">SEMI_AUTO: AI 시그널을 추천으로만 남기고 사용자 승인을 기다립니다.</div>
             </div>
+
+            <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4">
+              <label id="set-order-submission-mode-label" class="text-sm block mb-1">실주문 제출 모드 <span id="set-order-submission-mode-tip" class="text-xs text-gray-500 cursor-help" title="TRADING_ENABLED와 별개로 브로커 주문 제출 범위를 제한합니다.">?</span></label>
+              <select id="set-order-submission-mode"
+                class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                <option value="FULL">매수/매도 허용 (FULL)</option>
+                <option value="SELL_ONLY">매도/취소만 허용 (SELL_ONLY)</option>
+                <option value="READ_ONLY">주문 제출 차단 (READ_ONLY)</option>
+              </select>
+              <div id="set-order-submission-mode-help" class="text-xs text-gray-500 mt-1">READ_ONLY: 분석과 추천은 유지하지만 브로커 주문 제출은 차단합니다.</div>
+            </div>
           </section>
 
           <section id="settings-panel-strategy" class="settings-tab-panel space-y-4">

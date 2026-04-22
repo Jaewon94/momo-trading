@@ -10,6 +10,7 @@ from loguru import logger
 from core.config import settings
 from core.database import AsyncSessionLocal
 from core.events import Event, EventType, event_bus
+from core.order_submission import decide_order_submission
 from models.order import Order
 from models.recommendation import Recommendation
 from models.trade_result import TradeResult
@@ -102,6 +103,31 @@ class DecisionMaker:
                 "message": error_msg,
                 "data": None,
             }
+            await event_bus.publish(Event(
+                type=EventType.ORDER_EXECUTED,
+                data=result,
+                source="decision_maker",
+            ))
+            return result
+
+        submission_decision = decide_order_submission(signal.action.value)
+        if not submission_decision.allowed:
+            skip_msg = f"주문 제출 차단: {submission_decision.reason}"
+            result = {
+                "mode": "AUTONOMOUS",
+                "symbol": signal.symbol,
+                "action": signal.action.value,
+                "success": False,
+                "order_id": "",
+                "message": skip_msg,
+                "data": submission_decision.as_detail(),
+            }
+            await activity_logger.log(
+                ActivityType.DECISION, ActivityPhase.SKIP,
+                f"\u23f8\ufe0f [{signal.symbol}] {skip_msg}",
+                cycle_id=cycle_id, symbol=signal.symbol,
+                detail=result,
+            )
             await event_bus.publish(Event(
                 type=EventType.ORDER_EXECUTED,
                 data=result,

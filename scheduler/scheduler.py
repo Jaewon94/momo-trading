@@ -27,6 +27,7 @@ from loguru import logger
 
 from core.config import settings
 from core.events import Event, EventType, event_bus
+from core.order_submission import decide_order_submission
 from services.observability_maintenance_service import observability_maintenance_service
 from services.observability_service import observability_service
 from services.account_equity_service import account_equity_service
@@ -141,6 +142,15 @@ class TradingScheduler:
 
     async def _place_market_sell(self, symbol: str, quantity: int, market: Market = Market.KRX):
         """브로커 어댑터 기준 시장가 매도 주문을 실행한다."""
+        submission_decision = decide_order_submission(OrderSide.SELL)
+        if not submission_decision.allowed:
+            return type("NormalizedOrderResult", (), {
+                "success": False,
+                "order_id": "",
+                "message": submission_decision.reason,
+                "error": submission_decision.reason,
+            })()
+
         request = OrderRequest(
             symbol=symbol,
             market=market,

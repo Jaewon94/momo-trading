@@ -48,6 +48,11 @@ class FailingBrokerAdapter(FakeBrokerAdapter):
         raise RuntimeError("broker down")
 
 
+@pytest.fixture(autouse=True)
+def _default_order_submission_mode(monkeypatch) -> None:
+    monkeypatch.setattr("services.manual_trade_service.settings.ORDER_SUBMISSION_MODE", "FULL")
+
+
 @pytest.mark.asyncio
 async def test_manual_trade_service_places_market_sell_and_confirms(monkeypatch):
     adapter = FakeBrokerAdapter(
@@ -94,6 +99,78 @@ async def test_manual_trade_service_places_market_sell_and_confirms(monkeypatch)
     assert confirmed["side"] == "SELL"
     assert confirmed["order_id"] == "SELL-1"
     assert logs
+
+
+@pytest.mark.asyncio
+async def test_manual_trade_service_read_only_mode_rejects_sell_without_broker_submission(monkeypatch):
+    adapter = FakeBrokerAdapter(
+        holdings=[
+            HoldingInfo(
+                symbol="A005930",
+                name="삼성전자",
+                quantity=7,
+                avg_buy_price=70000,
+                current_price=72000,
+                pnl=14000,
+                pnl_rate=2.0,
+            ),
+        ],
+    )
+    service = ManualTradeService(broker_adapter=adapter)
+
+    monkeypatch.setattr("services.manual_trade_service.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr("services.manual_trade_service.settings.ORDER_SUBMISSION_MODE", "READ_ONLY", raising=False)
+    monkeypatch.setattr(
+        "services.manual_trade_service.market_calendar.get_market_session_info",
+        lambda: {"is_regular_open": True, "label": "정규장"},
+    )
+
+    with pytest.raises(ServiceException) as exc_info:
+        await service.sell_position("005930")
+
+    assert exc_info.value.status_code == 400
+    assert "READ_ONLY" in str(exc_info.value.message)
+    assert adapter.placed_requests == []
+
+
+@pytest.mark.asyncio
+async def test_manual_trade_service_sell_only_mode_allows_manual_sell(monkeypatch):
+    adapter = FakeBrokerAdapter(
+        holdings=[
+            HoldingInfo(
+                symbol="A005930",
+                name="삼성전자",
+                quantity=7,
+                avg_buy_price=70000,
+                current_price=72000,
+                pnl=14000,
+                pnl_rate=2.0,
+            ),
+        ],
+        place_result=OrderResult(success=True, order_id="SELL-1", message="접수"),
+    )
+    service = ManualTradeService(broker_adapter=adapter)
+
+    monkeypatch.setattr("services.manual_trade_service.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr("services.manual_trade_service.settings.ORDER_SUBMISSION_MODE", "SELL_ONLY", raising=False)
+    monkeypatch.setattr(
+        "services.manual_trade_service.market_calendar.get_market_session_info",
+        lambda: {"is_regular_open": True, "label": "정규장"},
+    )
+
+    async def fake_confirm_and_record(**kwargs):
+        return None
+
+    async def fake_log(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("services.manual_trade_service.decision_maker.confirm_and_record", fake_confirm_and_record)
+    monkeypatch.setattr("services.manual_trade_service.activity_logger.log", fake_log)
+
+    result = await service.sell_position("005930")
+
+    assert result["order_id"] == "SELL-1"
+    assert adapter.placed_requests[0].side == OrderSide.SELL
 
 
 @pytest.mark.asyncio

@@ -55,6 +55,7 @@
 - Rollout: Admin settings apply 경로 사용.
 - Rollback: 동일 경로로 `AUTONOMY_MODE="AUTONOMOUS"` 재적용 가능.
 - 분류: `유지하되 harden`
+- 후속 조치: Track 1 Task 1.1에서 `AUTONOMY_MODE`와 별개인 `ORDER_SUBMISSION_MODE`를 추가해 감사/동결 중 실주문 제출 범위를 직접 제한할 수 있게 했습니다.
 
 ### F-002: `orders` 테이블이 비어 있어 주문 source of truth가 불명확함
 
@@ -104,7 +105,7 @@
 ### F-005: `SEMI_AUTO`가 모든 실주문을 막는 설정이 아님
 
 - 심각도: `P1`
-- 상태: `확정`
+- 상태: `완화됨`
 - 영역: `주문 | 운영 | 리스크`
 - 현상: `SEMI_AUTO`는 `DecisionMaker.execute`의 신규 AI 시그널을 추천 생성으로 돌리지만, 보유 점검 매도, 강제청산, 장중 보유 재평가, 갭 체크 매도, 수동 매도는 `TRADING_ENABLED=true`이면 실제 주문을 낼 수 있습니다.
 - 영향: “감사 중 자동 주문 차단”이라고 이해하면 위험합니다. 신규 매수는 막혀도 안전매도/청산성 주문은 계속 실행될 수 있고, 감사 중 DB 상태가 계속 변할 수 있습니다.
@@ -115,6 +116,7 @@
 - Rollout: 먼저 문구/상태 배지 수정, 이후 주문 gate 리팩터링은 별도 feature flag로 진행.
 - Rollback: 문구 변경은 즉시 되돌릴 수 있고, gate 변경은 기존 `TRADING_ENABLED` 동작으로 fallback 가능해야 합니다.
 - 분류: `유지하되 harden`
+- 조치: Track 1 Task 1.1에서 `ORDER_SUBMISSION_MODE=FULL|SELL_ONLY|READ_ONLY`를 추가해 `AUTONOMY_MODE`와 별개로 실주문 제출 범위를 제한할 수 있게 했습니다.
 
 ### F-006: 브로커 pending 4건 대비 DB pending 21건으로 대사 불일치가 큼
 
@@ -179,7 +181,7 @@
 ### F-010: `.env`와 runtime DB의 `TRADING_ENABLED`가 충돌해 운영자가 실주문 상태를 오판할 수 있음
 
 - 심각도: `P1`
-- 상태: `확정`
+- 상태: `완화됨`
 - 영역: `운영 | 리스크 | Admin`
 - 현상: `.env`에는 `TRADING_ENABLED=false`가 설정되어 있지만 runtime DB/API는 `TRADING_ENABLED=true`입니다.
 - 영향: 운영자가 파일 기준으로 “실주문 꺼짐”이라고 판단해도 실제 런타임은 주문 가능 상태일 수 있습니다. 특히 감사/장중 운영에서 위험합니다.
@@ -190,6 +192,7 @@
 - Rollout: read-only 설정 진단부터 추가.
 - Rollback: 진단 표시 제거 가능.
 - 분류: `유지하되 harden`
+- 조치: Track 1 Task 1.1에서 Admin system status에 `order_submission_mode`, `effective_order_submission_mode`, `runtime_override_active`를 노출했습니다.
 
 ### F-011: 병렬 BUY 후보 간 현금 예약 ledger가 없어 주문 전 risk check가 같은 현금을 중복 사용할 수 있음
 

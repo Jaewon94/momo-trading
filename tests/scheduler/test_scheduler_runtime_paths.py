@@ -11,6 +11,29 @@ from trading.models import CurrentPrice, OrderResult
 @pytest.fixture(autouse=True)
 def _default_broker_provider(monkeypatch) -> None:
     monkeypatch.setattr("scheduler.scheduler.settings.BROKER_PROVIDER", "KIS")
+    monkeypatch.setattr("scheduler.scheduler.settings.ORDER_SUBMISSION_MODE", "FULL")
+
+
+@pytest.mark.asyncio
+async def test_scheduler_place_market_sell_respects_read_only_order_submission_mode(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    requests = []
+
+    class FakeBrokerAdapter:
+        async def place_order(self, request):
+            requests.append(request)
+            return OrderResult(success=True, order_id="SELL-1", message="submitted")
+
+    monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr("scheduler.scheduler.settings.ORDER_SUBMISSION_MODE", "READ_ONLY", raising=False)
+    monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
+
+    result = await scheduler._place_market_sell("005930", 3)
+
+    assert result.success is False
+    assert result.order_id == ""
+    assert "READ_ONLY" in result.message
+    assert requests == []
 
 
 @pytest.mark.asyncio
