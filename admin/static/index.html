@@ -1763,7 +1763,7 @@
                     <label class="text-xs block mb-1 text-gray-500">T1 동시 분석 수</label>
                     <input id="set-llm-tier1-concurrency" type="number" min="1" max="8" step="1"
                       class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
-                    <div class="text-[11px] text-gray-500 mt-1">Tier1 호출을 동시에 몇 개까지 허용할지 정합니다.</div>
+                    <div id="set-llm-tier1-concurrency-help" class="text-[11px] text-gray-500 mt-1">Tier1 호출을 동시에 몇 개까지 허용할지 정합니다.</div>
                   </div>
                   <div>
                     <label class="text-xs block mb-1 text-gray-500">Codex timeout (초)</label>
@@ -1815,7 +1815,7 @@
                     <label class="text-xs block mb-1 text-gray-500">T2 동시 검토 수</label>
                     <input id="set-llm-tier2-concurrency" type="number" min="1" max="8" step="1"
                       class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
-                    <div class="text-[11px] text-gray-500 mt-1">Tier2 검토 호출의 병렬 실행 상한입니다.</div>
+                    <div id="set-llm-tier2-concurrency-help" class="text-[11px] text-gray-500 mt-1">Tier2 검토 호출의 병렬 실행 상한입니다.</div>
                   </div>
                   <div>
                     <label class="text-xs block mb-1 text-gray-500">Codex timeout (초)</label>
@@ -1930,7 +1930,7 @@
                     <label class="text-xs block mb-1 text-gray-500">뉴스 번역 병렬도</label>
                     <input id="set-news-translation-concurrency" type="number" min="1" max="8" step="1"
                       class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
-                    <div class="text-[11px] text-gray-500 mt-1">해외 뉴스 번역/감성 분석 동시 처리 수입니다. Ollama는 항상 1개씩 처리합니다.</div>
+                    <div id="set-news-translation-concurrency-help" class="text-[11px] text-gray-500 mt-1">해외 뉴스 번역/감성 분석 동시 처리 수입니다. Ollama는 항상 1개씩 처리합니다.</div>
                   </div>
                 </div>
 

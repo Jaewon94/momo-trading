@@ -35,11 +35,19 @@ import {
   resolveTierModelState,
 } from './settings_llm_state.js';
 import {
+  buildNewsTranslationConcurrencyFieldState,
+  buildTierConcurrencyFieldState,
+} from './settings_llm_concurrency_state.js';
+import {
   buildProviderModelEntries,
   buildProviderModelSourceText,
   getCatalogProvider,
   getProviderModelPlaceholder,
 } from './settings_llm_catalog_state.js';
+import {
+  buildTaskCardDescriptor,
+  resolveTaskCardRouting,
+} from './activity_card_state.js';
 import {
   buildClaudeUsageCopy,
   buildCodexAuthLabel,
@@ -709,6 +717,8 @@ function renderSettingsDraftState() {
   applySettingsToForm(formSettings);
   renderTierModelSelectors(formSettings);
   renderStandaloneModelSelectors(formSettings);
+  renderTierConcurrencyFields(formSettings);
+  renderNewsTranslationConcurrencyField(formSettings);
   renderSettingGuidance(formSettings);
   renderStrategyInsightsPanel(formSettings);
   renderSettingsApplyBar();
@@ -2450,19 +2460,24 @@ function appendActivity(data) {
     }
     lastActivityGroupKey = `cycle:${activity.cycle_id || activity.phase || 'global'}`;
   } else if (isTaskActivity || isDailyPlan) {
-    const descriptor = buildTaskCardDescriptor(activity);
-    const groupKey = `task:${descriptor.key}`;
-    let cardKey = latestTaskCardKeyByDescriptor[descriptor.key];
-    if (lastActivityGroupKey !== groupKey || !cardKey || !taskCards[cardKey]) {
-      const nextIndex = (taskCardSequence[descriptor.key] || 0) + 1;
-      taskCardSequence[descriptor.key] = nextIndex;
-      cardKey = `${descriptor.key}:${nextIndex}`;
+    const routing = resolveTaskCardRouting({
+      activity,
+      lastActivityGroupKey,
+      latestTaskCardKeyByGroup: latestTaskCardKeyByDescriptor,
+      taskCards,
+    });
+    const { descriptor, groupIdentity, groupKey } = routing;
+    let cardKey = routing.existingCardKey;
+    if (routing.needsNewCard || !cardKey) {
+      const nextIndex = (taskCardSequence[groupIdentity] || 0) + 1;
+      taskCardSequence[groupIdentity] = nextIndex;
+      cardKey = `${groupIdentity}:${nextIndex}`;
     }
     let card = taskCards[cardKey];
     if (!card) {
       card = createTaskCard(activity);
       taskCards[cardKey] = card;
-      latestTaskCardKeyByDescriptor[descriptor.key] = cardKey;
+      latestTaskCardKeyByDescriptor[groupIdentity] = cardKey;
       container.appendChild(card.element);
     }
     addStepToTaskCard(card, activity);
@@ -3101,34 +3116,6 @@ function cleanupStockCards() {
   taskCardSequence = {};
   latestTaskCardKeyByDescriptor = {};
   lastActivityGroupKey = null;
-}
-
-function buildTaskCardDescriptor(data) {
-  const summary = String(data?.summary || '');
-  const type = String(data?.activity_type || '').toUpperCase();
-
-  if (type === 'REPORT') {
-    return { key: 'report', title: '일일 리포트 작업', icon: '📝' };
-  }
-  if (/뉴스|공시|수집|poll/i.test(summary)) {
-    return { key: 'news', title: '뉴스 수집/해석', icon: '🛰️' };
-  }
-  if (type === 'QA') {
-    return { key: 'qa', title: 'Q&A 작업', icon: '💬' };
-  }
-  if (type === 'DAILY_PLAN') {
-    return { key: 'daily-plan', title: '일일 계획 작업', icon: '📅' };
-  }
-  if (type === 'LLM_CALL') {
-    return { key: 'llm', title: '공용 LLM 작업', icon: '🤖' };
-  }
-  if (type === 'EVENT') {
-    return { key: 'event', title: '운영 이벤트', icon: '📣' };
-  }
-  if (type === 'SCHEDULE' || type === 'TRADING_RULE' || type === 'HOLDINGS_CHECK') {
-    return { key: 'operations', title: '운영 스케줄 작업', icon: '⚙️' };
-  }
-  return { key: `task-${type || 'misc'}`, title: type || '기타 작업', icon: '📌' };
 }
 
 function parseActivityDetailObject(detail) {
@@ -5331,6 +5318,49 @@ function renderSettingGuidance(settingsOverride = runtimeSettings) {
   if (modeLabelEl) modeLabelEl.textContent = copy.modeLabel;
   if (modeHelpEl) modeHelpEl.textContent = copy.modeHelp;
   if (modeTipEl) modeTipEl.title = copy.modeTitle;
+}
+
+function renderTierConcurrencyFields(settingsOverride = getSettingsFormSettings()) {
+  const applyState = (tier) => {
+    const provider = getTierProvider(tier, 'primary', settingsOverride);
+    const state = buildTierConcurrencyFieldState({ tier, provider });
+    const inputEl = document.getElementById(
+      tier === 'tier1' ? 'set-llm-tier1-concurrency' : 'set-llm-tier2-concurrency',
+    );
+    const helpEl = document.getElementById(
+      tier === 'tier1' ? 'set-llm-tier1-concurrency-help' : 'set-llm-tier2-concurrency-help',
+    );
+
+    if (inputEl) {
+      inputEl.disabled = state.disabled;
+      inputEl.title = state.disabled ? state.helpText : '';
+    }
+    if (helpEl) {
+      helpEl.textContent = state.helpText;
+      helpEl.className = `text-[11px] mt-1 ${state.helpTone === 'warn' ? 'text-amber-300' : 'text-gray-500'}`;
+    }
+  };
+
+  applyState('tier1');
+  applyState('tier2');
+}
+
+function renderNewsTranslationConcurrencyField(settingsOverride = getSettingsFormSettings()) {
+  const provider = document.getElementById('set-news-llm-provider')?.value
+    || settingsOverride?.NEWS_LLM_PROVIDER
+    || 'CLAUDE_CODE';
+  const state = buildNewsTranslationConcurrencyFieldState({ provider });
+  const inputEl = document.getElementById('set-news-translation-concurrency');
+  const helpEl = document.getElementById('set-news-translation-concurrency-help');
+
+  if (inputEl) {
+    inputEl.disabled = state.disabled;
+    inputEl.title = state.disabled ? state.helpText : '';
+  }
+  if (helpEl) {
+    helpEl.textContent = state.helpText;
+    helpEl.className = `text-[11px] mt-1 ${state.helpTone === 'warn' ? 'text-amber-300' : 'text-gray-500'}`;
+  }
 }
 
 function renderSidebarSettingSummaries() {
