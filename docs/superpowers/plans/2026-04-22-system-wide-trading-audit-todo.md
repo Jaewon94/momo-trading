@@ -275,17 +275,17 @@
 - Read: `tests/services/test_news_*`
 - Update: audit evidence/findings docs
 
-- [ ] **Step 1: LLM 단계별 가치 측정 기준 정의**
+- [x] **Step 1: LLM 단계별 가치 측정 기준 정의**
   - latency, timeout, fallback, provider, model, prompt version, confidence, forward return을 연결할 기준을 정한다.
 
-- [ ] **Step 2: Codex/Claude/Ollama 병렬도 정책 검토**
+- [x] **Step 2: Codex/Claude/Ollama 병렬도 정책 검토**
   - Codex 번역 병렬도 1 고정과 news fetch 병렬도의 차이를 문서화한다.
   - CLI timeout cascade와 rate limit이 거래 판단을 막는지 확인한다.
 
-- [ ] **Step 3: 뉴스 소스별 비용/가치 평가**
+- [x] **Step 3: 뉴스 소스별 비용/가치 평가**
   - DART, KRX, YONHAP, BLOOMBERG, CNBC, NASDAQ, INVESTING, SEEKING_ALPHA별 성공률, 중복률, stale rate, trade gate 기여도를 평가한다.
 
-- [ ] **Step 4: 제거/비활성화 후보 기록**
+- [x] **Step 4: 제거/비활성화 후보 기록**
   - 기여도 미확인인데 latency/cost/failure만 늘리면 `기본 비활성화`.
   - noisy source는 `active set 제거` 또는 `cooldown 강화`.
 

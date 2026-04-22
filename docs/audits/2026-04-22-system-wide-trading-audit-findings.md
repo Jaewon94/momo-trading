@@ -416,6 +416,81 @@
 - Rollback: 테스트는 제거하지 않고, legacy behavior는 별도 옵션으로 고정합니다.
 - 분류: `유지하되 harden`
 
+### F-026: LLM 단계의 latency/cost가 forward return과 연결되지 않아 가치 판단이 불가능함
+
+- 심각도: `P1`
+- 상태: `확정`
+- 영역: `LLM | 전략 | 성과 측정`
+- 현상: `execution_metrics`에는 provider/model/latency/status가 저장되지만, 후보별 이후 수익률이나 stage별 benchmark와 연결되지 않습니다.
+- 영향: Codex, Claude, Ollama 중 무엇이 돈을 더 벌게 하는지, 또는 지연만 늘리는지 판단할 수 없습니다. Tier1+Tier2 지연이 50~80초인 후보도 있어 단기 전략에서는 latency 자체가 edge를 없앨 수 있습니다.
+- 증거: Phase 7 `LLM_CALL` 집계, F-016의 forward return dataset 부재.
+- 재현/검증: 특정 `cycle_id/symbol`의 LLM latency는 조회 가능하지만, 같은 decision event의 5m/15m/30m/close return은 조회할 수 없습니다.
+- 권고: decision event에 `provider`, `model`, `prompt_version`, `elapsed_ms`, `fallback_used`, `decision_action`, `forward_returns`를 함께 저장합니다.
+- 구현 전 테스트: `tests/services/test_decision_event_service.py`에 LLM metadata와 forward return label 저장 테스트 추가.
+- Rollout: write-only metric enrichment부터 시작하고 gate에는 연결하지 않습니다.
+- Rollback: enrichment feature flag를 끄면 기존 LLM 라우팅은 유지됩니다.
+- 분류: `유지하되 harden`
+
+### F-027: Codex timeout cooldown이 후보별 오류로 증폭되어 incident 수가 과대 집계될 수 있음
+
+- 심각도: `P1`
+- 상태: `확정`
+- 영역: `LLM | 운영`
+- 현상: `CodexProvider`는 timeout 후 300초 cooldown을 적용하지만, cooldown 중인 provider를 여러 후보가 다시 확인하면서 `llm_factory/generate` error event와 incident가 반복 생성됩니다.
+- 영향: 실제 root cause는 1개의 Codex timeout이어도 운영 UI에는 다수 LLM 장애처럼 보일 수 있습니다. 장중에는 후보 분석 실패가 연쇄적으로 발생해 decision coverage가 떨어집니다.
+- 증거: 최신 `error_events`의 `CODEX 최근 호출 실패로 비활성화 (...s 남음): Codex CLI timeout (120s)` 반복, `error_incidents`의 `llm_factory/generate` open 119건.
+- 재현/검증: Codex timeout 후 cooldown 중 여러 symbol 분석이 들어오면 provider unavailable 오류가 반복 기록됩니다.
+- 권고: provider cooldown 상태는 per-call exception이 아니라 provider health 상태로 집계하고, 같은 cooldown window에서는 incident dedupe/circuit-open event 1건으로 제한합니다.
+- 구현 전 테스트: `tests/analysis/test_llm_factory.py`에 cooldown 중 동일 provider 반복 호출 시 incident가 증폭되지 않는 테스트 추가.
+- Rollout: observability 집계 변경부터 적용하고 LLM 라우팅은 유지합니다.
+- Rollback: 기존 error_capture 호출 방식으로 되돌릴 수 있습니다.
+- 분류: `유지하되 harden`
+
+### F-028: 뉴스 기능은 현재 꺼져 있고 저장 표본도 stale/neutral이라 매매 가치가 검증되지 않음
+
+- 심각도: `P1`
+- 상태: `확정`
+- 영역: `뉴스 | 전략 | 성과 측정`
+- 현상: runtime 기준 `NEWS_POLL_ENABLED=false`, `NEWS_GATE_ENABLED=false`, `NEWS_LLM_ENABLED=false`, `NEWS_SHADOW_ENABLED=false`입니다. 저장된 `news_items`는 65건이며 최신 published_at은 2026-04-21이고 negative_count는 0입니다.
+- 영향: 지금 뉴스는 매매 판단에 영향이 없으므로 안전하지만, 다시 켜도 돈을 더 벌게 하는지 판단할 데이터가 없습니다.
+- 증거: runtime settings와 `news_items` source 집계.
+- 재현/검증: `sqlite3 -readonly data/app.db`로 runtime/news_items 집계 확인.
+- 권고: 뉴스는 계속 OFF 유지합니다. 재개 시에는 poll-only 또는 shadow-only로 시작하고, 실제 `NEWS_GATE_ENABLED=true`는 blocked-vs-baseline forward return 표본이 쌓인 뒤 적용합니다.
+- 구현 전 테스트: `tests/services/test_news_signal_service.py`, `tests/services/test_news_reporting_service.py`에 sample-size 부족 시 rollout 불가 테스트 추가.
+- Rollout: `POLL_ONLY -> SHADOW_ONLY -> SEMI_AUTO_GATE_RECOMMENDATION -> BUY_BLOCK_GATE` 순서.
+- Rollback: runtime settings에서 `NEWS_POLL_ENABLED=false`, `NEWS_GATE_ENABLED=false`, `NEWS_LLM_ENABLED=false`로 즉시 비활성화.
+- 분류: `기본 비활성화`
+
+### F-029: 뉴스 fetch 병렬도와 번역 병렬도가 다른 개념인데 Admin/운영 문서에서 혼동될 수 있음
+
+- 심각도: `P2`
+- 상태: `확정`
+- 영역: `뉴스 | 운영`
+- 현상: `NEWS_FETCH_CONCURRENCY`는 여러 뉴스 소스 HTTP fetch 병렬도이고, `NEWS_TRANSLATION_CONCURRENCY`는 LLM 번역 병렬도입니다. 코드상 `CODEX`/`OLLAMA` 번역은 항상 1로 강제됩니다.
+- 영향: fetch 병렬도를 Codex 병렬도처럼 이해하면 불필요하게 낮추거나, 반대로 번역 병렬도를 높이면 Codex timeout을 악화시킬 수 있습니다.
+- 증거: `services/news_polling_service.py:_poll_enabled_sources`, `services/news_translation_service.py:_translation_concurrency_limit`, `analysis/llm/llm_factory.py:_provider_concurrency_limit`.
+- 재현/검증: `NEWS_FETCH_CONCURRENCY=3`, `NEWS_TRANSLATION_CONCURRENCY=1`, news provider CODEX일 때 fetch는 최대 3 source, translation은 1 LLM 호출로 제한됩니다.
+- 권고: Admin 설정 설명을 `source fetch concurrency`와 `LLM translation concurrency`로 분리 표기합니다. 현재 값은 `fetch=3`, `translation=1` 유지가 적절합니다.
+- 구현 전 테스트: admin/settings schema 또는 runtime settings service 테스트에 설명/분류 필드 추가 후보.
+- Rollout: UI/문서 변경부터 적용.
+- Rollback: 설명 문구 제거 가능.
+- 분류: `유지하되 harden`
+
+### F-030: 뉴스 source별 성과 기여도와 중복/stale/실패율이 rollout gate와 연결되지 않음
+
+- 심각도: `P1`
+- 상태: `검증 중`
+- 영역: `뉴스 | 성과 측정`
+- 현상: source catalog에는 trust score와 official flag가 있지만, source별 created/duplicate/stale/error와 trade outcome이 연결되지 않습니다.
+- 영향: 어떤 뉴스 소스를 유지/제거할지 판단할 수 없습니다. foreign source를 켜면 번역 비용과 latency가 늘지만 성과 기여가 불명확합니다.
+- 증거: `news_items`는 DART/KRX/YONHAP 65건만 있고, `NEWS_POLL` execution metric은 확인되지 않았으며, news gate/shadow도 꺼져 있습니다.
+- 재현/검증: source별 뉴스 count는 가능하지만 source별 blocked trade forward return은 계산 불가입니다.
+- 권고: source별 `received/created/duplicate/skipped/error`, `translation_failed`, `gate_contribution`, `blocked_forward_return` 리포트를 추가한 뒤 source active set을 조정합니다.
+- 구현 전 테스트: `tests/services/test_news_reporting_service.py`에 source별 stale/duplicate/translation failure/rollout summary fixture 추가.
+- Rollout: report-only 후 source disable/enable 결정.
+- Rollback: source별 runtime flag를 기존 값으로 복구.
+- 분류: `실험`
+
 ## Open Questions
 
 - 감사 기간에 `TRADING_ENABLED=true`를 유지할지, 아니면 `SELL_ONLY`/`READ_ONLY`에 가까운 별도 운영 모드를 만들지 결정해야 합니다.
@@ -425,4 +500,6 @@
 - strategy 이름을 실제 alpha 전략으로 유지할지, execution profile로 바꿀지 결정해야 합니다.
 - 후보별 forward return을 기존 `analysis_results`/`recommendations`에 넣을지, 신규 canonical table로 분리할지 결정해야 합니다.
 - 백테스트 기본 체결 정책을 `next_open`, `next_close`, `limit_guard` 중 무엇으로 둘지 결정해야 합니다.
+- 뉴스 재개 시 첫 단계는 `POLL_ONLY`로 할지 `SHADOW_ONLY`까지 같이 켤지 결정해야 합니다.
+- Tier1 LLM을 계속 Codex `gpt-5.4`로 둘지, latency-sensitive 모델/Claude/Ollama 후보를 실험할지 결정해야 합니다.
 - `.env`와 shell history까지 시크릿 스캔 범위를 확장할지는 tracked files + runtime logs 점검 후 결정합니다.

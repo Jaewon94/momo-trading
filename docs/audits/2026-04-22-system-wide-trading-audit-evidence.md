@@ -711,7 +711,122 @@ Phase 5 결론상 구현 후보는 다음 dataset을 먼저 쌓아야 합니다.
 
 ## Phase 7: LLM, 뉴스, 비용/지연 가치
 
-> 아직 시작하지 않았습니다.
+### 외부 기준
+
+| 출처 | 감사에 반영한 기준 |
+|---|---|
+| OpenAI Codex docs, https://developers.openai.com/ | Codex는 coding agent/CLI 용도에 최적화되어 있으며 장중 매매 LLM으로 쓸 때는 timeout/latency/cost 관측을 별도 검증해야 함 |
+| OpenAI GPT-5.3-Codex model page, https://developers.openai.com/api/docs/models/gpt-5.3-codex | agentic coding model은 reasoning effort와 높은 latency/cost 가능성을 전제로 해야 함 |
+| OpenAI codex-mini-latest model page, https://developers.openai.com/api/docs/models/codex-mini-latest | Codex CLI 최적화 fast model 계열도 있어 장중 latency-sensitive 작업은 모델 tier 재검토 가능 |
+
+### 현재 Runtime LLM/뉴스 설정
+
+운영 DB `runtime_settings` 기준:
+
+| key | value |
+|---|---|
+| `LLM_PROVIDER_TIER1` | `CODEX` |
+| `LLM_PROVIDER_TIER2` | `CLAUDE_CODE` |
+| `LLM_TIER1_CONCURRENCY` | `1` |
+| `LLM_TIER2_CONCURRENCY` | `1` |
+| `CODEX_MODEL_TIER1` | `gpt-5.4` |
+| `CODEX_TIMEOUT_SEC_TIER1` | `120` |
+| `CLAUDE_CODE_MODEL_TIER2` | `opus` |
+| `NEWS_POLL_ENABLED` | `false` |
+| `NEWS_GATE_ENABLED` | `false` |
+| `NEWS_LLM_ENABLED` | `false` |
+| `NEWS_INCLUDE_FOREIGN` | `false` |
+| `NEWS_SHADOW_ENABLED` | `false` |
+| `NEWS_FETCH_CONCURRENCY` | `3` |
+| `NEWS_TRANSLATION_CONCURRENCY` | `1` |
+
+해석:
+
+- 현재 뉴스는 수집, LLM 번역/감성, 매수 게이트, shadow A/B가 모두 꺼진 상태입니다.
+- `NEWS_FETCH_CONCURRENCY=3`은 뉴스 소스 HTTP fetch 병렬도입니다. LLM 번역 병렬도가 아닙니다.
+- `NEWS_TRANSLATION_CONCURRENCY=1`은 뉴스 LLM 번역 병렬도입니다. 코드상 `CODEX` 또는 `OLLAMA` provider이면 설정값과 무관하게 1로 강제됩니다.
+- `LLMFactory`도 Codex provider는 전역 provider semaphore 1개로 직렬화합니다.
+
+### LLM 호출 메트릭
+
+전체 `execution_metrics`의 `LLM_CALL` 집계:
+
+| provider/model | success_count | avg_elapsed_ms | max_elapsed_ms | fallback_count |
+|---|---:|---:|---:|---:|
+| `CODEX / codex:gpt-5.4` | 570 | 21,122.5 | 91,030 | 0 |
+| `CODEX / codex:gpt-5-codex` | 524 | 38,903.1 | 112,682 | 0 |
+| `CLAUDE_CODE / claude-haiku-4-5-20251001` | 306 | 44,546.7 | 148,858 | 45 |
+| `CLAUDE_CODE / claude-opus-4-7` | 168 | 44,395.4 | 75,932 | 0 |
+| `CLAUDE_CODE / claude-sonnet-4-6` | 21 | 155,908.1 | 216,912 | 0 |
+| `ERROR / no provider` | 479 | n/a | n/a | 25 |
+
+2026-04-22 당일 `LLM_CALL` 집계:
+
+| status/provider | count | avg_elapsed_ms | max_elapsed_ms |
+|---|---:|---:|---:|
+| `SUCCESS / CODEX` | 233 | 23,539.0 | 91,030 |
+| `SUCCESS / CLAUDE_CODE` | 77 | 43,424.1 | 51,736 |
+| `ERROR / no provider` | 42 | n/a | n/a |
+
+최신 성공 호출 샘플:
+
+- Tier1 Codex `gpt-5.4`: 12~34초 범위가 많고, risk tuning 등 symbol 없는 호출도 포함됩니다.
+- Tier2 Claude `opus-4-7`: 최근 샘플은 약 38~42초입니다.
+- 장중 후보 1개가 Tier1+Tier2를 모두 거치면 LLM latency만 대략 50~80초가 될 수 있습니다.
+
+### LLM 장애/관측성
+
+- `error_incidents`에서 `llm_factory/generate` open incident는 119건입니다.
+- 최신 `error_events`는 `CODEX 최근 호출 실패로 비활성화 (...s 남음): Codex CLI timeout (120s)`가 반복됩니다.
+- `CodexProvider`는 timeout/nonzero exit 발생 시 300초 cooldown을 적용합니다.
+- 하지만 `LLMFactory.generate`는 cooldown 중인 provider를 후보마다 다시 확인하고, 모든 provider가 실패하면 error metric과 incident를 남깁니다. 이 때문에 하나의 timeout이 여러 후보/호출에서 다수 오류로 증폭될 수 있습니다.
+- fallback provider 설정은 runtime에서 빈 값입니다. `.env`에는 fallback이 있으나 runtime DB에서는 `LLM_FALLBACK_PROVIDER_TIER1=""`, `LLM_FALLBACK_PROVIDER_TIER2=""`입니다.
+
+### 뉴스 수집/게이트 현황
+
+`news_items` 집계:
+
+| source_code | count | negative_count | min_published_at | max_published_at |
+|---|---:|---:|---|---|
+| `DART` | 27 | 0 | 2026-04-21 00:00 | 2026-04-21 00:00 |
+| `KRX` | 26 | 0 | 2026-04-21 10:42 | 2026-04-21 11:41 |
+| `YONHAP` | 12 | 0 | 2026-04-21 10:00 | 2026-04-21 11:43 |
+
+관찰:
+
+- 현재 저장 뉴스는 모두 2026-04-21에 생성된 데이터입니다.
+- 감성 라벨은 비어 있거나 중립 점수 `0.5`가 대부분입니다.
+- 해외 뉴스/번역은 현재 꺼져 있어 번역 지연은 없습니다.
+- `execution_metrics`에서 `NEWS_POLL` 집계는 확인되지 않았습니다.
+- `error_incidents`에는 `news_translation/translate_item` open incident 29건, news polling source error 일부가 있습니다.
+
+### 뉴스 Source와 병렬도 해석
+
+| 설정 | 의미 | 현재값 | 권고 |
+|---|---|---:|---|
+| `NEWS_FETCH_CONCURRENCY` | DART/KRX/YONHAP/Bloomberg/CNBC 등 소스 fetch를 동시에 몇 개 돌릴지 | 3 | 네트워크 I/O 병렬도라 2~4는 합리적. 지금 3 유지 가능 |
+| `NEWS_TRANSLATION_CONCURRENCY` | 해외 뉴스 LLM 번역/감성 호출을 동시에 몇 개 돌릴지 | 1 | Codex/Ollama는 코드상 1 강제. 장중은 1 유지 |
+| `LLM_TIER1_CONCURRENCY` | Tier1 분석 LLM 동시 실행 수 | 1 | Codex timeout 이력이 있어 1 유지 |
+| `LLM_TIER2_CONCURRENCY` | Tier2 최종 검토 LLM 동시 실행 수 | 1 | Opus latency가 길어 1 유지 |
+
+### 뉴스 가치 판단
+
+- 현재 뉴스가 꺼져 있으므로 지금 매매 성능에 뉴스가 직접 개입하지 않습니다.
+- 저장된 뉴스 표본은 65건이고, negative signal 0건이며, gate/shadow가 모두 꺼져 있어 “뉴스가 돈을 벌게 하는지” 판단할 수 없습니다.
+- 따라서 뉴스 기능은 당분간 `기본 비활성화` 유지가 맞습니다.
+- 재개한다면 `NEWS_POLL_ENABLED=true`, `NEWS_LLM_ENABLED=false`, `NEWS_GATE_ENABLED=false`, `NEWS_SHADOW_ENABLED=true` 같은 수집/shadow-only부터 시작해야 합니다. 실제 BUY 차단은 forward return과 blocked-vs-baseline 비교가 쌓인 뒤 판단해야 합니다.
+
+### Phase 7 Verification
+
+```bash
+.venv313/bin/python -m pytest tests/analysis/test_llm_factory.py tests/services/test_llm_runtime_recommendation_service.py tests/services/test_llm_usage_service.py tests/services/test_news_polling_service.py tests/services/test_news_translation_service.py tests/services/test_news_signal_service.py tests/services/test_news_runtime_service.py tests/services/test_news_reporting_service.py
+```
+
+결과:
+
+- 72 tests passed.
+- 확인 범위: LLM factory, LLM runtime recommendation, usage snapshot, news polling/translation/signal/runtime/reporting.
+- 미확인 범위: 뉴스 gate가 실제 forward return을 개선하는지, LLM provider 변경이 매매 기대값을 높이는지.
 
 ## Phase 8: 스케줄러, 실시간 이벤트, 운영/보안/Admin
 
