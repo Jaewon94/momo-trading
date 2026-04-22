@@ -1578,6 +1578,7 @@ async def test_force_liquidation_retries_failed_orders_once(monkeypatch) -> None
     logs: list[str] = []
     sleep_calls: list[float] = []
     place_order_calls: list[str] = []
+    confirmed_orders: list[dict] = []
     holding = SimpleNamespace(symbol="005930", name="삼성전자", quantity=2, pnl_rate=-1.3, current_price=69_500)
 
     async def fake_get_holdings() -> list:
@@ -1605,6 +1606,9 @@ async def test_force_liquidation_retries_failed_orders_once(monkeypatch) -> None
     async def fake_get_pending_orders() -> list:
         return []
 
+    async def fake_confirm_and_record(**kwargs) -> None:
+        confirmed_orders.append(kwargs)
+
     monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_holiday", lambda: False)
     monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
     monkeypatch.setattr("scheduler.scheduler.settings.DAY_TRADING_ONLY", False)
@@ -1616,12 +1620,21 @@ async def test_force_liquidation_retries_failed_orders_once(monkeypatch) -> None
     monkeypatch.setattr("asyncio.sleep", fake_sleep)
     monkeypatch.setattr("agent.trading_agent.trading_agent._acquire_sell", fake_acquire_sell)
     monkeypatch.setattr("agent.trading_agent.trading_agent._release_sell", lambda _symbol: None)
+    monkeypatch.setattr("agent.decision_maker.decision_maker.confirm_and_record", fake_confirm_and_record)
     monkeypatch.setattr("realtime.event_detector.event_detector.remove_levels", lambda _symbol: None)
 
     await scheduler._force_liquidation()
 
     assert place_order_calls == ["005930", "005930"]
     assert sleep_calls == [5]
+    assert confirmed_orders == [{
+        "symbol": "005930",
+        "side": "SELL",
+        "order_id": "SELL-RETRY",
+        "quantity": 2,
+        "expected_price": 69_500,
+        "exit_reason": "FORCE_LIQUIDATION",
+    }]
     assert any("청산 1건 실패" in message for message in logs)
     assert any("실패 1건" in message for message in logs)
 

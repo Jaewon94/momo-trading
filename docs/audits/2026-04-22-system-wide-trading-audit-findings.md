@@ -123,7 +123,7 @@
 ### F-006: 브로커 pending 4건 대비 DB pending 21건으로 대사 불일치가 큼
 
 - 심각도: `P1`
-- 상태: `확정`
+- 상태: `해결됨`
 - 영역: `주문 | 리스크 | PnL`
 - 현상: read-only 브로커 미체결은 4건인데 `trade_results.PENDING_CONFIRM BUY`는 21건입니다. `001250`, `008350`처럼 DB pending은 있으나 브로커 pending에는 없는 종목이 있습니다.
 - 영향: DB pending을 그대로 노출/차단/성과 계산에 사용하면 실제 미체결보다 훨씬 큰 노출로 보거나, 반대로 체결됐지만 확정되지 않은 수량을 open lot/PnL에 누락할 수 있습니다.
@@ -529,6 +529,7 @@
 - Rollout: 기록 경로만 추가하므로 실주문 방식은 유지. 중복 기록 방지를 위해 `order_id` idempotency 확인을 함께 둡니다.
 - Rollback: helper 적용 전 코드로 되돌릴 수 있으나, 기록 누락 위험이 재발합니다.
 - 분류: `수정 필요`
+- 조치: Track 2 Task 2.3에서 `_record_liquidation_sell()`를 추가해 1차 성공과 재시도 성공이 모두 `decision_maker.confirm_and_record()`를 호출하도록 통일했습니다. `order_id`가 없으면 기록하지 않고 error log만 남깁니다.
 
 ### F-033: 스마트 청산이 데이터 수집 실패를 즉시 SELL로 해석함
 

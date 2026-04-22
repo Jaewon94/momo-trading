@@ -1044,14 +1044,7 @@ class TradingScheduler:
                         f"{h.quantity}주 시장가 매도 {pnl_text}",
                         symbol=h.symbol,
                     )
-                    # 체결 확인 + TradeResult 기록
-                    from agent.decision_maker import decision_maker
-                    await decision_maker.confirm_and_record(
-                        symbol=h.symbol, side="SELL",
-                        order_id=str(getattr(resp, "order_id", "") or ""), quantity=h.quantity,
-                        expected_price=h.current_price,
-                        exit_reason="FORCE_LIQUIDATION",
-                    )
+                    await self._record_liquidation_sell(h, resp)
                 else:
                     failed_holdings.append(h)
                     logger.error(
@@ -1084,6 +1077,7 @@ class TradingScheduler:
                     if resp.success:
                         sold_count += 1
                         logger.info("청산 재시도 성공: {}({})", h.name, h.symbol)
+                        await self._record_liquidation_sell(h, resp)
                     else:
                         logger.error("청산 재시도 실패: {}({}) — {}", h.name, h.symbol, resp.error or "")
 
@@ -1112,6 +1106,26 @@ class TradingScheduler:
                 ActivityType.SCHEDULE, ActivityPhase.ERROR,
                 f"\u274c 청산 오류: {str(e)[:100]}",
             )
+
+    async def _record_liquidation_sell(self, holding, response) -> None:
+        order_id = str(getattr(response, "order_id", "") or "")
+        if not order_id:
+            logger.error(
+                "청산 체결 기록 스킵: {}({}) — 주문번호 없음",
+                getattr(holding, "name", ""),
+                getattr(holding, "symbol", ""),
+            )
+            return
+
+        from agent.decision_maker import decision_maker
+        await decision_maker.confirm_and_record(
+            symbol=getattr(holding, "symbol", ""),
+            side="SELL",
+            order_id=order_id,
+            quantity=int(getattr(holding, "quantity", 0) or 0),
+            expected_price=float(getattr(holding, "current_price", 0.0) or 0.0),
+            exit_reason="FORCE_LIQUIDATION",
+        )
 
     async def _collect_holdings_data(
         self, sellable: list,

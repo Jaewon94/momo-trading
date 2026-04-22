@@ -199,24 +199,29 @@
 - Modify: `scheduler/scheduler.py`
 - Test: `tests/scheduler/test_scheduler_force_liquidation.py`
 
-- [ ] **Step 1: 실패 테스트 작성**
+- [x] **Step 1: 실패 테스트 작성**
   - 첫 매도 실패, retry 성공 fake adapter fixture에서 `decision_maker.confirm_and_record`가 retry 성공에도 1회 호출되는지 테스트한다.
+  - Result: 기존 `tests/scheduler/test_scheduler_runtime_paths.py::test_force_liquidation_retries_failed_orders_once`에 retry success 기록 기대값을 추가했다.
 
-- [ ] **Step 2: 실패 확인**
+- [x] **Step 2: 실패 확인**
   - Run: `./.venv313/bin/python -m pytest tests/scheduler/test_scheduler_force_liquidation.py -q`
   - Expected: retry success 기록 누락으로 실패.
+  - Result: `confirmed_orders == []`로 실패 확인. 실제 테스트 파일은 기존 구조상 `tests/scheduler/test_scheduler_runtime_paths.py`를 사용했다.
 
-- [ ] **Step 3: 최소 구현**
+- [x] **Step 3: 최소 구현**
   - `_record_liquidation_sell()` helper를 만들고 1차 성공/재시도 성공이 같은 기록 경로를 쓰게 한다.
   - `order_id`가 없으면 기록하지 않고 error log를 남긴다.
+  - Result: `_record_liquidation_sell()`를 추가하고 1차 성공/재시도 성공 모두 같은 기록 경로를 사용하게 했다.
 
-- [ ] **Step 4: 통과 확인**
+- [x] **Step 4: 통과 확인**
   - Run: `./.venv313/bin/python -m pytest tests/scheduler/test_scheduler_force_liquidation.py tests/scheduler/test_scheduler_runtime_paths.py -q`
   - Expected: PASS.
+  - Result: `tests/scheduler/test_scheduler_runtime_paths.py` 63 passed.
 
-- [ ] **Step 5: 문서/커밋**
+- [x] **Step 5: 문서/커밋**
   - Update: F-032.
   - Commit: `fix: record successful liquidation retries`
+  - Result: F-032 갱신 완료. 커밋은 이 작업 검증 후 생성.
 
 ## Track 3: PnL Truth and Kill Switch
 
