@@ -221,9 +221,55 @@
 - Rollback: report-only 제거 가능.
 - 분류: `유지하되 harden`
 
+### F-013: closed trade 표본이 0건이라 기대값/승률/PF 기반 성과 판단이 불가능함
+
+- 심각도: `P1`
+- 상태: `확정`
+- 영역: `PnL | 성과 측정 | 전략`
+- 현상: 운영 DB에서 `side=BUY`, `status=CONFIRMED`, `exit_at IS NOT NULL`인 closed trade가 0건입니다. PerformanceReportingService와 PerformanceTracker는 이 closed BUY만 기대값/승률/PF/연속손실의 기준으로 사용합니다.
+- 영향: 현재 “전략이 돈을 잘 버는지”를 closed-trade 지표로 판단할 수 없습니다. LLM risk tuning과 trading guard의 성과 입력도 사실상 비어 있어 전략 개선 판단이 왜곡됩니다.
+- 증거: `services/performance_reporting_service.py:170-183`, `analysis/feedback/performance_tracker.py:35-40`, read-only DB 집계 `closed BUY=0`.
+- 재현/검증: `select count(*) from trade_results where side='BUY' and status='CONFIRMED' and exit_at is not null`.
+- 권고: closed trade 표본이 부족하면 UI/API/LLM prompt에 `INSUFFICIENT_CLOSED_TRADE_SAMPLE`을 명시하고, 전략 성과 판단은 account equity delta와 별도 표시합니다.
+- 구현 전 테스트: `tests/services/test_performance_reporting_service.py`에 closed trade 0건이면 “평가 불가” 상태를 반환하는 테스트 추가.
+- Rollout: report-only 상태 필드부터 추가.
+- Rollback: 상태 필드 제거 가능.
+- 분류: `유지하되 harden`
+
+### F-014: account equity는 기록되지만 전략 성과/kill switch와 충분히 연결되지 않음
+
+- 심각도: `P1`
+- 상태: `확정`
+- 영역: `PnL | 리스크 | 성과 측정`
+- 현상: `account_equity_snapshots`는 총자산, 현금, 주식평가, 평가손익을 잘 저장하고 session metrics도 계산합니다. 그러나 PerformanceTracker와 TradingGuard의 핵심 성과/손실 판단은 closed `TradeResult`에 치우쳐 있습니다.
+- 영향: 계좌 총자산이 장중 크게 흔들려도 전략 기대값, 연속 손실, kill switch에는 즉시 반영되지 않습니다. 현재 같은 장중에는 total_asset 517,447,795~533,288,675 범위까지 움직였습니다.
+- 증거: `services/account_equity_service.py:182-239`, `strategy/trading_guard.py:59-79`, 최신 account snapshots.
+- 재현/검증: account equity snapshot asset range와 closed trade PnL 집계를 비교합니다.
+- 권고: 성과 모델을 `realized_trade_pnl`, `unrealized_pnl`, `total_asset_delta`, `cash_delta`, `pending_exposure`로 분리하고, risk gate는 최소 `total_asset_delta`와 intraday drawdown을 사용해야 합니다.
+- 구현 전 테스트: `tests/services/test_account_equity_service.py`, `tests/strategy/test_trading_guard.py`에 account equity 기반 drawdown 테스트 추가.
+- Rollout: 먼저 리포트 경고와 chart, 이후 BUY gate/kill switch에 연결.
+- Rollback: gate 적용 전 report-only 단계는 제거 가능.
+- 분류: `유지하되 harden`
+
+### F-015: daily report의 주문 count와 TradeResult count가 섞여 리포트 해석이 혼란스러움
+
+- 심각도: `P2`
+- 상태: `검증 중`
+- 영역: `성과 측정 | 리포트`
+- 현상: 저장된 2026-04-21 daily report는 `total_orders=2`인데 `buy_count=0`, `sell_count=0`입니다. daily report는 activity count와 TradeResult count를 함께 사용합니다.
+- 영향: 리포트 사용자가 “주문 2건이 있었는데 매수/매도는 0건”으로 보게 되어 실제 주문/추천/체결/확인대기 구분이 흐려집니다.
+- 증거: `services/daily_report_service.py:119-137`, `daily_reports` read-only DB 조회.
+- 재현/검증: `select report_date,total_orders,buy_count,sell_count from daily_reports`.
+- 권고: report schema를 `recommendations`, `submitted_orders`, `broker_pending_orders`, `confirmed_entries`, `confirmed_exits`, `closed_positions`로 분리합니다.
+- 구현 전 테스트: daily report 서비스 테스트 파일을 추가하거나 기존 테스트에 count source별 분리 테스트 추가.
+- Rollout: 새 필드 추가 후 기존 total은 deprecated 표시.
+- Rollback: 기존 필드 유지 가능.
+- 분류: `유지하되 harden`
+
 ## Open Questions
 
 - 감사 기간에 `TRADING_ENABLED=true`를 유지할지, 아니면 `SELL_ONLY`/`READ_ONLY`에 가까운 별도 운영 모드를 만들지 결정해야 합니다.
 - DB pending과 브로커 pending이 불일치할 때 어떤 값을 신규 BUY 차단과 노출 계산의 기준으로 삼을지 결정해야 합니다.
 - LLM risk tuning이 제안할 수 있는 absolute cap을 계좌 규모별로 얼마로 둘지 결정해야 합니다.
+- closed trade 0건인 현 상태에서 전략 성과 판단은 account equity forward return 중심으로 임시 전환할지 결정해야 합니다.
 - `.env`와 shell history까지 시크릿 스캔 범위를 확장할지는 tracked files + runtime logs 점검 후 결정합니다.

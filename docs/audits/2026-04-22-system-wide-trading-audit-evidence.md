@@ -404,7 +404,95 @@ API 기준 현재 설정:
 
 ## Phase 4: 성과 측정과 PnL 신뢰도
 
-> 아직 시작하지 않았습니다.
+### 성과 Source 구분
+
+| 지표 | 코드 위치 | Source | 관찰 |
+|---|---|---|---|
+| closed trade metrics | `services/performance_reporting_service.py:57-95`, `170-183` | `TradeResult` 중 `side=BUY`, `status=CONFIRMED`, `exit_at IS NOT NULL` | 기대값, PF, 승률, max drawdown은 닫힌 BUY만 사용 |
+| live account snapshot | `services/performance_reporting_service.py:124-154` | broker adapter balance/holdings/pending | current account는 live 값으로 별도 포함 |
+| account equity snapshot | `services/account_equity_service.py:46-67`, `98-155` | broker adapter balance/holdings/pending -> `account_equity_snapshots` | 총자산, 현금, 주식평가, 평가손익, pending count 기록 |
+| session metrics | `services/account_equity_service.py:182-239` | day baseline + latest snapshot + completed trades | `asset_delta`, `realized_today_pnl`, `daily_unrealized_delta` 계산 |
+| strategy feedback stats | `analysis/feedback/performance_tracker.py:35-40`, `164-190` | closed BUY only | AI feedback/expectancy/연속손실은 닫힌 BUY만 기준 |
+| daily report | `services/daily_report_service.py:124-163` | opened/completed/sell count + broker unrealized | 실현손익과 미실현손익을 모두 prompt/report에 넣음 |
+
+### 운영 DB PnL 집계
+
+- `trade_results` closed BUY: `0`
+- `trade_results` open confirmed BUY: `48`
+- `trade_results` pending BUY: `21`
+- confirmed BUY 전체 `pnl_sum=0.0`, `return_pct_sum=0.0`, `is_win_count=0`
+- 의미:
+  - closed-trade 기반 기대값, PF, 승률, max drawdown은 현재 운영 DB에서 학습/평가에 쓸 표본이 없습니다.
+  - open/pending 상태가 많은데 닫힌 거래가 0건이라 “돈을 벌고 있는지”는 trade outcome 기반으로 판단할 수 없습니다.
+  - 현재 판단 가능한 것은 broker/account equity 기준 총자산 변화와 평가손익뿐입니다.
+
+### Account Equity Snapshot
+
+최신 계좌 API 응답:
+
+| key | value |
+|---|---:|
+| `total_asset` | 529,528,690 |
+| `cash` | 183,654,660 |
+| `stock_value` | 345,874,030 |
+| `total_pnl` | -2,047,365 |
+| `total_pnl_rate` | -0.59% |
+| `session_metrics.asset_delta` | +3,528,292 |
+| `session_metrics.asset_delta_rate` | +0.67% |
+| `session_metrics.realized_today_pnl` | 0 |
+| `session_metrics.daily_unrealized_delta` | +3,528,292 |
+| `session_metrics.intraday_high_asset` | 533,288,675 |
+| `session_metrics.intraday_low_asset` | 517,447,795 |
+
+최신 DB snapshots:
+
+| captured_at | total_asset | cash | stock_value | total_unrealized_pnl | pnl_rate | holding_count | pending_count |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 2026-04-22 11:10 | 528,195,291 | 183,662,041 | 344,533,250 | -3,380,764 | -0.98% | 6 | 3 |
+| 2026-04-22 11:05 | 529,261,473 | 208,395,433 | 320,866,040 | -2,314,582 | -0.72% | 6 | 4 |
+| 2026-04-22 11:00 | 533,288,675 | 103,129,267 | 430,159,408 | 8,639,880 | 2.07% | 7 | 5 |
+| 2026-04-22 10:55 | 530,664,894 | 103,143,773 | 427,521,121 | 6,016,099 | 1.44% | 7 | 4 |
+| 2026-04-22 10:50 | 530,396,838 | 103,145,240 | 427,251,598 | 5,748,043 | 1.38% | 7 | 4 |
+
+기준선:
+
+- 2026-04-22 baseline: total_asset 526,000,398, cash 525,983,658, stock_value 16,740, unrealized -113, holding_count 2, pending_count 0.
+- 이후 11:00에는 stock_value가 430,159,408까지 증가했습니다.
+- 총자산 기준 baseline은 유용하지만, baseline stock/cash/holding 상태는 장 시작 직후 동기화 전 상태일 가능성이 있어 포지션/노출 기준으로 쓰기 어렵습니다.
+
+### Daily Reports
+
+최신 저장 리포트:
+
+| report_date | cycles | analyses | recommendations | total_orders | buy_count | sell_count | win/loss | total_pnl | unrealized_pnl | open_positions |
+|---|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|
+| 2026-04-21 | 15 | 280 | 180 | 2 | 0 | 0 | 0/0 | 0 | 0 | 8 |
+| 2026-04-10 | 2 | 166 | 20 | 13 | 13 | 0 | 0/0 | 0 | 0 | 8 |
+
+관찰:
+
+- daily report는 broker unrealized를 포함하도록 구현되어 있지만 저장된 과거 리포트의 `unrealized_pnl`은 0입니다.
+- 2026-04-22 리포트는 아직 저장되지 않았습니다.
+- `total_orders=2`인데 `buy_count=0`, `sell_count=0`인 2026-04-21 row는 activity count 기반 total과 TradeResult 기반 count가 섞인 결과일 가능성이 있습니다.
+
+### Rollout/전략 평가 영향
+
+- `PerformanceReportingService._calc_metrics`는 trade_count가 0이면 expectancy, PF, drawdown을 모두 0으로 반환합니다.
+- PF는 loss가 없으면 999로 cap되지만, 현재는 closed trade가 0이라 PF 0입니다.
+- rollout 판단은 min sample size를 보지만, closed trade가 0이면 promote는 되지 않습니다.
+- 문제는 “나쁘다”보다 “평가 불가”입니다. 이 상태에서 전략/뉴스/LLM 성능 결론을 내리면 안 됩니다.
+
+### Phase 4 Verification
+
+```bash
+.venv313/bin/python -m pytest tests/services/test_performance_reporting_service.py tests/services/test_account_equity_service.py tests/strategy/test_trading_guard.py
+```
+
+결과:
+
+- 17 tests passed.
+- 확인 범위: performance metric 계산, rollout 판단, account baseline/session metrics, trading guard.
+- 미확인 범위: closed trade 0건일 때 UI/API가 “평가 불가”로 표시되는지, activity count와 TradeResult count 불일치 경고, stale open lot/pending이 성과 리포트에 경고로 노출되는지.
 
 ## Phase 5: 전략 가치와 매매 기대값
 

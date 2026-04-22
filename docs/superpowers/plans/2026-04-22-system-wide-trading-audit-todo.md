@@ -189,16 +189,16 @@
 - Read: `tests/services/test_account_equity_service.py`
 - Update: audit evidence/findings docs
 
-- [ ] **Step 1: realized/unrealized PnL 정의 분리**
+- [x] **Step 1: realized/unrealized PnL 정의 분리**
   - 닫힌 거래 손익, 열린 포지션 평가손익, 총자산 변화, 현금 변화의 정의를 분리한다.
 
-- [ ] **Step 2: 성과 지표 신뢰도 점검**
+- [x] **Step 2: 성과 지표 신뢰도 점검**
   - expectancy, profit factor, max drawdown, win rate, trade count가 어떤 source에서 계산되는지 기록한다.
 
-- [ ] **Step 3: canonical PnL 모델 초안 작성**
+- [x] **Step 3: canonical PnL 모델 초안 작성**
   - 구현하지 말고 먼저 어떤 테이블/필드가 canonical인지 findings에 제안한다.
 
-- [ ] **Step 4: 구현 후보 테스트 정의**
+- [x] **Step 4: 구현 후보 테스트 정의**
   - 문제 발견 시 `tests/services/test_performance_reporting_service.py`에 “닫힌 거래만”, “열린 평가손익 포함”, “브로커 snapshot과 대사” 테스트를 먼저 추가하도록 계획한다.
 
 ## Phase 5: 전략 가치와 매매 기대값 감사
