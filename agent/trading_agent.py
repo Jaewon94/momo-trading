@@ -9,6 +9,7 @@ from loguru import logger
 
 from agent.decision_maker import decision_maker
 from agent.market_scanner import market_scanner
+from agent.order_reservation import OrderReservationDecision, OrderReservationLedger
 from analysis.chart_analyzer import ChartAnalysisResult, chart_analyzer
 from analysis.feedback.context_builder import FeedbackContextBuilder
 from analysis.llm.llm_factory import llm_factory
@@ -299,6 +300,7 @@ class TradingAgent:
 
             semaphore = asyncio.Semaphore(llm_factory.analysis_concurrency_limit())
             executed_count = 0
+            reservation_ledger = OrderReservationLedger(starting_cash=snapshot.get("cash", 0))
 
             holding_syms = {
                 normalize_krx_symbol(item) for item in snapshot.get("holding_symbols", [])
@@ -331,6 +333,7 @@ class TradingAgent:
                         stock_info, cycle_id,
                         dynamic_limits=dynamic_limits,
                         portfolio_snapshot=snapshot,
+                        order_reservation_ledger=reservation_ledger,
                         executed_count_ref=lambda: executed_count,
                         manual_provider_override=manual_provider_override,
                         manual_model_override=manual_model_override,
@@ -527,6 +530,7 @@ class TradingAgent:
         self, stock_info: dict, cycle_id: str,
         dynamic_limits: dict | None = None,
         portfolio_snapshot: dict | None = None,
+        order_reservation_ledger: OrderReservationLedger | None = None,
         executed_count_ref: Callable | None = None,
         manual_provider_override: str | None = None,
         manual_model_override: str | None = None,
@@ -1092,6 +1096,8 @@ class TradingAgent:
         if risk_result.get("adjusted_quantity"):
             signal.suggested_quantity = risk_result["adjusted_quantity"]
 
+        reservation_decision: OrderReservationDecision | None = None
+
         # 6. 매수 시 주문 직전 매수가능수량 재조회 (병렬 주문으로 가용금액 변동 반영)
         if signal.action == SignalAction.BUY:
             min_qty = (
@@ -1127,6 +1133,15 @@ class TradingAgent:
             # 매수 주문 실행 정책 적용 (시장가/슬리피지 가드 지정가)
             self._apply_buy_execution_policy(signal=signal, current_price=current_price)
 
+            reservation_decision = await self._reserve_buy_cash_for_cycle(
+                signal,
+                order_reservation_ledger,
+                cycle_id=cycle_id,
+                stock_name=name,
+            )
+            if not reservation_decision.approved and self._order_reservation_mode() == "ENFORCE":
+                return result
+
         # 7. 매매 결정 (자율/반자율) — AI 분석 컨텍스트를 TradeResult에 전달
         analysis_context = {
             "ai_recommendation": analysis.get("recommendation"),
@@ -1157,8 +1172,72 @@ class TradingAgent:
             signal, cycle_id=cycle_id, analysis_context=analysis_context,
         )
         result["executed"] = exec_result.get("success", False)
+        if (
+            signal.action == SignalAction.BUY
+            and order_reservation_ledger is not None
+            and reservation_decision is not None
+            and reservation_decision.reservation_id
+            and not result["executed"]
+        ):
+            order_reservation_ledger.release(reservation_decision.reservation_id, reason="order_not_submitted")
 
         return result
+
+    @staticmethod
+    def _order_reservation_mode() -> str:
+        mode = str(getattr(settings, "ORDER_RESERVATION_ENFORCEMENT", "SHADOW") or "SHADOW").upper()
+        return "ENFORCE" if mode == "ENFORCE" else "SHADOW"
+
+    async def _reserve_buy_cash_for_cycle(
+        self,
+        signal: TradeSignal,
+        order_reservation_ledger: OrderReservationLedger | None,
+        *,
+        cycle_id: str | None = None,
+        stock_name: str | None = None,
+    ) -> OrderReservationDecision:
+        amount = float(signal.suggested_price or 0.0) * int(signal.suggested_quantity or 0)
+        if order_reservation_ledger is None:
+            return OrderReservationDecision(
+                approved=True,
+                symbol=normalize_krx_symbol(signal.symbol),
+                requested_amount=amount,
+                reserved_amount=0.0,
+                available_cash=0.0,
+                reason="예약 ledger 없음",
+            )
+
+        decision = order_reservation_ledger.reserve(
+            symbol=signal.symbol,
+            amount=amount,
+            quantity=int(signal.suggested_quantity or 0),
+        )
+        if not decision.approved:
+            message = (
+                f"💰 [{stock_name or signal.symbol}] cycle 현금 예약 부족 "
+                f"({decision.available_cash:,.0f}원 < {decision.requested_amount:,.0f}원)"
+            )
+            if self._order_reservation_mode() == "ENFORCE":
+                await activity_logger.log(
+                    ActivityType.RISK_CHECK,
+                    ActivityPhase.SKIP,
+                    message,
+                    cycle_id=cycle_id,
+                    symbol=signal.symbol,
+                    detail={
+                        "mode": "ENFORCE",
+                        "reason": decision.reason,
+                        "available_cash": decision.available_cash,
+                        "requested_amount": decision.requested_amount,
+                    },
+                )
+            else:
+                logger.warning("[{}] cycle 현금 예약 shadow 경고: {}", signal.symbol, decision.reason)
+            return decision
+
+        signal.metadata["order_reservation_id"] = decision.reservation_id
+        signal.metadata["order_reserved_amount"] = decision.reserved_amount
+        return decision
 
     @staticmethod
     def _apply_buy_execution_policy(signal: TradeSignal, current_price: float) -> None:

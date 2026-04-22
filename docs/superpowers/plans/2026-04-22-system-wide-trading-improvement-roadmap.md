@@ -167,26 +167,31 @@
 - Test: `tests/agent/test_order_reservation.py`
 - Test: `tests/agent/test_trading_agent_risk_reservation.py`
 
-- [ ] **Step 1: 실패 테스트 작성**
+- [x] **Step 1: 실패 테스트 작성**
   - 두 BUY 후보가 같은 cash snapshot을 동시에 통과하려는 fixture를 만든다.
   - 첫 후보가 70% 현금을 reserve하면 두 번째 후보는 남은 현금 기준으로 차단되는지 테스트한다.
+  - Result: `tests/agent/test_order_reservation.py`와 `tests/agent/test_trading_agent_risk_reservation.py`에 cycle-local 현금 예약 테스트를 추가했다.
 
-- [ ] **Step 2: 실패 확인**
+- [x] **Step 2: 실패 확인**
   - Run: `./.venv313/bin/python -m pytest tests/agent/test_order_reservation.py tests/agent/test_trading_agent_risk_reservation.py -q`
   - Expected: reservation 부재로 두 후보가 모두 통과.
+  - Result: `ModuleNotFoundError: No module named 'agent.order_reservation'`로 실패 확인.
 
-- [ ] **Step 3: 최소 구현**
+- [x] **Step 3: 최소 구현**
   - cycle 단위 `OrderReservationLedger`를 추가한다.
   - 주문 접수 성공/실패/skip에서 reservation 상태를 명확히 해제하거나 확정한다.
   - 처음 rollout은 `ORDER_RESERVATION_ENFORCEMENT=shadow`로 mismatch 로그만 남긴다.
+  - Result: `OrderReservationLedger`를 추가하고 TradingAgent BUY 직전 예약을 연결했다. 기본값은 `SHADOW`, 명시적으로 `ENFORCE`일 때만 cycle 현금 부족 BUY를 차단한다.
 
-- [ ] **Step 4: 통과 확인**
+- [x] **Step 4: 통과 확인**
   - Run: `./.venv313/bin/python -m pytest tests/agent/test_order_reservation.py tests/agent/test_trading_agent_risk_reservation.py -q`
   - Expected: PASS.
+  - Result: 3 passed.
 
-- [ ] **Step 5: 관련 회귀/커밋**
+- [x] **Step 5: 관련 회귀/커밋**
   - Run: `./.venv313/bin/python -m pytest tests/agent tests/strategy tests/trading -q`
   - Commit: `feat: add cycle cash reservation ledger`
+  - Result: 134 passed. 커밋은 이 작업 검증 후 생성.
 
 ### Task 2.3: liquidation retry 기록 누락 수정
 

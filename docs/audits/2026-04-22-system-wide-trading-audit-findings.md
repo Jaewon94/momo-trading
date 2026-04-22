@@ -200,7 +200,7 @@
 ### F-011: 병렬 BUY 후보 간 현금 예약 ledger가 없어 주문 전 risk check가 같은 현금을 중복 사용할 수 있음
 
 - 심각도: `P1`
-- 상태: `검증 중`
+- 상태: `완화됨`
 - 영역: `주문 | 리스크 | 자본 배분`
 - 현상: 후보 종목 분석은 병렬로 수행되고 각 후보는 같은 cycle portfolio snapshot을 받아 risk check를 수행합니다. BUY 직전 buying power 재조회는 있지만, 주문 접수 후 체결/미체결 pending이 반영되기 전 다른 후보가 같은 현금을 기준으로 통과할 수 있습니다.
 - 영향: 서로 다른 종목의 동시 BUY가 broker reject로 끝나거나, 의도보다 큰 주문 시도가 발생할 수 있습니다. 이는 중복 주문/과다 노출 방지 측면의 pre-trade control 공백입니다.
@@ -211,6 +211,7 @@
 - Rollout: 먼저 dry-run reservation log, 이후 실제 BUY gate에 적용.
 - Rollback: reservation gate를 feature flag로 분리.
 - 분류: `유지하되 harden`
+- 조치: Track 2 Task 2.2에서 cycle-local `OrderReservationLedger`와 `ORDER_RESERVATION_ENFORCEMENT=SHADOW|ENFORCE`를 추가했습니다. 기본값은 `SHADOW`로 중복 현금 사용 경고/관측부터 시작하고, `ENFORCE`일 때만 두 번째 BUY를 cycle 잔여 현금 기준으로 차단합니다.
 
 ### F-012: DB open BUY 노출이 실제 브로커 보유 평가액보다 크게 부풀어 있음
 

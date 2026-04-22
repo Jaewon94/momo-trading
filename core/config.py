@@ -147,6 +147,7 @@ class Settings(BaseSettings):
     MAX_SINGLE_ORDER_USD: int = 0  # 0 = AI 자율 결정
     BUY_ORDER_EXECUTION_MODE: str = "LIMIT_GUARD"  # LIMIT_GUARD | MARKET
     BUY_SLIPPAGE_GUARD_BPS: int = 20  # LIMIT_GUARD 모드에서 허용 슬리피지 (bp)
+    ORDER_RESERVATION_ENFORCEMENT: str = "SHADOW"  # SHADOW | ENFORCE
     AUTO_RISK_KILL_SWITCH_ENABLED: bool = True
     MAX_DAILY_DRAWDOWN_PCT: float = 2.5  # 일손실률 한도(%)
     MAX_CONSECUTIVE_LOSSES: int = 4
