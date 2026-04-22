@@ -17,151 +17,424 @@
 ※ DAY_TRADING_ONLY=true: 당일 매수→당일 청산 필수 (오버나이트 없음)
 ※ DAY_TRADING_ONLY=false: 스윙 모드 — 유망 종목 오버나이트 보유 (스마트 청산)
 """
+from collections.abc import Awaitable
+import asyncio
+import copy
+import time as _time
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
 
 from core.config import settings
-from trading.enums import ActivityPhase, ActivityType
+from core.events import Event, EventType, event_bus
+from core.order_submission import decide_order_submission
+from services.observability_maintenance_service import observability_maintenance_service
+from services.observability_service import observability_service
+from services.account_equity_service import account_equity_service
+from services.error_capture_service import error_capture_service
+from services.news_translation_backfill_service import news_translation_backfill_service
+from trading.broker_factory import get_broker_adapter
+from trading.enums import ActivityPhase, ActivityType, Market, OrderSide, OrderType
+from trading.models import OrderRequest
 
 
 class TradingScheduler:
     """KRX 장 시간 기반 자동 운영 스케줄러"""
 
     def __init__(self):
-        self.scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
+        self.scheduler = self._build_scheduler()
         self._running = False
+        self._news_poll_lock = asyncio.Lock()
+        self._background_tasks: set[asyncio.Task[object]] = set()
+        self._last_event_news_poll_at = 0.0
+        self._last_event_news_poll_by_symbol: dict[str, float] = {}
+        self._event_handlers_registered = False
+        self._register_news_event_handlers()
 
-    async def start(self) -> None:
-        if not settings.SCHEDULER_ENABLED:
-            logger.debug("스케줄러 비활성화 (SCHEDULER_ENABLED=false)")
+    def _spawn_background_task(
+        self,
+        coro,
+        *,
+        task_name: str,
+        delay_seconds: float = 0.25,
+    ) -> None:
+        async def _runner() -> None:
+            try:
+                if delay_seconds > 0:
+                    await asyncio.sleep(delay_seconds)
+                await coro
+            except Exception as exc:
+                logger.warning("백그라운드 시작 작업 실패 ({}): {}", task_name, str(exc))
+                await error_capture_service.capture_exception(
+                    component="scheduler",
+                    operation=f"startup_task:{task_name}",
+                    exc=exc,
+                )
+
+        asyncio.create_task(_runner())
+
+    @staticmethod
+    def _build_scheduler() -> AsyncIOScheduler:
+        return AsyncIOScheduler(timezone="Asia/Seoul")
+
+    def _register_news_event_handlers(self) -> None:
+        if self._event_handlers_registered:
+            return
+        event_bus.subscribe(EventType.VOLUME_SPIKE, self._on_news_trigger_event)
+        event_bus.subscribe(EventType.PRICE_SURGE, self._on_news_trigger_event)
+        event_bus.subscribe(EventType.PRICE_DROP, self._on_news_trigger_event)
+        event_bus.subscribe(EventType.ORDER_EXECUTED, self._on_news_trigger_event)
+        event_bus.subscribe(EventType.RECOMMENDATION_CREATED, self._on_news_trigger_event)
+        event_bus.subscribe(EventType.MARKET_OPEN, self._on_news_trigger_event)
+        self._event_handlers_registered = True
+
+    def _schedule_background_task(
+        self,
+        coro: Awaitable[object],
+        *,
+        label: str,
+    ) -> asyncio.Task[object]:
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+
+        def _finalize(done_task: asyncio.Task[object]) -> None:
+            self._background_tasks.discard(done_task)
+            if done_task.cancelled():
+                return
+            try:
+                done_task.result()
+            except Exception as exc:  # pragma: no cover - logging path
+                logger.warning("{} 실패: {}", label, str(exc))
+
+        task.add_done_callback(_finalize)
+        return task
+
+    async def _on_news_trigger_event(self, event: Event) -> None:
+        if not settings.NEWS_POLL_ENABLED:
             return
 
-        self._setup_jobs()
+        now_mono = _time.monotonic()
+        symbol = str((event.data or {}).get("symbol") or "").strip()
+        global_cooldown_sec = 90.0
+        symbol_cooldown_sec = 300.0
+
+        if (now_mono - self._last_event_news_poll_at) < global_cooldown_sec:
+            return
+        if symbol:
+            last_symbol_at = float(self._last_event_news_poll_by_symbol.get(symbol) or 0.0)
+            if (now_mono - last_symbol_at) < symbol_cooldown_sec:
+                return
+            self._last_event_news_poll_by_symbol[symbol] = now_mono
+
+        self._last_event_news_poll_at = now_mono
+        self._schedule_background_task(
+            self._news_poll(
+                trigger_mode="AUTO_EVENT",
+                trigger_reason=event.type.value,
+            ),
+            label="이벤트 기반 뉴스 폴링",
+        )
+
+    async def _fetch_current_price(self, symbol: str, market: Market = Market.KRX) -> float:
+        """브로커 어댑터 기준 현재가를 조회한다."""
+        quote = await get_broker_adapter().get_current_price(symbol, market)
+        return float(quote.price or 0.0)
+
+    async def _place_market_sell(self, symbol: str, quantity: int, market: Market = Market.KRX):
+        """브로커 어댑터 기준 시장가 매도 주문을 실행한다."""
+        submission_decision = decide_order_submission(OrderSide.SELL)
+        if not submission_decision.allowed:
+            return type("NormalizedOrderResult", (), {
+                "success": False,
+                "order_id": "",
+                "message": submission_decision.reason,
+                "error": submission_decision.reason,
+            })()
+
+        request = OrderRequest(
+            symbol=symbol,
+            market=market,
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,
+            quantity=quantity,
+        )
+        result = await get_broker_adapter().place_order(request)
+        return type("NormalizedOrderResult", (), {
+            "success": bool(result.success),
+            "order_id": result.order_id or "",
+            "message": result.message,
+            "error": None if result.success else result.message,
+        })()
+
+    async def start(self) -> None:
+        if self._running:
+            logger.debug("스케줄러 이미 실행 중")
+            return
+
+        trading_jobs_enabled = bool(settings.SCHEDULER_ENABLED)
+        news_jobs_enabled = bool(settings.NEWS_POLL_ENABLED)
+
+        if not trading_jobs_enabled and not news_jobs_enabled:
+            logger.debug("스케줄러 비활성화 (SCHEDULER_ENABLED=false, NEWS_POLL_ENABLED=false)")
+            return
+
+        self.scheduler = self._build_scheduler()
+        self._setup_jobs(
+            include_trading_jobs=trading_jobs_enabled,
+            include_news_jobs=news_jobs_enabled,
+        )
         self.scheduler.start()
         self._running = True
-        logger.info("스케줄러 시작 — 트레이딩 타임라인 활성화")
+        if trading_jobs_enabled:
+            logger.info("스케줄러 시작 — 트레이딩 타임라인 활성화")
+        else:
+            logger.info("뉴스 폴링 스케줄러 시작 — 트레이딩 스케줄러 비활성")
 
         # 서버 기동 시 현재 상태에 맞는 초기 작업 실행
-        await self._on_startup()
+        if trading_jobs_enabled:
+            self._spawn_background_task(
+                self._on_startup(),
+                task_name="trading_startup",
+            )
+        if news_jobs_enabled:
+            self._spawn_background_task(
+                self._news_poll(),
+                task_name="initial_news_poll",
+            )
+            self._spawn_background_task(
+                self._news_translation_backfill(),
+                task_name="initial_news_translation_backfill",
+            )
 
     async def stop(self) -> None:
         if self._running:
             self.scheduler.shutdown(wait=False)
             self._running = False
+            self.scheduler = self._build_scheduler()
             logger.info("스케줄러 중지")
 
-    def _setup_jobs(self) -> None:
+    async def wait_until_idle(
+        self,
+        *,
+        timeout_sec: float = 60.0,
+        poll_interval_sec: float = 0.1,
+    ) -> bool:
+        deadline = _time.perf_counter() + max(float(timeout_sec), 0.0)
+        interval = max(float(poll_interval_sec), 0.01)
+
+        while True:
+            if not self._news_poll_lock.locked() and not self._background_tasks:
+                return True
+            if _time.perf_counter() >= deadline:
+                return False
+            await asyncio.sleep(interval)
+
+    async def _resource_snapshot(self) -> None:
+        await observability_service.record_resource_snapshot()
+
+    async def _account_equity_snapshot(self) -> None:
+        await account_equity_service.capture_and_record_current(
+            session_phase="INTRADAY",
+            detail={"reason": "scheduler_interval"},
+        )
+
+    async def _observability_maintenance(self) -> None:
+        started_at = _time.perf_counter()
+        try:
+            summary = await observability_maintenance_service.run_maintenance()
+            elapsed_ms = int((_time.perf_counter() - started_at) * 1000)
+            await observability_service.record_execution_metric(
+                metric_type="JOB",
+                metric_name="OBSERVABILITY_MAINTENANCE",
+                status="SUCCESS",
+                elapsed_ms=elapsed_ms,
+                detail=summary,
+            )
+        except Exception as exc:
+            elapsed_ms = int((_time.perf_counter() - started_at) * 1000)
+            await observability_service.record_execution_metric(
+                metric_type="JOB",
+                metric_name="OBSERVABILITY_MAINTENANCE",
+                status="ERROR",
+                elapsed_ms=elapsed_ms,
+                detail={"error": str(exc)},
+            )
+            raise
+
+    def _setup_jobs(
+        self,
+        *,
+        include_trading_jobs: bool = True,
+        include_news_jobs: bool = True,
+    ) -> None:
         from scheduler.jobs.portfolio_sync_job import portfolio_sync_job
         from scheduler.jobs.market_data_job import market_data_job
 
-        # ── 장 시작 전 준비 (08:50 평일) — KRX 개장 10분 전 ──
-        self.scheduler.add_job(
-            self._pre_market,
-            "cron",
-            hour=8, minute=50,
-            day_of_week="mon-fri",
-            id="pre_market",
-            name="장 시작 전 준비",
-            misfire_grace_time=600,
-        )
+        if include_trading_jobs:
+            # ── 장 시작 전 준비 (08:50 평일) — KRX 개장 10분 전 ──
+            self.scheduler.add_job(
+                self._pre_market,
+                "cron",
+                hour=8, minute=50,
+                day_of_week="mon-fri",
+                id="pre_market",
+                name="장 시작 전 준비",
+                misfire_grace_time=600,
+            )
 
-        # ── 장 시작 스캔 (09:05 평일) — 전체 시장 스캔 → 종목 선정 → 매매 시작 ──
-        self.scheduler.add_job(
-            self._market_open_scan,
-            "cron",
-            hour=9, minute=5,
-            day_of_week="mon-fri",
-            id="market_open_scan",
-            name="장 시작 스캔 + 매매",
-            misfire_grace_time=600,
-        )
+            # ── 장 시작 스캔 (09:05 평일) — 전체 시장 스캔 → 종목 선정 → 매매 시작 ──
+            self.scheduler.add_job(
+                self._market_open_scan,
+                "cron",
+                hour=9, minute=5,
+                day_of_week="mon-fri",
+                id="market_open_scan",
+                name="장 시작 스캔 + 매매",
+                misfire_grace_time=600,
+            )
 
-        # ── 장중 재스캔 (11:00, 13:00 평일) — 새로운 기회 탐색 ──
-        self.scheduler.add_job(
-            self._intraday_rescan,
-            "cron",
-            hour="11,13", minute=0,
-            day_of_week="mon-fri",
-            id="intraday_rescan",
-            name="장중 재스캔",
-            misfire_grace_time=600,
-        )
+            # ── 장중 재스캔 (11:00, 13:00 평일) — 새로운 기회 탐색 ──
+            self.scheduler.add_job(
+                self._intraday_rescan,
+                "cron",
+                hour="11,13", minute=0,
+                day_of_week="mon-fri",
+                id="intraday_rescan",
+                name="장중 재스캔",
+                misfire_grace_time=600,
+            )
 
-        # ── 장중 보유종목 점검 (1시간 간격, 09:00~15:00) — WebSocket 보완용 안전망 ──
-        self.scheduler.add_job(
-            self._holdings_check,
-            "cron",
-            minute="0,15,30,45",
-            hour="9-14",
-            day_of_week="mon-fri",
-            id="holdings_check",
-            name="보유종목 손절/익절 점검",
-            misfire_grace_time=300,
-        )
+        if include_news_jobs:
+            self.scheduler.add_job(
+                self._news_poll,
+                "interval",
+                minutes=max(int(settings.NEWS_POLL_INTERVAL_MIN_TRADING or 5), 1),
+                id="news_poll_trading",
+                name="장중 뉴스 폴링",
+                kwargs={"market_hours": True},
+            )
 
-        # ── 장중 보유종목 AI 재평가 (30분 간격, 09:00~14:00) — 맥락 기반 HOLD/SELL + 임계값 조정 ──
-        self.scheduler.add_job(
-            self._intraday_holdings_review,
-            "cron",
-            minute="0,30",
-            hour="9-14",
-            day_of_week="mon-fri",
-            id="intraday_holdings_review",
-            name="장중 보유종목 AI 재평가",
-            misfire_grace_time=600,
-        )
+            self.scheduler.add_job(
+                self._news_poll,
+                "interval",
+                minutes=max(int(settings.NEWS_POLL_INTERVAL_MIN_OFF_HOURS or 30), 1),
+                id="news_poll_off_hours",
+                name="장외 뉴스 폴링",
+                kwargs={"market_hours": False},
+            )
+            self.scheduler.add_job(
+                self._news_translation_backfill,
+                "interval",
+                minutes=5,
+                id="news_translation_backfill",
+                name="뉴스 번역 백로그 처리",
+            )
 
-        # ── 장 마감 전 청산 (15:10 평일) — DAY_TRADING: 전량 매도 / 스윙: 스마트 청산 ──
-        self.scheduler.add_job(
-            self._force_liquidation,
-            "cron",
-            hour=settings.FORCE_LIQUIDATION_HOUR,
-            minute=settings.FORCE_LIQUIDATION_MINUTE,
-            day_of_week="mon-fri",
-            id="force_liquidation",
-            name="장 마감 전 청산",
-            misfire_grace_time=300,
-        )
+        if bool(getattr(settings, "METRICS_RESOURCE_SAMPLING_ENABLED", True)):
+            self.scheduler.add_job(
+                self._resource_snapshot,
+                "interval",
+                minutes=max(int(getattr(settings, "METRICS_RESOURCE_INTERVAL_MIN", 5) or 5), 1),
+                id="resource_snapshot",
+                name="리소스 스냅샷",
+            )
 
-        # ── 장 마감 리뷰 (15:40 평일) — KRX 종가 기반 성과 리뷰 ──
-        self.scheduler.add_job(
-            self._post_market,
-            "cron",
-            hour=15, minute=40,
-            day_of_week="mon-fri",
-            id="post_market",
-            name="장 마감 성과 리뷰",
-            misfire_grace_time=3600,
-        )
+        if bool(getattr(settings, "METRICS_MAINTENANCE_ENABLED", True)):
+            self.scheduler.add_job(
+                self._observability_maintenance,
+                "interval",
+                minutes=max(int(getattr(settings, "METRICS_MAINTENANCE_INTERVAL_MIN", 60) or 60), 1),
+                id="observability_maintenance",
+                name="운영 메트릭 롤업/정리",
+            )
 
-        # ── 포트폴리오 정산 (16:00) ──
-        self.scheduler.add_job(
-            portfolio_sync_job,
-            "cron",
-            hour=16, minute=0,
-            id="portfolio_sync",
-            name="포트폴리오 정산",
-            misfire_grace_time=3600,
-        )
+        if include_trading_jobs:
+            self.scheduler.add_job(
+                self._account_equity_snapshot,
+                "cron",
+                minute="*/5",
+                hour="9-15",
+                day_of_week="mon-fri",
+                id="account_equity_snapshot",
+                name="계좌 자산 스냅샷",
+                misfire_grace_time=300,
+            )
 
-        # ── 일봉 데이터 수집 (16:30) ──
-        self.scheduler.add_job(
-            market_data_job,
-            "cron",
-            hour=16, minute=30,
-            id="market_data",
-            name="일봉 데이터 수집",
-            misfire_grace_time=3600,
-        )
+            # ── 장중 보유종목 점검 (1시간 간격, 09:00~15:00) — WebSocket 보완용 안전망 ──
+            self.scheduler.add_job(
+                self._holdings_check,
+                "cron",
+                minute="0,15,30,45",
+                hour="9-14",
+                day_of_week="mon-fri",
+                id="holdings_check",
+                name="보유종목 손절/익절 점검",
+                misfire_grace_time=300,
+            )
 
-        # ── 만료 추천 정리 (1시간 간격) ──
-        self.scheduler.add_job(
-            self._expire_recommendations,
-            "interval",
-            hours=1,
-            id="expire_recommendations",
-            name="만료 추천 처리",
-        )
+            # ── 장중 보유종목 AI 재평가 (30분 간격, 09:00~14:00) — 맥락 기반 HOLD/SELL + 임계값 조정 ──
+            self.scheduler.add_job(
+                self._intraday_holdings_review,
+                "cron",
+                minute="0,30",
+                hour="9-14",
+                day_of_week="mon-fri",
+                id="intraday_holdings_review",
+                name="장중 보유종목 AI 재평가",
+                misfire_grace_time=600,
+            )
+
+            # ── 장 마감 전 청산 (15:10 평일) — DAY_TRADING: 전량 매도 / 스윙: 스마트 청산 ──
+            self.scheduler.add_job(
+                self._force_liquidation,
+                "cron",
+                hour=settings.FORCE_LIQUIDATION_HOUR,
+                minute=settings.FORCE_LIQUIDATION_MINUTE,
+                day_of_week="mon-fri",
+                id="force_liquidation",
+                name="장 마감 전 청산",
+                misfire_grace_time=300,
+            )
+
+            # ── 장 마감 리뷰 (15:40 평일) — KRX 종가 기반 성과 리뷰 ──
+            self.scheduler.add_job(
+                self._post_market,
+                "cron",
+                hour=15, minute=40,
+                day_of_week="mon-fri",
+                id="post_market",
+                name="장 마감 성과 리뷰",
+                misfire_grace_time=3600,
+            )
+
+            # ── 포트폴리오 정산 (16:00) ──
+            self.scheduler.add_job(
+                portfolio_sync_job,
+                "cron",
+                hour=16, minute=0,
+                id="portfolio_sync",
+                name="포트폴리오 정산",
+                misfire_grace_time=3600,
+            )
+
+            # ── 일봉 데이터 수집 (16:30) ──
+            self.scheduler.add_job(
+                market_data_job,
+                "cron",
+                hour=16, minute=30,
+                id="market_data",
+                name="일봉 데이터 수집",
+                misfire_grace_time=3600,
+            )
+
+            # ── 만료 추천 정리 (1시간 간격) ──
+            self.scheduler.add_job(
+                self._expire_recommendations,
+                "interval",
+                hours=1,
+                id="expire_recommendations",
+                name="만료 추천 처리",
+            )
 
     # ─────────── 스케줄 작업 구현 ───────────
 
@@ -387,6 +660,90 @@ class TradingScheduler:
         except Exception as e:
             logger.warning("WebSocket 구독 갱신 실패: {}", str(e))
 
+    async def _news_poll(
+        self,
+        market_hours: bool | None = None,
+        *,
+        trigger_mode: str | None = None,
+        trigger_reason: str | None = None,
+    ) -> None:
+        """뉴스 자동 폴링 + 신규 뉴스 이벤트 발행"""
+        if not settings.NEWS_POLL_ENABLED:
+            return
+
+        from core.database import AsyncSessionLocal
+        from scheduler.market_calendar import market_calendar
+        from services.news_polling_service import news_polling_service
+
+        actual_market_hours = market_calendar.is_krx_trading_hours()
+        if market_hours is not None and actual_market_hours != market_hours:
+            return
+
+        runtime_mode = trigger_mode or ("AUTO_TRADING" if actual_market_hours else "AUTO_OFF_HOURS")
+
+        try:
+            async with self._news_poll_lock:
+                async with AsyncSessionLocal() as session:
+                    summary = await news_polling_service.poll_sources(
+                        session,
+                        market_hours=actual_market_hours,
+                        mode=runtime_mode,
+                    )
+                    await session.commit()
+            if summary.get("skipped"):
+                logger.debug("뉴스 폴링 스킵: {}", summary.get("reason", "unknown"))
+            if summary.get("created"):
+                logger.info(
+                    "뉴스 폴링 완료: 신규 {}건, 이벤트 {}건",
+                    summary.get("created", 0),
+                    summary.get("published_events", 0),
+                )
+            elif trigger_reason:
+                logger.debug("이벤트 기반 뉴스 폴링 완료: {} ({})", runtime_mode, trigger_reason)
+        except Exception as e:
+            logger.warning("뉴스 폴링 오류: {}", str(e))
+            await error_capture_service.capture_exception(
+                component="scheduler",
+                operation="news_poll",
+                exc=e,
+                detail={
+                    "trigger_mode": runtime_mode,
+                    "trigger_reason": trigger_reason,
+                    "market_hours": actual_market_hours,
+                },
+            )
+
+    async def _news_translation_backfill(self) -> None:
+        if not settings.NEWS_LLM_ENABLED:
+            return
+
+        from core.database import AsyncSessionLocal
+        from scheduler.market_calendar import market_calendar
+
+        actual_market_hours = market_calendar.is_krx_trading_hours()
+        try:
+            async with AsyncSessionLocal() as session:
+                summary = await news_translation_backfill_service.process_pending(
+                    session,
+                    market_hours=actual_market_hours,
+                )
+                await session.commit()
+            await observability_service.record_execution_metric(
+                metric_type="JOB",
+                metric_name="NEWS_TRANSLATION_BACKFILL",
+                status=str(summary.get("status") or "IDLE"),
+                elapsed_ms=0,
+                detail=summary,
+            )
+        except Exception as e:
+            logger.warning("뉴스 번역 백로그 처리 오류: {}", str(e))
+            await error_capture_service.capture_exception(
+                component="scheduler",
+                operation="news_translation_backfill",
+                exc=e,
+                detail={"market_hours": actual_market_hours},
+            )
+
     async def _holdings_check(self) -> None:
         """보유종목 현재가 점검 — WebSocket 보완용 안전망 + 시간 기반 조기 청산
 
@@ -395,7 +752,7 @@ class TradingScheduler:
         조기 익절/손절도 실행한다. KRX 장중(09:00~15:30)에만 작동.
         """
         from scheduler.market_calendar import market_calendar
-        if not market_calendar.is_krx_trading_hours():
+        if not market_calendar.is_automated_trading_session():
             return
 
         from services.activity_logger import activity_logger
@@ -403,7 +760,6 @@ class TradingScheduler:
 
         try:
             from trading.account_manager import account_manager
-            from trading.mcp_client import mcp_client as _mcp
 
             holdings = await account_manager.get_holdings()
             if not holdings:
@@ -426,10 +782,7 @@ class TradingScheduler:
                 if h.avg_buy_price <= 0 or h.quantity <= 0:
                     continue
                 # MCP로 현재가 직접 조회
-                resp = await _mcp.get_current_price(h.symbol)
-                if not resp.success or not resp.data:
-                    continue
-                current = float(resp.data.get("price", 0))
+                current = await self._fetch_current_price(h.symbol)
                 if current <= 0:
                     continue
                 pnl_rate = (current - h.avg_buy_price) / h.avg_buy_price * 100
@@ -476,13 +829,7 @@ class TradingScheduler:
                         )
                         continue
                     try:
-                        sell_resp = await _mcp.place_order(
-                            symbol=h.symbol,
-                            side="SELL",
-                            quantity=h.quantity,
-                            price=None,
-                            market="KRX",
-                        )
+                        sell_resp = await self._place_market_sell(h.symbol, h.quantity)
                         status = "성공" if sell_resp.success else f"실패: {sell_resp.error or ''}"
                         alerts.append(
                             f"\U0001f6a8 {h.name}({h.symbol}): {reason} → 매도 {status}"
@@ -492,11 +839,9 @@ class TradingScheduler:
                             event_detector.remove_levels(h.symbol)
                             # 체결 확인 + TradeResult 기록
                             from agent.decision_maker import decision_maker
-                            order_data = sell_resp.data or {}
-                            order_id = order_data.get("order_id", "")
                             await decision_maker.confirm_and_record(
                                 symbol=h.symbol, side="SELL",
-                                order_id=order_id, quantity=h.quantity,
+                                order_id=str(getattr(sell_resp, "order_id", "") or ""), quantity=h.quantity,
                                 expected_price=current,
                                 exit_reason="HOLDINGS_CHECK",
                             )
@@ -595,9 +940,9 @@ class TradingScheduler:
 
         try:
             from trading.account_manager import account_manager
-            from trading.mcp_client import mcp_client as _mcp
 
             holdings = await account_manager.get_holdings()
+            pending_orders = await account_manager.get_pending_orders()
             if not holdings:
                 await activity_logger.log(
                     ActivityType.SCHEDULE, ActivityPhase.PROGRESS,
@@ -605,7 +950,42 @@ class TradingScheduler:
                 )
                 return
 
-            sellable = [h for h in holdings if h.quantity > 0]
+            pending_sell_qty_by_symbol: dict[str, int] = {}
+            for order in pending_orders or []:
+                if str(getattr(order, "side", "")) != "매도":
+                    continue
+                symbol = str(getattr(order, "symbol", "") or "")
+                remaining_qty = max(int(getattr(order, "remaining_qty", 0) or 0), 0)
+                if not symbol or remaining_qty <= 0:
+                    continue
+                pending_sell_qty_by_symbol[symbol] = pending_sell_qty_by_symbol.get(symbol, 0) + remaining_qty
+
+            adjusted_sellable = []
+            for holding in holdings:
+                quantity = int(getattr(holding, "quantity", 0) or 0)
+                if quantity <= 0:
+                    continue
+                pending_sell_qty = pending_sell_qty_by_symbol.get(getattr(holding, "symbol", ""), 0)
+                available_qty = max(quantity - pending_sell_qty, 0)
+                if available_qty <= 0:
+                    logger.info(
+                        "청산 스킵: {}({}) — 미체결 매도 {}주 대기 중",
+                        holding.name, holding.symbol, pending_sell_qty,
+                    )
+                    continue
+                if available_qty != quantity:
+                    logger.info(
+                        "청산 수량 보정: {}({}) {}주 → {}주 (미체결 매도 {}주 제외)",
+                        holding.name, holding.symbol, quantity, available_qty, pending_sell_qty,
+                    )
+                if hasattr(holding, "model_copy"):
+                    adjusted = holding.model_copy(update={"quantity": available_qty})
+                else:
+                    adjusted = copy.copy(holding)
+                    setattr(adjusted, "quantity", available_qty)
+                adjusted_sellable.append(adjusted)
+
+            sellable = adjusted_sellable
             if not sellable:
                 return
 
@@ -633,13 +1013,7 @@ class TradingScheduler:
                 if not await trading_agent._acquire_sell(h.symbol):
                     return (None, h)
                 try:
-                    resp = await _mcp.place_order(
-                        symbol=h.symbol,
-                        side="SELL",
-                        quantity=h.quantity,
-                        price=None,
-                        market="KRX",
-                    )
+                    resp = await self._place_market_sell(h.symbol, h.quantity)
                     return (resp, h)
                 finally:
                     trading_agent._release_sell(h.symbol)
@@ -670,16 +1044,7 @@ class TradingScheduler:
                         f"{h.quantity}주 시장가 매도 {pnl_text}",
                         symbol=h.symbol,
                     )
-                    # 체결 확인 + TradeResult 기록
-                    from agent.decision_maker import decision_maker
-                    order_data = resp.data or {}
-                    order_id = order_data.get("order_id", "")
-                    await decision_maker.confirm_and_record(
-                        symbol=h.symbol, side="SELL",
-                        order_id=order_id, quantity=h.quantity,
-                        expected_price=h.current_price,
-                        exit_reason="FORCE_LIQUIDATION",
-                    )
+                    await self._record_liquidation_sell(h, resp)
                 else:
                     failed_holdings.append(h)
                     logger.error(
@@ -712,6 +1077,7 @@ class TradingScheduler:
                     if resp.success:
                         sold_count += 1
                         logger.info("청산 재시도 성공: {}({})", h.name, h.symbol)
+                        await self._record_liquidation_sell(h, resp)
                     else:
                         logger.error("청산 재시도 실패: {}({}) — {}", h.name, h.symbol, resp.error or "")
 
@@ -741,6 +1107,26 @@ class TradingScheduler:
                 f"\u274c 청산 오류: {str(e)[:100]}",
             )
 
+    async def _record_liquidation_sell(self, holding, response) -> None:
+        order_id = str(getattr(response, "order_id", "") or "")
+        if not order_id:
+            logger.error(
+                "청산 체결 기록 스킵: {}({}) — 주문번호 없음",
+                getattr(holding, "name", ""),
+                getattr(holding, "symbol", ""),
+            )
+            return
+
+        from agent.decision_maker import decision_maker
+        await decision_maker.confirm_and_record(
+            symbol=getattr(holding, "symbol", ""),
+            side="SELL",
+            order_id=order_id,
+            quantity=int(getattr(holding, "quantity", 0) or 0),
+            expected_price=float(getattr(holding, "current_price", 0.0) or 0.0),
+            exit_reason="FORCE_LIQUIDATION",
+        )
+
     async def _collect_holdings_data(
         self, sellable: list,
     ) -> tuple[list[dict], dict, list]:
@@ -756,7 +1142,6 @@ class TradingScheduler:
         from realtime.event_detector import event_detector
         from repositories.trade_result_repository import TradeResultRepository
         from strategy.holding_policy import _calc_hold_days, _get_max_hold_days
-        from trading.mcp_client import mcp_client as _mcp
 
         holdings_data: list[dict] = []
         holdings_map: dict = {}
@@ -767,10 +1152,7 @@ class TradingScheduler:
 
             for h in sellable:
                 try:
-                    resp = await _mcp.get_current_price(h.symbol)
-                    current_price = 0.0
-                    if resp.success and resp.data:
-                        current_price = float(resp.data.get("price", 0))
+                    current_price = await self._fetch_current_price(h.symbol)
 
                     if current_price <= 0:
                         fallback_sell.append(h)
@@ -947,7 +1329,7 @@ class TradingScheduler:
         import time
 
         from scheduler.market_calendar import market_calendar
-        if not market_calendar.is_krx_trading_hours():
+        if not market_calendar.is_automated_trading_session():
             return
 
         from services.activity_logger import activity_logger
@@ -1031,7 +1413,6 @@ class TradingScheduler:
             from agent.trading_agent import trading_agent
             from realtime.event_detector import event_detector
             from strategy.holding_policy import evaluate_overnight_hold
-            from trading.mcp_client import mcp_client as _mcp
 
             log_lines = []
 
@@ -1059,17 +1440,12 @@ class TradingScheduler:
                         log_lines.append(f"  - {stock_name}({symbol}): SELL → 이미 매도 진행 중")
                         continue
                     try:
-                        sell_resp = await _mcp.place_order(
-                            symbol=symbol, side="SELL",
-                            quantity=h.quantity, price=None, market="KRX",
-                        )
+                        sell_resp = await self._place_market_sell(symbol, h.quantity)
                         if sell_resp.success:
                             event_detector.remove_levels(symbol)
-                            order_data = sell_resp.data or {}
-                            order_id = order_data.get("order_id", "")
                             await decision_maker.confirm_and_record(
                                 symbol=symbol, side="SELL",
-                                order_id=order_id, quantity=h.quantity,
+                                order_id=str(getattr(sell_resp, "order_id", "") or ""), quantity=h.quantity,
                                 expected_price=current_price,
                                 exit_reason="HOLDINGS_REVIEW",
                             )
@@ -1215,10 +1591,7 @@ class TradingScheduler:
                         # exit_price 추정: 현재가 또는 마지막 SELL 레코드
                         exit_price = 0.0
                         try:
-                            from trading.mcp_client import mcp_client
-                            resp = await mcp_client.get_current_price(tr.stock_symbol)
-                            if resp.success and resp.data:
-                                exit_price = float(resp.data.get("price", 0))
+                            exit_price = await self._fetch_current_price(tr.stock_symbol)
                         except Exception:
                             pass
 
@@ -1285,7 +1658,6 @@ class TradingScheduler:
             from core.database import AsyncSessionLocal
             from repositories.trade_result_repository import TradeResultRepository
             from trading.account_manager import account_manager
-            from trading.mcp_client import mcp_client as _mcp
 
             holdings = await account_manager.get_holdings()
             if not holdings:
@@ -1306,10 +1678,7 @@ class TradingScheduler:
                 if not tr:
                     continue  # 당일 매수 등 — 갭 체크 불필요
 
-                resp = await _mcp.get_current_price(h.symbol)
-                if not resp.success or not resp.data:
-                    continue
-                current = float(resp.data.get("price", 0))
+                current = await self._fetch_current_price(h.symbol)
                 if current <= 0:
                     continue
 
@@ -1333,10 +1702,7 @@ class TradingScheduler:
                         alerts.append(f"\u26a0\ufe0f {h.name}({h.symbol}): {reason} → 이미 매도 진행 중")
                         continue
                     try:
-                        sell_resp = await _mcp.place_order(
-                            symbol=h.symbol, side="SELL",
-                            quantity=h.quantity, price=None, market="KRX",
-                        )
+                        sell_resp = await self._place_market_sell(h.symbol, h.quantity)
                         status = "성공" if sell_resp.success else f"실패: {sell_resp.error or ''}"
                         alerts.append(f"\U0001f6a8 {h.name}({h.symbol}): {reason} → 매도 {status}")
                         if sell_resp.success:
@@ -1344,11 +1710,9 @@ class TradingScheduler:
                             event_detector.remove_levels(h.symbol)
                             # 체결 확인 + TradeResult 기록
                             from agent.decision_maker import decision_maker
-                            order_data = sell_resp.data or {}
-                            order_id = order_data.get("order_id", "")
                             await decision_maker.confirm_and_record(
                                 symbol=h.symbol, side="SELL",
-                                order_id=order_id, quantity=h.quantity,
+                                order_id=str(getattr(sell_resp, "order_id", "") or ""), quantity=h.quantity,
                                 expected_price=current,
                                 exit_reason="GAP_CHECK",
                             )

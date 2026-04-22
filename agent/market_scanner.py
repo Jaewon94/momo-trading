@@ -8,9 +8,9 @@ from analysis.llm.llm_factory import llm_factory
 from analysis.llm.prompts.market_scan import MARKET_SCAN_PROMPT, MARKET_SCAN_SYSTEM
 from core.database import AsyncSessionLocal
 from services.activity_logger import activity_logger
-from trading.account_manager import account_manager
+from trading.adapters.base import BrokerAdapter
+from trading.broker_factory import get_broker_adapter
 from trading.enums import ActivityPhase, ActivityType
-from trading.mcp_client import mcp_client
 
 # 모의투자 매매불가 종목 필터 키워드
 _EXCLUDE_NAME_KEYWORDS = ("ETN", "스팩", "SPAC")
@@ -22,7 +22,8 @@ class MarketScanner:
     (기존 scan → screening 2단계를 1단계로 통합하여 LLM 호출 1건 절약)
     """
 
-    def __init__(self):
+    def __init__(self, broker_adapter: BrokerAdapter | None = None):
+        self._broker_adapter = broker_adapter or get_broker_adapter()
         self._untradeable_symbols: set[str] = set()
 
     def add_untradeable(self, symbol: str) -> None:
@@ -73,21 +74,22 @@ class MarketScanner:
             cycle_id=cycle_id,
         )
 
-        # 1. 데이터 수집 병렬화 (MCP 3건 + DB 1건 + 계좌 1건)
+        # 1. 데이터 수집 병렬화 (시장 랭킹 3건 + DB 1건 + 계좌 2건)
         (
-            account_snapshot,
+            balance,
+            holdings,
             volume_rank,
             surge_data,
             drop_data,
             performance_summary,
         ) = await asyncio.gather(
-            account_manager.get_account_snapshot(),
+            self._broker_adapter.get_balance(),
+            self._broker_adapter.get_holdings(),
             self._get_volume_rank(),
             self._get_fluctuation_rank("top"),
             self._get_fluctuation_rank("bottom"),
             self._get_performance_summary(),
         )
-        balance, holdings = account_snapshot
         available_cash = balance.cash
         total_asset = balance.total_asset or available_cash
         max_pos_pct = 0.2
@@ -245,18 +247,12 @@ class MarketScanner:
             return "매매 이력 없음"
 
     async def _get_volume_rank(self) -> list[dict]:
-        resp = await mcp_client.get_volume_rank()
-        if resp.success and resp.data:
-            stocks = resp.data.get("stocks", resp.data.get("items", []))
-            return self._filter_untradeable(stocks)
-        return []
+        stocks = await self._broker_adapter.get_volume_rank()
+        return self._filter_untradeable(stocks)
 
     async def _get_fluctuation_rank(self, sort: str) -> list[dict]:
-        resp = await mcp_client.get_fluctuation_rank(sort=sort)
-        if resp.success and resp.data:
-            stocks = resp.data.get("stocks", resp.data.get("items", []))
-            return self._filter_untradeable(stocks)
-        return []
+        stocks = await self._broker_adapter.get_fluctuation_rank(sort=sort)
+        return self._filter_untradeable(stocks)
 
     def _format_data(self, data: list[dict]) -> str:
         if not data:

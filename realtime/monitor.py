@@ -6,7 +6,8 @@ from loguru import logger
 
 from realtime.event_detector import event_detector
 from realtime.stream_manager import stream_manager
-from trading.kis_websocket import kis_websocket
+from trading.broker_factory import get_broker_adapter
+from trading.enums import Market
 
 
 class RealtimeMonitor:
@@ -30,24 +31,47 @@ class RealtimeMonitor:
         self._health_task: asyncio.Task | None = None
         self._poll_task: asyncio.Task | None = None
 
+    @staticmethod
+    def _supports_realtime_quotes() -> bool:
+        try:
+            return bool(get_broker_adapter().capabilities.supports_realtime_quotes)
+        except Exception:
+            return False
+
+    def _start_polling_task(self) -> None:
+        self._polling_active = True
+        if self._poll_task is None or self._poll_task.done():
+            self._poll_task = asyncio.create_task(self._poll_loop())
+
+    def _stop_polling_task(self) -> None:
+        self._polling_active = False
+        if self._poll_task and not self._poll_task.done():
+            self._poll_task.cancel()
+        self._poll_task = None
+
     async def start(self) -> None:
         """실시간 모니터링 시작"""
+        from scheduler.market_calendar import market_calendar
+
         self._running = True
         self._last_ws_data_time = time.monotonic()
-        kis_websocket.set_on_price(self._on_price_update)
-        await stream_manager.start()
-        # WebSocket 상태 점검 루프 시작
+
+        if self._supports_realtime_quotes():
+            stream_manager.set_on_price(self._on_price_update)
+            await stream_manager.start()
+            logger.debug("실시간 모니터 시작 (realtime adapter, 실패해도 서버 기동)")
+        else:
+            if market_calendar.is_krx_trading_hours():
+                self._start_polling_task()
+            logger.debug("실시간 모니터 시작 (polling fallback 모드)")
         self._health_task = asyncio.create_task(self._ws_health_loop())
-        logger.debug("실시간 모니터 시작 (폴링 폴백 대기)")
 
     async def stop(self) -> None:
         """실시간 모니터링 중지"""
         self._running = False
-        self._polling_active = False
+        self._stop_polling_task()
         if self._health_task and not self._health_task.done():
             self._health_task.cancel()
-        if self._poll_task and not self._poll_task.done():
-            self._poll_task.cancel()
         await stream_manager.stop()
         logger.debug("실시간 모니터 중지")
 
@@ -56,10 +80,7 @@ class RealtimeMonitor:
         self._last_ws_data_time = time.monotonic()
         # WebSocket 복구 → 폴링 비활성화
         if self._polling_active:
-            self._polling_active = False
-            if self._poll_task and not self._poll_task.done():
-                self._poll_task.cancel()
-                self._poll_task = None
+            self._stop_polling_task()
             logger.debug("WebSocket 데이터 수신 복구 → 폴링 폴백 비활성화")
         await event_detector.on_price_update(data)
 
@@ -75,11 +96,14 @@ class RealtimeMonitor:
                 from scheduler.market_calendar import market_calendar
                 if not market_calendar.is_krx_trading_hours():
                     if self._polling_active:
-                        self._polling_active = False
-                        if self._poll_task and not self._poll_task.done():
-                            self._poll_task.cancel()
-                            self._poll_task = None
+                        self._stop_polling_task()
                         logger.debug("장외 시간 → 폴링 폴백 비활성화")
+                    continue
+
+                if not self._supports_realtime_quotes():
+                    if not self._polling_active:
+                        logger.debug("실시간 미지원 브로커 → 폴링 폴백 활성화")
+                        self._start_polling_task()
                     continue
 
                 ws_disconnected = not stream_manager.is_connected
@@ -88,10 +112,7 @@ class RealtimeMonitor:
                 if (ws_disconnected or data_stale) and not self._polling_active:
                     reason = "연결 끊김" if ws_disconnected else f"데이터 {self.WS_STALE_THRESHOLD_SEC}초 미수신"
                     logger.warning("WebSocket 단절 감지 ({}) → 폴링 폴백 활성화", reason)
-                    self._polling_active = True
-                    # 폴링 태스크 시작
-                    if self._poll_task is None or self._poll_task.done():
-                        self._poll_task = asyncio.create_task(self._poll_loop())
+                    self._start_polling_task()
 
             except asyncio.CancelledError:
                 break
@@ -113,24 +134,22 @@ class RealtimeMonitor:
         logger.debug("폴링 폴백 루프 종료")
 
     async def _poll_holdings_prices(self) -> None:
-        """보유종목 현재가 MCP 조회 → event_detector.on_price_update() 전달"""
+        """보유종목 현재가를 현재 브로커 어댑터로 조회 → event_detector.on_price_update() 전달"""
         from trading.account_manager import account_manager
-        from trading.mcp_client import mcp_client
 
         try:
             holdings = await account_manager.get_holdings()
             if not holdings:
                 return
 
+            broker_adapter = get_broker_adapter()
             polled_count = 0
             for h in holdings:
                 if not h.symbol or h.quantity <= 0:
                     continue
                 try:
-                    resp = await mcp_client.get_current_price(h.symbol)
-                    if not resp.success or not resp.data:
-                        continue
-                    price = float(resp.data.get("price", 0))
+                    quote = await broker_adapter.get_current_price(h.symbol, market=Market.KRX)
+                    price = float(quote.price or 0)
                     if price <= 0:
                         continue
 
@@ -138,8 +157,8 @@ class RealtimeMonitor:
                     await event_detector.on_price_update({
                         "symbol": h.symbol,
                         "price": price,
-                        "volume": 0,
-                        "change_rate": 0,
+                        "volume": int(quote.volume or 0),
+                        "change_rate": float(quote.change_rate or 0.0),
                         "source": "polling_fallback",
                     })
                     polled_count += 1

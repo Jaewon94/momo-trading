@@ -12,10 +12,11 @@ import httpx
 from loguru import logger
 
 from core.config import settings
+from core.paths import RUNTIME_DATA_DIR
 
 DOMAIN = "https://openapi.koreainvestment.com:9443"
 VIRTUAL_DOMAIN = "https://openapivts.koreainvestment.com:29443"
-TOKEN_FILE = Path("data/kis_token.json")
+TOKEN_FILE = RUNTIME_DATA_DIR / "kis_token.json"
 
 # 토큰 동시 발급 방지용 Lock + 메모리 캐시
 _token_lock = asyncio.Lock()

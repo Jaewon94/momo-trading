@@ -1,15 +1,17 @@
-"""MCP를 통한 잔고/체결내역 조회 — 장외 시간 폴링 차단 + 캐시"""
+"""브로커별 계좌/체결 조회 — 장외 시간 폴링 차단 + 캐시"""
 from loguru import logger
 
+from core.config import settings
 from scheduler.market_calendar import market_calendar
+from trading.enums import BrokerProvider
 from trading.mcp_client import mcp_client
 from trading.models import AccountBalance, HoldingInfo, PendingOrderInfo
 
 
 class AccountManager:
-    """계좌 관리 (MCP 통신)
+    """계좌 관리
 
-    KIS API inquery-balance 응답 형식:
+    KIS MCP 응답 형식:
     - output1: 보유종목 리스트 [{pdno, prdt_name, hldg_qty, pchs_avg_pric, prpr, evlu_pfls_amt, evlu_pfls_rt, ...}]
     - output2: 계좌 총합 [{dnca_tot_amt, scts_evlu_amt, tot_evlu_amt, nass_amt, ...}]
     """
@@ -31,6 +33,10 @@ class AccountManager:
             total_pnl=0, total_pnl_rate=0,
             is_valid=False,
         )
+
+    @staticmethod
+    def _uses_mcp_account_source() -> bool:
+        return settings.uses_kis_broker
 
     def _parse_balance(self, data: dict, holdings: list["HoldingInfo"] | None = None) -> AccountBalance:
         """MCP 응답에서 AccountBalance 파싱
@@ -132,6 +138,9 @@ class AccountManager:
         장외 + 캐시 있음: 캐시 반환, MCP 미호출
         장외 + 캐시 없음: MCP 1회 호출 → 캐시 저장
         """
+        if not self._uses_mcp_account_source():
+            return await self._get_adapter_account_snapshot()
+
         # 장외 + 양쪽 캐시 모두 있음 → MCP 호출 없이 캐시 반환
         if not market_calendar.is_krx_trading_hours():
             if self._balance_cache and self._holdings_cache is not None:
@@ -199,6 +208,9 @@ class AccountManager:
         장외 + 캐시 있음: 캐시 반환
         장외 + 캐시 없음: MCP 1회 호출 → 캐시 저장
         """
+        if not self._uses_mcp_account_source():
+            return await self._get_adapter_pending_orders()
+
         if not market_calendar.is_krx_trading_hours():
             if self._pending_orders_cache is not None:
                 logger.debug("장외 시간 → 미체결 주문 캐시 반환")
@@ -211,6 +223,33 @@ class AccountManager:
 
         data = response.data or {}
         orders = self._parse_pending_orders(data)
+        self._pending_orders_cache = orders
+        return orders
+
+    async def _get_adapter_account_snapshot(self) -> tuple[AccountBalance, list[HoldingInfo]]:
+        from trading.broker_factory import get_broker_adapter
+
+        if not market_calendar.is_krx_trading_hours():
+            if self._balance_cache and self._holdings_cache is not None:
+                logger.debug("장외 시간 → 브로커 계좌 스냅샷 캐시 반환")
+                return self._balance_cache, self._holdings_cache
+
+        adapter = get_broker_adapter()
+        balance = await adapter.get_balance()
+        holdings = await adapter.get_holdings()
+        self._balance_cache = balance
+        self._holdings_cache = holdings
+        return balance, holdings
+
+    async def _get_adapter_pending_orders(self) -> list[PendingOrderInfo]:
+        from trading.broker_factory import get_broker_adapter
+
+        if not market_calendar.is_krx_trading_hours():
+            if self._pending_orders_cache is not None:
+                logger.debug("장외 시간 → 브로커 미체결 주문 캐시 반환")
+                return self._pending_orders_cache
+
+        orders = await get_broker_adapter().get_pending_orders()
         self._pending_orders_cache = orders
         return orders
 

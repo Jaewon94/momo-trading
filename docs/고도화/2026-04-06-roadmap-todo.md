@@ -1,0 +1,139 @@
+# 2026-04-06 로드맵 / TODO
+
+## 목적
+- 다른 컴퓨터에서도 현재 작업 위치를 바로 이어갈 수 있게, 완료 범위와 다음 우선순위를 한 문서에 정리한다.
+
+## 현재 기준선
+- 로컬 DB 유실/불일치가 확인되어, 2026-04-06부터는 "현재 브로커 계좌 상태 + 복구된 열린 BUY lot"를 운영 기준선으로 삼는다.
+- 현재 보유/미체결/잔고는 브로커 응답 기준으로 판단한다.
+- 과거 실현손익/성과 지표는 옛 DB가 없으면 완전 복구하지 않는다.
+- 상세 정리는 `docs/고도화/2026-04-06-trade-baseline-reset.md` 참고
+
+## 현재까지 완료
+- 거래 코어 수익방어 고도화
+  - 실행 정책(`LIMIT_GUARD`/`MARKET`)
+  - 자동 리스크 킬스위치
+  - 변동성 기반 포지션 사이징
+  - 호라이즌(`SHORT/MID/LONG`) 기반 리스크/비용 게이트
+- 뉴스 인텔 2차
+  - `DART`, `KRX/KIND`, `연합뉴스TV`, `Bloomberg`, `CNBC`, `Nasdaq` 수집기
+  - 뉴스 저장/중복제거/해외 뉴스 한글 요약
+  - 소스 fetch 병렬화 + 해외 뉴스 번역 제한 병렬화
+  - 소스별 ingest 집계 정합화 + overall `PARTIAL_ERROR` 상태 계산
+  - 반복 실패 소스 cooldown
+  - 관리자 설정에서 뉴스 fetch/번역 병렬도와 Claude 세션 공유 여부 조정
+  - 뉴스 게이트, 신규 뉴스 증분 재검증
+  - 관리자 뉴스 탭, 메인 뉴스 인텔 스트립, 종목 상세 뉴스 타임라인
+  - 날짜/소스/심볼/감성 기준으로 조회 가능한 `뉴스 아카이브` 뷰
+  - 뉴스 기반 KPI, Shadow / Rollout 판정
+- 거래 정합성/운영 UI
+  - 자동 매도 수량을 실제 보유 수량 기준으로 보정
+  - 강제 청산 시 미체결 매도 수량을 제외한 잔여 수량만 주문
+  - 수동 즉시 매도, 미체결 액션 UI
+  - 부분 매도 정합성 및 복구 로직
+  - 성과 분석 화면, 뉴스 반영 거래 vs 일반 거래 비교
+- 브로커 운영 안정성
+  - 키움 모의투자 `RC9002` 잔고 지연 응답 짧은 재시도
+  - 브로커 읽기/뉴스/에러를 장 시작 전에 한 번에 점검하는 preflight 추가 예정
+
+## 신규 고도화 축
+- 장외/시간외/NXT 세션 지원 검토
+  - 현재 자동매매는 정규장 데이트레이딩 기준 유지
+  - [x] 1차: 세션 상태 모델/API/UI 정리
+    - `/api/v1/admin/system/status`에 세션 코드/라벨/다음 세션 정보 추가
+    - 운영 시그널과 상단 뱃지가 `정규장/장외/NXT` 기준으로 표시되도록 정리
+  - [x] 2차: 주문 세션/브로커 capability 분리
+    - `OrderSession` 모델 추가
+    - 브로커 capability에 `supported_order_sessions`, `supports_after_hours_orders`, `supports_nxt_quotes` 추가
+    - 수동 즉시 매도는 정규장 + 브로커 지원 세션일 때만 활성화
+  - 자동 주문 확장은 세션별 주문 정책/브로커 지원 범위 검증 후 별도 진행
+  - 상세 계획은 `docs/고도화/2026-04-07-after-hours-session-plan.md` 참고
+
+## 현재 우선순위
+1. 수익 검증 체계 마무리
+- [x] Shadow A/B를 운영 화면에서 더 명확히 추적
+- [x] 일일 리포트에 뉴스 반영 거래 vs 일반 거래 비교 스냅샷 추가
+  - 리포트 기준 청산 거래를 `뉴스 반영 거래` / `일반 거래`로 분리해 `Expectancy`, `PF`, `총 손익`, `비용 차감 손익 차이` 노출
+- [x] 주간/월간 리포트 아카이브에서 비교 노출 범위 추가 확장
+- [x] rollout 승급/보류/롤백 사유를 운영자에게 더 명확히 노출
+- [x] 성과 화면에 `기준선 리셋 이후 데이터` 구분 노출
+
+2. 거래 상태 표현 정리
+- [x] 3단 UI 배지 상태 체계 분리
+  - 행동 배지: `매수 검토`, `매수 접수중`, `매수 대기중`, `매수 완료`, `보유 중`, `매도 검토`, `매도 접수중`, `매도 대기중`, `부분 매도`, `매도 완료`, `보류`, `오류`
+  - 보조 텍스트: `체결 확인 대기`, `주문 접수 후 체결 대기`, `잔량 8100주 보유 중`, `전체 수량 청산 완료` 등
+- [x] 이벤트 레이더/3단 카드/종목 상세에서 같은 상태 모델 재사용
+- [x] 종목 상세 타임라인 라벨 정리
+  - 닫힌 BUY clone을 `매수 체결`이 아니라 `부분 매도 후 정리` 또는 `최종 청산 lot`로 노출
+  - 타임라인 첫 설명 줄에 `잔량 n주 보유 중`, `전체 수량 청산 완료` 같은 보조 설명 추가
+
+3. 설정/운영 안정성
+- [x] 관리자 설정 영속화
+  - `TRADING_ENABLED`, `AUTONOMY_MODE`, `SCHEDULER_ENABLED`, 뉴스 관련 토글이 재시작 후 유지되게 저장소 설계
+- [x] `scripts/dev/start.sh -d` PID 추적 및 상태 표시 정리
+- [x] 뉴스 폴링/브로커/주문 오류를 한눈에 보는 운영 상태 패널 정리
+- [x] 시스템 설정 탭에 `운영 DB 초기화` 버튼 추가
+  - 설정은 유지하고 거래/리포트/활동/뉴스 이력만 비움
+  - 현재 브로커 보유 기준으로 열린 `BUY` lot를 다시 생성
+- [x] 시스템 설정 탭에 `운영 DB 백업` 버튼 추가
+  - 수동 백업 API: `POST /api/v1/admin/system/backup-operational-db`
+  - `DB 초기화` 실행 전 `before-reset` 백업 자동 생성
+- [x] 키움 잔고 조회 지연 재시도
+  - `BROKER_BALANCE_RETRY_COUNT`, `BROKER_BALANCE_RETRY_DELAY_MS` 추가
+  - `RC9002` 계열은 짧게 재시도 후 최종 실패 처리
+
+4. 뉴스 인텔 2차 잔여
+- [x] 뉴스 아카이브 뷰 추가
+  - `/admin` 좌측 네비에 `뉴스 아카이브` 추가
+  - 날짜 범위, 소스, 심볼, 감성, 검색어 기준으로 `news_items` 조회
+  - 날짜별 그룹 카드로 기사 목록/번역 제목/연관 심볼/섹터/영향도/신뢰도 표시
+  - 카드별 `상세 보기` 드로어로 원문 제목/요약, 매칭 종목명/업종, 원문 링크 확인
+- [x] 해외 소스 확대 여부 판단
+  - Reuters 직접 일반 피드는 anti-bot/호출 안정성 이슈로 현재 기준 보류
+  - `Investing.com`은 공식 RSS 카탈로그가 확인돼 있어 현재 `Stock Market News` 유지, 추가 `Economic Indicators`/`Breaking News` 계열은 매크로 매핑 단계에서 검토
+  - `Seeking Alpha`는 `All News`와 부문별 feed(예: sector/financial.xml)가 존재하지만, US 주식/의견성 편향이 커서 일반 뉴스 소스 추가 확대보다 보조 테마 소스로 후순위 유지
+  - 현재 일반 해외 소스는 `Bloomberg + CNBC + Nasdaq + Investing + Seeking Alpha` 조합 유지
+- [ ] 종목 연관도/섹터 영향도/장중 반응 가중치 2차 고도화
+  - 메타데이터 기반 `symbol_relevance` / `sector_relevance` 가중치 반영 완료
+  - 수집기 단계에서 `matched_stock_names`, `related_symbols`, `sector_label`, `sector_symbols`, `sector_relevance` 자동 채움
+  - 수집기 단계에서 복수 업종 기사에 대해 `matched_sector_labels`, `sector_weights` 자동 채움
+  - 추가 반영: 재시작 직후 뉴스 폴링 즉시 1회 실행 + 이벤트 트리거(`AUTO_EVENT`) 기반 타겟 재수집
+  - 다음 단계: 해외 소스별 테마 라벨/장중 반응 가중치 정교화
+- [x] 소스별 마지막 성공/실패 원인과 적재 추이를 운영 UI에 강화
+  - 1차 반영: 소스 pill에 마지막 상태/메시지와 `24h 적재 건수` 노출
+  - 2차 반영: 소스 pill에 `마지막 성공 시각`, `연속 실패 횟수`, `최근 실행 시각`, `신규/중복/스킵 집계`, `마지막 실패 시각` 노출
+  - 현재 수집 파이프라인은 소스 fetch를 병렬화하고, DB ingest/save는 순차로 유지
+- [x] 반복 실패 소스 cooldown과 overall 상태 정합성 보강
+  - `SUCCESS / EMPTY / PARTIAL_ERROR`를 전체 상태에 분리 반영
+  - `INVESTING`, `SEEKING_ALPHA` 같은 반복 실패 소스는 잠시 polling을 쉬고 UI에 cooldown 노출
+
+## 현재 확인된 실제 이슈
+- [x] 다른 컴퓨터 이동 과정에서 로컬 DB 기준 거래 이력이 일부 유실된 것으로 보임
+  - 현재 기준선: 브로커 계좌 상태 + 복구된 열린 `BUY` lot
+  - 자동 복구 API: `POST /api/v1/admin/trades/reconcile-pending`, `POST /api/v1/admin/trades/reconcile-holdings`
+  - 초기화 API: `POST /api/v1/admin/system/reset-operational-baseline`
+- [ ] `011930`는 실계좌 기준 보유가 없는데, 종목 상세 타임라인에서 `8100주`가 보유처럼 보이는 라벨 혼동
+  - 원인: 부분 매도 후 생성된 닫힌 BUY lot를 `매수 체결` 제목으로 렌더링
+- [ ] 3단 카드 배지가 `매수/매도`만 보여 실제 주문 상태를 충분히 설명하지 못함
+- [x] 설정 UI 변경이 재시작 후 유지되지 않음
+- [x] `start.sh -d` 상태 표시가 실제 프로세스와 어긋날 수 있음
+
+## 추천 실행 순서
+1. 장 시작 전 preflight 점검 추가
+ - [x] `GET /api/v1/admin/system/preflight`
+   - 브로커 read-only smoke, 뉴스 health, Ollama 준비 상태를 한 번에 점검
+   - `overall`, `checks`, `actions` 형태로 운영자용 요약 제공
+2. 브로커 공식 주문 문서 재검증
+3. 거래 상태 배지/타임라인 라벨 잔여 정리
+4. 뉴스 인텔 잔여 소스/점수화 고도화
+5. DB 백업/복원 운영 절차 문서화
+6. 뉴스 운영 체크 명령 정리
+ - `bash start.sh check-news`로 최근 24h 적재 수, 소스별 신규/중복/스킵, 마지막 성공/실패를 점검
+
+## 참고 문서
+- `docs/고도화/2026-04-05-trading-core-risk-upgrade.md`
+- `docs/고도화/2026-04-05-news-intel-phase2-plan.md`
+- `docs/고도화/2026-04-06-news-intel-checklist.md`
+- `docs/고도화/2026-04-06-trade-baseline-reset.md`
+- `docs/고도화/2026-04-06-db-backup-restore-runbook.md`
+- `docs/고도화/2026-04-07-after-hours-session-plan.md`

@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from loguru import logger
 
-from core.config import settings
+from core.config import DEFAULT_LLM_MODEL, normalize_llm_model_value, settings
 from trading.enums import LLMProvider, LLMTier
 
 
@@ -31,6 +31,7 @@ class ClaudeCodeProvider:
     _active_session_id: str | None = None
     _session_initialized: bool = False  # 첫 호출 완료 여부
     _session_lock: asyncio.Lock | None = None
+    _session_lock_loop: asyncio.AbstractEventLoop | None = None
 
     # 클래스 레벨 누적 사용량
     cumulative_usage: dict = {
@@ -46,21 +47,31 @@ class ClaudeCodeProvider:
         }),
     }
 
-    def __init__(self, tier: LLMTier = LLMTier.TIER1):
+    def __init__(self, tier: LLMTier = LLMTier.TIER1, model_override: str | None = None):
         self._tier = tier
         self._claude_path: str | None = None
         # Tier별 모델: TIER1=haiku(빠름), TIER2=sonnet(정확)
-        if tier == LLMTier.TIER1:
-            self._model = settings.CLAUDE_CODE_MODEL_TIER1 or settings.CLAUDE_CODE_MODEL or "haiku"
+        if model_override is not None:
+            configured_model = model_override
+        elif tier == LLMTier.TIER1:
+            configured_model = settings.CLAUDE_CODE_MODEL_TIER1 or settings.CLAUDE_CODE_MODEL
         else:
-            self._model = settings.CLAUDE_CODE_MODEL_TIER2 or settings.CLAUDE_CODE_MODEL or "sonnet"
+            configured_model = settings.CLAUDE_CODE_MODEL_TIER2 or settings.CLAUDE_CODE_MODEL
+        normalized_model = normalize_llm_model_value(configured_model)
+        self._configured_model = normalized_model
+        self._model = None if normalized_model == DEFAULT_LLM_MODEL else normalized_model
         self._resolved_model: str = ""
 
     @classmethod
     def _get_lock(cls) -> asyncio.Lock:
         """세션 락 (resume 호출 직렬화)"""
-        if cls._session_lock is None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if cls._session_lock is None or cls._session_lock_loop is not loop:
             cls._session_lock = asyncio.Lock()
+            cls._session_lock_loop = loop
         return cls._session_lock
 
     # ── 세션 관리 ──
@@ -118,7 +129,12 @@ class ClaudeCodeProvider:
 
     @property
     def model_id(self) -> str:
-        return self._resolved_model or f"claude-code:{self._model}"
+        return self._resolved_model or f"claude-code:{self._model or DEFAULT_LLM_MODEL}"
+
+    def _model_args(self) -> list[str]:
+        if not self._model:
+            return []
+        return ["--model", self._model]
 
     def _find_claude(self) -> str | None:
         """claude CLI 경로 탐색"""
@@ -165,7 +181,7 @@ class ClaudeCodeProvider:
         cmd = [
             claude, "-p",
             "--output-format", "json",
-            "--model", self._model,
+            *self._model_args(),
             "--max-turns", "1",
             "--effort", effort,
             "--dangerously-skip-permissions",

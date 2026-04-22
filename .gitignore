@@ -36,8 +36,10 @@ MANIFEST
 
 # ===== 환경 설정 =====
 # 가상환경
+.venv
 .env/
 .venv/
+.venv*/
 env/
 venv/
 ENV/
@@ -53,6 +55,7 @@ venv.bak/
 
 # KIS API 토큰 (런타임 생성, 절대 커밋 금지)
 data/kis_token.json
+data/kiwoom_token.json
 
 # Python 버전 관리
 .python-version
@@ -60,6 +63,7 @@ data/kis_token.json
 
 # ===== Claude Code 관련 =====
 .claude
+.serena/
 .mcp.json
 CLAUDE.md
 *_custom_prompt.md
@@ -69,12 +73,28 @@ compact_custom_prompt.md
 # 로그 파일
 *.log
 logs/
+*.pid
+!runtime/
+!runtime/logs/
+!runtime/pids/
+!runtime/data/
+runtime/logs/*
+runtime/pids/*
+runtime/data/*.db
+runtime/data/*.db-wal
+runtime/data/*.db-shm
+runtime/data/*.json
+!runtime/logs/.gitkeep
+!runtime/pids/.gitkeep
+!runtime/data/.gitkeep
 
 # 데이터베이스 파일
 *.db
 *.sqlite
 *.sqlite3
 *.db-journal
+*.db-wal
+*.db-shm
 
 # ===== 테스트 및 커버리지 =====
 htmlcov/
@@ -132,6 +152,7 @@ Thumbs.db
 
 # ===== 임시 파일 =====
 tmp/
+tmp-home/
 temp/
 *.tmp
 *.bak
@@ -141,3 +162,7 @@ alembic/versions/__pycache__/
 
 # ===== Docker =====
 docker-compose.override.yml
+
+# ===== Frontend tooling =====
+node_modules/
+.playwright-mcp/

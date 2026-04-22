@@ -1,7 +1,7 @@
 """에이전트 활동 로그 리포지토리"""
 from datetime import date, datetime, time
 
-from sqlalchemy import func, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.agent_activity import AgentActivityLog
@@ -59,6 +59,22 @@ class AgentActivityRepository(AsyncBaseRepository[AgentActivityLog]):
             .limit(limit)
         )
         return list(result.scalars().all())
+
+    async def get_latest_error(
+        self,
+        *,
+        activity_type: str | None = None,
+    ) -> AgentActivityLog | None:
+        stmt = (
+            select(AgentActivityLog)
+            .where(AgentActivityLog.phase == "ERROR")
+            .order_by(desc(AgentActivityLog.created_at))
+            .limit(1)
+        )
+        if activity_type:
+            stmt = stmt.where(AgentActivityLog.activity_type == activity_type)
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
 
     async def get_recent_cycles(self, limit: int = 20) -> list[dict]:
         """최근 사이클 목록 (cycle_id별 그룹핑)"""

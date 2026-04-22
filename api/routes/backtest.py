@@ -18,8 +18,8 @@ async def run_backtest(req: BacktestRunRequest):
     end_dt = req.end_date or date.today()
     start_dt = req.start_date or (end_dt - timedelta(days=180))
 
-    # MCP에서 과거 데이터 로드
-    df = await BacktestDataLoader.load_from_mcp(
+    # 현재 브로커 어댑터에서 과거 데이터 로드
+    df = await BacktestDataLoader.load_from_broker(
         symbol=req.symbol,
         start_date=start_dt,
         end_date=end_dt,

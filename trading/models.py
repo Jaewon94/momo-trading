@@ -2,9 +2,9 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
-from trading.enums import Market, OrderSide, OrderType
+from trading.enums import Market, OrderSession, OrderSide, OrderType
 
 
 class KISTokenInfo(BaseModel):
@@ -38,14 +38,53 @@ class CurrentPrice(BaseModel):
     timestamp: datetime
 
 
+class Candle(BaseModel):
+    """정규화된 캔들 데이터"""
+    time_key: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+
+
+class BrokerCapabilities(BaseModel):
+    """브로커 기능 매트릭스"""
+    supports_domestic_stocks: bool = False
+    supports_overseas_stocks: bool = False
+    supports_paper_trading: bool = False
+    supports_live_trading: bool = False
+    supports_realtime_quotes: bool = False
+    supports_order_cancellation: bool = False
+    supports_nxt_quotes: bool = False
+    supports_after_hours_orders: bool = False
+    supports_after_hours_automation: bool = False
+    supported_order_sessions: list[OrderSession] = []
+
+
 class OrderRequest(BaseModel):
     """주문 요청"""
     symbol: str
     market: Market
     side: OrderSide
     order_type: OrderType
+    order_session: OrderSession = OrderSession.REGULAR
     quantity: int
     price: Optional[float] = None  # 시장가 주문 시 None
+
+    @model_validator(mode="after")
+    def validate_order_request(self) -> "OrderRequest":
+        if self.quantity <= 0:
+            raise ValueError("주문 수량은 1 이상이어야 합니다")
+
+        if self.order_type == OrderType.LIMIT:
+            if self.price is None or self.price <= 0:
+                raise ValueError("지정가 주문은 유효한 가격이 필요합니다")
+
+        if self.order_type == OrderType.MARKET:
+            self.price = None
+
+        return self
 
 
 class OrderResult(BaseModel):
@@ -55,6 +94,16 @@ class OrderResult(BaseModel):
     message: str
     filled_quantity: int = 0
     filled_price: float = 0.0
+
+
+class OrderStatusInfo(BaseModel):
+    """주문 상태/체결 요약"""
+    order_id: str
+    symbol: str
+    filled_qty: int = 0
+    filled_price: float = 0.0
+    remaining_qty: int = 0
+    order_price: float = 0.0
 
 
 class AccountBalance(BaseModel):
@@ -89,3 +138,10 @@ class PendingOrderInfo(BaseModel):
     remaining_qty: int      # 미체결수량
     order_price: float      # 주문단가
     order_time: str         # 주문시각
+
+
+class BuyingPowerInfo(BaseModel):
+    """주문 가능 수량/현금 정보"""
+    success: bool
+    max_qty: int = 0
+    available_cash: float = 0.0

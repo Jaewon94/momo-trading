@@ -56,12 +56,16 @@ RISK_TUNING_PROMPT = """## AI 한도 결정 요청
 ### 참고 설정
 - 일일 거래 한도 기본값: {max_daily_trades}회 (조정 가능)
 - 최소 매수 수량: {min_buy_quantity}주
+- 시스템 절대 일일 거래 상한: {abs_max_daily_trades}회
+- 시스템 절대 단일 주문 상한: {abs_max_single_order_krw:,.0f}원
+- 시스템 절대 단일 포지션 비중 상한: {abs_max_position_pct:.1f}%
 
 ---
 
 위 정보를 분석하여 오늘의 적정 매매 한도를 자율적으로 결정해주세요.
 총자산 대비 적절한 단일 주문 금액, 포지션 비중, 현금 비율을 판단하세요.
-max_daily_trades=0은 무제한, max_single_order_krw=0은 무제한을 의미합니다.
+max_daily_trades=0 또는 max_single_order_krw=0은 AI 제안 단계에서는 무제한 의미지만,
+시스템 적용 단계에서는 위 절대 상한으로 강제 보정됩니다.
 max_single_order_krw 설정 시 포트폴리오 내 고가 종목(10만~50만원대) 1주 매수가 가능하도록 고려하세요.
 너무 낮으면 좋은 기회를 놓칠 수 있습니다.
 

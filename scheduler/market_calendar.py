@@ -129,6 +129,82 @@ class MarketCalendar:
         return "CLOSED"
 
     @staticmethod
+    def get_market_session_label(session_code: str) -> str:
+        return {
+            "NXT_PRE": "NXT 프리마켓",
+            "KRX_NXT": "정규장",
+            "KRX_CLOSE": "장마감 동시호가",
+            "NXT_AFTER": "NXT 애프터마켓",
+            "CLOSED": "장외",
+        }.get(session_code, "장외")
+
+    @staticmethod
+    def get_market_session_note(session_code: str) -> str:
+        return {
+            "NXT_PRE": "08:00~08:50 대체거래소 프리마켓",
+            "KRX_NXT": "09:00~15:20 정규장 / 15:20~15:30 장마감 동시호가",
+            "KRX_CLOSE": "15:20~15:30 KRX 종가경매 구간",
+            "NXT_AFTER": "15:30~20:00 대체거래소 애프터마켓",
+            "CLOSED": "정규장 외 시간대",
+        }.get(session_code, "정규장 외 시간대")
+
+    @staticmethod
+    def supports_automated_trading(session_code: str) -> bool:
+        """현재 자동매매가 공식 지원하는 세션 여부"""
+        return session_code == "KRX_NXT"
+
+    @staticmethod
+    def is_automated_trading_session(dt: datetime | None = None) -> bool:
+        """자동 주문 생성이 허용되는 국내 세션 여부."""
+        return MarketCalendar.supports_automated_trading(MarketCalendar.get_market_session(dt))
+
+    @staticmethod
+    def next_session_start(dt: datetime | None = None) -> datetime:
+        """다음 국내 세션 시작 시각
+
+        세션 기준:
+        - 장외/휴장: 다음 NXT 프리마켓 08:00
+        - 프리마켓: 정규장 09:00
+        - 정규장: 장마감 동시호가 15:20
+        - 종가경매: NXT 애프터마켓 15:30
+        - 애프터마켓: 다음 거래일 08:00
+        """
+        dt = dt or now_kst()
+        if MarketCalendar.is_krx_holiday(dt):
+            return MarketCalendar.next_market_open(dt)
+
+        session = MarketCalendar.get_market_session(dt)
+        base = dt.replace(second=0, microsecond=0)
+        if session == "NXT_PRE":
+            return base.replace(hour=9, minute=0)
+        if session == "KRX_NXT":
+            return base.replace(hour=15, minute=20)
+        if session == "KRX_CLOSE":
+            return base.replace(hour=15, minute=30)
+        if session == "NXT_AFTER":
+            return MarketCalendar.next_market_open(dt + timedelta(minutes=1))
+        return MarketCalendar.next_market_open(dt)
+
+    @staticmethod
+    def get_market_session_info(dt: datetime | None = None) -> dict[str, object]:
+        dt = dt or now_kst()
+        holiday_name = MarketCalendar.get_holiday_name(dt)
+        session_code = MarketCalendar.get_market_session(dt)
+        is_domestic_open = MarketCalendar.is_domestic_trading_hours(dt)
+        is_regular_open = MarketCalendar.is_krx_trading_hours(dt)
+        next_session_at = MarketCalendar.next_session_start(dt)
+        return {
+            "code": session_code,
+            "label": MarketCalendar.get_market_session_label(session_code),
+            "note": MarketCalendar.get_market_session_note(session_code),
+            "holiday_name": holiday_name,
+            "is_domestic_open": is_domestic_open,
+            "is_regular_open": is_regular_open,
+            "supports_automated_trading": MarketCalendar.supports_automated_trading(session_code),
+            "next_session_at": next_session_at,
+        }
+
+    @staticmethod
     def is_any_market_open(dt: datetime | None = None) -> bool:
         """어떤 시장이라도 열려있는지 (국내 + 미국)"""
         return (MarketCalendar.is_domestic_trading_hours(dt) or

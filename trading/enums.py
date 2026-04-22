@@ -3,11 +3,19 @@ from enum import Enum
 
 class Market(str, Enum):
     """주식 시장"""
+    KRX = "KRX"
+    NXT = "NXT"
     KOSPI = "KOSPI"
     KOSDAQ = "KOSDAQ"
     NASDAQ = "NASDAQ"
     NYSE = "NYSE"
     AMEX = "AMEX"
+
+
+class BrokerProvider(str, Enum):
+    """브로커 제공자"""
+    KIS = "KIS"
+    KIWOOM = "KIWOOM"
 
 
 class OrderSide(str, Enum):
@@ -20,6 +28,17 @@ class OrderType(str, Enum):
     """주문 유형"""
     MARKET = "MARKET"
     LIMIT = "LIMIT"
+
+
+class OrderSession(str, Enum):
+    """주문 세션"""
+    REGULAR = "REGULAR"
+    NXT_PRE = "NXT_PRE"
+    KRX_CLOSE_AUCTION = "KRX_CLOSE_AUCTION"
+    NXT_AFTER = "NXT_AFTER"
+    PRE_MARKET_CLOSE = "PRE_MARKET_CLOSE"
+    POST_MARKET_CLOSE = "POST_MARKET_CLOSE"
+    AFTER_HOURS_SINGLE = "AFTER_HOURS_SINGLE"
 
 
 class OrderStatus(str, Enum):
@@ -97,6 +116,8 @@ class LLMTier(str, Enum):
 class LLMProvider(str, Enum):
     """LLM 제공자"""
     CLAUDE_CODE = "CLAUDE_CODE"  # 로컬 Claude Code CLI (구독 크레딧)
+    CODEX = "CODEX"  # 로컬 Codex CLI (ChatGPT 로그인 또는 API 키)
+    OLLAMA = "OLLAMA"  # 로컬 Ollama HTTP API
 
 
 class OrderConfirmStatus(str, Enum):

@@ -13,7 +13,8 @@ from repositories.daily_report_repository import DailyReportRepository
 from repositories.trade_result_repository import TradeResultRepository
 from services.activity_logger import activity_logger
 from trading.account_manager import account_manager
-from trading.enums import ActivityPhase, ActivityType
+from trading.broker_factory import get_broker_adapter
+from trading.enums import ActivityPhase, ActivityType, LLMTier
 
 DAILY_REPORT_PROMPT = """당신은 AI 트레이딩 시스템의 일일 리포트 작성자입니다.
 오늘 하루의 활동 데이터를 기반으로 다음 항목을 한국어로 작성해주세요.
@@ -53,7 +54,13 @@ DAILY_REPORT_PROMPT = """당신은 AI 트레이딩 시스템의 일일 리포트
 class DailyReportService:
     """일일 리포트 생성 서비스 (자체 세션 사용)"""
 
-    async def generate_daily_report(self, report_date: date | None = None) -> DailyReport | None:
+    async def generate_daily_report(
+        self,
+        report_date: date | None = None,
+        manual_provider_override: str | None = None,
+        manual_model_override: str | None = None,
+        force_regenerate: bool = False,
+    ) -> DailyReport | None:
         """일일 리포트 생성"""
         from util.time_util import now_kst
         if report_date is None:
@@ -81,7 +88,18 @@ class DailyReportService:
                 cash = balance.cash
                 stock_value = balance.stock_value
             except Exception as e:
-                logger.warning("계좌 스냅샷 조회 실패 (리포트 계속): {}", str(e))
+                logger.warning("계좌 스냅샷 조회 실패, 브로커 직접 조회로 폴백: {}", str(e))
+                try:
+                    adapter = get_broker_adapter()
+                    balance = await adapter.get_balance()
+                    holdings = await adapter.get_holdings()
+                    unrealized_pnl = balance.total_pnl
+                    open_position_count = len(holdings)
+                    total_asset = balance.total_asset
+                    cash = balance.cash
+                    stock_value = balance.stock_value
+                except Exception as fallback_exc:
+                    logger.warning("브로커 직접 계좌 조회도 실패 (리포트 계속): {}", str(fallback_exc))
 
             async with AsyncSessionLocal() as session:
                 async with session.begin():
@@ -90,7 +108,7 @@ class DailyReportService:
 
                     # 기존 리포트 확인 (중복 방지)
                     existing = await report_repo.get_by_date(report_date)
-                    if existing:
+                    if existing and not force_regenerate:
                         logger.debug("이미 리포트 존재: {}", report_date)
                         return existing
 
@@ -131,20 +149,18 @@ class DailyReportService:
                         f"- {k}: {v}건" for k, v in activity_counts.items()
                     )
 
-                    report = DailyReport(
-                        report_date=report_date,
-                        total_cycles=total_cycles,
-                        total_analyses=total_analyses,
-                        total_recommendations=total_recommendations,
-                        total_orders=total_orders,
-                        buy_count=buy_count,
-                        sell_count=sell_count,
-                        win_count=win_count,
-                        loss_count=loss_count,
-                        total_pnl=total_pnl,
-                        unrealized_pnl=unrealized_pnl,
-                        open_position_count=open_position_count,
-                    )
+                    report = existing or DailyReport(report_date=report_date)
+                    report.total_cycles = total_cycles
+                    report.total_analyses = total_analyses
+                    report.total_recommendations = total_recommendations
+                    report.total_orders = total_orders
+                    report.buy_count = buy_count
+                    report.sell_count = sell_count
+                    report.win_count = win_count
+                    report.loss_count = loss_count
+                    report.total_pnl = total_pnl
+                    report.unrealized_pnl = unrealized_pnl
+                    report.open_position_count = open_position_count
 
                     # LLM 요약 생성 시도
                     try:
@@ -166,7 +182,12 @@ class DailyReportService:
                             activity_counts=activity_count_text or "활동 없음",
                             recent_activities=recent_summaries or "활동 없음",
                         )
-                        result_text, provider = await llm_factory.generate_tier1(prompt)
+                        result_text, provider = await llm_factory.generate_manual(
+                            prompt,
+                            default_tier=LLMTier.TIER1,
+                            manual_provider_override=manual_provider_override,
+                            manual_model_override=manual_model_override,
+                        )
                         parsed = self._parse_json(result_text)
 
                         if parsed:
@@ -177,13 +198,30 @@ class DailyReportService:
                             report.top_picks = json.dumps(
                                 parsed.get("top_picks", []), ensure_ascii=False
                             )
+                        else:
+                            raise ValueError("daily report JSON parse failed")
                     except Exception as e:
                         logger.warning("LLM 리포트 요약 생성 실패: {}", str(e))
-                        report.market_summary = "LLM 요약 생성 실패"
-                        report.performance_review = f"활동 {len(activities)}건 기록됨"
+                        report.market_summary = self._build_market_summary_fallback(
+                            total_cycles=total_cycles,
+                            total_analyses=total_analyses,
+                            total_recommendations=total_recommendations,
+                            total_pnl=total_pnl,
+                            unrealized_pnl=unrealized_pnl,
+                        )
+                        report.performance_review = self._build_performance_review_fallback(
+                            activity_count=len(activities),
+                            buy_count=buy_count,
+                            sell_count=sell_count,
+                            open_position_count=open_position_count,
+                        )
+                        report.lessons_learned = "LLM 요약 생성이 실패해 활동/계좌 스냅샷 기준으로 fallback 요약을 기록했습니다."
+                        report.next_day_plan = "LLM 요약 복구 후 다음 거래일 전략/관심 종목을 다시 생성해 확인하세요."
+                        report.top_picks = json.dumps([], ensure_ascii=False)
 
                     report.strategy_stats = json.dumps(activity_counts, ensure_ascii=False)
-                    session.add(report)
+                    if not existing:
+                        session.add(report)
 
         except Exception as e:
             logger.error("일일 리포트 생성 실패: {}", str(e))
@@ -215,6 +253,33 @@ class DailyReportService:
     def _parse_json(self, text: str) -> dict | None:
         result = parse_llm_json(text)
         return result or None
+
+    def _build_market_summary_fallback(
+        self,
+        *,
+        total_cycles: int,
+        total_analyses: int,
+        total_recommendations: int,
+        total_pnl: float,
+        unrealized_pnl: float,
+    ) -> str:
+        return (
+            f"오늘 사이클 {total_cycles}회, 분석 {total_analyses}건, 추천 {total_recommendations}건을 기록했습니다. "
+            f"실현 손익은 {total_pnl:+,.0f}원, 현재 미실현 손익은 {unrealized_pnl:+,.0f}원입니다."
+        )
+
+    def _build_performance_review_fallback(
+        self,
+        *,
+        activity_count: int,
+        buy_count: int,
+        sell_count: int,
+        open_position_count: int,
+    ) -> str:
+        return (
+            f"활동 {activity_count}건, 매수 {buy_count}건, 매도 {sell_count}건이 기록됐고 "
+            f"현재 보유는 {open_position_count}종목입니다."
+        )
 
 
 daily_report_service = DailyReportService()

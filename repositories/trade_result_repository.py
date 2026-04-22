@@ -114,6 +114,24 @@ class TradeResultRepository(AsyncBaseRepository[TradeResult]):
         result = await self.db.execute(stmt)
         return result.scalar() or 0
 
+    async def get_sell_executions_by_date(self, target_date: date) -> list[TradeResult]:
+        """특정 날짜의 매도 체결 기록 (SELL 레코드, CONFIRMED)"""
+        start = datetime.combine(target_date, time.min, tzinfo=KST)
+        end = datetime.combine(target_date, time.max, tzinfo=KST)
+        stmt = (
+            select(TradeResult)
+            .where(and_(
+                TradeResult.side == "SELL",
+                TradeResult.exit_at.isnot(None),
+                TradeResult.exit_at >= start,
+                TradeResult.exit_at <= end,
+                TradeResult.status == "CONFIRMED",
+            ))
+            .order_by(TradeResult.exit_at.asc())
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
     async def get_opened_by_date(self, target_date: date) -> list[TradeResult]:
         """특정 날짜에 진입한 매수 기록 (entry_at 기준, CONFIRMED만)"""
         start = datetime.combine(target_date, time.min, tzinfo=KST)
@@ -125,6 +143,23 @@ class TradeResultRepository(AsyncBaseRepository[TradeResult]):
                 TradeResult.entry_at >= start,
                 TradeResult.entry_at <= end,
                 TradeResult.status == "CONFIRMED",
+            ))
+            .order_by(TradeResult.entry_at.asc())
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_pending_confirms_by_date(self, target_date: date) -> list[TradeResult]:
+        """특정 날짜에 생성된 PENDING_CONFIRM 매수 기록"""
+        start = datetime.combine(target_date, time.min, tzinfo=KST)
+        end = datetime.combine(target_date, time.max, tzinfo=KST)
+        stmt = (
+            select(TradeResult)
+            .where(and_(
+                TradeResult.side == "BUY",
+                TradeResult.entry_at >= start,
+                TradeResult.entry_at <= end,
+                TradeResult.status == "PENDING_CONFIRM",
             ))
             .order_by(TradeResult.entry_at.asc())
         )
@@ -163,6 +198,21 @@ class TradeResultRepository(AsyncBaseRepository[TradeResult]):
             select(TradeResult)
             .where(TradeResult.status == "PENDING_CONFIRM")
             .order_by(TradeResult.created_at.asc())
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_confirmed_open_buys_with_zero_entry_price(self) -> list[TradeResult]:
+        """미청산 CONFIRMED BUY 중 체결가가 0인 레코드 조회"""
+        stmt = (
+            select(TradeResult)
+            .where(and_(
+                TradeResult.side == "BUY",
+                TradeResult.exit_at.is_(None),
+                TradeResult.status == "CONFIRMED",
+                TradeResult.entry_price <= 0,
+            ))
+            .order_by(TradeResult.entry_at.asc(), TradeResult.created_at.asc())
         )
         result = await self.db.execute(stmt)
         return list(result.scalars().all())

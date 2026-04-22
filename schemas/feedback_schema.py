@@ -53,6 +53,7 @@ class TradeResultResponse(BaseModel):
     entry_rsi: Optional[float] = None
     entry_pattern: Optional[str] = None
     market_regime: str = ""
+    notes: Optional[str] = None
     status: str = "CONFIRMED"
     entry_at: Optional[datetime] = None
     exit_at: Optional[datetime] = None

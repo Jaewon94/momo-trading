@@ -7,12 +7,12 @@ LLM 다단계 분석(스크리닝 → 기술적 분석 → 최종 검토)과 실
 ## 주요 기능
 
 - **AI 에이전트 파이프라인** — 시장 스캔 → LLM 스크리닝 → 5단계 CoT 분석 → 8항목 체크리스트 최종 검토 → 자동 주문
-- **2-Tier LLM 라우팅** — Tier1(빠른 모델: Gemini Flash/Haiku)로 스캔·분석, Tier2(정밀 모델: Claude/Bedrock)로 최종 승인
+- **2-Tier LLM 라우팅** — Tier1/Tier2별로 Claude Code 또는 Codex를 선택하고, 모델 alias/버전까지 분리 설정 가능
 - **듀얼 전략** — STABLE_SHORT(대형주 보수적) + AGGRESSIVE_SHORT(모멘텀 공격적), 시장 국면별 파라미터 자동 조정
 - **실시간 이벤트 트레이딩** — KIS WebSocket → 거래량 급증 / 급등 / 급락 감지 → 즉시 분석 및 매매
 - **스윙 모드** — 오버나이트 보유, 종목별 HOLD/SELL 판단, 갭 리스크 체크
 - **피드백 학습** — 일일 성과 분석 → 성공/실패 패턴 추출 → 트레이딩 규칙 자동 생성·적용
-- **Admin 대시보드** — SSE 실시간 활동 피드, 보유종목·미체결 현황, 설정 변경, 수동 사이클 트리거
+- **Admin 대시보드** — SSE 실시간 활동 피드, 보유종목·미체결 현황, `오늘 매매/체결`, `확인 대기(PENDING_CONFIRM)` 복구
 - **백테스팅** — 과거 데이터 기반 전략 시뮬레이션
 
 ## 기술 스택
@@ -26,8 +26,8 @@ LLM 다단계 분석(스크리닝 → 기술적 분석 → 최종 검토)과 실
 | **기술적 분석** | pandas + pandas-ta |
 | **실시간 통신** | WebSocket (KIS), SSE (Admin) |
 | **스케줄러** | APScheduler (KRX 장 시간 기준 cron) |
-| **증권사 API** | KIS MCP Server (Docker) + KIS REST API 직접 호출 |
-| **LLM** | Claude Code CLI / Google Gemini / AWS Bedrock |
+| **증권사 API** | KIS MCP Server (Docker, KIS 전용) + Kiwoom REST API |
+| **LLM** | Claude Code CLI / Codex CLI |
 | **로깅** | loguru |
 | **테스트** | pytest + pytest-asyncio |
 
@@ -85,6 +85,7 @@ KIS WebSocket → RealtimeMonitor → EventDetector
 ```
 momo-trading/
 ├── main.py                     # FastAPI 앱 진입점
+├── start.sh                    # 루트 실행 진입점 (scripts/dev/start.sh 래퍼)
 ├── core/                       # 설정, DB, 이벤트버스, 로깅
 ├── models/                     # SQLAlchemy ORM 모델
 ├── repositories/               # AsyncBaseRepository[T] CRUD
@@ -123,6 +124,8 @@ momo-trading/
 ├── admin/static/               # Admin 대시보드 (HTML/JS)
 ├── backtesting/                # 백테스팅 엔진
 ├── docker/kis-mcp/             # KIS MCP Docker 설정
+├── scripts/                    # dev / qa 스크립트
+├── runtime/                    # logs / pids / data 런타임 산출물
 ├── alembic/                    # DB 마이그레이션
 └── tests/                      # pytest 테스트
 ```
@@ -134,7 +137,7 @@ momo-trading/
 - Python 3.12+
 - [KIS Developers](https://apiportal.koreainvestment.com/) 계정 및 API 키
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (LLM 분석용)
-- Docker & Docker Compose (KIS MCP 서버 실행용)
+- Docker & Docker Compose (KIS 사용 시 필요, Kiwoom만 쓰면 선택)
 
 ### 1. 저장소 클론 및 환경 설정
 
@@ -155,7 +158,14 @@ cp .env.example .env
 
 ### 2. `.env` 설정
 
-`.env` 파일을 열고 KIS API 키를 입력합니다.
+`.env` 파일에서 먼저 `BROKER_PROVIDER`를 정합니다. 실행 스크립트의 자동 분기 기준도 이 값입니다.
+
+```bash
+BROKER_PROVIDER=KIS      # KIS 사용: kis-mcp 자동 기동
+# BROKER_PROVIDER=KIWOOM # Kiwoom 사용: kis-mcp 자동 중지
+```
+
+그 다음 선택한 브로커의 인증값을 채웁니다.
 
 ```bash
 # === 필수: KIS API 인증 ===
@@ -182,9 +192,37 @@ MAX_DAILY_TRADES=30                   # 일일 최대 거래 횟수
 
 > 전체 설정 항목은 `.env.example`을 참조하세요.
 
+### LLM 모델 / 버전 설정
+
+`.env`와 Admin 대시보드 모두에서 provider와 model/version을 분리해서 설정할 수 있습니다.
+
+```bash
+LLM_PROVIDER=CLAUDE_CODE
+LLM_PROVIDER_TIER1=CODEX
+LLM_PROVIDER_TIER2=CLAUDE_CODE
+LLM_FALLBACK_PROVIDER_TIER1=CLAUDE_CODE
+LLM_FALLBACK_PROVIDER_TIER2=CODEX
+LLM_FALLBACK_MODEL_TIER1=claude-opus-4-6
+LLM_FALLBACK_MODEL_TIER2=DEFAULT
+
+CLAUDE_CODE_MODEL=DEFAULT
+CLAUDE_CODE_MODEL_TIER1=DEFAULT
+CLAUDE_CODE_MODEL_TIER2=claude-sonnet-4-6
+
+CODEX_MODEL=DEFAULT
+CODEX_MODEL_TIER1=gpt-5-codex
+CODEX_MODEL_TIER2=DEFAULT
+```
+
+- `DEFAULT`는 해당 CLI에 `--model`을 넘기지 않고 벤더 기본값을 그대로 사용합니다.
+- Claude는 `sonnet`, `opus`, `haiku` 같은 alias 또는 pinned model name을 사용할 수 있습니다.
+- Codex는 `gpt-5-codex` 같은 codex 계열이나 필요한 경우 custom model string을 직접 넣을 수 있습니다.
+- fallback provider도 별도로 모델/버전을 가질 수 있습니다.
+- Admin 대시보드는 공식 문서 기반 모델 목록을 동기화해 보여주지만, 로컬 CLI 버전/계정 권한에 따라 실제 사용 가능 여부는 달라질 수 있습니다.
+
 ### 3. 실행
 
-#### Docker (권장)
+#### Docker 전체 실행
 
 ```bash
 docker compose up
@@ -193,16 +231,40 @@ docker compose up
 # Admin 대시보드: http://localhost:9000/admin
 ```
 
-#### 로컬 개발
+#### 로컬 실행 권장: `./start.sh`
 
 ```bash
-# KIS MCP 서버를 별도로 실행해야 합니다
-docker compose up kis-mcp
+./start.sh
 
-# 다른 터미널에서
-alembic upgrade head          # DB 마이그레이션
-uvicorn main:app --reload     # http://localhost:8000
+# 백그라운드
+./start.sh -d
+./start.sh status
+./start.sh logs
+./start.sh stop
 ```
+
+`./start.sh`는 루트 진입점이고, 실제 구현은 `scripts/dev/start.sh`에 있습니다.
+로그와 PID 기본 위치는 `runtime/logs/`, `runtime/pids/` 입니다.
+로컬 SQLite DB와 브로커 토큰 캐시는 `runtime/data/`를 기본 경로로 사용합니다.
+`./start.sh`를 쓰면 `.env`의 `BROKER_PROVIDER`를 읽어 자동으로 분기합니다.
+- `BROKER_PROVIDER=KIS` → `kis-mcp`를 `docker compose up -d kis-mcp`로 먼저 기동
+- `BROKER_PROVIDER!=KIS` 예: `KIWOOM` → 실행 중인 `kis-mcp`를 `docker compose stop kis-mcp`로 정리 후 앱 시작
+
+기본 포트는 `9000`이고, 이미 사용 중이면 이렇게 바꿔서 실행할 수 있습니다.
+
+```bash
+MOMO_PORT=9010 ./start.sh
+```
+
+#### 직접 실행
+
+```bash
+alembic upgrade head
+python -m uvicorn main:app --host 0.0.0.0 --port 9000 --reload
+```
+
+기존 로컬 환경에서 이미 `.env`에 `DATABASE_URL=sqlite:///./data/app.db`를 쓰고 있으면 그대로 동작합니다.
+새 기본 경로만 `runtime/data/app.db`로 바뀐 것이고, `.env`가 있으면 그 값이 우선합니다.
 
 ### 4. 첫 실행 체크리스트
 
@@ -242,6 +304,8 @@ uvicorn main:app --reload     # http://localhost:8000
 - **실시간 피드** — SSE 기반 에이전트 활동 스트림 (매수/매도/분석/에러)
 - **보유종목 카드** — 현재 포지션, 수익률, 미실현 손익
 - **미체결 주문** — 대기 중인 주문 현황
+- **오늘 매매/체결** — `오늘 진입`, `오늘 청산`, `보유 포지션`, `확인 대기(PENDING_CONFIRM)` 표시
+- **확인 대기 복구** — 관리자 버튼으로 `PENDING_CONFIRM` 수동 재확인
 - **일일 리포트** — 승률, 손익, Sharpe ratio, AI 학습 내용
 - **설정 패널** — 런타임 설정 변경 (재시작 불필요)
 - **수동 트리거** — 장 외 시간에도 사이클 실행 가능
@@ -251,9 +315,27 @@ uvicorn main:app --reload     # http://localhost:8000
 ```bash
 pytest tests/ -v
 pytest tests/api/test_health.py -v    # 단일 파일
+pnpm test:ui                          # Admin 순수 상태 JS 테스트
 ```
 
 인메모리 SQLite(`sqlite+aiosqlite://`)로 실행되며, KIS API 호출 없이 독립 테스트 가능합니다.
+
+## 브로커 Smoke Test
+
+키움이나 KIS 계정을 실제로 붙이기 전후에 읽기 전용 smoke test로 연결 상태를 확인할 수 있습니다.
+
+```bash
+python -m tools.broker_smoke --symbol 005930 --market KRX
+```
+
+이 명령은 주문 없이 아래만 확인합니다.
+
+- 잔고 조회
+- 보유 종목 조회
+- 미체결 주문 조회
+- 현재가 조회
+
+`BROKER_PROVIDER=KIWOOM`으로 바꾼 뒤 키움 키를 `.env`에 넣으면 같은 명령으로 키움 경로를 바로 검증할 수 있습니다.
 
 ## 면책 조항
 

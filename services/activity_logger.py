@@ -6,7 +6,7 @@ from uuid import uuid4
 from loguru import logger
 
 from admin.sse_manager import sse_manager
-from core.database import AsyncSessionLocal
+from core.database import AsyncSessionLocal, run_sqlite_write_with_retry
 from models.agent_activity import AgentActivityLog
 from trading.enums import ActivityPhase, ActivityType
 from util.time_util import now_kst
@@ -56,9 +56,12 @@ class ActivityLogger:
 
         # DB 저장 (자체 세션)
         try:
-            async with AsyncSessionLocal() as session:
-                async with session.begin():
-                    session.add(entry)
+            async def _persist() -> None:
+                async with AsyncSessionLocal() as session:
+                    async with session.begin():
+                        session.add(entry)
+
+            await run_sqlite_write_with_retry(_persist)
         except Exception as e:
             logger.error("활동 로그 DB 저장 실패: {}", str(e))
 

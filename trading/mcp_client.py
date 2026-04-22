@@ -46,6 +46,7 @@ class MCPClient:
         self._call_timestamps: list[float] = []
         self._rate_lock = asyncio.Lock()
         self._call_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_CALLS)
+        self._connect_lock = asyncio.Lock()
         # P1-3: 주문 메타데이터 추적 (SSE 끊김 시 미확인 주문 복구용)
         self._pending_order_meta: dict[int, dict] = {}  # msg_id → {tool_name, arguments, timestamp}
         self._unconfirmed_orders: list[dict] = []  # SSE 끊김 시 보관
@@ -53,6 +54,28 @@ class MCPClient:
     @property
     def is_connected(self) -> bool:
         return self._post_client is not None and self._session_id is not None
+
+    async def ensure_connected(self, force_reconnect: bool = False) -> bool:
+        """현재 연결이 없거나 반쯤 끊긴 상태면 fresh reconnect"""
+        if self.is_connected and not force_reconnect:
+            return True
+
+        async with self._connect_lock:
+            if self.is_connected and not force_reconnect:
+                return True
+
+            has_stale_state = any(
+                item is not None for item in (self._post_client, self._sse_client, self._sse_task)
+            )
+            if force_reconnect or has_stale_state:
+                await self.disconnect()
+
+            try:
+                await self.connect()
+            except Exception as e:
+                logger.warning("MCP fresh reconnect 실패: {}", str(e))
+                return False
+            return self.is_connected
 
     async def connect(self) -> None:
         self._shutting_down = False
@@ -335,8 +358,17 @@ class MCPClient:
         _retry: int = 0,
     ) -> MCPResponse:
         """MCP 도구 호출 — 세마포어 + rate limit으로 초당 한도 준수"""
-        if not self._post_client:
-            return MCPResponse(success=False, error="MCP 클라이언트가 연결되지 않았습니다")
+        had_partial_state = any(
+            item is not None for item in (self._post_client, self._sse_client, self._sse_task)
+        )
+        if not self.is_connected:
+            reconnected = await self.ensure_connected(force_reconnect=had_partial_state)
+            if not reconnected:
+                error = (
+                    "MCP SSE 세션 없음 (재연결 실패)"
+                    if had_partial_state else "MCP 클라이언트가 연결되지 않았습니다"
+                )
+                return MCPResponse(success=False, error=error)
 
         # SSE 재연결 중이면 잠시 대기
         if not self._session_id:
@@ -535,8 +567,12 @@ class MCPClient:
 
     async def list_tools(self) -> list[dict]:
         """사용 가능한 MCP 도구 목록 조회"""
-        if not self._post_client or not self._session_id:
-            return []
+        had_partial_state = any(
+            item is not None for item in (self._post_client, self._sse_client, self._sse_task)
+        )
+        if not self.is_connected:
+            if not await self.ensure_connected(force_reconnect=had_partial_state):
+                return []
 
         msg_id = self._next_id
         self._next_id += 1

@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from core.config import settings
 from schemas.common import SuccessResponse
 from schemas.dashboard_schema import SystemStatus
+from services.runtime_settings_service import runtime_settings_service
 from trading.enums import AutonomyMode
 
 router = APIRouter(prefix="/dashboard", tags=["대시보드"])
@@ -27,7 +28,7 @@ class AutonomyModeUpdate(BaseModel):
 
 @router.put("/system/autonomy", response_model=SuccessResponse[dict])
 async def update_autonomy_mode(data: AutonomyModeUpdate):
-    settings.AUTONOMY_MODE = data.mode.value
+    await runtime_settings_service.update_settings({"AUTONOMY_MODE": data.mode.value})
     return SuccessResponse(
         data={"autonomy_mode": settings.AUTONOMY_MODE},
         message=f"자율 모드가 {data.mode.value}로 변경되었습니다",
@@ -40,7 +41,7 @@ class TradingToggle(BaseModel):
 
 @router.put("/system/trading-enabled", response_model=SuccessResponse[dict])
 async def toggle_trading(data: TradingToggle):
-    settings.TRADING_ENABLED = data.enabled
+    await runtime_settings_service.update_settings({"TRADING_ENABLED": data.enabled})
     return SuccessResponse(
         data={"trading_enabled": settings.TRADING_ENABLED},
         message=f"매매가 {'활성화' if data.enabled else '비활성화'}되었습니다",

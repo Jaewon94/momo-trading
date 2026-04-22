@@ -22,8 +22,282 @@
     body { font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
     .chat-bubble { animation: fadeIn 0.3s ease-out; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-    .detail-content { max-height: 0; overflow: hidden; transition: max-height 0.4s ease-out; }
-    .detail-content.open { max-height: 2000px; overflow-y: auto; }
+    .detail-content {
+      display: grid;
+      grid-template-rows: 0fr;
+      opacity: 0;
+      overflow: hidden;
+      pointer-events: none;
+      margin-top: 0 !important;
+      transition: grid-template-rows 0.18s ease, opacity 0.14s ease, margin-top 0.18s ease;
+    }
+    .detail-content.open {
+      grid-template-rows: 1fr;
+      opacity: 1;
+      pointer-events: auto;
+      margin-top: 6px !important;
+    }
+    .detail-content-inner {
+      min-height: 0;
+      overflow: hidden;
+    }
+    .settings-modal-overlay {
+      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: rgba(2, 6, 23, 0.76); backdrop-filter: blur(10px);
+      z-index: 60; opacity: 0; pointer-events: none; transition: opacity 0.16s ease;
+      padding: 20px;
+    }
+    .settings-modal-overlay.open { opacity: 1; pointer-events: auto; }
+    .settings-modal {
+      width: min(1080px, 100%);
+      height: min(820px, calc(100vh - 40px));
+      background: linear-gradient(180deg, rgba(17,24,39,0.98), rgba(15,16,33,0.98));
+      border: 1px solid #334155; border-radius: 18px; overflow: hidden;
+      box-shadow: 0 28px 90px rgba(15, 23, 42, 0.45);
+      transform: translateY(10px) scale(0.985); transition: transform 0.18s ease;
+      display: flex; flex-direction: column;
+    }
+    .settings-modal-overlay.open .settings-modal { transform: translateY(0) scale(1); }
+    .settings-tab-btn.active { border-color: #60a5fa; background: rgba(37, 99, 235, 0.18); color: #dbeafe; }
+    .settings-tab-panel { display: none; min-height: 0; }
+    .settings-tab-panel.active { display: block; min-height: 100%; }
+    .settings-summary-card {
+      border: 1px solid #374151; border-radius: 12px; background: rgba(15,16,33,0.74); padding: 12px;
+    }
+    .settings-jump-btn {
+      width: 100%; text-align: left; border: 1px solid #374151; border-radius: 12px;
+      background: rgba(15,16,33,0.74); padding: 10px 12px; transition: 0.15s ease;
+    }
+    .settings-jump-btn:hover { border-color: #60a5fa; background: rgba(30, 41, 59, 0.92); }
+    .news-overview-grid {
+      display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px;
+    }
+    .news-overview-card {
+      border: 1px solid rgba(51,65,85,0.92); border-radius: 14px;
+      background: rgba(15,23,42,0.68); padding: 12px 14px;
+    }
+    .news-overview-label { color: #94a3b8; font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; }
+    .news-overview-value { color: #f8fafc; font-size: 20px; font-weight: 700; margin-top: 6px; }
+    .news-overview-help { color: #64748b; font-size: 11px; margin-top: 6px; line-height: 1.5; }
+    .news-source-pill-row { display: flex; flex-wrap: wrap; gap: 8px; }
+    .news-source-pill {
+      display: inline-flex; align-items: center; gap: 8px; padding: 7px 10px;
+      border: 1px solid rgba(71,85,105,0.92); border-radius: 999px;
+      background: rgba(15,16,33,0.54); color: #cbd5e1; font-size: 12px;
+    }
+    .news-source-pill strong { color: #f8fafc; font-weight: 600; }
+    .news-item-list { display: grid; gap: 10px; }
+    .news-item-card {
+      border: 1px solid rgba(51,65,85,0.92); border-radius: 16px;
+      background:
+        linear-gradient(180deg, rgba(15,16,33,0.88), rgba(15,23,42,0.78)),
+        radial-gradient(circle at top left, rgba(96,165,250,0.10), transparent 36%);
+      padding: 12px 14px;
+    }
+    .news-item-meta { color: #94a3b8; font-size: 11px; }
+    .news-item-title { color: #f8fafc; font-size: 14px; font-weight: 600; margin-top: 6px; line-height: 1.5; }
+    .news-item-subtitle { color: #cbd5e1; font-size: 12px; line-height: 1.5; margin-top: 6px; }
+    .news-item-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .news-item-badge {
+      display: inline-flex; align-items: center; border-radius: 999px; padding: 4px 8px;
+      font-size: 11px; color: #dbeafe; background: rgba(30,58,138,0.22); border: 1px solid rgba(71,85,105,0.82);
+    }
+    .report-news-strip {
+      border: 1px solid rgba(51,65,85,0.92);
+      border-radius: 18px;
+      background:
+        linear-gradient(180deg, rgba(15,16,33,0.92), rgba(15,23,42,0.72)),
+        radial-gradient(circle at top left, rgba(96,165,250,0.08), transparent 38%);
+      overflow: hidden;
+    }
+    .report-news-strip.tone-success {
+      border-color: rgba(16,185,129,0.35);
+      background:
+        linear-gradient(180deg, rgba(8,34,30,0.95), rgba(15,16,33,0.76)),
+        radial-gradient(circle at top left, rgba(16,185,129,0.14), transparent 40%);
+    }
+    .report-news-strip.tone-empty {
+      border-color: rgba(245,158,11,0.28);
+      background:
+        linear-gradient(180deg, rgba(41,26,8,0.95), rgba(15,16,33,0.76)),
+        radial-gradient(circle at top left, rgba(245,158,11,0.12), transparent 40%);
+    }
+    .report-news-strip.tone-error {
+      border-color: rgba(248,113,113,0.35);
+      background:
+        linear-gradient(180deg, rgba(49,18,18,0.95), rgba(15,16,33,0.76)),
+        radial-gradient(circle at top left, rgba(248,113,113,0.14), transparent 40%);
+    }
+    .report-news-strip.tone-idle {
+      border-color: rgba(71,85,105,0.9);
+    }
+    .report-news-strip-summary {
+      list-style: none;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: start;
+      cursor: pointer;
+      padding: 14px 16px;
+    }
+    .report-news-strip-summary::-webkit-details-marker { display: none; }
+    .report-news-strip-eyebrow {
+      color: #94a3b8;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+    }
+    .report-news-strip-title {
+      color: #f8fafc;
+      font-size: 15px;
+      font-weight: 700;
+      margin-top: 6px;
+    }
+    .report-news-strip-meta {
+      color: #94a3b8;
+      font-size: 12px;
+      margin-top: 6px;
+      line-height: 1.5;
+    }
+    .report-news-strip-stat-row {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .report-news-strip-stat {
+      min-width: 118px;
+      border: 1px solid rgba(71,85,105,0.9);
+      border-radius: 14px;
+      background: rgba(15,16,33,0.52);
+      padding: 10px 12px;
+    }
+    .report-news-strip-stat-label {
+      display: block;
+      color: #94a3b8;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+    }
+    .report-news-strip-stat strong {
+      display: block;
+      color: #f8fafc;
+      font-size: 13px;
+      font-weight: 700;
+      margin-top: 6px;
+    }
+    .report-news-strip-body {
+      border-top: 1px solid rgba(51,65,85,0.82);
+      padding: 14px 16px 16px;
+    }
+    .news-settings-grid {
+      display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .news-settings-field {
+      border: 1px solid #374151; border-radius: 14px; background: rgba(15,16,33,0.58); padding: 12px;
+    }
+    .news-settings-field.full-span { grid-column: 1 / -1; }
+    .news-settings-field label { display: block; color: #e5e7eb; font-size: 13px; margin-bottom: 6px; }
+    .news-settings-field .help { color: #64748b; font-size: 11px; margin-top: 6px; line-height: 1.5; }
+    .settings-accordion {
+      border: 1px solid #374151;
+      border-radius: 16px;
+      background: rgba(15, 16, 33, 0.6);
+      overflow: hidden;
+    }
+    .settings-accordion > summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 14px 16px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .settings-accordion > summary::-webkit-details-marker { display: none; }
+    .settings-accordion[open] > summary {
+      border-bottom: 1px solid rgba(55, 65, 81, 0.9);
+      background: rgba(30, 41, 59, 0.35);
+    }
+    .settings-accordion-arrow {
+      color: #94a3b8;
+      font-size: 12px;
+      transition: transform 0.18s ease;
+      margin-top: 2px;
+    }
+    .settings-accordion[open] .settings-accordion-arrow {
+      transform: rotate(180deg);
+    }
+    .settings-accordion-body {
+      padding: 16px;
+    }
+    .performance-table { display: grid; gap: 8px; }
+    .performance-table-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) repeat(4, minmax(0, 0.8fr));
+      gap: 8px;
+      align-items: center;
+      border: 1px solid rgba(51,65,85,0.82);
+      border-radius: 14px;
+      background: rgba(15,16,33,0.55);
+      padding: 10px 12px;
+    }
+    .performance-table-row.compact {
+      grid-template-columns: minmax(0, 1.2fr) repeat(3, minmax(0, 0.8fr));
+    }
+    .performance-table-cell { color: #dbe4f0; font-size: 12px; }
+    .performance-table-cell.metric-name { color: #f8fafc; font-weight: 600; }
+    .performance-table-head {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      color: #64748b;
+      font-size: 11px;
+      min-width: 240px;
+      text-align: right;
+    }
+    .performance-table-head.compact {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      min-width: 180px;
+    }
+    .observability-chart-shell {
+      border: 1px solid rgba(51,65,85,0.82);
+      border-radius: 16px;
+      background: rgba(15,16,33,0.72);
+      padding: 10px 12px;
+      min-height: 132px;
+    }
+    .observability-chart-svg {
+      width: 100%;
+      height: 96px;
+      display: block;
+    }
+    .observability-chart-path {
+      fill: none;
+      stroke-width: 2.5;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .stroke-blue-400 { stroke: #60a5fa; }
+    .stroke-emerald-400 { stroke: #34d399; }
+    .stroke-amber-400 { stroke: #fbbf24; }
+    .stroke-fuchsia-400 { stroke: #e879f9; }
+    .observability-chart-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 8px;
+      color: #94a3b8;
+      font-size: 11px;
+    }
+    .observability-chart-empty {
+      min-height: 96px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #64748b;
+      font-size: 12px;
+    }
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: #1a1b2e; }
     ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
@@ -58,9 +332,15 @@
       border-left: 4px solid #60a5fa;
       background: linear-gradient(90deg, rgba(96,165,250,0.06) 0%, transparent 30%);
     }
-    .stock-card.outcome-hold { border-left: 3px solid #6b7280; }
+    .stock-card.outcome-hold {
+      border-left: 3px solid #cbd5e1;
+      background: linear-gradient(180deg, rgba(255,255,255,0.018), rgba(15,23,42,0.04));
+    }
     .stock-card.outcome-error { border-left: 3px solid #fbbf24; }
-    .stock-card.outcome-progress { border-left: 3px solid #a78bfa; }
+    .stock-card.outcome-progress {
+      border-left: 3px solid #cbd5e1;
+      background: linear-gradient(180deg, rgba(255,255,255,0.018), rgba(15,23,42,0.04));
+    }
     .stock-card-header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; cursor: pointer; user-select: none; transition: background 0.15s; }
     .stock-card-header:hover { background: rgba(255,255,255,0.03); }
     .stock-card-body { max-height: 0; overflow: hidden; transition: max-height 0.3s ease-out; }
@@ -68,6 +348,418 @@
     .stock-card-steps { padding: 0 12px 8px 12px; }
     .stock-step { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0; border-top: 1px solid #1f2937; }
     .stock-step:first-child { border-top: none; }
+    .task-card {
+      border-left: 3px solid #475569;
+      background: linear-gradient(180deg, rgba(15,23,42,0.72), rgba(15,23,42,0.38));
+    }
+    .task-card.outcome-hold,
+    .task-card.outcome-progress {
+      border-left-color: #475569;
+      background: linear-gradient(180deg, rgba(15,23,42,0.72), rgba(15,23,42,0.38));
+    }
+    .task-card .stock-card-header {
+      padding-top: 10px;
+      padding-bottom: 10px;
+      background: rgba(15, 23, 42, 0.42);
+    }
+    .task-card .stock-card-header:hover {
+      background: rgba(30, 41, 59, 0.46);
+    }
+    .task-icon-badge {
+      width: 28px;
+      height: 28px;
+      border-radius: 10px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(180deg, rgba(51,65,85,0.5), rgba(30,41,59,0.7));
+      border: 1px solid rgba(100,116,139,0.3);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+    .task-meta-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.74);
+      border: 1px solid rgba(71, 85, 105, 0.75);
+      color: #94a3b8;
+      font-size: 10px;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    .task-card .stock-card-body.open {
+      background: linear-gradient(180deg, rgba(15,23,42,0.2), rgba(15,23,42,0.02));
+    }
+    .task-card .stock-step {
+      padding-top: 8px;
+      padding-bottom: 8px;
+    }
+
+    .event-radar-shell {
+      border-bottom: 1px solid rgba(55, 65, 81, 0.9);
+      background:
+        linear-gradient(180deg, rgba(15,16,33,0.98), rgba(15,23,42,0.95)),
+        radial-gradient(circle at top left, rgba(96,165,250,0.12), transparent 42%);
+    }
+    .event-radar-shell.compact #event-radar-filters,
+    .event-radar-shell.compact #event-radar-list {
+      display: none;
+    }
+    .event-radar-shell.compact #event-radar-summary {
+      margin-top: 10px;
+    }
+    .event-radar-toggle {
+      border: 1px solid rgba(71,85,105,0.9);
+      border-radius: 999px;
+      background: rgba(15,16,33,0.58);
+      color: #cbd5e1;
+      font-size: 11px;
+      padding: 5px 10px;
+      transition: 0.15s ease;
+    }
+    .event-radar-toggle:hover {
+      border-color: rgba(96,165,250,0.8);
+      color: #eff6ff;
+    }
+    .event-radar-summary-grid {
+      display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px;
+    }
+    .event-radar-summary-pill {
+      border: 1px solid rgba(51,65,85,0.92); border-radius: 16px;
+      background: rgba(15,23,42,0.6); padding: 12px 14px;
+    }
+    .event-radar-summary-label { color: #94a3b8; font-size: 11px; }
+    .event-radar-summary-value { color: #f8fafc; font-size: 18px; font-weight: 700; margin-top: 6px; }
+    .event-radar-filter-row { display: flex; flex-wrap: wrap; gap: 8px; }
+    .event-radar-filter-chip {
+      display: inline-flex; align-items: center; gap: 8px;
+      border: 1px solid rgba(71,85,105,0.9); border-radius: 999px;
+      background: rgba(15,16,33,0.58); color: #cbd5e1;
+      padding: 6px 10px; font-size: 12px; transition: 0.15s ease;
+    }
+    .event-radar-filter-chip.active {
+      border-color: rgba(96,165,250,0.82); background: rgba(37,99,235,0.18); color: #dbeafe;
+    }
+    .event-radar-filter-count {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 20px; height: 20px; border-radius: 999px; padding: 0 6px;
+      background: rgba(255,255,255,0.08); color: #94a3b8; font-size: 11px;
+    }
+    .event-radar-list { display: grid; gap: 10px; }
+    .event-radar-card {
+      border: 1px solid rgba(51,65,85,0.92); border-radius: 18px; padding: 14px;
+      background: rgba(15,16,33,0.7);
+      display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px;
+    }
+    .event-radar-card.tone-buy {
+      border-color: rgba(16,185,129,0.35);
+      background:
+        linear-gradient(180deg, rgba(7,31,30,0.95), rgba(15,16,33,0.74)),
+        radial-gradient(circle at top left, rgba(16,185,129,0.14), transparent 42%);
+    }
+    .event-radar-card.tone-sell {
+      border-color: rgba(248,113,113,0.35);
+      background:
+        linear-gradient(180deg, rgba(45,18,21,0.95), rgba(15,16,33,0.74)),
+        radial-gradient(circle at top left, rgba(248,113,113,0.14), transparent 42%);
+    }
+    .event-radar-card.tone-watch {
+      border-color: rgba(96,165,250,0.28);
+      background:
+        linear-gradient(180deg, rgba(15,25,48,0.95), rgba(15,16,33,0.74)),
+        radial-gradient(circle at top left, rgba(96,165,250,0.14), transparent 42%);
+    }
+    .event-radar-card.is-focused { box-shadow: 0 0 0 1px rgba(96,165,250,0.8), 0 12px 30px rgba(30,58,138,0.25); }
+    .event-radar-eyebrow { color: #94a3b8; font-size: 10px; text-transform: uppercase; letter-spacing: 0.16em; }
+    .event-radar-title { color: #f8fafc; font-size: 15px; font-weight: 600; margin-top: 6px; }
+    .event-radar-subtitle { color: #cbd5e1; font-size: 13px; margin-top: 4px; }
+    .event-radar-meta { color: #64748b; font-size: 11px; margin-top: 8px; }
+    .event-radar-side { display: grid; justify-items: end; gap: 8px; align-content: start; }
+    .event-radar-score {
+      border-radius: 999px; padding: 6px 10px; font-size: 12px; font-weight: 700;
+      background: rgba(255,255,255,0.08); color: #f8fafc;
+    }
+    .event-radar-state { color: #e2e8f0; font-size: 12px; }
+    .event-radar-cooldown { color: #93c5fd; font-size: 11px; }
+    .event-radar-trade-badge {
+      display: inline-flex; align-items: center; border-radius: 999px; padding: 4px 8px;
+      font-size: 11px; border: 1px solid rgba(71,85,105,0.85); color: #cbd5e1; background: rgba(15,16,33,0.58);
+    }
+    .event-radar-link {
+      border: 1px solid rgba(71,85,105,0.9); border-radius: 999px; padding: 5px 8px;
+      font-size: 11px; color: #dbeafe; background: rgba(30,58,138,0.22); transition: 0.15s ease;
+    }
+    .event-radar-link:hover { border-color: rgba(96,165,250,0.8); background: rgba(30,64,175,0.3); }
+    .event-radar-empty {
+      border: 1px dashed rgba(71,85,105,0.8); border-radius: 16px;
+      background: rgba(15,16,33,0.35); padding: 18px; color: #64748b; font-size: 13px;
+    }
+    .position-recent-event-strip { display: flex; flex-wrap: wrap; gap: 10px; }
+    .position-recent-event-chip {
+      display: inline-flex; flex-direction: column; gap: 4px;
+      border-radius: 16px; border: 1px solid rgba(51,65,85,0.92);
+      background: rgba(15,16,33,0.58); padding: 10px 12px; min-width: 160px;
+    }
+    .position-recent-event-chip.tone-buy { border-color: rgba(16,185,129,0.28); }
+    .position-recent-event-chip.tone-sell { border-color: rgba(248,113,113,0.28); }
+    .position-recent-event-chip-label { color: #f8fafc; font-size: 13px; font-weight: 600; }
+    .position-recent-event-chip-meta { color: #94a3b8; font-size: 11px; }
+    @media (max-width: 960px) {
+      .event-radar-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .event-radar-card { grid-template-columns: 1fr; }
+      .event-radar-side { justify-items: start; }
+      .report-news-strip-summary { grid-template-columns: 1fr; }
+      .report-news-strip-stat-row { justify-content: stretch; }
+      .report-news-strip-stat { flex: 1 1 140px; }
+    }
+
+    /* Position detail timeline */
+    .position-timeline-filter-row { display: flex; flex-wrap: wrap; gap: 8px; }
+    .position-timeline-filter-chip {
+      display: inline-flex; align-items: center; gap: 8px;
+      border: 1px solid #374151; border-radius: 999px;
+      background: rgba(15,16,33,0.52); color: #cbd5e1;
+      padding: 6px 10px; font-size: 12px; line-height: 1; transition: 0.15s ease;
+    }
+    .position-timeline-filter-chip:hover { border-color: #60a5fa; color: #eff6ff; }
+    .position-timeline-filter-chip.active {
+      border-color: rgba(96,165,250,0.76);
+      background: rgba(37,99,235,0.18);
+      color: #dbeafe;
+    }
+    .position-timeline-filter-count {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 20px; height: 20px; border-radius: 999px;
+      background: rgba(255,255,255,0.06); font-size: 11px; color: #94a3b8;
+      padding: 0 6px;
+    }
+    .position-summary-card {
+      position: relative;
+      border: 1px solid rgba(51,65,85,0.92);
+      border-radius: 20px;
+      padding: 16px;
+      background:
+        linear-gradient(180deg, rgba(15,16,33,0.9), rgba(15,23,42,0.7)),
+        radial-gradient(circle at top left, rgba(255,255,255,0.05), transparent 44%);
+      overflow: hidden;
+    }
+    .position-summary-card::after {
+      content: "";
+      position: absolute; inset: 0 auto auto 0;
+      width: 100%; height: 1px;
+      background: linear-gradient(90deg, rgba(255,255,255,0.15), transparent 70%);
+      pointer-events: none;
+    }
+    .position-summary-card.tone-buy {
+      border-color: rgba(248,113,113,0.22);
+      background:
+        linear-gradient(180deg, rgba(33,14,18,0.92), rgba(15,16,33,0.74)),
+        radial-gradient(circle at top left, rgba(248,113,113,0.16), transparent 40%);
+    }
+    .position-summary-card.tone-analysis {
+      border-color: rgba(167,139,250,0.22);
+      background:
+        linear-gradient(180deg, rgba(28,16,48,0.92), rgba(15,16,33,0.74)),
+        radial-gradient(circle at top left, rgba(167,139,250,0.14), transparent 40%);
+    }
+    .position-summary-card.tone-sell {
+      border-color: rgba(96,165,250,0.22);
+      background:
+        linear-gradient(180deg, rgba(11,23,52,0.92), rgba(15,16,33,0.74)),
+        radial-gradient(circle at top left, rgba(96,165,250,0.14), transparent 40%);
+    }
+    .position-summary-card-topline { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .position-summary-card-eyebrow {
+      color: #94a3b8; font-size: 11px; text-transform: uppercase; letter-spacing: 0.16em;
+    }
+    .position-summary-card-title {
+      color: #f8fafc; font-size: 13px; font-weight: 600; margin-top: 6px;
+    }
+    .position-summary-card-hero {
+      color: #ffffff; font-size: 28px; line-height: 1.05; font-weight: 700;
+      margin-top: 18px; letter-spacing: -0.04em;
+    }
+    .position-summary-card-hero-meta {
+      color: #cbd5e1; font-size: 13px; margin-top: 6px; min-height: 20px;
+    }
+    .position-summary-card-metrics {
+      display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px; margin-top: 14px;
+    }
+    .position-summary-metric {
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 14px; background: rgba(255,255,255,0.03);
+      padding: 10px 10px 9px;
+    }
+    .position-summary-metric-label { color: #64748b; font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; }
+    .position-summary-metric-value { color: #e2e8f0; font-size: 13px; font-weight: 600; margin-top: 6px; }
+    .position-summary-card-body {
+      margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.06);
+      color: #cbd5e1; font-size: 12px; line-height: 1.55; display: grid; gap: 6px;
+    }
+    .position-summary-card-caption { margin-top: 10px; color: #64748b; font-size: 11px; }
+    .position-decision-shell {
+      border: 1px solid rgba(51,65,85,0.92);
+      border-radius: 22px;
+      padding: 16px;
+      background:
+        linear-gradient(180deg, rgba(15,16,33,0.92), rgba(15,23,42,0.76)),
+        radial-gradient(circle at top right, rgba(96,165,250,0.10), transparent 36%);
+    }
+    .position-decision-header {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+    }
+    .position-decision-verdict { text-align: right; }
+    .position-decision-hero {
+      color: #f8fafc; font-size: 20px; font-weight: 700; letter-spacing: -0.03em;
+    }
+    .position-decision-meta { color: #cbd5e1; font-size: 12px; margin-top: 6px; max-width: 380px; }
+    .position-decision-grid {
+      display: grid; gap: 12px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 14px;
+    }
+    .position-timeline-group {
+      display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 14px;
+      align-items: flex-start;
+    }
+    .position-timeline-date {
+      position: sticky; top: 0;
+      padding-top: 4px;
+    }
+    .position-timeline-date-label {
+      color: #f8fafc; font-size: 18px; font-weight: 700; letter-spacing: -0.02em;
+    }
+    .position-timeline-date-stamp { color: #64748b; font-size: 11px; margin-top: 2px; }
+    .position-timeline-date-relative {
+      display: inline-flex; align-items: center;
+      margin-top: 8px; border-radius: 999px; padding: 4px 8px;
+      background: rgba(96,165,250,0.12); color: #bfdbfe; font-size: 11px;
+    }
+    .position-timeline-rail { display: grid; gap: 12px; }
+    .position-timeline-item {
+      display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 10px;
+      align-items: stretch;
+    }
+    .position-timeline-node {
+      display: grid; grid-template-rows: 28px minmax(20px, 1fr);
+      justify-items: center;
+    }
+    .position-timeline-dot {
+      width: 28px; height: 28px; border-radius: 999px;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 10px; font-weight: 700; letter-spacing: -0.02em;
+      border: 1px solid rgba(148,163,184,0.22); background: rgba(15,23,42,0.96);
+      color: #e2e8f0;
+      box-shadow: 0 0 0 4px rgba(15,16,33,0.82);
+    }
+    .position-timeline-stem {
+      width: 2px; border-radius: 999px; background: linear-gradient(180deg, rgba(71,85,105,0.78), rgba(51,65,85,0.2));
+      min-height: 26px;
+    }
+    .position-timeline-stem-fade { opacity: 0.35; }
+    .position-timeline-card {
+      border: 1px solid rgba(51,65,85,0.9);
+      border-radius: 18px;
+      background:
+        linear-gradient(180deg, rgba(15,16,33,0.84), rgba(15,23,42,0.6)),
+        radial-gradient(circle at top left, rgba(255,255,255,0.05), transparent 40%);
+      padding: 12px 14px 13px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+    }
+    .position-timeline-card-topline {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      font-size: 11px; color: #94a3b8;
+    }
+    .position-timeline-time { font-variant-numeric: tabular-nums; letter-spacing: 0.04em; }
+    .position-timeline-badge {
+      display: inline-flex; align-items: center; gap: 6px; color: #cbd5e1;
+      text-transform: uppercase; letter-spacing: 0.08em; font-size: 10px;
+    }
+    .position-timeline-title-row {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+      margin-top: 8px;
+    }
+    .position-timeline-title { color: #f8fafc; font-size: 15px; font-weight: 600; line-height: 1.35; }
+    .position-timeline-chip {
+      flex-shrink: 0;
+      border-radius: 999px; padding: 3px 8px;
+      background: rgba(148,163,184,0.12); color: #cbd5e1; font-size: 11px;
+      border: 1px solid rgba(148,163,184,0.14);
+    }
+    .position-timeline-summary { margin-top: 8px; color: #dbe4f0; font-size: 13px; line-height: 1.5; }
+    .position-timeline-meta { margin-top: 6px; color: #64748b; font-size: 11px; line-height: 1.45; }
+    .position-timeline-item.tone-buy .position-timeline-dot {
+      background: rgba(127,29,29,0.7); color: #fecaca; border-color: rgba(248,113,113,0.4);
+    }
+    .position-timeline-item.tone-buy .position-timeline-card {
+      border-color: rgba(248,113,113,0.25);
+      background:
+        linear-gradient(180deg, rgba(33,14,18,0.9), rgba(15,16,33,0.72)),
+        radial-gradient(circle at top left, rgba(248,113,113,0.12), transparent 42%);
+    }
+    .position-timeline-item.tone-sell .position-timeline-dot {
+      background: rgba(30,58,138,0.7); color: #bfdbfe; border-color: rgba(96,165,250,0.4);
+    }
+    .position-timeline-item.tone-sell .position-timeline-card {
+      border-color: rgba(96,165,250,0.25);
+      background:
+        linear-gradient(180deg, rgba(11,23,52,0.92), rgba(15,16,33,0.72)),
+        radial-gradient(circle at top left, rgba(96,165,250,0.11), transparent 44%);
+    }
+    .position-timeline-item.tone-analysis .position-timeline-dot,
+    .position-timeline-item.tone-progress .position-timeline-dot {
+      background: rgba(76,29,149,0.7); color: #e9d5ff; border-color: rgba(167,139,250,0.4);
+    }
+    .position-timeline-item.tone-analysis .position-timeline-card,
+    .position-timeline-item.tone-progress .position-timeline-card {
+      border-color: rgba(167,139,250,0.2);
+      background:
+        linear-gradient(180deg, rgba(28,16,48,0.9), rgba(15,16,33,0.72)),
+        radial-gradient(circle at top left, rgba(167,139,250,0.11), transparent 44%);
+    }
+    .position-timeline-item.tone-news .position-timeline-dot {
+      background: rgba(6,78,59,0.78); color: #99f6e4; border-color: rgba(45,212,191,0.38);
+    }
+    .position-timeline-item.tone-news .position-timeline-card {
+      border-color: rgba(45,212,191,0.24);
+      background:
+        linear-gradient(180deg, rgba(7,32,30,0.92), rgba(15,16,33,0.72)),
+        radial-gradient(circle at top left, rgba(45,212,191,0.11), transparent 44%);
+    }
+    .position-timeline-item.tone-pending .position-timeline-dot {
+      background: rgba(120,53,15,0.72); color: #fde68a; border-color: rgba(251,191,36,0.35);
+    }
+    .position-timeline-item.tone-pending .position-timeline-card {
+      border-color: rgba(251,191,36,0.22);
+    }
+    .position-timeline-item.tone-error .position-timeline-dot {
+      background: rgba(127,29,29,0.82); color: #fecaca; border-color: rgba(248,113,113,0.55);
+    }
+    .position-timeline-item.tone-error .position-timeline-card {
+      border-color: rgba(248,113,113,0.32);
+      background:
+        linear-gradient(180deg, rgba(52,16,22,0.92), rgba(15,16,33,0.72)),
+        radial-gradient(circle at top left, rgba(248,113,113,0.12), transparent 46%);
+    }
+    .position-timeline-load-more {
+      border: 1px solid #374151; border-radius: 999px; background: rgba(15,16,33,0.7);
+      color: #cbd5e1; font-size: 12px; padding: 8px 14px; transition: 0.15s ease;
+    }
+    .position-timeline-load-more:hover { border-color: #60a5fa; color: #eff6ff; }
+    .position-timeline-load-more.is-loading,
+    .position-timeline-load-more:disabled { opacity: 0.72; cursor: wait; }
+    @media (max-width: 768px) {
+      .position-summary-card-metrics { grid-template-columns: 1fr; }
+      .position-decision-header { display: grid; grid-template-columns: 1fr; }
+      .position-decision-verdict { text-align: left; }
+      .position-decision-grid { grid-template-columns: 1fr; }
+      .position-timeline-group { grid-template-columns: 1fr; gap: 8px; }
+      .position-timeline-date { position: static; }
+      .position-timeline-date-label { font-size: 15px; }
+    }
 
     /* Cycle divider */
     .cycle-divider { display: flex; align-items: center; gap: 8px; padding: 6px 12px; margin: 8px 0 4px 0; color: #6b7280; font-size: 12px; }
@@ -84,9 +776,293 @@
     .sidebar-section-body {
       max-height: 0; overflow: hidden; transition: max-height 0.3s ease-out;
     }
-    .sidebar-section-body.open { max-height: 600px; overflow-y: auto; }
+    .sidebar-section-body.open { max-height: 2000px; overflow: visible; }
     .sidebar-section-arrow { transition: transform 0.2s; }
     .sidebar-section-arrow.collapsed { transform: rotate(-90deg); }
+
+    .workspace-shell { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+    .admin-pane { position: relative; min-height: 0; overflow: hidden; }
+    .pane-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+    .pane-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 14px; border-bottom: 1px solid #374151;
+      background: linear-gradient(180deg, rgba(17,24,39,0.9), rgba(15,16,33,0.65));
+    }
+    .pane-header-kicker { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: #6b7280; }
+    .pane-header-title { font-size: 13px; font-weight: 600; color: #f3f4f6; }
+    .pane-divider {
+      position: relative; flex: 0 0 14px; width: 14px; display: flex; align-items: stretch;
+      justify-content: center; background: #111827;
+    }
+    .pane-resizer {
+      width: 100%; cursor: col-resize; position: relative; outline: none;
+      background: linear-gradient(180deg, rgba(148,163,184,0.06), rgba(148,163,184,0.01));
+    }
+    .pane-resizer::before {
+      content: ''; position: absolute; top: 0; bottom: 0; left: 6px; width: 2px;
+      border-radius: 999px; background: rgba(148,163,184,0.18); transition: background 0.15s ease;
+    }
+    .pane-resizer:hover::before, .pane-resizer.dragging::before, .pane-resizer:focus-visible::before {
+      background: rgba(96,165,250,0.8);
+    }
+    .pane-collapse-btn {
+      position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+      z-index: 2; width: 18px; height: 28px; border-radius: 999px;
+      border: 1px solid #374151; background: #111827; color: #9ca3af;
+      font-size: 14px; line-height: 1; cursor: pointer; transition: 0.15s ease;
+    }
+    .pane-collapse-btn:hover { color: #f3f4f6; border-color: #60a5fa; }
+    .pane-collapsed { width: 0 !important; min-width: 0 !important; border-width: 0 !important; }
+    .pane-collapsed .pane-header, .pane-collapsed .pane-scroll, .pane-collapsed > .p-3 { display: none; }
+    .account-overview-shell {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid rgba(71,85,105,0.72);
+      border-radius: 18px;
+      background:
+        linear-gradient(145deg, rgba(14,21,36,0.98), rgba(16,18,30,0.9) 54%, rgba(10,15,27,0.96)),
+        radial-gradient(circle at 82% 10%, rgba(245,158,11,0.13), transparent 34%),
+        radial-gradient(circle at 8% 0%, rgba(56,189,248,0.12), transparent 30%);
+      padding: 13px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 14px 32px rgba(0,0,0,0.18);
+    }
+    .account-overview-shell::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background-image: linear-gradient(rgba(148,163,184,0.05) 1px, transparent 1px);
+      background-size: 100% 22px;
+      mask-image: linear-gradient(180deg, rgba(0,0,0,0.74), transparent 72%);
+    }
+    .account-overview-topline {
+      position: relative;
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: flex-start;
+      margin-bottom: 12px;
+    }
+    .account-overview-kicker {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: #cbd5e1;
+      opacity: 0.62;
+    }
+    .account-overview-title {
+      margin-top: 3px;
+      font-size: 15px;
+      font-weight: 700;
+      color: #f8fafc;
+    }
+    .account-overview-pill {
+      border: 1px solid rgba(245,158,11,0.3);
+      border-radius: 999px;
+      background: rgba(245,158,11,0.08);
+      color: #fbbf24;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      padding: 4px 7px;
+      white-space: nowrap;
+    }
+    .account-overview-total {
+      position: relative;
+      font-size: 24px;
+      line-height: 1.05;
+      font-weight: 800;
+      letter-spacing: -0.045em;
+      color: #f8fafc;
+      font-variant-numeric: tabular-nums;
+    }
+    .account-overview-meta {
+      position: relative;
+      margin-top: 7px;
+      font-size: 11px;
+      color: #94a3b8;
+      font-variant-numeric: tabular-nums;
+    }
+    .account-overview-meta.positive { color: #86efac; }
+    .account-overview-meta.negative { color: #fda4af; }
+    .account-overview-bar {
+      position: relative;
+      margin-top: 13px;
+      height: 9px;
+      border: 1px solid rgba(148,163,184,0.14);
+      border-radius: 999px;
+      background: rgba(15,23,42,0.86);
+      overflow: hidden;
+      display: flex;
+    }
+    .account-overview-bar-fill {
+      height: 100%;
+      min-width: 0;
+    }
+    .account-overview-bar-fill.cash {
+      background: linear-gradient(90deg, #67e8f9, #38bdf8);
+    }
+    .account-overview-bar-fill.stock {
+      background: linear-gradient(90deg, #fbbf24, #34d399);
+    }
+    .account-overview-grid {
+      position: relative;
+      margin-top: 12px;
+      display: grid;
+      gap: 1px;
+      border: 1px solid rgba(71,85,105,0.45);
+      border-radius: 13px;
+      overflow: hidden;
+      background: rgba(71,85,105,0.35);
+    }
+    .account-overview-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      min-width: 0;
+      background: rgba(15,23,42,0.64);
+      padding: 9px 10px;
+    }
+    .account-overview-label {
+      font-size: 11px;
+      color: #cbd5e1;
+      font-weight: 700;
+    }
+    .account-overview-row-meta {
+      margin-top: 2px;
+      font-size: 10px;
+      color: #64748b;
+      font-variant-numeric: tabular-nums;
+    }
+    .account-overview-value {
+      min-width: 0;
+      text-align: right;
+      font-size: 12px;
+      font-weight: 800;
+      color: #f8fafc;
+      letter-spacing: -0.02em;
+      font-variant-numeric: tabular-nums;
+    }
+    .account-overview-value.positive { color: #86efac; }
+    .account-overview-value.negative { color: #fda4af; }
+    .account-overview-empty {
+      position: relative;
+      font-size: 12px;
+      color: #64748b;
+    }
+    .trade-mini-group-title { font-size: 11px; font-weight: 600; color: #9ca3af; margin-bottom: 8px; }
+    .trade-mini-card {
+      border: 1px solid #374151; border-radius: 10px; background: rgba(15,16,33,0.72);
+      padding: 10px; margin-bottom: 8px;
+    }
+    .trade-mini-card:last-child { margin-bottom: 0; }
+    .trade-mini-card.completed-win { border-left: 3px solid #34d399; }
+    .trade-mini-card.completed-loss { border-left: 3px solid #f87171; }
+    .trade-mini-card.opened { border-left: 3px solid #60a5fa; }
+    .trade-mini-card.position { border-left: 3px solid #a78bfa; }
+    .trade-center-kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+    .trade-center-kpi {
+      border: 1px solid #374151; border-radius: 12px; background: rgba(15,16,33,0.72);
+      padding: 12px;
+    }
+    .trade-center-kpi-label { font-size: 11px; color: #94a3b8; }
+    .trade-center-kpi-value { margin-top: 6px; font-size: 20px; font-weight: 700; color: #f8fafc; }
+    .trade-center-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .trade-center-tab {
+      border: 1px solid #374151; border-radius: 999px; background: rgba(15,16,33,0.58);
+      color: #cbd5e1; font-size: 12px; padding: 6px 10px; transition: 0.15s ease;
+    }
+    .trade-center-tab.active { border-color: rgba(96,165,250,0.76); background: rgba(37,99,235,0.2); color: #dbeafe; }
+    .trade-center-list { margin-top: 14px; display: grid; gap: 8px; }
+    .trade-center-card {
+      width: 100%; text-align: left;
+      border: 1px solid #374151; border-radius: 12px; background: rgba(15,16,33,0.72);
+      padding: 12px; transition: 0.15s ease;
+    }
+    .trade-center-card:hover { border-color: rgba(96,165,250,0.6); background: rgba(15,23,42,0.85); }
+    .trade-center-card.tone-pending { border-left: 3px solid #fbbf24; }
+    .trade-center-card.tone-opened { border-left: 3px solid #60a5fa; }
+    .trade-center-card.tone-completed-win { border-left: 3px solid #34d399; }
+    .trade-center-card.tone-completed-loss { border-left: 3px solid #f87171; }
+    .trade-center-card.tone-position { border-left: 3px solid #a78bfa; }
+    .trade-center-card-meta { font-size: 11px; color: #94a3b8; margin-top: 4px; }
+    .trade-center-empty {
+      border: 1px dashed #475569; border-radius: 12px; background: rgba(15,16,33,0.42);
+      padding: 16px; color: #64748b; font-size: 13px;
+    }
+    .trade-center-toolbar { margin-top: 10px; display: flex; justify-content: flex-end; gap: 8px; }
+    .trade-center-action {
+      border: 1px solid rgba(251,191,36,0.5); border-radius: 10px;
+      background: rgba(113,63,18,0.25); color: #fde68a; font-size: 11px; padding: 6px 10px;
+      transition: 0.15s ease;
+    }
+    .trade-center-action:hover { border-color: rgba(251,191,36,0.75); background: rgba(113,63,18,0.35); }
+    .trade-center-controls { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .trade-center-search {
+      flex: 1 1 220px;
+      border: 1px solid #374151; border-radius: 10px; background: rgba(15,16,33,0.65);
+      color: #e5e7eb; font-size: 12px; padding: 7px 10px;
+    }
+    .trade-center-sort {
+      border: 1px solid #374151; border-radius: 10px; background: rgba(15,16,33,0.65);
+      color: #cbd5e1; font-size: 12px; padding: 7px 10px;
+    }
+    .trade-center-load-more {
+      border: 1px solid #374151; border-radius: 10px; background: rgba(15,16,33,0.7);
+      color: #cbd5e1; font-size: 12px; padding: 8px 12px; transition: 0.15s ease;
+    }
+    .trade-center-load-more:hover { border-color: rgba(96,165,250,0.7); color: #eff6ff; }
+    .sidebar-action-dock {
+      border-top: 1px solid rgba(71,85,105,0.9);
+      background:
+        linear-gradient(180deg, rgba(10,14,28,0.98), rgba(15,16,33,0.98)),
+        radial-gradient(circle at top left, rgba(96,165,250,0.08), transparent 45%);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+    }
+    .sidebar-action-kicker {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.16em; color: #64748b;
+    }
+    .sidebar-action-lead {
+      margin-top: 4px; font-size: 12px; color: #cbd5e1; line-height: 1.45;
+    }
+    .sidebar-action-primary {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid rgba(59,130,246,0.5);
+      background: linear-gradient(180deg, rgba(37,99,235,0.92), rgba(29,78,216,0.88));
+      color: white;
+      font-size: 14px;
+      font-weight: 600;
+      padding: 11px 12px;
+      transition: 0.15s ease;
+      box-shadow: 0 10px 28px rgba(37,99,235,0.22);
+    }
+    .sidebar-action-primary:hover { filter: brightness(1.06); }
+    .sidebar-action-secondary {
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid #374151;
+      background: rgba(15,23,42,0.9);
+      color: #e5e7eb;
+      font-size: 13px;
+      padding: 9px 12px;
+      transition: 0.15s ease;
+    }
+    .sidebar-action-secondary:hover { border-color: #60a5fa; color: #fff; }
+
+    @media (max-width: 1023px) {
+      .workspace-shell { flex-direction: column; }
+      .pane-divider { display: none; }
+      #admin-left-pane, #admin-right-pane {
+        width: auto !important; flex: 0 0 auto; border-right-width: 0; border-left-width: 0;
+        border-bottom: 1px solid #374151;
+      }
+      #admin-center-pane { min-height: 46vh; }
+      .pane-collapsed { width: auto !important; }
+      .pane-collapsed .pane-header, .pane-collapsed .pane-scroll, .pane-collapsed > .p-3 { display: block; }
+      .trade-center-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
 
     /* Stock confidence mini-bar */
     .stock-confidence { display: inline-flex; align-items: center; gap: 4px; }
@@ -100,152 +1076,249 @@
 </head>
 <body class="dark bg-dark-900 text-gray-200 h-screen flex flex-col overflow-hidden">
   <!-- Header -->
-  <header class="bg-dark-800 border-b border-gray-700 px-4 py-2 flex items-center justify-between shrink-0">
-    <div class="flex items-center gap-3">
-      <h1 class="text-lg font-bold text-white">MOMO Trading Admin</h1>
-      <span id="version" class="text-xs text-gray-500">v0.1.0</span>
-    </div>
-    <div class="flex items-center gap-4 text-sm">
-      <span id="badge-trading" class="px-2 py-0.5 rounded text-xs font-medium"></span>
-      <span id="badge-mode" class="px-2 py-0.5 rounded bg-purple-900/50 text-purple-300 text-xs"></span>
-      <span id="badge-mcp" class="px-2 py-0.5 rounded text-xs"></span>
-      <span id="badge-sse" class="px-2 py-0.5 rounded text-xs"></span>
+  <header class="bg-dark-800 border-b border-gray-700 px-4 py-3 shrink-0">
+    <div class="flex items-center justify-between gap-4 flex-wrap">
+      <div class="flex items-center gap-3">
+        <h1 class="text-lg font-bold text-white">MOMO Trading Admin</h1>
+        <span id="version" class="text-xs text-gray-500">v0.1.0</span>
+      </div>
+      <div class="flex items-center gap-3 text-sm flex-wrap">
+        <span id="badge-broker" class="px-2 py-0.5 rounded text-xs font-medium"></span>
+        <span id="badge-market" class="px-2 py-0.5 rounded text-xs font-medium"></span>
+        <span id="badge-trading" class="px-2 py-0.5 rounded text-xs font-medium"></span>
+        <span id="badge-mode" class="px-2 py-0.5 rounded bg-purple-900/50 text-purple-300 text-xs"></span>
+        <span id="badge-mcp" class="px-2 py-0.5 rounded text-xs"></span>
+        <span id="badge-sse" class="px-2 py-0.5 rounded text-xs"></span>
+      </div>
     </div>
   </header>
 
   <!-- Main Content -->
-  <div class="flex flex-1 overflow-hidden">
-    <!-- Left Sidebar -->
-    <aside class="w-64 bg-dark-800 border-r border-gray-700 flex flex-col shrink-0">
-      <!-- Navigation (always visible) -->
-      <nav class="p-3 space-y-1">
-        <button onclick="switchView('live')" id="nav-live" class="nav-btn w-full text-left px-3 py-2 rounded-lg text-sm font-medium bg-blue-900/30 text-blue-300">
-          &#x1f4e1; &#xc2e4;&#xc2dc;&#xac04; &#xbaa8;&#xb2c8;&#xd130;&#xb9c1;
-        </button>
-        <button onclick="switchView('today')" id="nav-today" class="nav-btn w-full text-left px-3 py-2 rounded-lg text-sm text-gray-400 hover:bg-dark-700">
-          &#x1f4cb; &#xc624;&#xb298; &#xb9ac;&#xd3ec;&#xd2b8;
-        </button>
-        <div class="pt-2">
-          <div class="text-xs text-gray-500 px-3 mb-1">&#xacfc;&#xac70; &#xb9ac;&#xd3ec;&#xd2b8;</div>
-          <div id="report-list" class="space-y-0.5 max-h-32 overflow-y-auto"></div>
+  <div id="workspace-shell" class="workspace-shell">
+    <!-- Left Pane -->
+    <aside id="admin-left-pane" class="admin-pane bg-dark-800 border-r border-gray-700 flex flex-col shrink-0" style="width: 320px;">
+      <div class="pane-header">
+        <div>
+          <div class="pane-header-kicker">Workspace</div>
+          <div class="pane-header-title">운영 콘솔</div>
         </div>
-      </nav>
+      </div>
 
-      <!-- Accordion sections -->
-      <div class="flex-1 overflow-y-auto">
-        <!-- Account Balance -->
-        <div class="sidebar-section" id="section-account">
-          <div class="sidebar-section-header" onclick="toggleSidebarSection('account')">
-            <span>&#x1f4b0; &#xacc4;&#xc88c; &#xc794;&#xace0;</span>
-            <span class="sidebar-section-arrow" id="arrow-account">&#x25BC;</span>
-          </div>
-          <div class="sidebar-section-body open" id="body-account">
-            <div class="px-3 pb-2">
-              <div id="account-info" class="text-xs space-y-1">
-                <div class="text-gray-600">&#xb85c;&#xb529; &#xc911;...</div>
+      <div class="pane-scroll">
+        <nav class="p-3 space-y-1 border-b border-gray-700">
+          <button onclick="switchView('live')" id="nav-live" class="nav-btn w-full text-left px-3 py-2 rounded-lg text-sm font-medium bg-blue-900/30 text-blue-300">
+            &#x1f4e1; &#xc2e4;&#xc2dc;&#xac04; &#xbaa8;&#xb2c8;&#xd130;&#xb9c1;
+          </button>
+          <button onclick="switchView('today')" id="nav-today" class="nav-btn w-full text-left px-3 py-2 rounded-lg text-sm text-gray-400 hover:bg-dark-700">
+            &#x1f4cb; &#xc624;&#xb298; &#xb9ac;&#xd3ec;&#xd2b8;
+          </button>
+          <button onclick="switchView('reports')" id="nav-reports" class="nav-btn w-full text-left px-3 py-2 rounded-lg text-sm text-gray-400 hover:bg-dark-700">
+            &#x1f5c3;&#xfe0f; &#xacfc;&#xac70; &#xb9ac;&#xd3ec;&#xd2b8; &#xc544;&#xce74;&#xc774;&#xbe0c; <span id="report-archive-count" class="ml-1 text-[11px] text-gray-500">(0)</span>
+          </button>
+          <button onclick="switchView('performance')" id="nav-performance" class="nav-btn w-full text-left px-3 py-2 rounded-lg text-sm text-gray-400 hover:bg-dark-700">
+            &#x1f4c8; &#xc131;&#xacfc; &#xbd84;&#xc11d;
+          </button>
+          <button onclick="switchView('observability')" id="nav-observability" class="nav-btn w-full text-left px-3 py-2 rounded-lg text-sm text-gray-400 hover:bg-dark-700">
+            &#x2699;&#xfe0f; &#xc2dc;&#xc2a4;&#xd15c; &#xad00;&#xce21;
+          </button>
+          <button onclick="switchView('errors')" id="nav-errors" class="nav-btn w-full text-left px-3 py-2 rounded-lg text-sm text-gray-400 hover:bg-dark-700">
+            &#x1f6a8; &#xc5d0;&#xb7ec; &#xad00;&#xce21;
+          </button>
+          <button onclick="switchView('news-archive')" id="nav-news-archive" class="nav-btn w-full text-left px-3 py-2 rounded-lg text-sm text-gray-400 hover:bg-dark-700">
+            &#x1f5de;&#xfe0f; &#xb274;&#xc2a4; &#xc544;&#xce74;&#xc774;&#xbe0c;
+          </button>
+          <button onclick="switchView('trades-center')" id="nav-trades-center" class="nav-btn w-full text-left px-3 py-2 rounded-lg text-sm text-gray-400 hover:bg-dark-700">
+            &#x1f4bc; &#xac70;&#xb798; &#xc13c;&#xd130;
+          </button>
+        </nav>
+
+        <div>
+          <!-- Settings -->
+          <div class="sidebar-section" id="section-settings">
+            <div class="sidebar-section-header" onclick="toggleSidebarSection('settings')">
+              <span>&#x2699;&#xfe0f; &#xc6b4;&#xc601; &#xd575;&#xc2ec;</span>
+              <span class="sidebar-section-arrow collapsed" id="arrow-settings">&#x25BC;</span>
+            </div>
+            <div class="sidebar-section-body" id="body-settings">
+              <div class="px-3 pb-2 space-y-3">
+                <div class="settings-summary-card">
+                  <div class="flex items-center justify-between">
+                    <div class="text-xs font-medium text-gray-300">즉시 제어</div>
+                    <button onclick="refreshRuntimePanels()"
+                      class="text-[11px] text-gray-400 hover:text-gray-200 transition">
+                      새로고침
+                    </button>
+                  </div>
+                  <div id="runtime-control-summary" class="mt-2 text-xs space-y-1 text-gray-400">
+                    상태 불러오는 중...
+                  </div>
+                  <div id="runtime-readiness-panel" class="mt-3 rounded-xl border border-gray-700 bg-dark-900/55 p-3 text-xs text-gray-300">
+                    운영 준비 상태 불러오는 중...
+                  </div>
+                  <div class="mt-3 space-y-2">
+                    <div class="text-[11px] text-gray-500">운영 프리셋</div>
+                    <div class="grid grid-cols-1 gap-2">
+                      <button onclick="applyRuntimePreset('live-auto')"
+                        class="rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 py-2 text-left transition hover:border-blue-400 hover:bg-blue-500/15">
+                        <div class="text-xs font-medium text-blue-100">자동 운영 시작</div>
+                        <div class="mt-0.5 text-[11px] text-blue-200/80">실주문 ON · 자동 주문 · 스케줄러 시작</div>
+                      </button>
+                      <button onclick="applyRuntimePreset('safe-review')"
+                        class="rounded-lg border border-gray-700 bg-dark-900/50 px-3 py-2 text-left transition hover:border-gray-500 hover:bg-dark-900/70">
+                        <div class="text-xs font-medium text-gray-200">안전 모드 복귀</div>
+                        <div class="mt-0.5 text-[11px] text-gray-400">실주문 OFF · 추천 후 승인 · 스케줄러 중지</div>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="mt-3 space-y-2">
+                    <div>
+                      <div class="text-[11px] text-gray-500 mb-1">실주문 실행</div>
+                      <div class="grid grid-cols-2 gap-2">
+                        <button id="runtime-trading-on" onclick="setTradingEnabled(true)"
+                          class="rounded-md border border-gray-700 px-2 py-1.5 text-xs text-gray-300 transition">
+                          매매 ON
+                        </button>
+                        <button id="runtime-trading-off" onclick="setTradingEnabled(false)"
+                          class="rounded-md border border-gray-700 px-2 py-1.5 text-xs text-gray-300 transition">
+                          매매 OFF
+                        </button>
+                      </div>
+                    </div>
+                    <div>
+                      <div class="text-[11px] text-gray-500 mb-1">주문 처리 방식</div>
+                      <div class="grid grid-cols-2 gap-2">
+                        <button id="runtime-mode-semi" onclick="setAutonomyMode('SEMI_AUTO')"
+                          class="rounded-md border border-gray-700 px-2 py-1.5 text-xs text-gray-300 transition">
+                          추천 후 승인
+                        </button>
+                        <button id="runtime-mode-auto" onclick="setAutonomyMode('AUTONOMOUS')"
+                          class="rounded-md border border-gray-700 px-2 py-1.5 text-xs text-gray-300 transition">
+                          자동 주문
+                        </button>
+                      </div>
+                    </div>
+                    <div>
+                      <div class="text-[11px] text-gray-500 mb-1">스케줄러</div>
+                      <div class="grid grid-cols-2 gap-2">
+                        <button id="runtime-scheduler-start" onclick="setSchedulerRunning(true)"
+                          class="rounded-md border border-gray-700 px-2 py-1.5 text-xs text-gray-300 transition">
+                          시작
+                        </button>
+                        <button id="runtime-scheduler-stop" onclick="setSchedulerRunning(false)"
+                          class="rounded-md border border-gray-700 px-2 py-1.5 text-xs text-gray-300 transition">
+                          중지
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <button onclick="openSettingsModal('strategy')" class="settings-jump-btn">
+                  <div class="flex items-center justify-between gap-3">
+                    <div>
+                      <div class="text-sm text-gray-200">리스크 성향</div>
+                      <div id="left-risk-summary" class="text-xs text-gray-500 mt-1">현재값 불러오는 중...</div>
+                    </div>
+                    <span class="text-xs text-blue-300">전략 설정</span>
+                  </div>
+                </button>
+
+                <button onclick="openSettingsModal('llm')" class="settings-jump-btn">
+                  <div class="flex items-center justify-between gap-3">
+                    <div>
+                      <div class="text-sm text-gray-200">AI 설정</div>
+                      <div id="left-llm-summary" class="text-xs text-gray-500 mt-1">현재값 불러오는 중...</div>
+                    </div>
+                    <span class="text-xs text-blue-300">LLM 설정</span>
+                  </div>
+                </button>
+
+                <button onclick="openSettingsModal('news')" class="settings-jump-btn">
+                  <div class="flex items-center justify-between gap-3">
+                    <div>
+                      <div class="text-sm text-gray-200">뉴스 인텔</div>
+                      <div id="left-news-summary" class="text-xs text-gray-500 mt-1">현재값 불러오는 중...</div>
+                    </div>
+                    <span class="text-xs text-blue-300">뉴스 설정</span>
+                  </div>
+                </button>
+
               </div>
             </div>
           </div>
-        </div>
 
-        <!-- Holdings -->
-        <div class="sidebar-section" id="section-holdings">
-          <div class="sidebar-section-header" onclick="toggleSidebarSection('holdings')">
-            <span>&#x1f4ca; &#xbcf4;&#xc720;&#xc885;&#xbaa9; <span id="holdings-count" class="ml-1 px-1.5 py-0.5 rounded-full bg-green-900/40 text-green-400 text-xs">0</span></span>
-            <span class="sidebar-section-arrow" id="arrow-holdings">&#x25BC;</span>
-          </div>
-          <div class="sidebar-section-body open" id="body-holdings">
-            <div class="px-3 pb-2">
-              <div id="holdings-info" class="text-xs space-y-1.5"></div>
+          <!-- System -->
+          <div class="sidebar-section" id="section-system">
+            <div class="sidebar-section-header" onclick="toggleSidebarSection('system')">
+              <span>&#x1f5a5; &#xc6b4;&#xc601; &#xc2dc;&#xadf8;&#xb110;</span>
+              <span class="sidebar-section-arrow collapsed" id="arrow-system">&#x25BC;</span>
             </div>
-          </div>
-        </div>
-
-        <!-- Pending Orders -->
-        <div class="sidebar-section" id="section-pending">
-          <div class="sidebar-section-header" onclick="toggleSidebarSection('pending')">
-            <span>&#x23f3; &#xbbf8;&#xccb4;&#xacb0; &#xc8fc;&#xbb38; <span id="pending-count" class="ml-1 px-1.5 py-0.5 rounded-full bg-yellow-900/40 text-yellow-400 text-xs">0</span></span>
-            <span class="sidebar-section-arrow collapsed" id="arrow-pending">&#x25BC;</span>
-          </div>
-          <div class="sidebar-section-body" id="body-pending">
-            <div class="px-3 pb-2">
-              <div id="pending-orders-info" class="text-xs space-y-1"></div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Settings -->
-        <div class="sidebar-section" id="section-settings">
-          <div class="sidebar-section-header" onclick="toggleSidebarSection('settings')">
-            <span>&#x2699;&#xfe0f; &#xc124;&#xc815;</span>
-            <span class="sidebar-section-arrow collapsed" id="arrow-settings">&#x25BC;</span>
-          </div>
-          <div class="sidebar-section-body" id="body-settings">
-            <div class="px-3 pb-2 space-y-3">
-              <label class="flex items-center justify-between">
-                <span class="text-sm">&#xb9e4;&#xb9e4; &#xd65c;&#xc131;&#xd654;</span>
-                <input type="checkbox" id="set-trading" onchange="updateSetting('TRADING_ENABLED', this.checked)"
-                  class="w-9 h-5 rounded-full appearance-none bg-gray-600 checked:bg-green-500 relative cursor-pointer
-                  after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:transition-transform checked:after:translate-x-4">
-              </label>
-
-              <div>
-                <label class="text-sm block mb-1">&#xbaa8;&#xb4dc;</label>
-                <select id="set-mode" onchange="updateSetting('AUTONOMY_MODE', this.value)"
-                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
-                  <option value="SEMI_AUTO">SEMI_AUTO</option>
-                  <option value="AUTONOMOUS">AUTONOMOUS</option>
-                </select>
+            <div class="sidebar-section-body" id="body-system">
+              <div class="px-3 pb-2 space-y-3">
+                <div class="settings-summary-card">
+                  <div class="flex items-center justify-between gap-3">
+                    <div class="text-xs font-medium text-gray-300">브로커 · 뉴스 · 주문 상태</div>
+                    <button onclick="openSettingsModal('system')"
+                      class="text-[11px] text-gray-400 hover:text-gray-200 transition">
+                      상세
+                    </button>
+                  </div>
+                  <div id="sys-status" class="mt-2 text-xs space-y-1"></div>
+                </div>
               </div>
-
-              <div>
-                <label class="text-sm block mb-1">&#xb9ac;&#xc2a4;&#xd06c; &#xc131;&#xd5a5;</label>
-                <select id="set-risk-appetite" onchange="updateSetting('RISK_APPETITE', this.value)"
-                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
-                  <option value="CONSERVATIVE">&#xbcf4;&#xc218;&#xc801; (CONSERVATIVE)</option>
-                  <option value="MODERATE">&#xc911;&#xb9bd; (MODERATE)</option>
-                  <option value="AGGRESSIVE">&#xacf5;&#xaca9;&#xc801; (AGGRESSIVE)</option>
-                </select>
-              </div>
-
-              <div class="border-t border-gray-700 pt-2">
-                <div class="text-xs text-gray-500 font-medium mb-1">LLM</div>
-                <div class="text-xs text-gray-400">Claude Code (&#xb85c;&#xceec; CLI)</div>
-                <div id="llm-tier1-model" class="text-xs text-gray-500 mt-0.5 truncate"></div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- System -->
-        <div class="sidebar-section" id="section-system">
-          <div class="sidebar-section-header" onclick="toggleSidebarSection('system')">
-            <span>&#x1f5a5; &#xc2dc;&#xc2a4;&#xd15c;</span>
-            <span class="sidebar-section-arrow" id="arrow-system">&#x25BC;</span>
-          </div>
-          <div class="sidebar-section-body open" id="body-system">
-            <div class="px-3 pb-2">
-              <div id="sys-status" class="text-xs space-y-1"></div>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Action buttons (always at bottom) -->
-      <div class="p-3 space-y-2 shrink-0 border-t border-gray-700">
-        <button onclick="triggerCycle()"
-          class="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg py-2 transition">
+      <div class="sidebar-action-dock p-3 space-y-3 shrink-0">
+        <div>
+          <div class="sidebar-action-kicker">Quick Actions</div>
+          <div class="sidebar-action-lead">상태 확인은 위에서, 즉시 실행은 여기서 처리합니다.</div>
+        </div>
+        <button data-cycle-trigger="true" onclick="triggerCycle()"
+          class="sidebar-action-primary">
           &#x25b6;&#xfe0f; &#xc218;&#xb3d9; &#xc0ac;&#xc774;&#xd074; &#xc2e4;&#xd589;
         </button>
+        <button onclick="openSettingsModal('operating')"
+          class="sidebar-action-secondary">
+          &#x2699;&#xfe0f; &#xc124;&#xc815; &#xc13c;&#xd130; &#xc5f4;&#xae30;
+        </button>
         <button onclick="generateReport()"
-          class="w-full bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm rounded-lg py-1.5 transition">
+          class="sidebar-action-secondary">
           &#x1f4cb; &#xb9ac;&#xd3ec;&#xd2b8; &#xc0dd;&#xc131;
         </button>
       </div>
     </aside>
 
-    <!-- Chat Area -->
-    <main class="flex-1 flex flex-col overflow-hidden">
+    <div class="pane-divider">
+      <button id="toggle-left-pane" class="pane-collapse-btn" onclick="togglePaneCollapse('left')" type="button" aria-label="왼쪽 패널 접기/펼치기">&#x2039;</button>
+      <div id="pane-resizer-left" class="pane-resizer" role="separator" tabindex="0" aria-orientation="vertical" aria-label="왼쪽 패널 크기 조절"></div>
+    </div>
+
+    <!-- Center Pane -->
+    <main id="admin-center-pane" class="flex-1 min-w-0 flex flex-col overflow-hidden">
+      <section id="event-radar-shell" class="event-radar-shell compact px-4 py-4 shrink-0">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <div class="text-[11px] uppercase tracking-[0.2em] text-gray-500">Event Radar</div>
+            <div class="text-sm font-medium text-white mt-1">지금 확인할 실시간 이벤트</div>
+            <div class="text-xs text-gray-500 mt-1">급등락, 거래량, 손절/익절 이벤트를 우선순위 순으로 보여줍니다.</div>
+          </div>
+          <div class="flex items-center gap-2">
+            <button type="button" id="event-radar-toggle" onclick="toggleEventRadarPanel()" class="event-radar-toggle">펼치기</button>
+            <button onclick="loadEventRadar()" class="text-[11px] text-gray-400 hover:text-gray-200 transition">새로고침</button>
+          </div>
+        </div>
+        <div id="event-radar-summary" class="event-radar-summary-grid mt-4">
+          <div class="event-radar-summary-pill"><div class="event-radar-summary-label">실시간 이벤트</div><div class="event-radar-summary-value">-</div></div>
+        </div>
+        <div id="event-radar-filters" class="event-radar-filter-row mt-3"></div>
+        <div id="event-radar-list" class="event-radar-list mt-3">
+          <div class="event-radar-empty">이벤트 레이더를 불러오는 중...</div>
+        </div>
+      </section>
+
       <!-- Chat messages -->
       <div id="chat-container" class="flex-1 overflow-y-auto p-4 space-y-2">
         <div class="text-center text-gray-500 text-sm py-8">
@@ -280,8 +1353,768 @@
         </div>
       </div>
     </main>
+
+    <div class="pane-divider">
+      <button id="toggle-right-pane" class="pane-collapse-btn" onclick="togglePaneCollapse('right')" type="button" aria-label="오른쪽 패널 접기/펼치기">&#x203A;</button>
+      <div id="pane-resizer-right" class="pane-resizer" role="separator" tabindex="0" aria-orientation="vertical" aria-label="오른쪽 패널 크기 조절"></div>
+    </div>
+
+    <!-- Right Pane -->
+    <aside id="admin-right-pane" class="admin-pane bg-dark-800 border-l border-gray-700 flex flex-col shrink-0" style="width: 360px;">
+      <div class="pane-header">
+        <div>
+          <div class="pane-header-kicker">Portfolio</div>
+          <div class="pane-header-title">자산 · 체결</div>
+        </div>
+      </div>
+
+      <div class="pane-scroll">
+        <div class="p-3 space-y-3">
+          <div class="account-overview-shell">
+            <div class="account-overview-topline">
+              <div>
+                <div class="account-overview-kicker">Account Ledger</div>
+                <div class="account-overview-title">&#xacc4;&#xc88c; &#xd604;&#xd669;</div>
+              </div>
+              <div class="account-overview-pill">1&#xc6d0; &#xb2e8;&#xc704;</div>
+            </div>
+            <div id="account-info" class="text-xs">
+              <div class="account-overview-empty">&#xb85c;&#xb529; &#xc911;...</div>
+            </div>
+          </div>
+
+          <div class="sidebar-section" id="section-holdings">
+            <div class="sidebar-section-header" onclick="toggleSidebarSection('holdings')">
+              <span>&#x1f4ca; &#xbcf4;&#xc720;&#xc885;&#xbaa9; <span id="holdings-count" class="ml-1 px-1.5 py-0.5 rounded-full bg-green-900/40 text-green-400 text-xs">0</span></span>
+              <span class="sidebar-section-arrow collapsed" id="arrow-holdings">&#x25BC;</span>
+            </div>
+            <div class="sidebar-section-body" id="body-holdings">
+              <div class="px-3 pb-2">
+                <div id="holdings-info" class="text-xs space-y-1.5"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="sidebar-section" id="section-pending">
+            <div class="sidebar-section-header" onclick="toggleSidebarSection('pending')">
+              <span>&#x23f3; &#xbbf8;&#xccb4;&#xacb0; &#xc8fc;&#xbb38; <span id="pending-count" class="ml-1 px-1.5 py-0.5 rounded-full bg-yellow-900/40 text-yellow-400 text-xs">0</span></span>
+              <span class="sidebar-section-arrow collapsed" id="arrow-pending">&#x25BC;</span>
+            </div>
+            <div class="sidebar-section-body" id="body-pending">
+              <div class="px-3 pb-2">
+                <div id="pending-orders-info" class="text-xs space-y-1"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="sidebar-section" id="section-trades">
+            <div class="sidebar-section-header" onclick="toggleSidebarSection('trades')">
+              <span>&#x2705; &#xc624;&#xb298; &#xac70;&#xb798; &#xc694;&#xc57d; <span id="trades-count" class="ml-1 px-1.5 py-0.5 rounded-full bg-blue-900/40 text-blue-300 text-xs">0</span></span>
+              <span class="sidebar-section-arrow collapsed" id="arrow-trades">&#x25BC;</span>
+            </div>
+            <div class="sidebar-section-body" id="body-trades">
+              <div class="px-3 pb-2">
+                <div class="mb-2 flex justify-end">
+                  <button onclick="switchView('trades-center')"
+                    class="rounded-md border border-blue-700/60 bg-blue-900/20 px-2 py-1 text-[11px] text-blue-200 transition hover:border-blue-600 hover:bg-blue-900/30">
+                    거래 센터 열기
+                  </button>
+                </div>
+                <div id="today-trades-info" class="text-xs space-y-2"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
   </div>
 
-  <script src="/admin/static/js/app.js"></script>
+  <div id="settings-modal-overlay" class="settings-modal-overlay" onclick="closeSettingsModalOnBackdrop(event)">
+    <div class="settings-modal">
+      <div class="flex items-center justify-between border-b border-gray-700 px-5 py-4">
+        <div>
+          <div class="text-xs uppercase tracking-[0.12em] text-gray-500">Settings Center</div>
+          <div class="text-lg font-semibold text-white">설정 센터</div>
+          <div class="mt-1 text-[11px] text-gray-500">이 창에서 바꾼 값은 저장을 눌러야 한 번에 적용됩니다.</div>
+        </div>
+        <button id="settings-modal-close" onclick="closeSettingsModal()"
+          class="rounded-md border border-gray-600 px-3 py-1.5 text-sm text-gray-200 transition hover:border-blue-400 hover:text-white">
+          닫기
+        </button>
+      </div>
+      <div class="flex min-h-0 flex-1 flex-col lg:flex-row">
+        <div class="shrink-0 border-b border-gray-700 px-4 py-3 lg:w-56 lg:border-b-0 lg:border-r">
+          <div class="grid grid-cols-2 gap-2 lg:grid-cols-1">
+            <button id="settings-tab-operating" onclick="switchSettingsTab('operating')"
+              class="settings-tab-btn rounded-lg border border-gray-700 px-3 py-2 text-left text-sm text-gray-300 transition hover:border-blue-400 hover:text-white">
+              운영
+            </button>
+            <button id="settings-tab-strategy" onclick="switchSettingsTab('strategy')"
+              class="settings-tab-btn rounded-lg border border-gray-700 px-3 py-2 text-left text-sm text-gray-300 transition hover:border-blue-400 hover:text-white">
+              전략
+            </button>
+            <button id="settings-tab-news" onclick="switchSettingsTab('news')"
+              class="settings-tab-btn rounded-lg border border-gray-700 px-3 py-2 text-left text-sm text-gray-300 transition hover:border-blue-400 hover:text-white">
+              뉴스
+            </button>
+            <button id="settings-tab-llm" onclick="switchSettingsTab('llm')"
+              class="settings-tab-btn rounded-lg border border-gray-700 px-3 py-2 text-left text-sm text-gray-300 transition hover:border-blue-400 hover:text-white">
+              LLM
+            </button>
+            <button id="settings-tab-system" onclick="switchSettingsTab('system')"
+              class="settings-tab-btn rounded-lg border border-gray-700 px-3 py-2 text-left text-sm text-gray-300 transition hover:border-blue-400 hover:text-white">
+              시스템
+            </button>
+          </div>
+        </div>
+        <fieldset id="settings-form-fieldset" class="min-h-0 h-full flex-1 overflow-y-auto border-0 p-5 disabled:opacity-60">
+          <section id="settings-panel-operating" class="settings-tab-panel space-y-4">
+            <div>
+              <div class="text-sm font-medium text-white">운영 제어</div>
+              <div class="mt-1 text-xs text-gray-500">여기서 바꾼 운영값도 저장을 눌러야 적용됩니다. 긴급 제어는 대시보드 운영 버튼을 사용하세요.</div>
+            </div>
+
+            <label class="flex items-center justify-between gap-3 rounded-xl border border-gray-700 bg-dark-900/60 p-4">
+              <div class="min-w-0">
+                <div class="flex items-center gap-1">
+                  <span id="set-trading-label" class="text-sm">실주문 실행</span>
+                  <span id="set-trading-tip" class="text-xs text-gray-500 cursor-help" title="끄면 분석과 추천은 계속되지만 실제 매수·매도 주문은 보내지 않습니다.">?</span>
+                </div>
+                <div id="set-trading-help" class="text-xs text-gray-500 mt-0.5">OFF: 분석과 추천은 계속되지만 실제 주문은 보내지 않습니다.</div>
+              </div>
+              <input type="checkbox" id="set-trading"
+                class="w-9 h-5 rounded-full appearance-none bg-gray-600 checked:bg-green-500 relative cursor-pointer
+                after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:transition-transform checked:after:translate-x-4">
+            </label>
+
+            <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4">
+              <label id="set-mode-label" class="text-sm block mb-1">주문 처리 방식 <span id="set-mode-tip" class="text-xs text-gray-500 cursor-help" title="AI가 낸 BUY/SELL 시그널을 추천으로 둘지, 즉시 주문할지 정합니다.">?</span></label>
+              <select id="set-mode"
+                class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                <option value="SEMI_AUTO">추천 후 승인 (SEMI_AUTO)</option>
+                <option value="AUTONOMOUS">즉시 자동 주문 (AUTONOMOUS)</option>
+              </select>
+              <div id="set-mode-help" class="text-xs text-gray-500 mt-1">SEMI_AUTO: AI 시그널을 추천으로만 남기고 사용자 승인을 기다립니다.</div>
+            </div>
+
+            <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4">
+              <label id="set-order-submission-mode-label" class="text-sm block mb-1">실주문 제출 모드 <span id="set-order-submission-mode-tip" class="text-xs text-gray-500 cursor-help" title="TRADING_ENABLED와 별개로 브로커 주문 제출 범위를 제한합니다.">?</span></label>
+              <select id="set-order-submission-mode"
+                class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                <option value="FULL">매수/매도 허용 (FULL)</option>
+                <option value="SELL_ONLY">매도/취소만 허용 (SELL_ONLY)</option>
+                <option value="READ_ONLY">주문 제출 차단 (READ_ONLY)</option>
+              </select>
+              <div id="set-order-submission-mode-help" class="text-xs text-gray-500 mt-1">READ_ONLY: 분석과 추천은 유지하지만 브로커 주문 제출은 차단합니다.</div>
+            </div>
+          </section>
+
+          <section id="settings-panel-strategy" class="settings-tab-panel space-y-4">
+            <div>
+              <div class="text-sm font-medium text-white">전략 설정</div>
+              <div class="mt-1 text-xs text-gray-500">리스크와 보유 성향처럼 자주 토글하지 않는 전략 값을 둡니다.</div>
+            </div>
+            <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4">
+              <label class="text-sm block mb-1">리스크 성향</label>
+              <select id="set-risk-appetite"
+                class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                <option value="CONSERVATIVE">보수적 (CONSERVATIVE)</option>
+                <option value="MODERATE">중립 (MODERATE)</option>
+                <option value="AGGRESSIVE">공격적 (AGGRESSIVE)</option>
+              </select>
+            </div>
+            <div id="strategy-insights-panel" class="rounded-xl border border-gray-700 bg-dark-900/60 p-4 text-sm text-gray-300">
+              불러오는 중...
+            </div>
+          </section>
+
+          <section id="settings-panel-news" class="settings-tab-panel space-y-4">
+            <div>
+              <div class="text-sm font-medium text-white">뉴스 인텔 설정</div>
+              <div class="mt-1 text-xs text-gray-500">수집, 게이트, 재검증, 뉴스 전용 LLM을 한 곳에서 관리합니다.</div>
+            </div>
+
+            <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4">
+              <div class="flex items-center justify-between gap-3">
+                <div>
+                  <div class="text-xs font-medium text-gray-300">뉴스 인텔 개요</div>
+                  <div class="mt-1 text-[11px] text-gray-500">최근 적재, 차단, 재검증, 수익 검증 수치를 같이 봅니다.</div>
+                </div>
+                <div class="flex items-center gap-2">
+                  <button onclick="loadNewsOverview(true)"
+                    class="text-[11px] text-gray-400 hover:text-gray-200 transition">새로고침</button>
+                  <button onclick="fetchBloombergNews()"
+                    class="rounded-md border border-sky-700/60 bg-sky-900/20 px-2 py-1 text-[11px] text-sky-200 transition hover:border-sky-600 hover:bg-sky-900/30">
+                    Bloomberg 수동 수집
+                  </button>
+                  <button onclick="fetchCnbcNews()"
+                    class="rounded-md border border-cyan-700/60 bg-cyan-900/20 px-2 py-1 text-[11px] text-cyan-200 transition hover:border-cyan-600 hover:bg-cyan-900/30">
+                    CNBC 수동 수집
+                  </button>
+                  <button onclick="fetchNasdaqNews()"
+                    class="rounded-md border border-indigo-700/60 bg-indigo-900/20 px-2 py-1 text-[11px] text-indigo-200 transition hover:border-indigo-600 hover:bg-indigo-900/30">
+                    Nasdaq 수동 수집
+                  </button>
+                  <button onclick="fetchInvestingNews()"
+                    class="rounded-md border border-violet-700/60 bg-violet-900/20 px-2 py-1 text-[11px] text-violet-200 transition hover:border-violet-600 hover:bg-violet-900/30">
+                    Investing 수동 수집
+                  </button>
+                  <button onclick="fetchYonhapNews()"
+                    class="rounded-md border border-amber-700/60 bg-amber-900/20 px-2 py-1 text-[11px] text-amber-200 transition hover:border-amber-600 hover:bg-amber-900/30">
+                    연합뉴스TV 수동 수집
+                  </button>
+                  <button onclick="fetchKrxNews()"
+                    class="rounded-md border border-emerald-700/60 bg-emerald-900/20 px-2 py-1 text-[11px] text-emerald-200 transition hover:border-emerald-600 hover:bg-emerald-900/30">
+                    KIND 수동 수집
+                  </button>
+                  <button onclick="fetchDartNews()"
+                    class="rounded-md border border-blue-700/60 bg-blue-900/20 px-2 py-1 text-[11px] text-blue-200 transition hover:border-blue-600 hover:bg-blue-900/30">
+                    DART 수동 수집
+                  </button>
+                </div>
+              </div>
+              <div id="news-overview-summary" class="news-overview-grid mt-3">
+                <div class="news-overview-card"><div class="news-overview-label">최근 24시간</div><div class="news-overview-value">-</div></div>
+              </div>
+              <div id="news-manual-fetch-result" class="mt-3"></div>
+              <div id="news-source-pills" class="news-source-pill-row mt-3"></div>
+            </div>
+
+            <div class="grid gap-4 xl:grid-cols-[1.45fr,1fr]">
+              <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4">
+                <div class="text-xs font-medium text-gray-300">뉴스 성과 KPI</div>
+                <div class="mt-1 text-[11px] text-gray-500">Expectancy, PF, MDD, 비용 차감 손익, Shadow 차단율을 같이 봅니다.</div>
+                <div id="news-performance-cards" class="news-overview-grid mt-3"></div>
+              </div>
+              <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4">
+                <div class="text-xs font-medium text-gray-300">Shadow / Rollout 정책</div>
+                <div class="mt-1 text-[11px] text-gray-500">뉴스 전략 승급/유지/롤백 기준과 현재 판정을 확인합니다.</div>
+                <div id="news-rollout-policy" class="mt-3 text-sm text-gray-400">불러오는 중...</div>
+              </div>
+            </div>
+
+            <div class="news-settings-grid">
+              <div class="news-settings-field">
+                <label class="flex items-center justify-between gap-3">
+                  <span>뉴스 AI 분석 사용</span>
+                  <input type="checkbox" id="set-news-llm-enabled"
+                    class="w-9 h-5 rounded-full appearance-none bg-gray-600 checked:bg-green-500 relative cursor-pointer after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:transition-transform checked:after:translate-x-4">
+                </label>
+                <div class="help">끄면 규칙 기반 적재만 하고, 뉴스 요약/감성 추론은 생략합니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <div class="text-sm text-white">뉴스 AI 선택은 `LLM` 탭으로 이동</div>
+                <div class="help">뉴스 전용 Provider, Ollama 모델, 병렬도, Claude 세션 공유 여부는 `LLM` 탭에서 함께 관리합니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label class="flex items-center justify-between gap-3">
+                  <span>해외 뉴스 포함</span>
+                  <input type="checkbox" id="set-news-include-foreign"
+                    class="w-9 h-5 rounded-full appearance-none bg-gray-600 checked:bg-green-500 relative cursor-pointer after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:transition-transform checked:after:translate-x-4">
+                </label>
+                <div class="help">Reuters/Bloomberg 같은 해외 소스를 켜고 끕니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label class="flex items-center justify-between gap-3">
+                  <span>Nasdaq 소스 사용</span>
+                  <input type="checkbox" id="set-news-nasdaq-enabled"
+                    class="w-9 h-5 rounded-full appearance-none bg-gray-600 checked:bg-green-500 relative cursor-pointer after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:transition-transform checked:after:translate-x-4">
+                </label>
+                <div class="help">현재 업스트림 응답이 불안정해 기본 OFF입니다. 필요할 때만 켜는 실험 소스입니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label class="flex items-center justify-between gap-3">
+                  <span>국내 미디어 뉴스 포함</span>
+                  <input type="checkbox" id="set-news-domestic-media-enabled"
+                    class="w-9 h-5 rounded-full appearance-none bg-gray-600 checked:bg-green-500 relative cursor-pointer after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:transition-transform checked:after:translate-x-4">
+                </label>
+                <div class="help">연합뉴스TV 경제 RSS를 자동 폴링에 포함합니다. 이용조건은 별도 확인이 필요합니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label class="flex items-center justify-between gap-3">
+                  <span>뉴스 게이트 활성화</span>
+                  <input type="checkbox" id="set-news-gate-enabled"
+                    class="w-9 h-5 rounded-full appearance-none bg-gray-600 checked:bg-green-500 relative cursor-pointer after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:transition-transform checked:after:translate-x-4">
+                </label>
+                <div class="help">부정 강도가 임계치를 넘으면 진입 차단 또는 재검증으로 보냅니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label class="flex items-center justify-between gap-3">
+                  <span>자동 폴링 활성화</span>
+                  <input type="checkbox" id="set-news-poll-enabled"
+                    class="w-9 h-5 rounded-full appearance-none bg-gray-600 checked:bg-green-500 relative cursor-pointer after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:transition-transform checked:after:translate-x-4">
+                </label>
+                <div class="help">장중/장외 주기를 나눠 자동 수집하고 신규 뉴스는 증분 재검증을 트리거합니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label class="flex items-center justify-between gap-3">
+                  <span>Shadow A/B 기록</span>
+                  <input type="checkbox" id="set-news-shadow-enabled"
+                    class="w-9 h-5 rounded-full appearance-none bg-gray-600 checked:bg-green-500 relative cursor-pointer after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:transition-transform checked:after:translate-x-4">
+                </label>
+                <div class="help">뉴스 ON/OFF 기준 결정을 같이 저장해 승급/롤백 판단의 표본으로 사용합니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label>부정 압력 차단 임계치</label>
+                <input id="set-news-negative-threshold" type="number" min="0" max="1" step="0.05"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
+                <div class="help">높을수록 더 강한 악재일 때만 막습니다. 기본 권장값은 0.65~0.75입니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label>뉴스 룩백 시간</label>
+                <input id="set-news-lookback-hours" type="number" min="1" max="168" step="1"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
+                <div class="help">매수 전에 참고하는 최근 뉴스 범위입니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label>장중 폴링 간격(분)</label>
+                <input id="set-news-poll-interval-trading" type="number" min="1" max="60" step="1"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
+                <div class="help">장중 신규 뉴스 감시 주기입니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label>장외 폴링 간격(분)</label>
+                <input id="set-news-poll-interval-off" type="number" min="1" max="240" step="1"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
+                <div class="help">장외에는 더 낮은 빈도로 감시해 개장 전 리스크를 준비합니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label>롤아웃 최소 표본 수</label>
+                <input id="set-news-rollout-min-sample" type="number" min="1" max="200" step="1"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
+                <div class="help">실거래/Shadow 둘 다 이 표본 수 이상이어야 승급 또는 롤백을 판단합니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label>롤아웃 최소 PF</label>
+                <input id="set-news-rollout-min-pf" type="number" min="0" max="10" step="0.05"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
+                <div class="help">이 값보다 낮으면 뉴스 전략은 롤백 권장 상태가 됩니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label>롤아웃 최소 기대값(원)</label>
+                <input id="set-news-rollout-min-expectancy" type="number" min="-1000000" max="1000000" step="100"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
+                <div class="help">거래당 기대 원화 손익 기준입니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label>롤아웃 최대 허용 MDD(원)</label>
+                <input id="set-news-rollout-max-drawdown" type="number" min="0" max="100000000" step="10000"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
+                <div class="help">누적 손익 기준 이 값을 넘게 무너지면 롤백 권장으로 전환합니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label>Ollama Base URL</label>
+                <input id="set-ollama-base-url" type="text"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200"
+                  placeholder="http://127.0.0.1:11434">
+                <div class="help">로컬 Ollama 서버 주소입니다.</div>
+              </div>
+
+              <div class="news-settings-field">
+                <label>Ollama 기본 모델</label>
+                <input id="set-ollama-model" type="text"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200"
+                  placeholder="llama3.1:8b">
+                <div class="help">뉴스/수동 작업 공용 기본값입니다. tier 전용 설정이 있으면 그 값이 우선합니다.</div>
+              </div>
+
+              <div class="news-settings-field full-span">
+                <div class="flex items-center justify-between gap-3">
+                  <div>
+                    <div class="text-sm text-white">최근 적재 뉴스</div>
+                    <div class="mt-1 text-[11px] text-gray-500">현재 활성 소스 기준으로 최근 기사만 노출합니다.</div>
+                  </div>
+                </div>
+                <div id="news-overview-list" class="news-item-list mt-3">
+                  <div class="text-xs text-gray-500">뉴스 인텔 데이터를 불러오는 중...</div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section id="settings-panel-llm" class="settings-tab-panel space-y-4">
+            <div>
+              <div class="text-sm font-medium text-white">LLM 설정</div>
+              <div class="mt-1 text-xs text-gray-500">분석 단계별 provider, 모델, fallback을 여기서 관리합니다.</div>
+            </div>
+            <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4">
+              <div class="text-xs text-gray-500 font-medium mb-1">LLM 요약</div>
+              <div id="llm-config-summary" class="text-xs text-gray-400">설정 불러오는 중...</div>
+              <div id="llm-tier1-model" class="text-xs text-gray-500 mt-0.5 truncate"></div>
+              <div id="llm-catalog-meta" class="text-[11px] text-gray-500 mt-1"></div>
+              <button onclick="refreshLLMCatalog()"
+                class="mt-2 w-full bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1 transition">
+                공식 모델 목록 새로고침
+              </button>
+            </div>
+
+            <details class="settings-accordion">
+              <summary>
+                <div>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <div class="text-sm font-medium text-white">분석용 AI (T1)</div>
+                    <span class="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] text-sky-200">추천: 빠르고 저비용인 분석형 모델</span>
+                  </div>
+                  <div class="text-[11px] text-gray-500 mt-1">시장 스캔, 선별, 빠른 분석 단계에 쓰는 기본 모델과 fallback을 설정합니다.</div>
+                </div>
+                <span class="settings-accordion-arrow">&#x25BC;</span>
+              </summary>
+              <div class="settings-accordion-body">
+                <label class="text-sm block mb-1">기본 분석 AI (T1)</label>
+                <select id="set-llm-tier1-provider"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                  <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CODEX">Codex</option>
+                  <option value="OLLAMA">Ollama</option>
+                </select>
+                <label class="text-xs block mt-2 mb-1 text-gray-500">모델 / 버전</label>
+                <select id="set-llm-tier1-model" onchange="updateTierModelSetting('tier1', this.value)"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
+                <div id="llm-tier1-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+                <div class="grid gap-3 md:grid-cols-2 mt-4">
+                  <div>
+                    <label class="text-xs block mb-1 text-gray-500">T1 동시 분석 수</label>
+                    <input id="set-llm-tier1-concurrency" type="number" min="1" max="8" step="1"
+                      class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
+                    <div id="set-llm-tier1-concurrency-help" class="text-[11px] text-gray-500 mt-1">Tier1 호출을 동시에 몇 개까지 허용할지 정합니다.</div>
+                  </div>
+                  <div>
+                    <label class="text-xs block mb-1 text-gray-500">Codex timeout (초)</label>
+                    <input id="set-codex-timeout-tier1" type="number" min="30" max="300" step="1"
+                      class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
+                    <div class="text-[11px] text-gray-500 mt-1">T1 provider가 Codex일 때만 적용됩니다.</div>
+                  </div>
+                </div>
+                <label class="text-xs block mt-3 mb-1 text-gray-500">T1 Fallback</label>
+                <select id="set-llm-tier1-fallback"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                  <option value="">없음</option>
+                  <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CODEX">Codex</option>
+                  <option value="OLLAMA">Ollama</option>
+                </select>
+                <label class="text-xs block mt-2 mb-1 text-gray-500">Fallback 모델 / 버전</label>
+                <select id="set-llm-tier1-fallback-model" onchange="updateTierModelSetting('tier1', this.value, 'fallback')"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
+                <div id="llm-tier1-fallback-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+              </div>
+            </details>
+
+            <details class="settings-accordion">
+              <summary>
+                <div>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <div class="text-sm font-medium text-white">최종 검토용 AI (T2)</div>
+                    <span class="rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-[10px] text-violet-200">추천: 추론 품질이 높은 검토형 모델</span>
+                  </div>
+                  <div class="text-[11px] text-gray-500 mt-1">최종 매매 판단, 더 무거운 검토, 정밀 분석 단계에 쓰는 모델을 설정합니다.</div>
+                </div>
+                <span class="settings-accordion-arrow">&#x25BC;</span>
+              </summary>
+              <div class="settings-accordion-body">
+                <label class="text-sm block mb-1">최종 검토 AI (T2)</label>
+                <select id="set-llm-tier2-provider"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                  <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CODEX">Codex</option>
+                  <option value="OLLAMA">Ollama</option>
+                </select>
+                <label class="text-xs block mt-2 mb-1 text-gray-500">모델 / 버전</label>
+                <select id="set-llm-tier2-model" onchange="updateTierModelSetting('tier2', this.value)"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
+                <div id="llm-tier2-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+                <div class="grid gap-3 md:grid-cols-2 mt-4">
+                  <div>
+                    <label class="text-xs block mb-1 text-gray-500">T2 동시 검토 수</label>
+                    <input id="set-llm-tier2-concurrency" type="number" min="1" max="8" step="1"
+                      class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
+                    <div id="set-llm-tier2-concurrency-help" class="text-[11px] text-gray-500 mt-1">Tier2 검토 호출의 병렬 실행 상한입니다.</div>
+                  </div>
+                  <div>
+                    <label class="text-xs block mb-1 text-gray-500">Codex timeout (초)</label>
+                    <input id="set-codex-timeout-tier2" type="number" min="30" max="300" step="1"
+                      class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
+                    <div class="text-[11px] text-gray-500 mt-1">T2 provider가 Codex일 때만 적용됩니다.</div>
+                  </div>
+                </div>
+                <label class="text-xs block mt-3 mb-1 text-gray-500">T2 Fallback</label>
+                <select id="set-llm-tier2-fallback"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                  <option value="">없음</option>
+                  <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CODEX">Codex</option>
+                  <option value="OLLAMA">Ollama</option>
+                </select>
+                <label class="text-xs block mt-2 mb-1 text-gray-500">Fallback 모델 / 버전</label>
+                <select id="set-llm-tier2-fallback-model" onchange="updateTierModelSetting('tier2', this.value, 'fallback')"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
+                <div id="llm-tier2-fallback-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+              </div>
+            </details>
+
+            <details class="settings-accordion">
+              <summary>
+                <div>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <div class="text-sm font-medium text-white">리포트·수동 작업용 AI</div>
+                    <span class="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-200">추천: 문장 품질과 안정성이 좋은 요약형 모델</span>
+                  </div>
+                  <div class="text-[11px] text-gray-500 mt-1">Q&amp;A, 장마감 리뷰, 일일 리포트 생성 같은 수동 작업에 쓰는 1순위와 풀백 AI를 설정합니다.</div>
+                </div>
+                <span class="settings-accordion-arrow">&#x25BC;</span>
+              </summary>
+              <div class="settings-accordion-body">
+                <label class="text-sm block mb-1">1순위 Provider</label>
+                <select id="set-manual-llm-provider"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                  <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CODEX">Codex</option>
+                  <option value="OLLAMA">Ollama</option>
+                </select>
+                <div class="text-[11px] text-gray-500 mt-1">
+                  Q&amp;A / 장마감 리뷰 / 리포트 생성 같은 수동 작업에 적용합니다.
+                </div>
+                <label class="text-xs block mt-3 mb-1 text-gray-500">1순위 모델 / 버전</label>
+                <select id="set-manual-llm-model"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
+                <div id="llm-manual-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+                <label class="text-xs block mt-3 mb-1 text-gray-500">풀백 Provider</label>
+                <select id="set-manual-llm-fallback-provider"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                  <option value="">없음</option>
+                  <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CODEX">Codex</option>
+                  <option value="OLLAMA">Ollama</option>
+                </select>
+                <label class="text-xs block mt-3 mb-1 text-gray-500">풀백 모델 / 버전</label>
+                <select id="set-manual-llm-fallback-model"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
+                <div id="llm-manual-fallback-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+                <div id="llm-manual-selection" class="text-xs text-gray-500 mt-1 truncate"></div>
+              </div>
+            </details>
+
+            <details class="settings-accordion">
+              <summary>
+                <div>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <div class="text-sm font-medium text-white">뉴스용 AI</div>
+                    <span class="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-200">추천: 짧은 번역과 요약에 빠르게 응답하는 모델</span>
+                  </div>
+                  <div class="text-[11px] text-gray-500 mt-1">뉴스 번역, 감성/요약, 뉴스 인텔 해석에 쓰는 1순위와 풀백 AI, 병렬도를 같이 설정합니다.</div>
+                </div>
+                <span class="settings-accordion-arrow">&#x25BC;</span>
+              </summary>
+              <div class="settings-accordion-body">
+                <label class="text-sm block mb-1">1순위 Provider</label>
+                <select id="set-news-llm-provider"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                  <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CODEX">Codex</option>
+                  <option value="OLLAMA">Ollama</option>
+                </select>
+                <div class="text-[11px] text-gray-500 mt-1">
+                  뉴스 감성/요약, 번역, 뉴스 인텔 해석에만 적용합니다.
+                </div>
+                <label class="text-xs block mt-3 mb-1 text-gray-500">1순위 모델 / 버전</label>
+                <select id="set-news-llm-model"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
+                <div id="llm-news-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+                <label class="text-xs block mt-3 mb-1 text-gray-500">풀백 Provider</label>
+                <select id="set-news-llm-fallback-provider"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                  <option value="">없음</option>
+                  <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CODEX">Codex</option>
+                  <option value="OLLAMA">Ollama</option>
+                </select>
+                <label class="text-xs block mt-3 mb-1 text-gray-500">풀백 모델 / 버전</label>
+                <select id="set-news-llm-fallback-model"
+                  class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
+                <div id="llm-news-fallback-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+                <div class="grid gap-3 md:grid-cols-2 mt-4">
+                  <div>
+                    <label class="text-xs block mb-1 text-gray-500">뉴스 fetch 병렬도</label>
+                    <input id="set-news-fetch-concurrency" type="number" min="1" max="8" step="1"
+                      class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
+                    <div class="text-[11px] text-gray-500 mt-1">뉴스 소스 수집을 동시에 몇 개까지 실행할지 정합니다.</div>
+                  </div>
+                  <div>
+                    <label class="text-xs block mb-1 text-gray-500">뉴스 번역 병렬도</label>
+                    <input id="set-news-translation-concurrency" type="number" min="1" max="8" step="1"
+                      class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
+                    <div id="set-news-translation-concurrency-help" class="text-[11px] text-gray-500 mt-1">해외 뉴스 번역/감성 분석 동시 처리 수입니다. Ollama는 항상 1개씩 처리합니다.</div>
+                  </div>
+                </div>
+
+                <label class="flex items-center justify-between gap-3 rounded-lg border border-gray-700 bg-dark-800/50 p-3 mt-4">
+                  <span class="text-sm text-gray-200">Claude Code 뉴스 세션 공유 유지</span>
+                  <input id="set-news-claude-share-session" type="checkbox"
+                    class="h-4 w-4 rounded border-gray-600 bg-dark-900 text-blue-500 focus:ring-blue-500">
+                </label>
+                <div class="text-[11px] text-gray-500 mt-2">켜면 기존 세션 맥락을 유지하지만 직렬화될 수 있고, 끄면 병렬 처리 이점이 커집니다.</div>
+              </div>
+            </details>
+          </section>
+
+          <section id="settings-panel-system" class="settings-tab-panel space-y-4">
+            <div>
+              <div class="text-sm font-medium text-white">시스템 정보</div>
+              <div class="mt-1 text-xs text-gray-500">운영 중 자주 누르지 않는 상태/사용량 정보는 여기로 모읍니다.</div>
+            </div>
+            <div class="rounded-xl border border-emerald-900/60 bg-emerald-950/20 p-4">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <div class="text-sm font-medium text-white">운영 DB 백업</div>
+                  <div class="mt-1 text-xs text-gray-400">
+                    현재 운영 DB 스냅샷을 `runtime/backups/db` 아래에 저장합니다.
+                    다른 컴퓨터로 옮기기 전이나 초기화 전에 먼저 백업해두세요.
+                  </div>
+                </div>
+                <button id="backup-operational-db-button"
+                  onclick="backupOperationalDatabase(this)"
+                  class="shrink-0 rounded-md border border-emerald-500/60 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-200 transition hover:border-emerald-400 hover:text-white">
+                  DB 백업
+                </button>
+              </div>
+            </div>
+            <div class="rounded-xl border border-red-900/60 bg-red-950/20 p-4">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <div class="text-sm font-medium text-white">운영 DB 초기화</div>
+                  <div class="mt-1 text-xs text-gray-400">
+                    설정은 유지하고 거래/리포트/활동/뉴스 같은 운영 이력만 비웁니다.
+                    이후 현재 브로커 잔고/보유/미체결을 다시 읽어 새 기준선을 만듭니다.
+                  </div>
+                </div>
+                <button id="reset-operational-baseline-button"
+                  onclick="resetOperationalBaseline(this)"
+                  class="shrink-0 rounded-md border border-red-500/60 bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-200 transition hover:border-red-400 hover:text-white">
+                  DB 초기화
+                </button>
+              </div>
+              <div class="mt-3 text-[11px] leading-5 text-gray-500">
+                과거 실현손익/리포트/뉴스 적재 이력은 복구되지 않습니다. 다른 컴퓨터에서 새 기준선으로 다시 시작하거나, 현재 상태만 다시 맞출 때 사용하세요.
+              </div>
+            </div>
+            <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4">
+              <div class="flex items-center justify-between">
+                <div class="text-xs font-medium text-gray-300">LLM 사용량</div>
+                <button onclick="loadLLMUsage()"
+                  class="text-[11px] text-gray-400 hover:text-gray-200 transition">
+                  새로고침
+                </button>
+              </div>
+              <div id="llm-usage-panel" class="mt-2 text-xs text-gray-400">
+                불러오는 중...
+              </div>
+            </div>
+          </section>
+        </fieldset>
+      </div>
+      <div class="border-t border-gray-700 px-5 py-4">
+        <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div class="min-w-0">
+            <div id="settings-apply-summary" class="text-sm font-medium text-white">저장되지 않은 변경 없음</div>
+            <div id="settings-apply-detail" class="mt-1 text-xs leading-5 text-gray-500">값을 바꾼 뒤 저장을 누르면 새 작업을 멈추고, 현재 작업 종료를 최대 60초까지 기다린 뒤 한 번에 적용합니다.</div>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="settings-apply-reset" onclick="resetSettingsDraft()"
+              class="rounded-md border border-gray-600 px-3 py-1.5 text-sm text-gray-200 transition hover:border-gray-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-50">
+              되돌리기
+            </button>
+            <button id="settings-apply-save" onclick="applySettingsDraft()"
+              class="rounded-md border border-blue-500/60 bg-blue-500/15 px-3 py-1.5 text-sm font-medium text-blue-100 transition hover:border-blue-400 hover:bg-blue-500/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-50">
+              저장
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="position-detail-overlay" class="settings-modal-overlay" onclick="closePositionDetailModalOnBackdrop(event)">
+    <div class="settings-modal">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-gray-700">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.2em] text-gray-500">Position Detail</div>
+          <div id="position-detail-title" class="text-lg font-semibold text-white">종목 상세</div>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="position-detail-settings-shortcut"
+            class="rounded-md border border-gray-600 bg-dark-800 px-3 py-1.5 text-xs font-medium text-gray-200 transition hover:border-blue-400 hover:text-white">
+            관련 설정 열기
+          </button>
+          <button onclick="closePositionDetailModal()"
+            class="rounded-md border border-gray-600 bg-dark-800 px-3 py-1.5 text-xs font-medium text-gray-200 transition hover:border-gray-400 hover:text-white">
+            닫기
+          </button>
+        </div>
+      </div>
+      <div class="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+        <div id="position-detail-summary" class="grid gap-3 md:grid-cols-3">
+          <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4 text-sm text-gray-400">종목 요약을 불러오는 중...</div>
+        </div>
+        <div>
+          <div class="text-sm font-medium text-white">의사결정 카드</div>
+          <div class="mt-1 text-xs text-gray-500">진입 당시 차트, 비용, 뉴스 판단 근거를 한 번에 확인합니다.</div>
+          <div id="position-detail-decision" class="mt-3">
+            <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4 text-sm text-gray-400">의사결정 카드 정보를 불러오는 중...</div>
+          </div>
+        </div>
+        <div>
+          <div class="text-sm font-medium text-white">최근 이벤트</div>
+          <div class="mt-1 text-xs text-gray-500">최근 감지된 우선 이벤트를 요약해서 보여줍니다.</div>
+          <div id="position-detail-recent-events" class="position-recent-event-strip mt-3"></div>
+        </div>
+        <div>
+          <div class="text-sm font-medium text-white">종목 타임라인</div>
+          <div class="mt-1 text-xs text-gray-500">거래 이력, AI 분석, 활동 로그를 시간순으로 묶어 봅니다.</div>
+        </div>
+        <div id="position-detail-timeline-filters" class="position-timeline-filter-row"></div>
+        <div id="position-detail-timeline" class="space-y-3">
+          <div class="text-sm text-gray-500">타임라인을 불러오는 중...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="news-archive-detail-overlay" class="settings-modal-overlay" onclick="closeNewsArchiveDetailOnBackdrop(event)">
+    <div class="settings-modal">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-gray-700">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.2em] text-gray-500">News Detail</div>
+          <div id="news-archive-detail-title" class="text-lg font-semibold text-white">뉴스 상세</div>
+        </div>
+        <button onclick="closeNewsArchiveDetailModal()"
+          class="rounded-md border border-gray-600 bg-dark-800 px-3 py-1.5 text-xs font-medium text-gray-200 transition hover:border-gray-400 hover:text-white">
+          닫기
+        </button>
+      </div>
+      <div class="flex-1 overflow-y-auto px-6 py-5">
+        <div id="news-archive-detail-body" class="space-y-4 text-sm text-gray-300">
+          <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4 text-sm text-gray-400">뉴스 상세를 불러오는 중...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/admin/static/js/app.js?v=20260406-1718"></script>
 </body>
 </html>
