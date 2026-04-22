@@ -101,17 +101,17 @@
 - Update: `docs/audits/2026-04-22-system-wide-trading-audit-evidence.md`
 - Update: `docs/audits/2026-04-22-system-wide-trading-audit-findings.md`
 
-- [ ] **Step 1: 테이블/모델/마이그레이션 맵 작성**
+- [x] **Step 1: 테이블/모델/마이그레이션 맵 작성**
   - `trade_results`, `orders`, `portfolio_holdings`, `account_equity_snapshots`, `runtime_settings`, `trading_rules`, `error_events`, `error_incidents`, `market_data_daily`, `market_snapshots`, `news_items`의 모델과 repository를 연결해 기록한다.
 
-- [ ] **Step 2: read-only DB 스냅샷 수집**
+- [x] **Step 2: read-only DB 스냅샷 수집**
   - 주문 상태별 수량, pending age, 체결/미체결, 계좌 snapshot, error incident, runtime setting, trading rules를 수집한다.
   - DB 파일 위치는 먼저 `core/config.py`, `core/database.py`, `runtime/`에서 확인한다.
 
-- [ ] **Step 3: PnL source of truth 후보 정리**
+- [x] **Step 3: PnL source of truth 후보 정리**
   - `trade_results.pnl`, `orders`, `account_equity_snapshots.total_unrealized_pnl`, 브로커 스냅샷 중 무엇이 어느 상황에서 기준인지 정리한다.
 
-- [ ] **Step 4: findings 기록**
+- [x] **Step 4: findings 기록**
   - PnL이 닫힌 거래 기준인지, 열린 포지션 평가손익까지 포함하는지 불명확하면 P1 후보로 기록한다.
   - DB와 브로커 포지션 불일치 가능성이 있으면 P0/P1 후보로 기록한다.
 
