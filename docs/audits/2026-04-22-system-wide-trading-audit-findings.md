@@ -341,6 +341,81 @@
 - Rollback: 실험 flag를 끄고 이전 runtime setting snapshot으로 복구합니다.
 - 분류: `실험`
 
+### F-021: 백테스트가 현재 봉 정보를 보고 같은 봉 종가에 진입하는 look-ahead/동시체결 가정을 가짐
+
+- 심각도: `P1`
+- 상태: `확정`
+- 영역: `백테스트 | 전략`
+- 현상: `BacktestEngine.run`은 `lookback_df = df.iloc[:i + 1]`로 현재 봉 close/high/low까지 포함해 지표를 계산한 뒤, 같은 `current_price=close`로 즉시 매수합니다.
+- 영향: 실제로는 종가가 확정된 뒤 같은 종가로 체결할 수 없거나, 다음 봉 open/limit 조건을 써야 합니다. 이 구조는 성과를 낙관적으로 만들 수 있습니다.
+- 증거: `backtesting/engine.py:86-124`, `_buy(symbol, current_date, current_price)`.
+- 재현/검증: 현재 봉 close로 BUY 신호가 생기는 fixture에서 같은 봉 close 체결이 발생합니다.
+- 권고: 신호 생성 봉과 체결 봉을 분리합니다. 기본값은 `signal_on_close -> execute_next_open` 또는 명시적 `execute_next_close`로 두고, 리포트에 체결 정책을 표시합니다.
+- 구현 전 테스트: 신규 `tests/backtesting/test_engine_execution_model.py`에 “i봉 신호는 i+1봉 이전에 체결되지 않는다”는 실패 테스트 추가.
+- Rollout: 기존 API에는 `execution_timing` 기본값을 보수적으로 추가하고, 기존 방식은 `LEGACY_SAME_CLOSE`로 명시합니다.
+- Rollback: feature flag로 legacy 체결 정책을 유지할 수 있게 합니다.
+- 분류: `유지하되 harden`
+
+### F-022: 백테스트가 live LLM pipeline이 아니라 rule-based RSI/MACD 대체 모델을 검증함
+
+- 심각도: `P1`
+- 상태: `확정`
+- 영역: `백테스트 | 전략 | LLM`
+- 현상: live trading은 scanner, chart, Tier1 LLM, Tier2 LLM, strategy profile, risk/cost gate를 거치지만, backtest는 `_build_rule_based_analysis`에서 RSI/MACD/cross 점수로 recommendation을 만듭니다.
+- 영향: backtest 결과가 좋아도 live LLM 전략이 좋다는 증거가 아닙니다. 반대로 backtest가 나빠도 LLM pipeline을 부정할 수 없습니다.
+- 증거: `backtesting/engine.py:150-190`, `agent/trading_agent.py`의 Tier1/Tier2 경로.
+- 재현/검증: backtest 실행 시 LLM provider나 실제 prompt path를 사용하지 않습니다.
+- 권고: 백테스트 리포트에 `model_family=RULE_BASED_TECHNICAL_PROXY`를 표시하고, live pipeline 검증은 Phase 5의 decision event/forward return dataset으로 분리합니다.
+- 구현 전 테스트: backtest report schema에 model_family/execution_policy가 포함되는 테스트 추가.
+- Rollout: 표시 필드부터 추가하고, LLM replay backtest는 별도 실험으로 둡니다.
+- Rollback: 표시 필드 제거 가능.
+- 분류: `유지하되 harden`
+
+### F-023: 백테스트 체결 모델이 미체결/부분체결/호가/상하한가/세금을 반영하지 않음
+
+- 심각도: `P1`
+- 상태: `확정`
+- 영역: `백테스트 | 주문 | 성과 측정`
+- 현상: `_buy`와 `_close_position`은 고정 percentage slippage와 commission만 반영하고 전량 체결로 처리합니다. KRX 호가단위, 가격제한폭, 거래정지, 거래세/제세금, 부분체결, 주문 거부가 없습니다.
+- 영향: 특히 단기/급등주 전략에서는 체결 가능성과 비용이 성과 대부분을 좌우할 수 있어 실제보다 성과가 과대평가될 수 있습니다.
+- 증거: `backtesting/engine.py:205-274`, `BacktestConfig`의 `commission_rate`, `slippage_rate`.
+- 재현/검증: 유동성이 낮거나 gap이 큰 fixture에서도 계산상 수량이 있으면 전량 체결됩니다.
+- 권고: `FeeModel`, `SlippageModel`, `FillModel`을 분리하고, 최소 `KoreaStockFeeModel`, `NextBarOHLCFillModel`, `LimitGuardFillModel`을 테스트로 고정합니다.
+- 구현 전 테스트: 수수료/세금/슬리피지/부분체결/상하한가 fixture를 추가합니다.
+- Rollout: report-only로 비용 breakdown을 먼저 출력하고, 이후 기존 결과와 새 결과를 나란히 표시합니다.
+- Rollback: legacy cost model을 별도 옵션으로 유지합니다.
+- 분류: `유지하되 harden`
+
+### F-024: 백테스트 data loader가 날짜 범위와 trading day를 엄밀하게 보장하지 않음
+
+- 심각도: `P2`
+- 상태: `확정`
+- 영역: `백테스트 | 데이터`
+- 현상: `load_from_broker`는 calendar day 차이로 candle count를 요청하고, 반환된 candle을 start/end로 다시 필터링하지 않습니다. 로컬 `market_data_daily`도 0 rows라 재현 가능한 백테스트 dataset이 없습니다.
+- 영향: 사용자가 지정한 기간과 실제 테스트 기간이 달라질 수 있고, 동일한 테스트를 나중에 재현하기 어렵습니다.
+- 증거: `backtesting/data_loader.py:17-45`, Phase 5 DB row count `market_data_daily=0`.
+- 재현/검증: broker가 요청 기간 밖 candle을 반환하는 fake adapter fixture에서 그대로 리포트에 포함됩니다.
+- 권고: 반환 후 날짜 필터링, trading day count 로깅, 데이터 source/version/hash를 리포트에 포함합니다.
+- 구현 전 테스트: `tests/backtesting/test_data_loader.py`에 기간 밖 candle 제거 테스트 추가.
+- Rollout: 필터링과 metadata는 backward-compatible하게 추가 가능합니다.
+- Rollback: 필터링 flag를 끌 수 있게 두되 기본은 엄격 모드로 둡니다.
+- 분류: `유지하되 harden`
+
+### F-025: 백테스트 엔진/metrics 테스트가 없어 성과 지표를 신뢰하기 어려움
+
+- 심각도: `P1`
+- 상태: `확정`
+- 영역: `백테스트 | 테스트`
+- 현상: 현재 `tests/backtesting/`에는 data loader 테스트 2개만 있고, engine/metrics/report 테스트가 없습니다.
+- 영향: 성과 지표나 체결 정책을 바꿔도 회귀를 잡기 어렵고, 백테스트 리포트를 운영 판단에 쓰기 위험합니다.
+- 증거: `rg --files tests/backtesting backtesting` 결과 `tests/backtesting/test_data_loader.py`만 존재.
+- 재현/검증: `BacktestEngine`, `calculate_metrics`, `BacktestReport` 직접 테스트가 없습니다.
+- 권고: Phase 6 이후 실제 구현 첫 단계는 TDD로 engine execution model 테스트를 추가하는 것입니다.
+- 구현 전 테스트: 동일 항목이 곧 구현 전 테스트입니다. look-ahead, fees/slippage, stop/take/gap, final liquidation, metrics edge case를 fixture로 고정합니다.
+- Rollout: 테스트 추가 후 엔진 리팩터링. 외부 라이브러리 도입은 테스트 baseline이 생긴 뒤 판단합니다.
+- Rollback: 테스트는 제거하지 않고, legacy behavior는 별도 옵션으로 고정합니다.
+- 분류: `유지하되 harden`
+
 ## Open Questions
 
 - 감사 기간에 `TRADING_ENABLED=true`를 유지할지, 아니면 `SELL_ONLY`/`READ_ONLY`에 가까운 별도 운영 모드를 만들지 결정해야 합니다.
@@ -349,4 +424,5 @@
 - closed trade 0건인 현 상태에서 전략 성과 판단은 account equity forward return 중심으로 임시 전환할지 결정해야 합니다.
 - strategy 이름을 실제 alpha 전략으로 유지할지, execution profile로 바꿀지 결정해야 합니다.
 - 후보별 forward return을 기존 `analysis_results`/`recommendations`에 넣을지, 신규 canonical table로 분리할지 결정해야 합니다.
+- 백테스트 기본 체결 정책을 `next_open`, `next_close`, `limit_guard` 중 무엇으로 둘지 결정해야 합니다.
 - `.env`와 shell history까지 시크릿 스캔 범위를 확장할지는 tracked files + runtime logs 점검 후 결정합니다.

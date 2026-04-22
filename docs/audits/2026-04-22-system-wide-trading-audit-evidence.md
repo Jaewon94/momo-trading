@@ -621,7 +621,93 @@ Phase 5 결론상 구현 후보는 다음 dataset을 먼저 쌓아야 합니다.
 
 ## Phase 6: 백테스트와 실험 위생
 
-> 아직 시작하지 않았습니다.
+### 외부 기준
+
+| 출처 | 감사에 반영한 기준 |
+|---|---|
+| Backtrader Slippage, https://www.backtrader.com/docu/slippage/slippage/ | market/limit/stop 주문별 슬리피지 적용과 high/low cap, 다음 봉 open 체결 같은 현실 모델이 필요함 |
+| Backtrader Commission Schemes, https://www.backtrader.com/docu/commission-schemes/commission-schemes/ | 주식/선물별 commission scheme, percentage/fixed commission을 명확히 분리해야 함 |
+| vectorbt Portfolio enums/orders, https://vectorbt.dev/api/portfolio/enums/ | fees, fixed_fees, slippage, min/max size, partial fill, reject probability 같은 주문 파라미터를 모델링 가능 |
+| QuantConnect LEAN Slippage Models, https://www.quantconnect.com/docs/v2/writing-algorithms/reality-modeling/slippage/supported-models | null/constant/volume share/market impact slippage처럼 모델 선택이 필요함 |
+| QuantConnect LEAN Trading and Orders, https://www.quantconnect.com/docs/v2/writing-algorithms/live-trading/trading-and-orders | backtest fill/fee/slippage/margin은 플러그인 모델로 제어하고, live order는 비동기 상태 전이를 가진다는 기준 |
+
+### 현재 Backtest Engine 가정
+
+| 항목 | 코드 위치 | 현재 가정 | 감사 판단 |
+|---|---|---|---|
+| 데이터 단위 | `BacktestEngine.run` | 일봉 OHLCV | 장중 전략/실시간 이벤트 성능 검증에는 부족 |
+| 시작 lookback | `for i in range(30, len(df))` | 30봉 이후부터 평가 | 최소 indicator lookback 목적은 타당 |
+| 신호 생성 | `lookback_df = df.iloc[:i + 1]` | 현재 봉 close/high/low까지 포함해 지표 계산 | 현재 봉 종가를 보고 같은 봉 종가에 매수하는 look-ahead/동시체결 가정 |
+| 진입 가격 | `_buy(... current_price)` | 신호 봉 close에 즉시 매수, 매수 슬리피지 가산 | 다음 봉 open/limit fill이 아니라 낙관적일 수 있음 |
+| 청산 가격 | `_check_positions` | 손절은 low, 익절은 high, max hold는 close | 같은 봉 high/low 순서를 모르지만 stop-loss를 먼저 보는 보수적 순서 |
+| 진입 당일 stop/TP | `run` 순서 | 포지션 체크 후 신규 매수 | 진입 당일 손절/익절은 평가하지 않음 |
+| 수수료 | `commission_rate` | 매수/매도 각각 percentage | 세금/거래세/최소 수수료/브로커별 fee 없음 |
+| 슬리피지 | `slippage_rate` | 매수는 +, 매도는 - 고정 percentage | 호가/거래량/시장가/지정가/상하한가 미반영 |
+| 포지션 | `_has_position(symbol)` | 단일 종목 1포지션 | 포트폴리오 동시 후보, 현금 경쟁, 상관 노출 미검증 |
+| 주문 실패 | 없음 | 계산 가능하면 전량 체결 | 미체결/부분체결/거부/reject probability 없음 |
+| 상하한가/유동성 | 없음 | OHLC 안이면 체결 | KRX 가격제한폭, 호가단위, 거래정지, 저유동성 미반영 |
+| 지표 기반 전략 | `_build_rule_based_analysis` | AI 대신 RSI/MACD/cross 규칙 | 실제 live LLM pipeline과 다른 전략을 테스트 |
+| 성과 지표 | `calculate_metrics` | trade return과 equity curve 기반 | benchmark, out-of-sample, parameter trial log 없음 |
+
+### Data Loader 관찰
+
+- `BacktestDataLoader.load_from_broker`는 `count=(end_date - start_date).days`로 broker daily candles를 요청합니다.
+- 반환 candle을 날짜순으로 정렬하지만, 요청 결과가 실제 `start_date/end_date` 안에 있는지 재필터링하지 않습니다.
+- calendar day와 trading day 차이를 그대로 count로 사용합니다.
+- DB source인 `market_data_daily`는 Phase 5 기준 0 rows라 현재 로컬 deterministic backtest dataset은 없습니다.
+- 테스트는 broker adapter 호출과 실패 시 empty frame 반환만 검증합니다.
+
+### 현재 테스트 범위
+
+확인한 backtesting test:
+
+- `tests/backtesting/test_data_loader.py::test_backtest_data_loader_uses_broker_adapter_candles`
+- `tests/backtesting/test_data_loader.py::test_backtest_data_loader_returns_empty_frame_when_broker_raises`
+
+미확인:
+
+- 엔진이 다음 봉 체결을 하는지
+- 수수료/슬리피지가 PnL에 정확히 반영되는지
+- stop-loss/take-profit 순서와 gap 처리
+- 같은 봉 high/low 양쪽 터치 시 정책
+- `max_hold_days` off-by-one
+- final liquidation이 equity curve에 반영되는지
+- 데이터 기간 필터링
+- benchmark/out-of-sample/parameter trial log
+
+### 외부 라이브러리 검토
+
+| 후보 | 장점 | 단점/주의 | 추천 |
+|---|---|---|---|
+| Backtrader | event-driven, commission/slippage/order model 문서가 성숙 | 프로젝트가 오래됐고 async/live pipeline과 직접 맞추려면 adapter 필요 | 현실 체결 모델의 reference 또는 독립 검증 엔진 후보 |
+| vectorbt | 빠른 벡터화, fees/slippage/order records/partial reject 등 풍부 | event-driven order lifecycle과 live broker reconciliation은 별도 설계 필요 | benchmark/parameter sweep 보조 도구 후보 |
+| QuantConnect LEAN | fill/fee/slippage/margin/reality modeling 개념이 강함 | 로컬 Python 서비스에 통합 비용이 큼 | 당장 도입보다 설계 기준/장기 후보 |
+
+### Phase 6 결론
+
+- 지금 백테스트 결과로 운영 전략의 수익성을 판단하면 안 됩니다.
+- 이유는 live pipeline이 LLM 기반인데 backtest는 rule-based RSI/MACD 대체 모델이고, 체결도 현재 봉 close 동시체결에 가깝기 때문입니다.
+- 즉시 외부 라이브러리로 교체하기보다, 현재 엔진에 아래 안전 기준을 먼저 추가하는 것이 비용 대비 낫습니다.
+
+우선순위:
+
+1. 엔진 테스트 추가: look-ahead 방지, 다음 봉 open/close 체결 정책, 수수료/슬리피지, stop/TP/gap.
+2. 데이터 검증 추가: start/end 필터, trading day count, corporate action/adjusted price 여부 표시.
+3. 실행 모델 분리: `SignalModel`, `FillModel`, `FeeModel`, `SlippageModel`, `PortfolioModel`.
+4. benchmark report 추가: buy-and-hold, no-trade, random, scanner-only, technical-only.
+5. 외부 라이브러리는 현재 엔진 결과와 독립 비교하는 verification layer로 먼저 사용.
+
+### Phase 6 Verification
+
+```bash
+.venv313/bin/python -m pytest tests/backtesting/test_data_loader.py
+```
+
+결과:
+
+- 2 tests passed.
+- 확인 범위: broker candle 로딩, broker 실패 시 empty frame.
+- 미확인 범위: backtest engine 체결/PnL/metrics. 테스트가 아직 없습니다.
 
 ## Phase 7: LLM, 뉴스, 비용/지연 가치
 

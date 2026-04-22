@@ -239,20 +239,20 @@
 - Read: `tests/backtesting/test_data_loader.py`
 - Update: audit evidence/findings docs
 
-- [ ] **Step 1: 현재 백테스트 가정 기록**
+- [x] **Step 1: 현재 백테스트 가정 기록**
   - 체결 시점, 수수료, 세금, 슬리피지, 상하한가, 미체결, survivorship bias, look-ahead 가능성을 기록한다.
 
-- [ ] **Step 2: 외부 라이브러리 비교표 작성**
+- [x] **Step 2: 외부 라이브러리 비교표 작성**
   - Backtrader: 성숙한 event-driven 엔진, 수수료/슬리피지 모델 문서가 좋다.
   - vectorbt: 벡터화 성능 장점, event/order lifecycle 세밀성은 별도 검토 필요.
   - QuantConnect LEAN: 현실 모델이 좋지만 로컬 통합 비용이 크다.
   - ml4t-backtest: 최신 라이브러리라 검증 주장과 의존성 안정성을 별도 검토해야 한다.
 
-- [ ] **Step 3: 도입 여부 결정 게이트**
+- [x] **Step 3: 도입 여부 결정 게이트**
   - 현재 `backtesting/`을 고치는 편이 나은지, 외부 라이브러리 검증 계층을 붙일지 findings에 기록한다.
   - 라이브러리 추가가 필요하면 별도 계획과 사용자 승인을 받는다.
 
-- [ ] **Step 4: 과최적화 방지 기준 작성**
+- [x] **Step 4: 과최적화 방지 기준 작성**
   - walk-forward, out-of-sample, parameter trial log, Deflated Sharpe Ratio 또는 최소한의 multiple-testing 보정 계획을 roadmap에 넣는다.
 
 ## Phase 7: LLM, 뉴스, 비용/지연 가치 감사
