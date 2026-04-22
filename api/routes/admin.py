@@ -57,6 +57,7 @@ from services.open_dart_disclosure_service import open_dart_disclosure_service
 from services.news_reporting_service import news_reporting_service
 from services.news_runtime_service import news_runtime_service
 from services.order_reconciliation_service import order_reconciliation_service
+from services.stale_pending_cleanup_service import stale_pending_cleanup_service
 from services.error_incident_service import error_incident_service
 from services.observability_reporting_service import observability_reporting_service
 from services.performance_reporting_service import performance_reporting_service
@@ -792,6 +793,39 @@ async def get_trade_reconciliation_report(db: AsyncSession = Depends(get_async_d
         db_pending_confirms=db_pending_confirms,
     )
     return SuccessResponse(data=report, message="주문 대사 리포트 조회 완료")
+
+
+@router.post("/trades/reconciliation/cleanup")
+async def cleanup_stale_pending_trades(
+    apply: bool = Query(False, description="true일 때만 DB PENDING_CONFIRM을 CONFIRM_FAILED로 변경"),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """브로커 pending에 없는 오래된 DB-only BUY PENDING_CONFIRM을 수동 정리"""
+    broker_pending_orders = await get_broker_adapter().get_pending_orders()
+    db_pending_confirms = await TradeResultRepository(db).get_pending_confirms()
+    result = await stale_pending_cleanup_service.cleanup(
+        db,
+        broker_pending_orders=broker_pending_orders,
+        db_pending_confirms=db_pending_confirms,
+        dry_run=not apply,
+    )
+    if apply:
+        await db.commit()
+    await activity_logger.log(
+        ActivityType.EVENT,
+        ActivityPhase.PROGRESS,
+        "🧹 stale PENDING_CONFIRM 수동 정리 실행",
+        detail={
+            "mode": result["mode"],
+            "summary": result["summary"],
+        },
+    )
+    message = (
+        f"stale pending 정리 {'적용' if apply else 'DRY_RUN'} · "
+        f"대상 {result['summary'].get('eligible_count', 0)}건 / "
+        f"변경 {result['summary'].get('updated_count', 0)}건"
+    )
+    return SuccessResponse(data=result, message=message)
 
 
 @router.post("/trades/reconcile-holdings")

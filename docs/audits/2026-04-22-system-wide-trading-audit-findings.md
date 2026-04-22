@@ -88,6 +88,7 @@
 - Rollback: detector는 제거 가능. 자동 reconcile은 DB 백업 후 진행해야 합니다.
 - 분류: `유지하되 harden`
 - 조치: Track 2 Task 2.1에서 `broker_only`, `db_only_stale`, `quantity_mismatch`, `partial_fill_pending` 분류를 가진 read-only reconciliation report를 추가했습니다. 자동 수정은 하지 않습니다.
+- 후속 조치: Track 2 Task 2.1a에서 `POST /api/v1/admin/trades/reconciliation/cleanup`을 추가했습니다. 기본은 `DRY_RUN`이고, `?apply=true`를 명시할 때만 브로커 pending에 없는 오래된 DB-only `BUY PENDING_CONFIRM`을 `CONFIRM_FAILED`로 변경합니다. SELL pending은 보유수량 대사가 필요하므로 자동 변경하지 않습니다.
 
 ### F-004: confirmed trade PnL이 0으로 유지되어 실현손익 신뢰도가 낮음
 
@@ -136,6 +137,7 @@
 - Rollback: report-only는 제거 가능. 자동 DB 보정은 적용 전 DB 백업과 변경 로그가 필요합니다.
 - 분류: `유지하되 harden`
 - 조치: Track 2 Task 2.1에서 `OrderReconciliationService`와 Admin read-only endpoint를 추가했습니다. 브로커 pending 수, DB pending 수, broker-only, stale DB-only, 수량 불일치, partial fill pending을 분리해 표시합니다.
+- 후속 조치: Track 2 Task 2.1a에서 stale DB-only pending cleanup을 수동 액션으로 추가했습니다. 자동 정리는 여전히 켜지지 않았고, 운영 적용은 `/trades/reconciliation/cleanup` 결과를 `DRY_RUN`으로 확인한 뒤 `?apply=true`로 별도 실행해야 합니다.
 
 ### F-007: LLM Codex timeout incident가 계속 누적되어 장중 판단 품질과 운영 안정성이 흔들림
 

@@ -129,6 +129,46 @@ async def test_admin_trade_reconciliation_route_returns_read_only_report(client,
 
 
 @pytest.mark.asyncio
+async def test_admin_trade_reconciliation_cleanup_defaults_to_dry_run(client, monkeypatch):
+    db_pending = [
+        SimpleNamespace(
+            id="db-stale",
+            order_id="DB-1",
+            stock_symbol="003280",
+            stock_name="흥아해운",
+            side="BUY",
+            quantity=7,
+            status="PENDING_CONFIRM",
+            notes="PENDING_CONFIRM",
+            created_at=__import__("datetime").datetime(2026, 4, 22, 8, 0),
+            entry_at=__import__("datetime").datetime(2026, 4, 22, 8, 0),
+        )
+    ]
+
+    class FakeRepo:
+        def __init__(self, _db) -> None:
+            pass
+
+        async def get_pending_confirms(self):
+            return db_pending
+
+    monkeypatch.setattr("api.routes.admin.TradeResultRepository", FakeRepo, raising=False)
+    monkeypatch.setattr(
+        "api.routes.admin.get_broker_adapter",
+        lambda: SimpleNamespace(get_pending_orders=lambda: __import__("asyncio").sleep(0, result=[])),
+    )
+
+    response = await client.post("/api/v1/admin/trades/reconciliation/cleanup")
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["mode"] == "dry_run"
+    assert payload["summary"]["eligible_count"] == 1
+    assert payload["summary"]["updated_count"] == 0
+    assert db_pending[0].status == "PENDING_CONFIRM"
+
+
+@pytest.mark.asyncio
 async def test_admin_reconcile_holdings_trades_route_returns_summary(client, monkeypatch):
     captured = {}
 

@@ -159,6 +159,41 @@
   - Commit: `feat: add order reconciliation report`
   - Result: findings 갱신 완료. 커밋은 이 작업 검증 후 생성.
 
+### Task 2.1a: stale DB-only pending cleanup 수동 액션 추가
+
+**Files:**
+- Create: `services/stale_pending_cleanup_service.py`
+- Modify: `api/routes/admin.py`
+- Test: `tests/services/test_stale_pending_cleanup_service.py`
+- Test: `tests/api/test_admin_trade_routes.py`
+
+- [x] **Step 1: 실패 테스트 작성**
+  - 오래된 DB-only `PENDING_CONFIRM BUY`와 브로커 pending에 남은 활성 주문 fixture를 만든다.
+  - 기본 `DRY_RUN`은 DB를 바꾸지 않고, `apply`는 stale DB-only BUY만 `CONFIRM_FAILED`로 변경해야 한다.
+  - Result: service/API 테스트를 추가했다.
+
+- [x] **Step 2: 실패 확인**
+  - Run: `./.venv313/bin/python -m pytest tests/services/test_stale_pending_cleanup_service.py tests/api/test_admin_trade_routes.py::test_admin_trade_reconciliation_cleanup_defaults_to_dry_run -q`
+  - Expected: 신규 서비스/endpoint 부재로 실패.
+  - Result: `ModuleNotFoundError: No module named 'services.stale_pending_cleanup_service'`로 실패 확인.
+
+- [x] **Step 3: 최소 구현**
+  - `StalePendingCleanupService`를 추가해 기존 reconciliation 결과의 `db_only_stale`만 사용한다.
+  - Admin endpoint `POST /api/v1/admin/trades/reconciliation/cleanup`을 추가한다.
+  - 기본값은 `DRY_RUN`이며, `?apply=true`일 때만 `CONFIRM_FAILED`로 변경한다.
+  - SELL pending은 보유수량 대사가 필요하므로 자동 변경하지 않고 skip한다.
+  - Result: 서비스와 관리자 수동 cleanup endpoint를 추가했다.
+
+- [x] **Step 4: 통과 확인**
+  - Run: `./.venv313/bin/python -m pytest tests/services/test_order_reconciliation_service.py tests/services/test_stale_pending_cleanup_service.py tests/api/test_admin_trade_routes.py -q`
+  - Expected: PASS.
+  - Result: 10 passed.
+
+- [x] **Step 5: 문서/커밋**
+  - Update: F-003/F-006에 수동 cleanup과 자동 정리 보류 상태를 반영한다.
+  - Commit: `feat: add stale pending cleanup action`
+  - Result: findings에 수동 cleanup endpoint, DRY_RUN 기본값, SELL pending skip 정책을 반영했다. 커밋은 이 작업 검증 후 생성.
+
 ### Task 2.2: cycle-local cash reservation ledger
 
 **Files:**
