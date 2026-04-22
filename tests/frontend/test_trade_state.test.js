@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  buildAccountOverviewModel,
   buildPortfolioQuickStatsModel,
   buildTradePanelState,
   buildTradeSummaryCounts,
@@ -65,6 +66,39 @@ describe("trade_state", () => {
       sellExecutionCount: 1,
       completedCount: 2,
       unmatchedSellExecutions: 0,
+    });
+  });
+
+  test("builds precise account overview labels without large-unit abbreviation", () => {
+    const stats = buildPortfolioQuickStatsModel(
+      {
+        total_asset: 527064565,
+        total_pnl: -2704805,
+        total_pnl_rate: -1.32,
+        cash: 181724859,
+        stock_value: 341909010,
+        session_metrics: {
+          available: true,
+          asset_delta: -7942186,
+          asset_delta_rate: -2.29,
+        },
+      },
+      [{}, {}, {}, {}, {}, {}],
+      [{}, {}],
+      {},
+    );
+
+    expect(buildAccountOverviewModel(stats)).toMatchObject({
+      totalAssetLabel: "527,064,565원",
+      totalAssetMeta: "장시작 대비 -7,942,186원 / -2.29%",
+      pnlLabel: "-2,704,805원",
+      pnlTone: "negative",
+      rows: [
+        { label: "현금", value: "181,724,859원", meta: "34.5%" },
+        { label: "주식 평가액", value: "341,909,010원", meta: "64.9%" },
+        { label: "보유", value: "6종목", meta: "미체결 2건" },
+        { label: "평가손익", value: "-2,704,805원", meta: "-1.32%", tone: "negative" },
+      ],
     });
   });
 

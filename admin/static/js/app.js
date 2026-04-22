@@ -54,6 +54,7 @@ import {
   buildCodexUsageCopy,
 } from './llm_usage_state.js';
 import {
+  buildAccountOverviewModel,
   buildPortfolioQuickStatsModel,
   buildTradePanelState,
   buildTradeSummaryCounts,
@@ -1780,34 +1781,30 @@ function refreshVisibleActivityMeta() {
 function renderAccountBalance(data) {
   const el = document.getElementById('account-info');
   if (!el || !data) {
-    if (el) el.innerHTML = '<div class="account-balance-empty">계좌 미연결</div>';
+    if (el) el.innerHTML = '<div class="account-overview-empty">계좌 미연결</div>';
     return;
   }
   const stats = buildPortfolioQuickStatsModel(data, latestAccountSnapshot?.holdings, latestAccountSnapshot?.pendingOrders, latestAccountSnapshot?.trades);
-  const cashRatio = Number.isFinite(stats.cashRatio) ? stats.cashRatio.toFixed(1) : '0.0';
-  const stockRatio = Number.isFinite(100 - stats.cashRatio) ? (100 - stats.cashRatio).toFixed(1) : '0.0';
+  const model = buildAccountOverviewModel(stats);
+  const cashWidth = Math.max(0, Math.min(100, model.cashRatio));
+  const stockWidth = Math.max(0, Math.min(100, model.stockRatio));
   el.innerHTML = `
-    <div class="account-balance-bar">
-      <div class="account-balance-bar-fill cash" style="width:${Math.max(0, Math.min(100, stats.cashRatio))}%"></div>
-      <div class="account-balance-bar-fill stock" style="width:${Math.max(0, Math.min(100, 100 - stats.cashRatio))}%"></div>
+    <div class="account-overview-total">${escapeHtml(model.totalAssetLabel)}</div>
+    <div class="account-overview-meta ${escapeHtml(model.assetDeltaTone)}">${escapeHtml(model.totalAssetMeta)}</div>
+    <div class="account-overview-bar" aria-label="계좌 자산 구성">
+      <div class="account-overview-bar-fill cash" style="width:${cashWidth}%"></div>
+      <div class="account-overview-bar-fill stock" style="width:${stockWidth}%"></div>
     </div>
-    <div class="account-balance-legend">
-      <div class="account-balance-legend-item">
-        <div class="account-balance-legend-label">
-          <span class="account-balance-dot cash"></span>
-          현금
+    <div class="account-overview-grid">
+      ${model.rows.map(row => `
+        <div class="account-overview-row">
+          <div>
+            <div class="account-overview-label">${escapeHtml(row.label)}</div>
+            <div class="account-overview-row-meta">${escapeHtml(row.meta)}</div>
+          </div>
+          <div class="account-overview-value ${escapeHtml(row.tone || 'neutral')}">${escapeHtml(row.value)}</div>
         </div>
-        <div class="account-balance-legend-value">${formatKRW(stats.cash)}</div>
-        <div class="account-balance-legend-meta">${cashRatio}%</div>
-      </div>
-      <div class="account-balance-legend-item">
-        <div class="account-balance-legend-label">
-          <span class="account-balance-dot stock"></span>
-          주식 평가액
-        </div>
-        <div class="account-balance-value">${formatKRW(stats.stockValue)}</div>
-        <div class="account-balance-legend-meta">${stockRatio}%</div>
-      </div>
+      `).join('')}
     </div>`;
 }
 

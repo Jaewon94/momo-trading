@@ -64,6 +64,76 @@ export function buildPortfolioQuickStatsModel(
   };
 }
 
+function formatWon(value, { signed = false } = {}) {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric)) return signed ? "+0원" : "0원";
+  const rounded = Math.round(numeric);
+  const prefix = signed && rounded > 0 ? "+" : "";
+  return `${prefix}${rounded.toLocaleString()}원`;
+}
+
+function formatPercent(value, { signed = false, digits = 1 } = {}) {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric)) return signed ? "+0.0%" : "0.0%";
+  const prefix = signed && numeric > 0 ? "+" : "";
+  return `${prefix}${numeric.toFixed(digits)}%`;
+}
+
+function toneFromNumber(value) {
+  const numeric = Number(value || 0);
+  if (numeric > 0) return "positive";
+  if (numeric < 0) return "negative";
+  return "neutral";
+}
+
+export function buildAccountOverviewModel(stats = {}) {
+  const totalAsset = Number(stats?.totalAsset || 0);
+  const cash = Number(stats?.cash || 0);
+  const stockValue = Number(stats?.stockValue || 0);
+  const cashRatio = totalAsset > 0 ? (cash / totalAsset) * 100 : 0;
+  const stockRatio = totalAsset > 0 ? (stockValue / totalAsset) * 100 : 0;
+  const pnlTone = toneFromNumber(stats?.unrealizedPnl);
+  const totalAssetMeta = stats?.assetDeltaAvailable
+    ? `장시작 대비 ${formatWon(stats.assetDelta, { signed: true })} / ${formatPercent(stats.assetDeltaRate, { signed: true, digits: 2 })}`
+    : "장시작 기준선 대기";
+
+  return {
+    totalAssetLabel: formatWon(totalAsset),
+    totalAssetMeta,
+    assetDeltaTone: stats?.assetDeltaAvailable ? toneFromNumber(stats?.assetDelta) : "neutral",
+    cashRatio,
+    stockRatio,
+    pnlLabel: formatWon(stats?.unrealizedPnl, { signed: true }),
+    pnlTone,
+    rows: [
+      {
+        label: "현금",
+        value: formatWon(cash),
+        meta: formatPercent(cashRatio),
+        tone: "neutral",
+      },
+      {
+        label: "주식 평가액",
+        value: formatWon(stockValue),
+        meta: formatPercent(stockRatio),
+        tone: "neutral",
+      },
+      {
+        label: "보유",
+        value: `${Number(stats?.holdingCount || 0).toLocaleString()}종목`,
+        meta: `미체결 ${Number(stats?.pendingCount || 0).toLocaleString()}건`,
+        tone: "neutral",
+      },
+      {
+        label: "평가손익",
+        value: formatWon(stats?.unrealizedPnl, { signed: true }),
+        meta: formatPercent(stats?.unrealizedPnlRate, { digits: 2 }),
+        tone: pnlTone,
+      },
+    ],
+  };
+}
+
 export function buildTradePanelState(data = {}) {
   const opened = data?.opened || [];
   const sellExecutions = data?.sell_executions || [];
