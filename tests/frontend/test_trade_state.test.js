@@ -81,6 +81,7 @@ describe("trade_state", () => {
           available: true,
           asset_delta: -7942186,
           asset_delta_rate: -2.29,
+          realized_today_pnl: 35000,
         },
       },
       [{}, {}, {}, {}, {}, {}],
@@ -98,6 +99,7 @@ describe("trade_state", () => {
         { label: "주식 평가액", value: "341,909,010원", meta: "64.9%" },
         { label: "보유", value: "6종목", meta: "미체결 2건" },
         { label: "평가손익", value: "-2,704,805원", meta: "-1.32%", tone: "negative" },
+        { label: "당일 실현손익", value: "+35,000원", meta: "청산 완료 기준", tone: "positive" },
       ],
     });
   });

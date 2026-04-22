@@ -93,6 +93,7 @@ export function buildAccountOverviewModel(stats = {}) {
   const cashRatio = totalAsset > 0 ? (cash / totalAsset) * 100 : 0;
   const stockRatio = totalAsset > 0 ? (stockValue / totalAsset) * 100 : 0;
   const pnlTone = toneFromNumber(stats?.unrealizedPnl);
+  const realizedTodayTone = toneFromNumber(stats?.realizedTodayPnl);
   const totalAssetMeta = stats?.assetDeltaAvailable
     ? `장시작 대비 ${formatWon(stats.assetDelta, { signed: true })} / ${formatPercent(stats.assetDeltaRate, { signed: true, digits: 2 })}`
     : "장시작 기준선 대기";
@@ -129,6 +130,12 @@ export function buildAccountOverviewModel(stats = {}) {
         value: formatWon(stats?.unrealizedPnl, { signed: true }),
         meta: formatPercent(stats?.unrealizedPnlRate, { digits: 2 }),
         tone: pnlTone,
+      },
+      {
+        label: "당일 실현손익",
+        value: formatWon(stats?.realizedTodayPnl, { signed: true }),
+        meta: "청산 완료 기준",
+        tone: realizedTodayTone,
       },
     ],
   };
