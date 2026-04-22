@@ -133,20 +133,20 @@
 - Read: `tests/trading/`
 - Update: audit evidence/findings docs
 
-- [ ] **Step 1: 주문 상태 전이표 작성**
+- [x] **Step 1: 주문 상태 전이표 작성**
   - `PENDING_CONFIRM`, `CONFIRMED`, `CONFIRM_FAILED`, open/closed sell 상태가 어디서 생성/변경되는지 파일/라인으로 기록한다.
 
-- [ ] **Step 2: 중복 주문 차단 경로 확인**
+- [x] **Step 2: 중복 주문 차단 경로 확인**
   - pending buy, pending sell, manual trade, scheduler liquidation, holdings review가 같은 종목을 동시에 건드릴 수 있는지 확인한다.
 
-- [ ] **Step 3: MCP/SSE 실패 복구 확인**
+- [x] **Step 3: MCP/SSE 실패 복구 확인**
   - `trading/mcp_client.py`의 pending future, `_unconfirmed_orders`, reconnect, rate limit, timeout 처리 흐름을 기록한다.
 
-- [ ] **Step 4: 브로커 read-only smoke 기준 정의**
+- [x] **Step 4: 브로커 read-only smoke 기준 정의**
   - 승인된 경우에만 `tools/broker_smoke.py` 또는 service 경로로 잔고/보유/미체결/quote를 조회한다.
   - 승인 없으면 코드와 테스트만 근거로 감사한다.
 
-- [ ] **Step 5: 구현 후보 테스트 정의**
+- [x] **Step 5: 구현 후보 테스트 정의**
   - 문제가 발견되면 먼저 `tests/agent/test_decision_maker.py`, `tests/scheduler/test_portfolio_sync_job.py`, `tests/services/test_manual_trade_service.py`, `tests/trading/test_mcp_client.py`에 실패 테스트를 추가하는 계획으로 기록한다.
 
 ## Phase 3: 리스크 제어와 자본 배분 감사
