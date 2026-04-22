@@ -189,6 +189,39 @@ async def test_admin_news_fetch_nasdaq_route_returns_502_for_upstream_timeout(cl
 
 
 @pytest.mark.asyncio
+async def test_admin_news_backfill_enrichment_route_returns_summary(client, monkeypatch):
+    async def fake_process(db, *, limit, source_code, missing_only, apply):
+        assert limit == 25
+        assert source_code == "KRX"
+        assert missing_only is True
+        assert apply is False
+        return {
+            "status": "SUCCESS",
+            "apply": False,
+            "candidate_count": 3,
+            "changed_count": 2,
+            "symbols_attached": 0,
+            "risk_classified": 2,
+            "topic_mapped": 0,
+            "items": [],
+        }
+
+    monkeypatch.setattr(
+        "api.routes.admin.news_enrichment_backfill_service.process",
+        fake_process,
+    )
+
+    response = await client.post(
+        "/api/v1/admin/news/backfill-enrichment?limit=25&source_code=KRX&missing_only=true&apply=false"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["data"]["changed_count"] == 2
+    assert "DRY_RUN" in payload["message"]
+
+
+@pytest.mark.asyncio
 async def test_admin_news_ingest_and_items_routes(client):
     response = await client.post(
         "/api/v1/admin/news/ingest",

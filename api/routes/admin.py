@@ -52,6 +52,7 @@ from services.krx_kind_disclosure_service import krx_kind_disclosure_service
 from services.llm_usage_service import llm_usage_service
 from services.manual_trade_service import manual_trade_service
 from services.nasdaq_news_service import nasdaq_news_service
+from services.news_enrichment_backfill_service import news_enrichment_backfill_service
 from services.news_ingest_service import news_ingest_service
 from services.open_dart_disclosure_service import open_dart_disclosure_service
 from services.news_reporting_service import news_reporting_service
@@ -1434,6 +1435,26 @@ async def fetch_seeking_alpha_news(
         counts=summary,
     )
     return SuccessResponse(data=summary, message="Seeking Alpha 뉴스 수집 완료")
+
+
+@router.post("/news/backfill-enrichment")
+async def backfill_news_enrichment(
+    limit: int = Query(200, ge=1, le=1000),
+    source_code: str | None = Query(None),
+    missing_only: bool = Query(True),
+    apply: bool = Query(False),
+    db: AsyncSession = Depends(get_async_db_with_transaction),
+):
+    """기존 news_items에 rule 기반 리스크/섹터 enrichment를 재적용."""
+    summary = await news_enrichment_backfill_service.process(
+        db,
+        limit=limit,
+        source_code=source_code,
+        missing_only=missing_only,
+        apply=apply,
+    )
+    mode = "적용" if apply else "DRY_RUN"
+    return SuccessResponse(data=summary, message=f"뉴스 enrichment backfill {mode} 완료")
 
 
 @router.get("/positions/{symbol}")

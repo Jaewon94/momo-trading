@@ -141,6 +141,14 @@
 - [ ] AI 비용 절감 로드맵 반영 여부 확인
   - `docs/고도화/2026-04-23-ai-cost-reduction-roadmap.md`
   - 기본 방향: Tier1/Tier2는 유지하되 명확한 공시/가격/세션/비용 판단은 deterministic reason code로 선처리해 AI 입력 품질과 비용 효율을 개선
+- [ ] 운영 재시작 후 뉴스 enrichment backfill 실행
+  - `POST /api/v1/admin/news/backfill-enrichment?limit=1000&apply=false`로 dry-run
+  - 결과 확인 후 `apply=true`
+  - `risk_classified`, `topic_mapped`, `symbols_attached` 변화 확인
+- [ ] DB 초기화 후 국내 종목 universe 복구
+  - 2026-04-23 점검 기준 `stocks=0`, 보유/미체결/스냅샷 0건
+  - `stocks`가 비어 있으면 해외/국내 매체 뉴스가 종목으로 연결되지 않음
+  - KRX/Kiwoom/KIS 종목 마스터 또는 거래량 상위 기반 bootstrap 설계 필요
 - [ ] `OPEN_DART_API_KEY` 실제 운영키 유지
 - [ ] `NEWS_DOMESTIC_MEDIA_ENABLED` 켜기 전 소스 이용조건 확인
 - [ ] `Bloomberg`/해외 소스 이용조건 및 호출 안정성 확인

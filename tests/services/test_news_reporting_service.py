@@ -141,7 +141,7 @@ async def test_news_reporting_service_uses_ingested_time_for_recent_counts(monke
             impact_score=0.0,
             trust_score=0.0,
             symbols_csv=",005930,",
-            metadata_json=None,
+            metadata_json='{"risk_classifier": {"reason_codes": ["dilution_financing"]}}',
             dedupe_hash="older-ingested-today",
             created_at=now - timedelta(hours=1),
         )
@@ -163,7 +163,7 @@ async def test_news_reporting_service_uses_ingested_time_for_recent_counts(monke
             impact_score=0.0,
             trust_score=0.0,
             symbols_csv=",005930,",
-            metadata_json=None,
+            metadata_json='{"topic_mapper": {"matched_categories": ["반도체"]}}',
             dedupe_hash="recent-ingested-old",
             created_at=now - timedelta(days=2),
         )
@@ -177,3 +177,9 @@ async def test_news_reporting_service_uses_ingested_time_for_recent_counts(monke
     assert overview["ingestion"]["latest_created_at"] is not None
     assert overview["health"]["status"] == "OK"
     assert "최근 24시간 신규 적재 0건" not in overview["health"]["alerts"]
+    enrichment = overview["ingestion"]["enrichment_by_source"][0]
+    assert enrichment["source_code"] == "INVESTING"
+    assert enrichment["total_count"] == 2
+    assert enrichment["with_symbols_count"] == 2
+    assert enrichment["risk_classified_count"] == 1
+    assert enrichment["topic_mapped_count"] == 1

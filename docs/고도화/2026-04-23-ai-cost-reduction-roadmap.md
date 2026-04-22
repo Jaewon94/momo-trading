@@ -46,6 +46,7 @@ AI를 없애는 것이 목표가 아니다. 현재 쓰는 Tier1/Tier2 AI는 유�
 - 해외 번역/요약을 켜면 NEWS_LLM이 기사별로 호출된다.
 - 번역을 끄면 감성도 대부분 중립으로 남아 뉴스 게이트 효과가 낮았다.
 - 2026-04-23 1차 구현으로 `news_risk_classifier`, `news_topic_mapper`를 추가했다.
+- 2026-04-23 2차 구현으로 기존 `news_items`에 deterministic enrichment를 재적용하는 backfill 서비스를 추가했다.
 
 권장:
 
@@ -56,7 +57,8 @@ AI를 없애는 것이 목표가 아니다. 현재 쓰는 Tier1/Tier2 AI는 유�
 
 추가 과제:
 
-- 기존 `news_items` 재분류 backfill.
+- 운영 재시작 후 `POST /api/v1/admin/news/backfill-enrichment?apply=true`로 기존 `news_items` 재분류 backfill 실행.
+- DB 초기화 후 `stocks` 테이블이 비면 뉴스-종목 매핑이 사실상 불가능하므로 국내 종목 universe bootstrap을 별도 구현.
 - KRX/YONHAP 국내 일반 뉴스의 리스크 키워드 확장.
 - 정책/매크로 이벤트 source/type 추가.
 - source별 precision/recall 대시보드: 몇 건이 실제 후보 종목과 연결됐는지, 차단 후보 수익률이 어땠는지.
@@ -256,9 +258,10 @@ TDD 후보:
 
 ### Phase 1: 뉴스와 후보 선정 입력 보강
 
-1. 뉴스 리스크 분류/테마 매핑 backfill.
-2. `CandidateScoringService` 추가.
-3. 시장 스캔에서 deterministic top-N을 만들고 AI 시장 해설은 optional로 분리.
+1. 뉴스 리스크 분류/테마 매핑 backfill. 1차 서비스/API 구현 완료, 운영 적용 대기.
+2. 국내 종목 universe bootstrap. DB 초기화 후 `stocks=0`이면 뉴스 매핑률이 0에 가까워진다.
+3. `CandidateScoringService` 추가.
+4. 시장 스캔에서 deterministic top-N을 만들고 AI 시장 해설은 optional로 분리.
 
 ### Phase 2: Tier1/Tier2 입력 품질과 호출 전 gate 강화
 

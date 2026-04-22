@@ -246,6 +246,23 @@ class NewsIngestService:
             query=query,
         )
 
+    async def enrich_existing_item(self, session: AsyncSession, item: NewsItem) -> dict[str, Any] | None:
+        """Re-apply deterministic enrichment to an already stored news item."""
+        raw = self._raw_from_existing_item(item)
+        enriched_items = await self._attach_symbols(session, [raw])
+        if not enriched_items:
+            return None
+        normalized = self._normalize_item(enriched_items[0])
+        if not normalized:
+            return None
+        return {
+            "sentiment_label": normalized["sentiment_label"],
+            "sentiment_score": normalized["sentiment_score"],
+            "impact_score": normalized["impact_score"],
+            "symbols_csv": normalized["symbols_csv"],
+            "metadata_json": normalized["metadata_json"],
+        }
+
     async def _attach_symbols(
         self,
         session: AsyncSession,
@@ -660,6 +677,26 @@ class NewsIngestService:
         except (TypeError, ValueError):
             return {}
         return payload if isinstance(payload, dict) else {}
+
+    def _raw_from_existing_item(self, item: NewsItem) -> dict[str, Any]:
+        raw: dict[str, Any] = {
+            "source_code": getattr(item, "source_code", ""),
+            "language": getattr(item, "language", ""),
+            "title": getattr(item, "title", ""),
+            "summary": getattr(item, "summary", None),
+            "body": getattr(item, "body", None),
+            "url": getattr(item, "url", None),
+            "external_id": getattr(item, "external_id", None),
+            "published_at": getattr(item, "published_at", None),
+            "trust_score": getattr(item, "trust_score", None),
+            "symbols": self._symbols_from_csv(getattr(item, "symbols_csv", "")),
+            "metadata": self._load_metadata(getattr(item, "metadata_json", None)),
+        }
+        if getattr(item, "sentiment_label", None) is not None:
+            raw["sentiment_label"] = getattr(item, "sentiment_label", None)
+            raw["sentiment_score"] = getattr(item, "sentiment_score", None)
+            raw["impact_score"] = getattr(item, "impact_score", None)
+        return raw
 
     @staticmethod
     def _initialize_translation_metadata(

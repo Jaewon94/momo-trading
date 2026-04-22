@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import case, desc, func, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -186,6 +186,7 @@ class NewsReportingService:
                 "by_source_24h": [],
                 "translation_pending_count": 0,
                 "translation_failed_count": 0,
+                "enrichment_by_source": [],
             }
 
         now = now_kst().replace(tzinfo=None)
@@ -234,6 +235,19 @@ class NewsReportingService:
             NewsItem.source_code.in_(sorted(allowed_codes)),
             NewsItem.metadata_json.like('%"translation_status"%FAILED%'),
         )
+        enrichment_stmt = (
+            select(
+                NewsItem.source_code,
+                func.count(NewsItem.id),
+                func.sum(case((NewsItem.symbols_csv != "", 1), else_=0)),
+                func.sum(case((NewsItem.metadata_json.like('%"risk_classifier"%'), 1), else_=0)),
+                func.sum(case((NewsItem.metadata_json.like('%"topic_mapper"%'), 1), else_=0)),
+                func.sum(case((NewsItem.sentiment_label == "NEGATIVE", 1), else_=0)),
+            )
+            .where(NewsItem.source_code.in_(sorted(allowed_codes)))
+            .group_by(NewsItem.source_code)
+            .order_by(NewsItem.source_code.asc())
+        )
 
         total_count = int((await session.execute(total_stmt)).scalar() or 0)
         recent_24h = int((await session.execute(recent_24h_stmt)).scalar() or 0)
@@ -245,6 +259,7 @@ class NewsReportingService:
         by_source_rows = (await session.execute(by_source_stmt)).all()
         translation_pending_count = int((await session.execute(translation_pending_stmt)).scalar() or 0)
         translation_failed_count = int((await session.execute(translation_failed_stmt)).scalar() or 0)
+        enrichment_rows = (await session.execute(enrichment_stmt)).all()
 
         return {
             "total_count": total_count,
@@ -263,6 +278,24 @@ class NewsReportingService:
             ],
             "translation_pending_count": translation_pending_count,
             "translation_failed_count": translation_failed_count,
+            "enrichment_by_source": [
+                {
+                    "source_code": str(source_code),
+                    "total_count": int(total_count or 0),
+                    "with_symbols_count": int(with_symbols_count or 0),
+                    "risk_classified_count": int(risk_classified_count or 0),
+                    "topic_mapped_count": int(topic_mapped_count or 0),
+                    "negative_count": int(negative_count or 0),
+                }
+                for (
+                    source_code,
+                    total_count,
+                    with_symbols_count,
+                    risk_classified_count,
+                    topic_mapped_count,
+                    negative_count,
+                ) in enrichment_rows
+            ],
         }
 
 
