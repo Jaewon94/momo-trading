@@ -234,25 +234,30 @@
 - Test: `tests/services/test_pnl_truth_service.py`
 - Test: `tests/services/test_performance_reporting_service.py`
 
-- [ ] **Step 1: 실패 테스트 작성**
+- [x] **Step 1: 실패 테스트 작성**
   - closed BUY 0건, open DB lot stale, account equity snapshot 존재 fixture를 만든다.
   - 결과가 `realized_trade_pnl`, `unrealized_broker_pnl`, `total_asset_delta`, `sample_status=INSUFFICIENT_CLOSED_TRADE_SAMPLE`로 분리되는지 테스트한다.
+  - Result: `tests/services/test_pnl_truth_service.py`와 `tests/services/test_performance_reporting_service.py`에 canonical PnL 분리와 metric contract 테스트를 추가했다.
 
-- [ ] **Step 2: 실패 확인**
+- [x] **Step 2: 실패 확인**
   - Run: `./.venv313/bin/python -m pytest tests/services/test_pnl_truth_service.py tests/services/test_performance_reporting_service.py -q`
   - Expected: 신규 canonical summary 부재로 실패.
+  - Result: `ModuleNotFoundError: No module named 'services.pnl_truth_service'`로 실패 확인. 추가로 `metric_contract` 부재 실패도 확인했다.
 
-- [ ] **Step 3: 최소 구현**
+- [x] **Step 3: 최소 구현**
   - PnL truth service를 추가해 closed trade, broker/account snapshot, daily baseline을 분리 계산한다.
   - 기존 performance report에는 새 필드를 추가하고 기존 필드는 deprecated 표시만 한다.
+  - Result: `PnlTruthService`를 추가하고 performance summary에 `pnl_truth`와 `metric_contract`를 연결했다.
 
-- [ ] **Step 4: 통과 확인**
+- [x] **Step 4: 통과 확인**
   - Run: `./.venv313/bin/python -m pytest tests/services/test_pnl_truth_service.py tests/services/test_performance_reporting_service.py -q`
   - Expected: PASS.
+  - Result: 13 passed.
 
-- [ ] **Step 5: 문서/커밋**
+- [x] **Step 5: 문서/커밋**
   - Update: F-004/F-013/F-014/F-015.
   - Commit: `feat: add canonical pnl truth summary`
+  - Result: findings 갱신 완료. 커밋은 이 작업 검증 후 생성.
 
 ### Task 3.2: account equity 기반 drawdown guard
 

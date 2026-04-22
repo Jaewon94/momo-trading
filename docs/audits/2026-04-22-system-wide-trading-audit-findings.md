@@ -103,6 +103,7 @@
 - Rollout: report-only 분리 표시부터 시작.
 - Rollback: 기존 리포트 계산으로 되돌릴 수 있게 feature flag 또는 별도 필드로 도입.
 - 분류: `유지하되 harden`
+- 조치: Track 3 Task 3.1에서 `PnlTruthService`와 performance summary의 `pnl_truth`/`metric_contract`를 추가해 실현손익, 브로커 평가손익, 총자산 변화, closed trade 표본 상태를 분리 표시합니다.
 
 ### F-005: `SEMI_AUTO`가 모든 실주문을 막는 설정이 아님
 
@@ -243,6 +244,7 @@
 - Rollout: report-only 상태 필드부터 추가.
 - Rollback: 상태 필드 제거 가능.
 - 분류: `유지하되 harden`
+- 조치: Track 3 Task 3.1에서 `sample_status=INSUFFICIENT_CLOSED_TRADE_SAMPLE|LOW_CLOSED_TRADE_SAMPLE|OK`를 추가했습니다. 기존 `overall` 지표는 `metric_contract.overall_source=trade_results.closed_buy`로 명시합니다.
 
 ### F-014: account equity는 기록되지만 전략 성과/kill switch와 충분히 연결되지 않음
 
@@ -258,6 +260,7 @@
 - Rollout: 먼저 리포트 경고와 chart, 이후 BUY gate/kill switch에 연결.
 - Rollback: gate 적용 전 report-only 단계는 제거 가능.
 - 분류: `유지하되 harden`
+- 조치: Track 3 Task 3.1에서 latest account equity snapshot과 day baseline을 이용한 `total_asset_delta`, `unrealized_broker_pnl` report-only 요약을 추가했습니다. kill switch 연결은 Task 3.2에서 진행합니다.
 
 ### F-015: daily report의 주문 count와 TradeResult count가 섞여 리포트 해석이 혼란스러움
 
@@ -273,6 +276,7 @@
 - Rollout: 새 필드 추가 후 기존 total은 deprecated 표시.
 - Rollback: 기존 필드 유지 가능.
 - 분류: `유지하되 harden`
+- 조치: Track 3 Task 3.1에서 performance summary에 `metric_contract`를 추가해 기존 closed-trade 기반 지표와 account PnL 지표의 source를 분리했습니다. daily report count schema 분리는 후속 작업으로 남깁니다.
 
 ### F-016: 후보별 forward return 데이터가 없어 전략 기대값을 검증할 수 없음
 

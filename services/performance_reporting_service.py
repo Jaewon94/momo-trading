@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.config import settings
 from models.agent_activity import AgentActivityLog
 from models.trade_result import TradeResult
+from services.pnl_truth_service import pnl_truth_service
 from trading.broker_factory import get_broker_adapter
 
 _TRADE_BASELINE_RESET = {
@@ -66,6 +67,7 @@ class PerformanceReportingService:
         by_strategy = self._group_metrics(trades, key_fn=lambda item: item.strategy_type or "UNKNOWN")
         by_horizon = self._group_metrics(trades, key_fn=lambda item: item.horizon or "MID")
         shadow = self._calc_shadow_context(shadow_points)
+        pnl_truth = await pnl_truth_service.build_summary(session)
 
         return {
             "baseline": self._build_baseline_snapshot(),
@@ -82,6 +84,8 @@ class PerformanceReportingService:
             "risk_controls": risk_counts,
             "news_context": self._calc_news_context(trades),
             "current_account": await self._build_live_account_snapshot(),
+            "pnl_truth": pnl_truth,
+            "metric_contract": self._build_metric_contract(pnl_truth),
             "shadow": shadow,
             "rollout": self._build_rollout_status(
                 overall=overall,
@@ -92,6 +96,15 @@ class PerformanceReportingService:
                 min_expectancy=float(getattr(settings, "NEWS_ROLLOUT_MIN_EXPECTANCY", 0.0) or 0.0),
                 max_drawdown_limit=-abs(float(getattr(settings, "NEWS_ROLLOUT_MAX_DRAWDOWN_KRW", 500000.0) or 500000.0)),
             ),
+        }
+
+    @staticmethod
+    def _build_metric_contract(pnl_truth: dict) -> dict:
+        return {
+            "overall_source": "trade_results.closed_buy",
+            "account_pnl_source": "pnl_truth",
+            "overall_deprecated_for_account_pnl": True,
+            "sample_status": str((pnl_truth or {}).get("sample_status") or "UNKNOWN"),
         }
 
     async def build_periodic_summary(self, session: AsyncSession, *, period: str = "weekly", size: int = 8) -> dict:

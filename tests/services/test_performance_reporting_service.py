@@ -1,4 +1,5 @@
 import json
+import pytest
 from types import SimpleNamespace
 
 from services.performance_reporting_service import PerformanceReportingService, _ShadowPoint, _TradePoint
@@ -28,6 +29,44 @@ def test_build_baseline_snapshot_returns_reset_notice():
     assert baseline["active"] is True
     assert baseline["effective_date"] == "2026-04-06"
     assert "기준선 리셋" in baseline["label"]
+
+
+@pytest.mark.asyncio
+async def test_build_summary_includes_canonical_pnl_truth(monkeypatch):
+    from tests.conftest import TestAsyncSessionLocal
+
+    async def fake_pnl_truth_summary(_session):
+        return {
+            "sample_status": "INSUFFICIENT_CLOSED_TRADE_SAMPLE",
+            "realized_trade_pnl": 0.0,
+            "unrealized_broker_pnl": -2704805.0,
+            "total_asset_delta": 7064565.0,
+        }
+
+    monkeypatch.setattr(
+        "services.performance_reporting_service.pnl_truth_service.build_summary",
+        fake_pnl_truth_summary,
+    )
+    monkeypatch.setattr(
+        "services.performance_reporting_service.PerformanceReportingService._build_live_account_snapshot",
+        lambda _self=None: __import__("asyncio").sleep(0, result={"synced": False}),
+    )
+
+    async with TestAsyncSessionLocal() as session:
+        summary = await PerformanceReportingService().build_summary(session, days=1)
+
+    assert summary["pnl_truth"] == {
+        "sample_status": "INSUFFICIENT_CLOSED_TRADE_SAMPLE",
+        "realized_trade_pnl": 0.0,
+        "unrealized_broker_pnl": -2704805.0,
+        "total_asset_delta": 7064565.0,
+    }
+    assert summary["metric_contract"] == {
+        "overall_source": "trade_results.closed_buy",
+        "account_pnl_source": "pnl_truth",
+        "overall_deprecated_for_account_pnl": True,
+        "sample_status": "INSUFFICIENT_CLOSED_TRADE_SAMPLE",
+    }
 
 
 def test_calc_metrics_includes_cost_adjusted_net_pnl():
