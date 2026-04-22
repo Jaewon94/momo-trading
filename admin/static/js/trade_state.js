@@ -51,6 +51,9 @@ export function buildPortfolioQuickStatsModel(
       ? Number(sessionMetrics?.intraday_low_asset || totalAsset)
       : totalAsset,
     baselineTotalAsset: sessionAvailable ? Number(sessionMetrics?.baseline_total_asset || 0) : 0,
+    tradingDate: sessionAvailable ? String(sessionMetrics?.trading_date || "") : "",
+    baselineAt: sessionAvailable ? String(sessionMetrics?.baseline_at || "") : "",
+    latestSnapshotAt: sessionAvailable ? String(sessionMetrics?.latest_snapshot_at || "") : "",
     realizedTodayPnl,
     cash,
     stockValue,
@@ -84,6 +87,23 @@ function toneFromNumber(value) {
   if (numeric > 0) return "positive";
   if (numeric < 0) return "negative";
   return "neutral";
+}
+
+function formatKstClock(value) {
+  if (!value) return "";
+  const match = String(value).match(/T(\d{2}):(\d{2})/);
+  if (match) return `${match[1]}:${match[2]}`;
+  return "";
+}
+
+function formatRealizedPeriod(stats = {}) {
+  if (!stats?.tradingDate || !stats?.baselineAt || !stats?.latestSnapshotAt) {
+    return "청산 완료 기준";
+  }
+  const start = formatKstClock(stats.baselineAt);
+  const end = formatKstClock(stats.latestSnapshotAt);
+  if (!start || !end) return "청산 완료 기준";
+  return `${stats.tradingDate} ${start} ~ ${end}`;
 }
 
 export function buildAccountOverviewModel(stats = {}) {
@@ -128,7 +148,7 @@ export function buildAccountOverviewModel(stats = {}) {
       {
         label: "당일 실현손익",
         value: formatWon(stats?.realizedTodayPnl, { signed: true }),
-        meta: "청산 완료 기준",
+        meta: formatRealizedPeriod(stats),
         tone: realizedTodayTone,
       },
     ],
