@@ -120,12 +120,6 @@ export function buildAccountOverviewModel(stats = {}) {
         tone: "neutral",
       },
       {
-        label: "보유",
-        value: `${Number(stats?.holdingCount || 0).toLocaleString()}종목`,
-        meta: `미체결 ${Number(stats?.pendingCount || 0).toLocaleString()}건`,
-        tone: "neutral",
-      },
-      {
         label: "평가손익",
         value: formatWon(stats?.unrealizedPnl, { signed: true }),
         meta: formatPercent(stats?.unrealizedPnlRate, { digits: 2 }),
