@@ -285,7 +285,122 @@ git rev-parse HEAD
 
 ## Phase 3: 리스크 제어와 자본 배분
 
-> 아직 시작하지 않았습니다.
+### 외부 기준 요약
+
+감사 기준은 다음 1차/공식 자료의 공통 원칙을 코드 수준으로 축약했습니다.
+
+| 출처 | 감사에 반영한 기준 |
+|---|---|
+| SEC Rule 15c3-5 Market Access Risk Management Controls, https://www.sec.gov/rules-regulations/2011/06/risk-management-controls-brokers-or-dealers-market-access | 주문 전 credit/capital threshold, 오류 주문, 중복 주문, 가격/수량 parameter 차단 |
+| e-CFR 17 CFR § 240.15c3-5, https://www.law.cornell.edu/cfr/text/17/240.15c3-5 | pre-trade financial/regulatory controls, direct control, regular effectiveness review |
+| FINRA Algorithmic Trading, https://www.finra.org/rules-guidance/key-topics/algorithmic-trading | 알고리즘 거래의 일반 risk assessment, 개발/테스트/감독 통제 |
+| KRX 주문유형 설명, https://global.krx.co.kr/contents/GLB/06/0602/0602020202/GLB0602020202T5.jsp | 시장가 주문은 빠르지만 불리한 가격/급격한 체결가 변동 위험이 있어 지정가/가격 guard 필요 |
+
+### 리스크 Gate 순서
+
+| 순서 | 위치 | 적용 대상 | 관찰 |
+|---|---|---|---|
+| 1 | `TradingAgent._run_trading_cycle` | cycle 전체 | 포트폴리오 스냅샷, 현금 부족 시 신규 매수 차단 |
+| 2 | `AIRiskTuner.compute_limits` | cycle 전체 | LLM이 일일 거래수/주문한도/포지션/현금비중을 제안 |
+| 3 | `TradingAgent._analyze_and_trade` 초반 | 후보 종목 | 연속 손실 5회 hard rule. BUY만 차단, 보유/SELL 분석은 허용 |
+| 4 | `TradingAgent._analyze_and_trade` | 후보 종목 | 현재가/일봉/분봉 조회와 현금으로 1주 또는 최소수량 매수 가능 여부 확인 |
+| 5 | Tier1 분석 후 trading rules | BUY 후보 | `min_confidence`, `revalidate_rr_ratio`, `require_stop_loss_logging` 적용 |
+| 6 | Tier2 최종 검토 | BUY/SELL 후보 | LLM 최종 승인 필요 |
+| 7 | cost gate/news gate | BUY 후보 | 기대 edge 대비 비용, 뉴스 부정압 차단 |
+| 8 | SELL 보유 확인 | SELL 후보 | 보유 종목/수량 없으면 SELL 차단, 수량은 보유 스냅샷으로 보정 |
+| 9 | `RiskManager.check` | 주문 직전 | BUY는 trading guard, 일일 거래수, 가격/수량, RR, 변동성 사이징, 단일 주문 한도, 현금, 현금비중, 포지션 비중 확인. SELL은 기본 허용 |
+| 10 | BUY 주문 직전 buying power 재조회 | BUY | 병렬 주문으로 변한 가용금액을 반영하려는 최종 조회 |
+| 11 | `DecisionMaker.execute` | 주문/추천 분기 | `AUTONOMY_MODE=SEMI_AUTO`면 추천 생성, `AUTONOMOUS`면 broker order |
+
+### Runtime Risk Settings
+
+API 기준 현재 설정:
+
+| key | value |
+|---|---|
+| `TRADING_ENABLED` | `true` |
+| `AUTONOMY_MODE` | `SEMI_AUTO` |
+| `RISK_APPETITE` | `MODERATE` |
+| `BUY_ORDER_EXECUTION_MODE` | `LIMIT_GUARD` |
+| `BUY_SLIPPAGE_GUARD_BPS` | `20` |
+| `AUTO_RISK_KILL_SWITCH_ENABLED` | `true` |
+| `MAX_DAILY_DRAWDOWN_PCT` | `2.5` |
+| `MAX_CONSECUTIVE_LOSSES` | `4` |
+| `MIN_STRATEGY_EXPECTANCY` | `0.0` |
+| `EXPECTANCY_SAMPLE_SIZE` | `12` |
+| `VOLATILITY_POSITION_SIZING_ENABLED` | `true` |
+| `RISK_PER_TRADE_PCT` | `0.5` |
+| `RISK_MULTIPLIER_SHORT` | `0.7` |
+| `RISK_MULTIPLIER_MID` | `1.0` |
+| `RISK_MULTIPLIER_LONG` | `1.2` |
+| `COST_GATE_ENABLED` | `true` |
+
+`.env` 기준과 runtime 기준의 차이:
+
+- `.env`는 `TRADING_ENABLED=false`입니다.
+- runtime DB/API는 `TRADING_ENABLED=true`입니다.
+- `runtime_settings`에는 `TRADING_ENABLED=true`만 저장되어 있고, 나머지 risk key는 대부분 config default/API settings 값으로 보입니다.
+- 운영자는 `.env`만 보고는 현재 실주문 master switch 상태를 판단할 수 없습니다.
+
+### AIRiskTuner 한도 처리
+
+- `strategy/ai_risk_tuner.py:112-131`의 `_clamp_limits`는 “최소 안전값만 적용, 상한선 없음”으로 구현되어 있습니다.
+- `max_daily_trades`: 0 이상이면 허용, 0은 무제한입니다.
+- `max_single_order_krw`: 0 이상이면 허용, 0은 무제한입니다.
+- `max_position_pct`: 최소 5%만 강제하고 상한선은 없습니다.
+- `min_cash_ratio`: 0이면 제한 없음입니다.
+- LLM 실패 시 default는 `MAX_SINGLE_ORDER_KRW` 설정을 따르는데, 기본값/`.env` 모두 0이면 시스템 hard cap이 없습니다.
+
+### TradingGuard와 Kill Switch
+
+- `TradingGuard.evaluate_buy_guard`는 BUY 전용입니다.
+- 일중 손실 한도는 `TradeResult.side=BUY`, `status=CONFIRMED`, `exit_at IS NOT NULL`인 닫힌 거래의 `pnl` 합계를 `portfolio_budget`으로 나눠 계산합니다.
+- 연속 손실과 전략 기대값도 `TradeResult` 기반입니다.
+- Phase 1/2에서 확인한 것처럼 confirmed trade PnL이 0에 가깝고 DB pending/open lot 정합성이 낮으면 kill switch의 입력값 신뢰도가 낮습니다.
+- 평가손익(`account_equity_snapshots.total_unrealized_pnl`)과 총자산 변화는 kill switch에 직접 반영되지 않습니다.
+
+### Trading Rules 우선순위
+
+- pre-market에서 `trading_rule_engine.load_active_rules()`를 호출하고, strategy/risk manager/trading agent에 적용합니다.
+- 활성 rules:
+
+| rule_type | scope | param | value | source | priority | active | expires_at | applied_count |
+|---|---|---|---:|---|---|---:|---|---:|
+| `PARAM_OVERRIDE` | `ALL` | `rr_floor` | 1.5 | `DAILY_REVIEW` | `MEDIUM` | 1 | 2026-04-23 15:40:40 | 1 |
+| `VALIDATION_TOGGLE` | `ALL` | `require_stop_loss_logging` | 1.0 | `BOOTSTRAP` | `HIGH` | 1 | 2027-04-02 08:50:00 | 3 |
+| `VALIDATION_TOGGLE` | `ALL` | `revalidate_rr_ratio` | 1.0 | `BOOTSTRAP` | `HIGH` | 1 | 2027-04-02 08:50:00 | 3 |
+
+- trading rules는 Tier2 전에 일부 hard gate로 적용됩니다.
+- 한계: pre-market 로드/적용 구조라 장중 새 rule 생성 또는 runtime 변경과의 동기화는 추가 확인이 필요합니다.
+
+### 노출 계산과 실제 계좌 비교
+
+- 브로커 보유 종목은 6개, stock_value 약 430,159,408원입니다.
+- DB `CONFIRMED BUY AND exit_at IS NULL`은 48건, 수량 합계 411,263주, entry notional 합계 약 981,916,149원입니다.
+- DB open BUY 명목금액이 최신 계좌 주식평가액의 약 2.28배입니다.
+- 이 차이는 Phase 2의 pending/confirmed 대사 불일치와 연결됩니다.
+- RiskManager의 주문 전 `portfolio_budget`, `portfolio_cash`, `holding_count`, `today_trade_count`는 portfolio snapshot에서 오며, DB open BUY notional과 DB pending notional은 직접 차감하지 않습니다.
+- BUY 직전 buying power 재조회가 있지만, 병렬 후보들이 같은 cycle snapshot으로 동시에 risk check를 통과할 수 있습니다. 서로 다른 종목 간 현금 예약 ledger는 확인되지 않았습니다.
+
+### 가격/수량 오류 주문 방지
+
+- `RiskManager.check`는 가격과 수량이 0 이하이면 차단합니다.
+- `MAX_SINGLE_ORDER_KRW`가 0이면 단일 주문 금액 hard cap은 없습니다.
+- `BUY_ORDER_EXECUTION_MODE=LIMIT_GUARD`이면 BUY 시장가 대신 현재가 + `BUY_SLIPPAGE_GUARD_BPS` 지정가를 만들 수 있습니다.
+- `BUY_ORDER_EXECUTION_MODE=MARKET`이면 BUY도 시장가가 가능하며, KRX 자료상 시장가는 빠르지만 불리한 가격 변동 위험이 있습니다.
+- SELL 안전매도/청산은 시장가 매도가 기본입니다. 이는 청산 목적상 타당할 수 있지만, 중복 매도와 수량 보정이 더 중요합니다.
+
+### Phase 3 Verification
+
+```bash
+.venv313/bin/python -m pytest tests/strategy/test_risk_manager_enhancements.py tests/strategy/test_trading_guard.py tests/agent/test_trading_agent_cost_gate.py tests/agent/test_trading_agent_execution_policy.py
+```
+
+결과:
+
+- 10 tests passed.
+- 확인 범위: 변동성 사이징, short horizon multiplier, trading guard 차단, daily drawdown/negative expectancy, cost gate, BUY execution policy.
+- 미확인 범위: DB pending/open lot과 브로커 pending/holdings 대사 기반 노출 차감, 병렬 BUY 현금 예약, runtime/.env 불일치 경고.
 
 ## Phase 4: 성과 측정과 PnL 신뢰도
 

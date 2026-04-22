@@ -163,16 +163,16 @@
 - Read: `tests/agent/test_trading_agent_cost_gate.py`
 - Update: audit evidence/findings docs
 
-- [ ] **Step 1: 리스크 gate 순서 맵 작성**
+- [x] **Step 1: 리스크 gate 순서 맵 작성**
   - LLM decision, strategy signal, cost gate, risk manager, trading guard, broker submit 순서를 그린다.
 
-- [ ] **Step 2: 노출 계산 기준 확인**
+- [x] **Step 2: 노출 계산 기준 확인**
   - 현금, 보유 수량, 미체결 주문, 종목별 노출, 일일 손실, 평가손익이 모두 주문 전 계산에 들어가는지 확인한다.
 
-- [ ] **Step 3: trading rules 우선순위 확인**
+- [x] **Step 3: trading rules 우선순위 확인**
   - `trading_rules`와 runtime settings가 LLM 판단보다 먼저/강하게 적용되는지 확인한다.
 
-- [ ] **Step 4: P0/P1 후보 기록**
+- [x] **Step 4: P0/P1 후보 기록**
   - 미체결 주문이 노출에서 빠지면 P0/P1.
   - 평가손실이 kill switch에서 빠지면 P1.
   - 손절/청산 로직이 진입보다 약하면 P1.

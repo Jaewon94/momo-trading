@@ -146,8 +146,84 @@
 - Rollback: report-only 변경은 제거 가능.
 - 분류: `유지하되 harden`
 
+### F-008: AI risk tuner가 상한 없이 주문/포지션 한도를 완화할 수 있음
+
+- 심각도: `P1`
+- 상태: `확정`
+- 영역: `리스크 | 자본 배분 | LLM`
+- 현상: `AIRiskTuner._clamp_limits`는 최소값만 강제하고 상한선이 없습니다. `max_single_order_krw=0`은 무제한, `max_daily_trades=0`은 무제한, `max_position_pct`는 최소 5%만 있고 상한은 없습니다.
+- 영향: LLM 또는 fallback 설정이 공격적으로 나오면 시스템 hard cap 없이 주문 금액/포지션 비중이 커질 수 있습니다. 이는 SEC/FINRA식 pre-trade credit/capital threshold 원칙과 맞지 않습니다.
+- 증거: `strategy/ai_risk_tuner.py:112-131`, `core/config.py:144-146`, `.env`의 `MAX_SINGLE_ORDER_KRW=0`.
+- 재현/검증: LLM risk tuning 결과가 큰 `max_single_order_krw`, `max_position_pct`를 반환해도 상한 clamp가 없습니다.
+- 권고: LLM은 추천만 하게 두고, 시스템 hard cap은 별도 `ABS_MAX_SINGLE_ORDER_KRW`, `ABS_MAX_POSITION_PCT`, `ABS_MAX_DAILY_TRADES`로 항상 적용합니다.
+- 구현 전 테스트: `tests/strategy/test_ai_risk_tuner.py` 또는 신규 테스트에 LLM이 과도한 한도를 반환해도 absolute cap으로 clamp되는 실패 테스트 추가.
+- Rollout: 먼저 cap 설정과 로그만 추가하고, 기본 cap은 보수적으로 적용합니다.
+- Rollback: cap 설정을 기존 0/무제한으로 되돌릴 수 있으나, 운영상 rollback은 별도 승인 필요.
+- 분류: `유지하되 harden`
+
+### F-009: kill switch가 실현손익만 보고 평가손실과 총자산 하락을 반영하지 않음
+
+- 심각도: `P1`
+- 상태: `확정`
+- 영역: `리스크 | PnL`
+- 현상: `TradingGuard`의 daily drawdown은 닫힌 BUY 거래의 `TradeResult.pnl`만 합산합니다. 열린 포지션 평가손익과 account equity delta는 반영하지 않습니다.
+- 영향: 열린 포지션에서 큰 손실이 발생해도 청산 전에는 kill switch가 작동하지 않을 수 있습니다. 현재 DB의 confirmed PnL 신뢰도가 낮기 때문에 더 위험합니다.
+- 증거: `strategy/trading_guard.py:16-79`, `strategy/trading_guard.py:59-79`, Phase 1/2의 `trade_results.pnl=0`, 최신 account equity snapshot의 평가손익 변동.
+- 재현/검증: `account_equity_snapshots.total_unrealized_pnl`이 악화되어도 닫힌 BUY `pnl`이 0이면 daily drawdown은 0으로 계산됩니다.
+- 권고: kill switch 입력을 `realized_pnl`, `unrealized_pnl`, `total_asset_delta`, `pending exposure`로 분리하고, 최소한 `account_equity_snapshots` 기준 intraday drawdown gate를 추가합니다.
+- 구현 전 테스트: `tests/strategy/test_trading_guard.py`에 unrealized drawdown과 total asset drawdown이 BUY를 차단하는 실패 테스트 추가.
+- Rollout: report-only 경고 -> BUY 차단 -> TRADING_ENABLED kill switch 순서로 단계 적용.
+- Rollback: BUY 차단 gate만 feature flag로 끌 수 있게 분리.
+- 분류: `유지하되 harden`
+
+### F-010: `.env`와 runtime DB의 `TRADING_ENABLED`가 충돌해 운영자가 실주문 상태를 오판할 수 있음
+
+- 심각도: `P1`
+- 상태: `확정`
+- 영역: `운영 | 리스크 | Admin`
+- 현상: `.env`에는 `TRADING_ENABLED=false`가 설정되어 있지만 runtime DB/API는 `TRADING_ENABLED=true`입니다.
+- 영향: 운영자가 파일 기준으로 “실주문 꺼짐”이라고 판단해도 실제 런타임은 주문 가능 상태일 수 있습니다. 특히 감사/장중 운영에서 위험합니다.
+- 증거: `.env:78`, Admin settings API, `runtime_settings`의 `TRADING_ENABLED=true`.
+- 재현/검증: `.env`와 `/api/v1/admin/settings` 비교.
+- 권고: Admin에 “runtime override active” 배지를 표시하고, startup/evidence report에 config source priority를 명시합니다. 안전 모드에서는 `.env=false`와 runtime=true 충돌을 P1 경고로 띄웁니다.
+- 구현 전 테스트: `tests/services/test_runtime_settings_service.py`, `tests/api/test_admin_settings_routes.py`에 source conflict 표시 테스트 후보.
+- Rollout: read-only 설정 진단부터 추가.
+- Rollback: 진단 표시 제거 가능.
+- 분류: `유지하되 harden`
+
+### F-011: 병렬 BUY 후보 간 현금 예약 ledger가 없어 주문 전 risk check가 같은 현금을 중복 사용할 수 있음
+
+- 심각도: `P1`
+- 상태: `검증 중`
+- 영역: `주문 | 리스크 | 자본 배분`
+- 현상: 후보 종목 분석은 병렬로 수행되고 각 후보는 같은 cycle portfolio snapshot을 받아 risk check를 수행합니다. BUY 직전 buying power 재조회는 있지만, 주문 접수 후 체결/미체결 pending이 반영되기 전 다른 후보가 같은 현금을 기준으로 통과할 수 있습니다.
+- 영향: 서로 다른 종목의 동시 BUY가 broker reject로 끝나거나, 의도보다 큰 주문 시도가 발생할 수 있습니다. 이는 중복 주문/과다 노출 방지 측면의 pre-trade control 공백입니다.
+- 증거: `agent/trading_agent.py:295-344`, `agent/trading_agent.py:1075-1129`, `executed_count_ref`는 전달되지만 확인한 검색 범위에서 실제 cap 계산에 쓰이지 않습니다.
+- 재현/검증: 여러 BUY 후보가 동시에 같은 `portfolio_cash`를 기준으로 risk check를 통과하는 fixture가 필요합니다.
+- 권고: cycle-local reservation ledger를 두고, 주문 접수 성공 시 reserved cash/notional을 즉시 차감합니다. 브로커 pending과 DB pending reconciliation 결과도 주문 전 exposure에 포함합니다.
+- 구현 전 테스트: `tests/agent/test_trading_agent_execution_policy.py` 또는 신규 `tests/agent/test_trading_agent_risk_reservation.py`에 병렬 BUY 현금 예약 테스트 추가.
+- Rollout: 먼저 dry-run reservation log, 이후 실제 BUY gate에 적용.
+- Rollback: reservation gate를 feature flag로 분리.
+- 분류: `유지하되 harden`
+
+### F-012: DB open BUY 노출이 실제 브로커 보유 평가액보다 크게 부풀어 있음
+
+- 심각도: `P1`
+- 상태: `확정`
+- 영역: `리스크 | PnL | 주문`
+- 현상: DB `CONFIRMED BUY AND exit_at IS NULL`은 48건, entry notional 약 981,916,149원입니다. 브로커 보유 종목은 6개, account snapshot 주식평가액은 약 430,159,408원입니다.
+- 영향: DB open BUY를 노출/PnL/성과 학습에 쓰면 실제보다 큰 포지션으로 판단할 수 있고, 반대로 브로커 snapshot만 쓰면 stale DB lot이 계속 학습 데이터에 남습니다.
+- 증거: `sqlite3 -readonly data/app.db` open BUY 집계, Admin holdings/account snapshot.
+- 재현/검증: `trade_results` open BUY 집계와 `/api/v1/admin/account/holdings` 비교.
+- 권고: Phase 4에서 canonical PnL/source를 확정하고, Phase 2의 pending reconciliation과 묶어 stale open lot report를 추가합니다.
+- 구현 전 테스트: `tests/services/test_performance_reporting_service.py`, `tests/scheduler/test_portfolio_sync_job.py`에 stale open BUY 대사 테스트 후보.
+- Rollout: report-only stale lot detector부터 시작.
+- Rollback: report-only 제거 가능.
+- 분류: `유지하되 harden`
+
 ## Open Questions
 
 - 감사 기간에 `TRADING_ENABLED=true`를 유지할지, 아니면 `SELL_ONLY`/`READ_ONLY`에 가까운 별도 운영 모드를 만들지 결정해야 합니다.
 - DB pending과 브로커 pending이 불일치할 때 어떤 값을 신규 BUY 차단과 노출 계산의 기준으로 삼을지 결정해야 합니다.
+- LLM risk tuning이 제안할 수 있는 absolute cap을 계좌 규모별로 얼마로 둘지 결정해야 합니다.
 - `.env`와 shell history까지 시크릿 스캔 범위를 확장할지는 tracked files + runtime logs 점검 후 결정합니다.
