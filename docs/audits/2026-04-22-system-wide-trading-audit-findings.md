@@ -1,6 +1,6 @@
 # MOMO Trading 전체 시스템 감사 Findings
 
-> 상태: Phase 0 기준선 문서입니다. 아직 실제 findings는 확정하지 않았습니다. 각 항목은 evidence가 확보된 뒤 P0-P3로 분류합니다.
+> 상태: Phase 9 기준 감사 Findings와 구현 로드맵 입력 자료입니다. F-001~F-036은 Phase 1~8 evidence 기반으로 분류했습니다.
 
 ## 심각도 기준
 

@@ -341,10 +341,11 @@
 - Update: `docs/audits/2026-04-22-system-wide-trading-audit-findings.md`
 - Create: `docs/superpowers/plans/2026-04-22-system-wide-trading-improvement-roadmap.md`
 
-- [ ] **Step 1: P0/P1 먼저 정렬**
+- [x] **Step 1: P0/P1 먼저 정렬**
   - 기준: 통제되지 않은 노출, 중복 주문, 거짓 PnL, 브로커/DB 불일치, 위험한 운영 상태.
+  - 결과: 구현 로드맵에서 Track 1~5를 안전/정합성 우선순위로 배치했다.
 
-- [ ] **Step 2: 구현 묶음 분리**
+- [x] **Step 2: 구현 묶음 분리**
   - `Order safety`
   - `PnL truth`
   - `Risk and exposure`
@@ -352,16 +353,20 @@
   - `Backtest hygiene`
   - `LLM/news simplification`
   - `Observability/security/Admin safety`
+  - 결과: 9개 Track으로 재구성했다. `Trading mode`, `Order reconciliation`, `PnL truth`, `Scheduler/realtime`, `Observability/Admin`, `Decision events`, `Backtest`, `LLM/news`, `Strategy taxonomy`.
 
-- [ ] **Step 3: 각 묶음에 TDD 태스크 작성**
+- [x] **Step 3: 각 묶음에 TDD 태스크 작성**
   - 각 태스크는 `실패 테스트 -> 실패 확인 -> 최소 구현 -> 통과 확인 -> 관련 테스트 -> 커밋` 순서로 쓴다.
+  - 결과: `docs/superpowers/plans/2026-04-22-system-wide-trading-improvement-roadmap.md`에 Task 1.1~9.1 작성.
 
-- [ ] **Step 4: rollout/rollback 작성**
+- [x] **Step 4: rollout/rollback 작성**
   - live trading 영향이 있는 변경은 feature flag 또는 runtime setting으로 끌 수 있어야 한다.
   - 주문/리스크 변경은 shadow mode 또는 read-only validation 단계가 먼저 있어야 한다.
+  - 결과: `ORDER_SUBMISSION_MODE`, `ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE`, `SMART_LIQUIDATION_DATA_FAILURE_ACTION`, `ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED`, news rollout mode 등으로 단계적 rollout을 정의했다.
 
-- [ ] **Step 5: 사용자 승인 요청**
+- [x] **Step 5: 사용자 승인 요청**
   - 이 단계까지 완료되면 구현을 시작하지 말고 roadmap 승인 요청을 한다.
+  - 결과: 구현 전 중단점을 roadmap 끝에 명시했다. 다음 응답에서 승인 요청 후 멈춘다.
 
 ## 예상 구현 계획 템플릿
 
