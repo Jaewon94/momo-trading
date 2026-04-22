@@ -217,16 +217,16 @@
 - Read: `tests/agent/`
 - Update: audit evidence/findings docs
 
-- [ ] **Step 1: funnel 정의**
+- [x] **Step 1: funnel 정의**
   - `scan -> screen -> chart/LLM -> final review -> strategy -> risk -> order -> fill -> PnL` 단계별 count를 정의한다.
 
-- [ ] **Step 2: forward return 기준 정의**
+- [x] **Step 2: forward return 기준 정의**
   - BUY/HOLD/SKIP 이후 5분, 15분, 30분, 1시간, 장마감 수익률을 어떤 market data로 계산할지 정한다.
 
-- [ ] **Step 3: 벤치마크 정의**
+- [x] **Step 3: 벤치마크 정의**
   - 거래 안 함, 같은 후보군 랜덤, 스캐너만, 기술 분석만, LLM만, LLM+리스크를 비교 대상으로 둔다.
 
-- [ ] **Step 4: 전략 제거/유지 기준 적용**
+- [x] **Step 4: 전략 제거/유지 기준 적용**
   - 기준선보다 못하거나 비용/리스크만 증가시키는 단계는 `기본 비활성화` 또는 `실험` 후보로 기록한다.
 
 ## Phase 6: 백테스트와 실험 위생 감사

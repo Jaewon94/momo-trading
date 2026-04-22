@@ -496,7 +496,128 @@ API 기준 현재 설정:
 
 ## Phase 5: 전략 가치와 매매 기대값
 
-> 아직 시작하지 않았습니다.
+### 외부 기준
+
+| 출처 | 감사에 반영한 기준 |
+|---|---|
+| A. Craig MacKinlay, Event Studies in Economics and Finance, https://www.jstor.org/stable/2729691 | 매수/보류/스킵 같은 의사결정 이벤트 이후 일정 시간 수익률과 초과수익률을 측정해야 함 |
+| Bailey et al., The Probability of Backtest Overfitting, https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2326253 | 여러 전략/파라미터를 비교할수록 과최적화 가능성이 커지므로 out-of-sample과 benchmark가 필요함 |
+| Bailey and Lopez de Prado, The Deflated Sharpe Ratio, https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2460551 | 선택 편향과 non-normal return을 고려하지 않은 성과 지표는 과대평가될 수 있음 |
+
+### 현재 의사결정 Funnel
+
+운영 로그와 코드 기준 현재 funnel은 다음처럼 볼 수 있습니다.
+
+| 단계 | 코드/데이터 위치 | 현재 기록 | 관찰 |
+|---|---|---|---|
+| 시장 scan | `agent/market_scanner.py` | `agent_activity_logs.activity_type=SCAN` | 거래량/급등/급락/보유/계좌/성과 요약을 LLM에 넣고 `selected`를 받음 |
+| screen | `agent/stock_screener.py` | `SCREENING` 로그 없음 | `StockScreener`는 존재하지만 현재 주요 cycle에서는 별도 단계로 쓰이지 않는 것으로 보임 |
+| chart/technical | `analysis/chart_analyzer.py`, `analysis/technical/` | `TIER1_ANALYSIS` detail 일부 | RSI, MACD, MA, BB, 패턴, 추세 분석은 있으나 구조화된 forward label은 없음 |
+| Tier1 LLM | `TradingAgent._tier1_analysis` | `TIER1_ANALYSIS`, `LLM_CALL` | BUY/HOLD/SELL과 confidence를 생성 |
+| Tier2 LLM | `TradingAgent._tier2_review` | `TIER2_REVIEW`, `LLM_CALL` | 최종 승인/거절, 수량, 근거를 생성 |
+| strategy eval | `strategy/stable_short.py`, `strategy/aggressive_short.py` | `STRATEGY_EVAL` | 전략은 독립 alpha 모델이라기보다 LLM 판단을 손절/익절/긴급도 파라미터로 변환 |
+| risk/cost/news gate | `RiskManager`, `_evaluate_cost_gate`, `_evaluate_news_gate` | `RISK_CHECK`, `REPORT` shadow 일부 | 비용 gate는 켜져 있고 뉴스 gate는 현재 꺼짐 |
+| order/recommendation | `agent/decision_maker.py` | `DECISION`, `ORDER`, `TRADE_RESULT` | `SEMI_AUTO`에서는 추천 생성. 실주문 source는 Phase 2 findings와 같이 불명확 |
+| fill/PnL | `trade_results`, `account_equity_snapshots` | `TRADE_RESULT`, equity snapshot | closed BUY 0건이라 trade outcome 기반 기대값은 계산 불가 |
+
+### 운영 로그 Count
+
+전체 `agent_activity_logs` 집계:
+
+| activity_type | phase | count |
+|---|---|---:|
+| `SCAN` | `START/COMPLETE/ERROR` | 23 / 12 / 11 |
+| `TIER1_ANALYSIS` | `START/COMPLETE` | 372 / 372 |
+| `TIER2_REVIEW` | `START/COMPLETE` | 200 / 201 |
+| `STRATEGY_EVAL` | `COMPLETE` | 197 |
+| `RISK_CHECK` | `COMPLETE/SKIP` | 197 / 12 |
+| `DECISION` | `START/COMPLETE/SKIP/ERROR` | 165 / 67 / 102 / 3 |
+| `ORDER` | `COMPLETE` | 10 |
+| `TRADE_RESULT` | `COMPLETE` | 34 |
+| `SCREENING` | 전체 | 0 |
+
+2026-04-22 당일 집계:
+
+| activity_type | count |
+|---|---:|
+| `SCAN` | 14 |
+| `TIER1_ANALYSIS` | 298 |
+| `TIER2_REVIEW` | 146 |
+| `STRATEGY_EVAL` | 73 |
+| `RISK_CHECK` | 73 |
+| `DECISION` | 137 |
+| `ORDER` | 7 |
+| `TRADE_RESULT` | 29 |
+| `LLM_CALL` | 294 |
+
+해석:
+
+- funnel 자체는 로그로 추적 가능하지만, 각 후보가 어떤 단계에서 탈락했고 이후 수익률이 어땠는지 계산할 canonical table은 없습니다.
+- `analysis_results`, `recommendations`, `strategy_signals`, `market_data_daily`, `market_snapshots`는 모두 0 rows입니다.
+- 따라서 현재는 activity log JSON을 역파싱해야만 funnel 분석이 가능하고, 이는 감사/성과 모델의 source of truth로 쓰기 어렵습니다.
+
+### 전략 코드의 실제 역할
+
+- `StableShortStrategy`와 `AggressiveShortStrategy`는 파일 주석처럼 “판단은 AI 분석 결과를 신뢰하고, 전략은 실행 파라미터와 이유 텍스트를 제공”하는 구조입니다.
+- `recommendation=BUY`이고 confidence가 기준 이상이면 BUY 신호를 만들고, target/stop/urgency를 붙입니다.
+- 일부 RSI, MACD, cross, trend 정보는 reason text에 추가되지만 BUY의 독립 hard edge 조건은 아닙니다.
+- 따라서 현재 성과 attribution은 “전략 alpha”라기보다 `scanner + chart features + Tier1 LLM + Tier2 LLM + risk/cost gate + execution parameter` 조합으로 봐야 합니다.
+
+### Forward Return 평가 기준
+
+Phase 5 결론상 구현 후보는 다음 dataset을 먼저 쌓아야 합니다.
+
+| 필드 | 이유 |
+|---|---|
+| `decision_event_id`, `cycle_id`, `symbol`, `timestamp` | 후보별 이벤트 추적 |
+| `stage` | `SCAN_SELECTED`, `TIER1_BUY`, `TIER1_HOLD`, `TIER2_APPROVED`, `RISK_BLOCKED`, `RECOMMENDED`, `ORDER_SUBMITTED`, `FILLED` 등 funnel 단계 |
+| `candidate_source` | volume/surge/drop/event/holding 등 scanner source |
+| `price_at_decision` | forward return 기준가 |
+| `decision_action`, `confidence`, `provider`, `strategy_type`, `horizon` | LLM/전략 attribution |
+| `target_price`, `stop_loss_price`, `cost_bps`, `edge_bps` | 비용 대비 기대 edge 검증 |
+| `ret_5m`, `ret_15m`, `ret_30m`, `ret_60m`, `ret_close` | 이벤트 이후 수익률 |
+| `market_ret_same_window`, `sector_ret_same_window` | 초과수익률 또는 상대성과 |
+| `actual_order_id`, `fill_price`, `fill_qty`, `realized_pnl`, `unrealized_pnl_at_close` | 실제 실행 결과와 signal 품질 분리 |
+
+시장 데이터 source는 우선순위가 필요합니다.
+
+1. 장중 broker quote snapshot을 `market_snapshots` 또는 신규 `decision_forward_returns`에 저장합니다.
+2. 체결/추천이 없어도 모든 후보의 decision price와 future price를 남깁니다.
+3. 일봉 `market_data_daily`는 close 기준 평가용으로 쓰고, 5~60분 평가는 분봉/quote snapshot 기반으로 분리합니다.
+
+### Benchmark 정의
+
+전략/LLM/리스크 단계별 가치는 아래 benchmark와 비교해야 합니다.
+
+| Benchmark | 설명 |
+|---|---|
+| no-trade | 같은 시간 현금 보유 |
+| random same candidates | 같은 scan 후보군에서 무작위 선택 |
+| scanner only | volume/surge/drop 상위 후보를 그대로 선택 |
+| technical only | `ChartAnalyzer.signal_summary` 방향/강도만 사용 |
+| Tier1 only | Tier1 BUY/HOLD/SELL만 사용 |
+| Tier2 only | Tier2 승인까지 사용 |
+| risk/cost gated | Tier2 승인 후 risk/cost gate 통과만 사용 |
+| actual recommendation/order | 현재 운영 정책이 실제 추천/주문한 결과 |
+
+### 제거/유지 기준
+
+- `StockScreener`: 별도 `SCREENING` 로그가 0이고 현재 scanner가 selection을 통합한다면 `제거` 또는 `기본 비활성화` 후보입니다. 다만 README/과거 계획 문서와 연결되어 있어 삭제 전 호출 경로와 UI 설명을 정리해야 합니다.
+- `StableShortStrategy`, `AggressiveShortStrategy`: 제거 대상은 아닙니다. 다만 “전략 alpha”로 표현하면 안 되고, `LLM decision -> execution profile`로 이름/문서/리포트를 바꾸는 것이 정확합니다.
+- `analysis_results`, `recommendations`, `strategy_signals`: 현재 비어 있지만 개념은 필요합니다. 제거보다 `decision_events/forward_returns` 계층으로 대체하거나 역할을 명확히 해야 합니다.
+- 뉴스/LLM/기술분석 단계는 forward return dataset이 최소 표본을 채우기 전에는 돈을 더 벌게 하는 기능이라고 결론내리면 안 됩니다.
+
+### Phase 5 Verification
+
+```bash
+.venv313/bin/python -m pytest tests/agent/test_market_scanner.py tests/agent/test_trading_agent_cost_gate.py tests/agent/test_trading_agent_execution_policy.py tests/strategy/test_trade_horizon.py
+```
+
+결과:
+
+- 9 tests passed.
+- 확인 범위: market scanner adapter 사용, cost gate, execution policy, trade horizon.
+- 미확인 범위: 후보별 forward return 저장, benchmark 산출, 전략 stage별 attribution. 이들은 아직 구현되어 있지 않습니다.
 
 ## Phase 6: 백테스트와 실험 위생
 

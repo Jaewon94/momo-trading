@@ -266,10 +266,87 @@
 - Rollback: 기존 필드 유지 가능.
 - 분류: `유지하되 harden`
 
+### F-016: 후보별 forward return 데이터가 없어 전략 기대값을 검증할 수 없음
+
+- 심각도: `P1`
+- 상태: `확정`
+- 영역: `전략 | 성과 측정 | 백테스트`
+- 현상: `analysis_results`, `recommendations`, `strategy_signals`, `market_data_daily`, `market_snapshots`가 모두 0 rows입니다. `agent_activity_logs`에는 단계별 로그가 있지만, 후보별 decision event와 이후 5분/15분/30분/1시간/종가 수익률이 구조화되어 저장되지 않습니다.
+- 영향: 어떤 후보를 샀어야 했는지, HOLD/SKIP이 맞았는지, Tier1/Tier2/risk gate가 기대값을 높였는지 판단할 수 없습니다. 현재 상태에서 “돈을 더 잘 벌게” 하는 전략 개선은 근거 없이 파라미터를 만지는 과최적화가 될 수 있습니다.
+- 증거: 운영 DB row count `analysis_results=0`, `recommendations=0`, `strategy_signals=0`, `market_data_daily=0`, `market_snapshots=0`; activity log는 존재하지만 forward return label이 없음.
+- 재현/검증: `sqlite3 -readonly data/app.db` row count와 `agent_activity_logs` 단계별 count 비교.
+- 권고: 구현 1순위로 `decision_events`와 `decision_forward_returns` 또는 동등한 canonical dataset을 추가합니다. 모든 scan/Tier1/Tier2/risk/recommend/order/fill 후보에 대해 기준가와 future return을 저장해야 합니다.
+- 구현 전 테스트: 신규 `tests/services/test_decision_event_service.py`에 후보 이벤트 생성, 중복 방지, 5m/15m/30m/60m/close label 업데이트 테스트를 먼저 작성합니다.
+- Rollout: shadow/write-only로 시작해 최소 1~2주 데이터 수집 후 리포트와 gate에 연결합니다.
+- Rollback: 수집 테이블 write를 feature flag로 끄고 기존 매매 경로는 유지합니다.
+- 분류: `유지하되 harden`
+
+### F-017: `StockScreener`가 현재 funnel에서 사용되지 않는 legacy 단계로 보임
+
+- 심각도: `P2`
+- 상태: `검증 중`
+- 영역: `전략 | LLM | 운영`
+- 현상: `agent/stock_screener.py`는 별도 `SCREENING` activity를 남기는 LLM 후보 필터링 단계지만, 운영 DB에는 `SCREENING` 로그가 0건입니다. 현재 `MarketScanner.scan`이 시장 데이터 수집과 LLM selection을 한 번에 수행합니다.
+- 영향: 문서/README상 funnel과 실제 운영 funnel이 달라지고, LLM 호출 단계가 중복으로 남아 있으면 유지보수와 성능 튜닝 기준이 흐려집니다.
+- 증거: `rg StockScreener` 결과 현재 코드 호출은 전역 인스턴스 정의와 문서 중심이며, DB activity count에서 `SCREENING=0`.
+- 재현/검증: `rg -n "stock_screener|StockScreener|SCREENING"`와 activity log count 확인.
+- 권고: 사용 계획이 없으면 제거 후보로 두고, 유지하려면 scanner와 screener의 책임을 분리해 `scan -> screen` 단계와 성과 attribution을 명확히 합니다.
+- 구현 전 테스트: 제거 전 `tests/agent/test_market_scanner.py`와 cycle 테스트에서 현재 scanner-only funnel이 유지되는지 확인합니다.
+- Rollout: 먼저 README/Admin 문구에서 legacy 표시, 이후 미사용 코드 제거.
+- Rollback: 제거 전 커밋으로 되돌릴 수 있으나, 삭제보다 deprecation 주석부터 적용하는 편이 안전합니다.
+- 분류: `제거`
+
+### F-018: `StableShort`/`AggressiveShort`는 독립 전략 alpha가 아니라 LLM 판단의 실행 프로필에 가까움
+
+- 심각도: `P1`
+- 상태: `확정`
+- 영역: `전략 | 성과 측정`
+- 현상: 두 전략 클래스는 `recommendation=BUY/SELL/HOLD`와 confidence를 LLM 분석에서 받아 손절/익절/긴급도와 reason text를 붙입니다. RSI/MACD/trend 조건은 대체로 설명 보강이며 BUY 진입의 독립 hard edge 조건이 아닙니다.
+- 영향: 리포트가 `STABLE_SHORT` 또는 `AGGRESSIVE_SHORT`의 성과처럼 표시되면 실제로는 LLM decision pipeline 성과를 전략 성과로 오해할 수 있습니다. 어떤 전략이 돈을 버는지 attribution이 틀어집니다.
+- 증거: `strategy/stable_short.py`, `strategy/aggressive_short.py` 파일 주석과 `evaluate` 구현.
+- 재현/검증: LLM recommendation이 BUY이고 confidence만 통과하면 전략은 BUY signal을 생성합니다.
+- 권고: 이름과 리포트 분류를 `execution_profile` 또는 `strategy_profile`로 재정의하고, 독립 technical strategy는 별도 benchmark로 분리합니다.
+- 구현 전 테스트: strategy evaluate 테스트에 “LLM recommendation이 같은 경우 technical reason은 signal 생성 여부를 바꾸지 않는다”는 현재 동작 고정 테스트를 추가합니다.
+- Rollout: 리포트 문구/모델 필드부터 바꾸고, 기존 DB 값은 migration 없이 alias로 유지합니다.
+- Rollback: 표시명만 되돌리면 됩니다.
+- 분류: `유지하되 harden`
+
+### F-019: 단계별 benchmark/control group이 없어 LLM, 기술분석, risk gate의 기여도를 분리할 수 없음
+
+- 심각도: `P1`
+- 상태: `확정`
+- 영역: `전략 | LLM | 성과 측정`
+- 현상: no-trade, random same candidates, scanner-only, technical-only, Tier1-only, Tier2-only, risk/cost-gated, actual recommendation/order 간 비교 결과가 저장되지 않습니다.
+- 영향: 특정 단계가 수익을 높이는지, 지연과 비용만 늘리는지 알 수 없습니다. 특히 LLM 호출 비용/지연과 뉴스/기술분석 단계의 가치를 평가할 수 없습니다.
+- 증거: Phase 5 funnel과 DB row count. Benchmark를 산출하는 service/test가 확인되지 않음.
+- 재현/검증: 저장된 후보 이벤트와 future return dataset이 없어서 benchmark query 자체를 구성할 수 없습니다.
+- 권고: forward return dataset 위에 benchmark report를 먼저 read-only로 추가합니다. 각 benchmark는 같은 시간, 같은 후보군, 같은 비용 가정으로 비교해야 합니다.
+- 구현 전 테스트: 신규 `tests/services/test_strategy_benchmark_service.py`에 동일 후보군 랜덤 baseline, scanner-only baseline, Tier1/Tier2 filter 비교 fixture 추가.
+- Rollout: 최소 표본 수 미달 시 `INSUFFICIENT_SAMPLE`만 반환하고, gate에는 연결하지 않습니다.
+- Rollback: report-only service 제거 가능.
+- 분류: `실험`
+
+### F-020: 현재 상태에서 전략/뉴스/LLM 파라미터를 바로 조정하면 과최적화 위험이 큼
+
+- 심각도: `P1`
+- 상태: `확정`
+- 영역: `전략 | 백테스트 | LLM`
+- 현상: closed trade 표본 0건, 후보별 forward return 0건, benchmark 0건인 상태입니다. 그런데 risk, confidence, cost, LLM provider, 뉴스 gate 등 조정 가능한 파라미터는 많습니다.
+- 영향: 장중 몇 개 사례만 보고 threshold를 바꾸면 실제 기대값 개선이 아니라 noise에 맞춘 튜닝이 될 가능성이 큽니다.
+- 증거: F-013, F-016, F-019와 연결. 외부 기준도 multiple testing/overfitting 방지를 요구합니다.
+- 재현/검증: 현재 DB만으로 parameter trial별 out-of-sample 성과를 계산할 수 없습니다.
+- 권고: 파라미터 변경은 `experiment_id`, 기간, 표본 수, benchmark, 비용 가정, out-of-sample 기준을 문서화한 뒤 shadow/SEMI_AUTO에서 검증합니다.
+- 구현 전 테스트: experiment registry 또는 benchmark report에 `min_sample_size`, `in_sample/out_of_sample` 구분 테스트 추가.
+- Rollout: 문서화된 실험 단위로만 변경하고, 각 Phase 완료 후 문서 최신화와 커밋을 유지합니다.
+- Rollback: 실험 flag를 끄고 이전 runtime setting snapshot으로 복구합니다.
+- 분류: `실험`
+
 ## Open Questions
 
 - 감사 기간에 `TRADING_ENABLED=true`를 유지할지, 아니면 `SELL_ONLY`/`READ_ONLY`에 가까운 별도 운영 모드를 만들지 결정해야 합니다.
 - DB pending과 브로커 pending이 불일치할 때 어떤 값을 신규 BUY 차단과 노출 계산의 기준으로 삼을지 결정해야 합니다.
 - LLM risk tuning이 제안할 수 있는 absolute cap을 계좌 규모별로 얼마로 둘지 결정해야 합니다.
 - closed trade 0건인 현 상태에서 전략 성과 판단은 account equity forward return 중심으로 임시 전환할지 결정해야 합니다.
+- strategy 이름을 실제 alpha 전략으로 유지할지, execution profile로 바꿀지 결정해야 합니다.
+- 후보별 forward return을 기존 `analysis_results`/`recommendations`에 넣을지, 신규 canonical table로 분리할지 결정해야 합니다.
 - `.env`와 shell history까지 시크릿 스캔 범위를 확장할지는 tracked files + runtime logs 점검 후 결정합니다.
