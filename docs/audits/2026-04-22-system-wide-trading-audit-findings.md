@@ -71,6 +71,7 @@
 - Rollout: 먼저 read-only report 추가, 이후 canonical PnL/service 분리.
 - Rollback: report-only 변경은 제거 가능. 데이터 마이그레이션은 별도 백업 후 진행.
 - 분류: `유지하되 harden`
+- 조치: Track 2 Task 2.1에서 `GET /api/v1/admin/trades/reconciliation` read-only endpoint를 추가해 브로커 미체결과 DB `PENDING_CONFIRM`를 주문번호 기준으로 대사할 수 있게 했습니다.
 
 ### F-003: `PENDING_CONFIRM` BUY가 20건 존재하고 반복 종목이 있음
 
@@ -86,6 +87,7 @@
 - Rollout: 먼저 report-only stale pending detector를 추가하고, 이후 자동 reconcile은 별도 승인.
 - Rollback: detector는 제거 가능. 자동 reconcile은 DB 백업 후 진행해야 합니다.
 - 분류: `유지하되 harden`
+- 조치: Track 2 Task 2.1에서 `broker_only`, `db_only_stale`, `quantity_mismatch`, `partial_fill_pending` 분류를 가진 read-only reconciliation report를 추가했습니다. 자동 수정은 하지 않습니다.
 
 ### F-004: confirmed trade PnL이 0으로 유지되어 실현손익 신뢰도가 낮음
 
@@ -132,6 +134,7 @@
 - Rollout: report-only endpoint/Admin 표시 먼저. 이후 복구 job은 dry-run summary -> 승인 실행 순서로 분리.
 - Rollback: report-only는 제거 가능. 자동 DB 보정은 적용 전 DB 백업과 변경 로그가 필요합니다.
 - 분류: `유지하되 harden`
+- 조치: Track 2 Task 2.1에서 `OrderReconciliationService`와 Admin read-only endpoint를 추가했습니다. 브로커 pending 수, DB pending 수, broker-only, stale DB-only, 수량 불일치, partial fill pending을 분리해 표시합니다.
 
 ### F-007: LLM Codex timeout incident가 계속 누적되어 장중 판단 품질과 운영 안정성이 흔들림
 
@@ -223,6 +226,7 @@
 - Rollout: report-only stale lot detector부터 시작.
 - Rollback: report-only 제거 가능.
 - 분류: `유지하되 harden`
+- 조치: Track 2 Task 2.1에서 pending 주문 대사 기반을 먼저 추가했습니다. stale open BUY lot 대사는 Track 3 PnL truth 작업과 묶어 별도 구현합니다.
 
 ### F-013: closed trade 표본이 0건이라 기대값/승률/PF 기반 성과 판단이 불가능함
 

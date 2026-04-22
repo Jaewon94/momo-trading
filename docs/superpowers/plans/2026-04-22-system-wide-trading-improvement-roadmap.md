@@ -133,26 +133,31 @@
 - Test: `tests/services/test_order_reconciliation_service.py`
 - Test: `tests/api/test_admin_trade_routes.py`
 
-- [ ] **Step 1: 실패 테스트 작성**
+- [x] **Step 1: 실패 테스트 작성**
   - 브로커 pending 4건, DB `PENDING_CONFIRM` 21건, partial fill 1건 fixture를 만든다.
   - 결과가 `broker_only`, `db_only_stale`, `quantity_mismatch`, `partial_fill_pending`으로 분류되는지 테스트한다.
+  - Result: `tests/services/test_order_reconciliation_service.py`와 `tests/api/test_admin_trade_routes.py`에 read-only 분류/API 테스트를 추가했다.
 
-- [ ] **Step 2: 실패 확인**
+- [x] **Step 2: 실패 확인**
   - Run: `./.venv313/bin/python -m pytest tests/services/test_order_reconciliation_service.py tests/api/test_admin_trade_routes.py -q`
   - Expected: 신규 서비스/endpoint 부재로 실패.
+  - Result: `ModuleNotFoundError: No module named 'services.order_reconciliation_service'`로 실패 확인.
 
-- [ ] **Step 3: 최소 구현**
+- [x] **Step 3: 최소 구현**
   - read-only reconciliation service를 만든다.
   - Admin endpoint `GET /api/v1/admin/trades/reconciliation`를 추가한다.
   - 자동 수정은 하지 않는다.
+  - Result: `OrderReconciliationService`와 read-only Admin endpoint를 추가했다.
 
-- [ ] **Step 4: 통과 확인**
+- [x] **Step 4: 통과 확인**
   - Run: `./.venv313/bin/python -m pytest tests/services/test_order_reconciliation_service.py tests/api/test_admin_trade_routes.py -q`
   - Expected: PASS.
+  - Result: 7 passed.
 
-- [ ] **Step 5: 문서/커밋**
+- [x] **Step 5: 문서/커밋**
   - Update: F-002/F-003/F-006/F-012.
   - Commit: `feat: add order reconciliation report`
+  - Result: findings 갱신 완료. 커밋은 이 작업 검증 후 생성.
 
 ### Task 2.2: cycle-local cash reservation ledger
 

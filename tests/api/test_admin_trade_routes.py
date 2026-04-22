@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
+from trading.models import PendingOrderInfo
 
 
 @pytest.mark.asyncio
@@ -73,6 +74,58 @@ async def test_admin_reconcile_pending_trades_route_returns_summary(client, monk
     assert payload["data"]["recovered"] == 1
     assert payload["data"]["skipped"] == 1
     assert captured["called"] is True
+
+
+@pytest.mark.asyncio
+async def test_admin_trade_reconciliation_route_returns_read_only_report(client, monkeypatch):
+    db_pending = [
+        SimpleNamespace(
+            id="db-stale",
+            order_id="DB-1",
+            stock_symbol="003280",
+            stock_name="흥아해운",
+            side="BUY",
+            quantity=7,
+            status="PENDING_CONFIRM",
+            created_at=__import__("datetime").datetime(2026, 4, 22, 8, 0),
+            entry_at=__import__("datetime").datetime(2026, 4, 22, 8, 0),
+        )
+    ]
+    broker_pending = [
+        PendingOrderInfo(
+            order_id="BR-1",
+            symbol="005930",
+            name="삼성전자",
+            side="매수",
+            order_qty=3,
+            filled_qty=0,
+            remaining_qty=3,
+            order_price=71000.0,
+            order_time="091500",
+        )
+    ]
+
+    class FakeRepo:
+        def __init__(self, _db) -> None:
+            pass
+
+        async def get_pending_confirms(self):
+            return db_pending
+
+    monkeypatch.setattr("api.routes.admin.TradeResultRepository", FakeRepo, raising=False)
+    monkeypatch.setattr(
+        "api.routes.admin.get_broker_adapter",
+        lambda: SimpleNamespace(get_pending_orders=lambda: __import__("asyncio").sleep(0, result=broker_pending)),
+    )
+
+    response = await client.get("/api/v1/admin/trades/reconciliation")
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["summary"]["broker_pending_count"] == 1
+    assert payload["summary"]["db_pending_count"] == 1
+    assert payload["broker_only"][0]["order_id"] == "BR-1"
+    assert payload["db_only_stale"][0]["trade_id"] == "db-stale"
 
 
 @pytest.mark.asyncio

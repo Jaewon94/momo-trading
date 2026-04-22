@@ -56,6 +56,7 @@ from services.news_ingest_service import news_ingest_service
 from services.open_dart_disclosure_service import open_dart_disclosure_service
 from services.news_reporting_service import news_reporting_service
 from services.news_runtime_service import news_runtime_service
+from services.order_reconciliation_service import order_reconciliation_service
 from services.error_incident_service import error_incident_service
 from services.observability_reporting_service import observability_reporting_service
 from services.performance_reporting_service import performance_reporting_service
@@ -779,6 +780,18 @@ async def reconcile_pending_trades():
         f"보류 {summary.get('skipped', 0)}건 / 실패 {summary.get('failed', 0)}건"
     )
     return SuccessResponse(data=summary, message=message)
+
+
+@router.get("/trades/reconciliation")
+async def get_trade_reconciliation_report(db: AsyncSession = Depends(get_async_db)):
+    """브로커 미체결과 DB PENDING_CONFIRM 간 read-only 대사 리포트"""
+    broker_pending_orders = await get_broker_adapter().get_pending_orders()
+    db_pending_confirms = await TradeResultRepository(db).get_pending_confirms()
+    report = order_reconciliation_service.build_report(
+        broker_pending_orders=broker_pending_orders,
+        db_pending_confirms=db_pending_confirms,
+    )
+    return SuccessResponse(data=report, message="주문 대사 리포트 조회 완료")
 
 
 @router.post("/trades/reconcile-holdings")
