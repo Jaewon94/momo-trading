@@ -752,7 +752,7 @@ class TradingScheduler:
         조기 익절/손절도 실행한다. KRX 장중(09:00~15:30)에만 작동.
         """
         from scheduler.market_calendar import market_calendar
-        if not market_calendar.is_krx_trading_hours():
+        if not market_calendar.is_automated_trading_session():
             return
 
         from services.activity_logger import activity_logger
@@ -1315,7 +1315,7 @@ class TradingScheduler:
         import time
 
         from scheduler.market_calendar import market_calendar
-        if not market_calendar.is_krx_trading_hours():
+        if not market_calendar.is_automated_trading_session():
             return
 
         from services.activity_logger import activity_logger

@@ -133,11 +133,13 @@ class EventDetector:
             return
 
         th = self.get_thresholds(symbol)
+        automated_trading_allowed = market_calendar.is_automated_trading_session()
+        enriched_data = {**data, "order_allowed": automated_trading_allowed}
 
         # 가격 업데이트 이벤트 발행
         await event_bus.publish(Event(
             type=EventType.PRICE_UPDATE,
-            data=data,
+            data=enriched_data,
             source="event_detector",
         ))
 
@@ -152,13 +154,20 @@ class EventDetector:
                              symbol, new_stop, price)
 
         # 거래량 급증 감지
-        await self._check_volume_spike(symbol, volume, th, data)
+        if not automated_trading_allowed:
+            self._prev_prices[symbol] = price
+            self._volume_history[symbol].append(volume)
+            if len(self._volume_history[symbol]) > 20:
+                self._volume_history[symbol] = self._volume_history[symbol][-20:]
+            return
+
+        await self._check_volume_spike(symbol, volume, th, enriched_data)
 
         # 급등/급락 감지
-        await self._check_price_movement(symbol, price, change_rate, th, data)
+        await self._check_price_movement(symbol, price, change_rate, th, enriched_data)
 
         # 손절/익절 감지
-        await self._check_stop_take(symbol, price, th, data)
+        await self._check_stop_take(symbol, price, th, enriched_data)
 
         # 캐시 업데이트
         self._prev_prices[symbol] = price

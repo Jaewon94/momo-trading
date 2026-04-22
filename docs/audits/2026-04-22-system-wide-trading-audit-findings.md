@@ -497,7 +497,7 @@
 ### F-031: 주문 생성 경로의 세션 가드가 자동매매 지원 세션보다 넓음
 
 - 심각도: `P1`
-- 상태: `확정`
+- 상태: `해결됨`
 - 영역: `스케줄러 | 주문 | 실시간 이벤트`
 - 현상: `market_calendar.supports_automated_trading()`은 `KRX_NXT` 세션만 자동매매 지원으로 보지만, `holdings_check`, `intraday_holdings_review`, `event_detector`, `realtime_monitor` 등 주문/이벤트 생성 경로는 `is_krx_trading_hours()`를 사용합니다. 이 함수는 09:00~15:30을 true로 반환합니다.
 - 영향: 15:20~15:30 `KRX_CLOSE` 구간에서도 이벤트/재평가/매도 트리거가 열릴 수 있어, Admin status의 `market_session_auto_trading` 의미와 실제 주문 경계가 불일치합니다.
@@ -508,6 +508,7 @@
 - Rollout: 먼저 guard를 read-only warning으로 기록하고, 다음 단계에서 SELL/BUY 실행 경로에 hard block 적용.
 - Rollback: runtime flag로 기존 `is_krx_trading_hours` guard를 임시 허용.
 - 분류: `유지하되 harden`
+- 조치: Track 1 Task 1.2에서 `MarketCalendar.is_automated_trading_session()`을 추가하고, scheduler 주문 생성 경로와 realtime order-trigger 이벤트를 자동매매 지원 세션 기준으로 제한했습니다. KRX_CLOSE에서는 가격 업데이트는 유지하되 STOP/TAKE 등 주문 트리거 이벤트는 발행하지 않습니다.
 
 ### F-032: 강제 청산 재시도 성공이 TradeResult에 기록되지 않을 수 있음
 

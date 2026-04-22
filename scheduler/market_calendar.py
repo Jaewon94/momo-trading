@@ -154,6 +154,11 @@ class MarketCalendar:
         return session_code == "KRX_NXT"
 
     @staticmethod
+    def is_automated_trading_session(dt: datetime | None = None) -> bool:
+        """자동 주문 생성이 허용되는 국내 세션 여부."""
+        return MarketCalendar.supports_automated_trading(MarketCalendar.get_market_session(dt))
+
+    @staticmethod
     def next_session_start(dt: datetime | None = None) -> datetime:
         """다음 국내 세션 시작 시각
 

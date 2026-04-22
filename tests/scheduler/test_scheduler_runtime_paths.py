@@ -833,6 +833,25 @@ async def test_holdings_check_returns_early_outside_trading_hours(monkeypatch) -
 
 
 @pytest.mark.asyncio
+async def test_holdings_check_returns_early_outside_automated_trading_session(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    fetched_holdings = False
+
+    async def fake_get_holdings() -> list:
+        nonlocal fetched_holdings
+        fetched_holdings = True
+        return []
+
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_automated_trading_session", lambda: False)
+    monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
+
+    await scheduler._holdings_check()
+
+    assert fetched_holdings is False
+
+
+@pytest.mark.asyncio
 async def test_holdings_check_returns_early_when_no_holdings_exist(monkeypatch) -> None:
     scheduler = TradingScheduler()
     realtime_updated = False
@@ -1906,6 +1925,25 @@ async def test_intraday_holdings_review_sells_position_and_triggers_rescan(monke
     assert len(created_tasks) == 1
     assert any("장중 재평가 매도" in message for message in logs)
     assert any("SELL 매도 성공" in message for message in logs)
+
+
+@pytest.mark.asyncio
+async def test_intraday_holdings_review_returns_early_outside_automated_trading_session(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    fetched_holdings = False
+
+    async def fake_get_holdings() -> list:
+        nonlocal fetched_holdings
+        fetched_holdings = True
+        return []
+
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_automated_trading_session", lambda: False)
+    monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
+
+    await scheduler._intraday_holdings_review()
+
+    assert fetched_holdings is False
 
 
 @pytest.mark.asyncio

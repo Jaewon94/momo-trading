@@ -138,3 +138,36 @@ async def test_realtime_monitor_start_uses_polling_when_realtime_is_not_supporte
     assert monitor.is_running is False
     assert monitor.is_polling is False
     assert observed == ["poll_loop", "health_loop", "stream_stop"]
+
+
+@pytest.mark.asyncio
+async def test_realtime_monitor_keeps_polling_prices_during_close_auction(monkeypatch) -> None:
+    monitor = RealtimeMonitor()
+    observed: list[str] = []
+
+    async def fake_poll_loop() -> None:
+        observed.append("poll_loop")
+
+    async def fake_health_loop() -> None:
+        observed.append("health_loop")
+
+    async def fake_stream_stop() -> None:
+        observed.append("stream_stop")
+
+    monkeypatch.setattr(
+        "realtime.monitor.get_broker_adapter",
+        lambda: SimpleNamespace(
+            capabilities=SimpleNamespace(supports_realtime_quotes=False),
+        ),
+    )
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_automated_trading_session", lambda: False)
+    monkeypatch.setattr(monitor, "_poll_loop", fake_poll_loop)
+    monkeypatch.setattr(monitor, "_ws_health_loop", fake_health_loop)
+    monkeypatch.setattr("realtime.monitor.stream_manager.stop", fake_stream_stop)
+
+    await monitor.start()
+    await asyncio.sleep(0)
+    await monitor.stop()
+
+    assert observed == ["poll_loop", "health_loop", "stream_stop"]

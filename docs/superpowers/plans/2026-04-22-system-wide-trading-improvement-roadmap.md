@@ -96,26 +96,31 @@
 - Test: `tests/realtime/test_event_detector.py`
 - Test: `tests/realtime/test_monitor.py`
 
-- [ ] **Step 1: 실패 테스트 작성**
+- [x] **Step 1: 실패 테스트 작성**
   - 15:25 KST `KRX_CLOSE` fixture에서 `supports_automated_trading=false`이고 주문 생성 path가 실행되지 않는 테스트를 추가한다.
   - 가격 모니터링은 가능하되 주문 트리거 이벤트는 publish되지 않거나 `order_allowed=false` metadata를 갖는지 테스트한다.
+  - 추가: 신규 `tests/scheduler/test_market_calendar.py`, `tests/realtime/test_event_detector.py`를 만들고 scheduler holdings/review guard 테스트를 추가했다.
 
-- [ ] **Step 2: 실패 확인**
+- [x] **Step 2: 실패 확인**
   - Run: `./.venv313/bin/python -m pytest tests/scheduler/test_market_calendar.py tests/scheduler/test_scheduler_runtime_paths.py tests/realtime/test_event_detector.py tests/realtime/test_monitor.py -q`
   - Expected: 기존 `is_krx_trading_hours()` 기준 때문에 실패.
+  - Result: 7 failed, 64 passed. 실패 원인은 `is_automated_trading_session` helper 부재와 guard 미적용.
 
-- [ ] **Step 3: 최소 구현**
+- [x] **Step 3: 최소 구현**
   - `MarketCalendar.is_automated_trading_session()` helper를 추가한다.
   - 주문 생성 가능 경로는 이 helper를 사용한다.
   - 순수 가격 수집/표시는 기존 시장 시간 helper를 유지하되 이름을 명확히 한다.
+  - Result: scheduler 주문 생성 경로는 자동매매 세션 guard를 사용하고, event detector는 가격 업데이트는 유지하되 close auction에서는 order-trigger 이벤트를 막는다.
 
-- [ ] **Step 4: 통과 확인**
+- [x] **Step 4: 통과 확인**
   - Run: `./.venv313/bin/python -m pytest tests/scheduler/test_market_calendar.py tests/scheduler/test_scheduler_runtime_paths.py tests/realtime/test_event_detector.py tests/realtime/test_monitor.py -q`
   - Expected: PASS.
+  - Result: 71 passed.
 
-- [ ] **Step 5: 문서/커밋**
+- [x] **Step 5: 문서/커밋**
   - Update: F-031 상태를 `해결됨` 또는 `완화됨`으로 변경.
   - Commit: `fix: align automated trading session guard`
+  - Result: F-031을 `해결됨`으로 갱신. 커밋은 이 작업 검증 후 생성.
 
 ## Track 2: Order Source of Truth and Reconciliation
 
