@@ -36,7 +36,7 @@
 ## 2026-04-23 현재 구현 검증 요약
 
 - Track 1, Track 2, Track 3.1, Track 3.1a는 코드와 테스트 기준 완료 상태다.
-- Track 5.1은 observability rollup 서비스와 테스트가 존재하지만, provider/model `NULL`을 rollup 저장 단계에서 완전히 `UNKNOWN`으로 정규화하지는 않는다. 별도 hardening으로 남긴다.
+- Track 5.1은 observability rollup key의 provider/model `NULL` 정규화와 maintenance failure preflight WARN 노출까지 구현됐다.
 - Track 8 관련으로 LLM 지연 경고(`LLM_SLOW_CALL_WARN_SEC`)는 별도 커밋으로 구현됐다. 다만 cooldown incident dedupe는 아직 미구현이다.
 - 뉴스 deterministic enrichment/backfill은 별도 커밋으로 구현됐다. 다만 현재 라이브 9000 서버는 최신 코드를 로드하지 않아 backfill endpoint가 아직 동작하지 않는다.
 - Track 6 decision event/forward return dataset은 아직 미구현이다. 이 항목이 없어서 뉴스/LLM/source별 실제 성과 검증은 아직 불가능하다.
@@ -491,25 +491,30 @@
 - Test: `tests/services/test_observability_maintenance_service.py`
 - Test: `tests/api/test_admin_system_preflight_routes.py`
 
-- [ ] **Step 1: 실패 테스트 작성**
+- [x] **Step 1: 실패 테스트 작성**
   - provider/model이 NULL인 error metric과 문자열 provider/model success metric이 섞인 fixture를 만든다.
   - maintenance가 rollup을 생성하고 preflight가 최근 maintenance 실패를 WARN으로 노출하는지 테스트한다.
+  - Result: `tests/services/test_observability_maintenance_service.py`와 `tests/services/test_system_preflight_service.py`에 회귀 테스트를 추가했다.
 
-- [ ] **Step 2: 실패 확인**
-  - Run: `./.venv313/bin/python -m pytest tests/services/test_observability_maintenance_service.py tests/api/test_admin_system_preflight_routes.py -q`
+- [x] **Step 2: 실패 확인**
+  - Run: `./.venv/bin/python -m pytest tests/services/test_observability_maintenance_service.py::test_observability_maintenance_service_normalizes_missing_provider_model tests/services/test_system_preflight_service.py::test_system_preflight_service_warns_on_recent_observability_maintenance_failure -q`
   - Expected: tuple sort 실패 또는 preflight 미노출로 실패.
+  - Result: tuple sort TypeError와 preflight OK 오판 실패를 확인했다.
 
-- [ ] **Step 3: 최소 구현**
+- [x] **Step 3: 최소 구현**
   - rollup key에서 provider/model을 `UNKNOWN`으로 normalize한다.
   - maintenance failure summary를 preflight에 추가한다.
+  - Result: rollup dimension 정규화 helper를 추가하고, 최근 `JOB/OBSERVABILITY_MAINTENANCE` 실패를 preflight `observability` WARN으로 노출했다. 실행 기록 없음은 새 DB 호환을 위해 OK 정보성 상태로 둔다.
 
-- [ ] **Step 4: 통과 확인**
-  - Run: `./.venv313/bin/python -m pytest tests/services/test_observability_maintenance_service.py tests/api/test_admin_system_preflight_routes.py -q`
+- [x] **Step 4: 통과 확인**
+  - Run: `./.venv/bin/python -m pytest tests/services/test_observability_maintenance_service.py tests/services/test_system_preflight_service.py tests/api/test_admin_system_preflight_routes.py -q`
   - Expected: PASS.
+  - Result: 6 passed.
 
-- [ ] **Step 5: 문서/커밋**
+- [x] **Step 5: 문서/커밋**
   - Update: F-035.
   - Commit: `fix: harden observability maintenance rollups`
+  - Result: F-035와 고도화 현황 문서를 갱신했다. 커밋은 이 작업 검증 후 생성.
 
 ### Task 5.2: Admin dangerous action confirmation
 

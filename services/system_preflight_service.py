@@ -1,9 +1,13 @@
 """운영 시작 전 read-only preflight 점검 서비스."""
 from __future__ import annotations
 
+import json
+
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from analysis.llm.ollama_provider import OllamaProvider
+from models.execution_metric import ExecutionMetric
 from services.broker_smoke_service import run_broker_smoke_test
 from services.error_capture_service import error_capture_service
 from services.news_reporting_service import news_reporting_service
@@ -18,11 +22,13 @@ class SystemPreflightService:
         broker = await self._run_broker_check(adapter=adapter, probe_symbol=probe_symbol)
         news = await self._run_news_check(db)
         ollama = await self._run_ollama_check()
+        observability = await self._run_observability_check(db)
 
         checks = {
             "broker": broker,
             "news": news,
             "ollama": ollama,
+            "observability": observability,
         }
         overall = self._resolve_overall(checks)
 
@@ -81,6 +87,58 @@ class SystemPreflightService:
                 "last_run_at": None,
             }
         return self._build_news_check(overview)
+
+    async def _run_observability_check(self, db: AsyncSession) -> dict:
+        if db is None:
+            return {
+                "status": "OK",
+                "label": "관측성 유지보수 확인 생략",
+                "message": "preflight DB session이 없어 observability maintenance 상태 확인을 생략했습니다.",
+                "ok": True,
+                "last_status": None,
+                "last_run_at": None,
+            }
+
+        row = await db.scalar(
+            select(ExecutionMetric)
+            .where(ExecutionMetric.metric_type == "JOB")
+            .where(ExecutionMetric.metric_name == "OBSERVABILITY_MAINTENANCE")
+            .order_by(ExecutionMetric.created_at.desc())
+            .limit(1)
+        )
+        if row is None:
+            return {
+                "status": "OK",
+                "label": "관측성 유지보수 기록 없음",
+                "message": "최근 observability maintenance 실행 기록이 없습니다.",
+                "ok": True,
+                "last_status": None,
+                "last_run_at": None,
+            }
+
+        status = str(row.status or "UNKNOWN").upper()
+        detail = self._parse_detail(row.detail)
+        if status == "SUCCESS":
+            return {
+                "status": "OK",
+                "label": "관측성 유지보수 정상",
+                "message": "최근 observability maintenance가 정상 완료되었습니다.",
+                "ok": True,
+                "last_status": status,
+                "last_run_at": row.created_at.isoformat() if row.created_at else None,
+                "detail": detail,
+            }
+
+        error = str(detail.get("error") or "").strip() if isinstance(detail, dict) else ""
+        return {
+            "status": "WARN",
+            "label": "관측성 유지보수 확인 필요",
+            "message": error or f"최근 observability maintenance 상태가 {status}입니다.",
+            "ok": False,
+            "last_status": status,
+            "last_run_at": row.created_at.isoformat() if row.created_at else None,
+            "detail": detail,
+        }
 
     async def _run_ollama_check(self) -> dict:
         try:
@@ -170,6 +228,7 @@ class SystemPreflightService:
         broker = checks.get("broker") or {}
         news = checks.get("news") or {}
         ollama = checks.get("ollama") or {}
+        observability = checks.get("observability") or {}
 
         if not broker.get("ok"):
             actions.append("브로커 read-only 조회 실패 항목을 먼저 확인하세요.")
@@ -177,9 +236,21 @@ class SystemPreflightService:
             actions.extend([str(alert) for alert in (news.get("alerts") or []) if str(alert).strip()])
         if not ollama.get("ok"):
             actions.append("Ollama 기동 또는 모델 로드 상태를 확인하세요.")
+        if not observability.get("ok"):
+            actions.append("관측성 유지보수 상태를 확인하세요.")
         if not actions:
             actions.append("운영 전 preflight 기준으로 즉시 조치가 필요한 항목이 없습니다.")
         return actions
+
+    @staticmethod
+    def _parse_detail(detail: str | None) -> dict:
+        if not detail:
+            return {}
+        try:
+            parsed = json.loads(detail)
+        except Exception:
+            return {"raw": detail}
+        return parsed if isinstance(parsed, dict) else {"value": parsed}
 
 
 system_preflight_service = SystemPreflightService()

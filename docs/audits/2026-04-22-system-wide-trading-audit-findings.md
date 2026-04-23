@@ -573,17 +573,18 @@
 ### F-035: Observability maintenance job이 provider/model NULL 때문에 반복 실패함
 
 - 심각도: `P1`
-- 상태: `확정`
+- 상태: `해결됨`
 - 영역: `관측성 | 운영`
-- 현상: `OBSERVABILITY_MAINTENANCE` job이 당일 10회 모두 실패했습니다. 오류는 `'< not supported between instances of 'str' and 'NoneType'`입니다.
+- 현상: 이전에는 `OBSERVABILITY_MAINTENANCE` job이 당일 10회 모두 실패했습니다. 오류는 `'< not supported between instances of 'str' and 'NoneType'`입니다.
 - 영향: hourly rollup과 raw retention 정리가 실행되지 않아, 장기 운영 시 관측성 데이터가 부정확해지고 DB가 커질 수 있습니다. 운영 UI에서는 오류가 보이지만 preflight의 핵심 차단 항목으로는 반영되지 않습니다.
 - 증거: `execution_metrics`의 `JOB/OBSERVABILITY_MAINTENANCE ERROR 10`, `services/observability_maintenance_service.py:_build_execution_rollups`, 당일 `execution_metrics`에 provider/model NULL row 52건.
 - 재현/검증: provider/model이 NULL인 metric과 문자열 provider/model metric을 함께 넣고 maintenance를 실행하면 tuple sort에서 실패합니다.
 - 권고: rollup grouping/sort key에서 `None`을 `""` 또는 `"UNKNOWN"`으로 normalize하고, maintenance failure를 preflight/overview alert에 명확히 노출합니다.
-- 구현 전 테스트: `tests/services/test_observability_maintenance_service.py`에 NULL provider/model 혼합 fixture 추가.
+- 구현 전 테스트: `tests/services/test_observability_maintenance_service.py`에 NULL provider/model 혼합 fixture 추가. `tests/services/test_system_preflight_service.py`에 최근 maintenance 실패 WARN 노출 테스트 추가.
 - Rollout: normalize는 backward-compatible. 기존 NULL row는 migration 없이 처리 가능.
 - Rollback: 코드 revert 가능하지만 maintenance 실패가 재발합니다.
-- 분류: `수정 필요`
+- 분류: `완료`
+- 조치: Track 5 Task 5.1에서 rollup grouping/sort key의 provider/model을 `UNKNOWN`으로 정규화했습니다. 최근 `JOB/OBSERVABILITY_MAINTENANCE` 실패는 system preflight의 `observability` 체크에서 WARN으로 노출합니다.
 
 ### F-036: 실시간 구독 41개 초과 시 우선순위/폴백 정책이 없음
 

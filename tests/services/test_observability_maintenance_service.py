@@ -194,3 +194,59 @@ async def test_observability_maintenance_service_rebuilds_existing_bucket(monkey
 
     assert len(rows) == 1
     assert rows[0].sample_count == 1
+
+
+@pytest.mark.asyncio
+async def test_observability_maintenance_service_normalizes_missing_provider_model(monkeypatch):
+    current_time = now_kst().replace(minute=35, second=0, microsecond=0)
+    completed_bucket = (current_time - timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+    monkeypatch.setattr("services.observability_maintenance_service.settings.METRICS_ROLLUP_LOOKBACK_HOURS", 4)
+
+    async with TestAsyncSessionLocal() as session:
+        await session.execute(delete(ExecutionMetricHourlyRollup))
+        await session.execute(delete(ResourceHourlyRollup))
+        await session.execute(delete(ExecutionMetric))
+        await session.execute(delete(ResourceSnapshot))
+        await session.commit()
+
+    async with TestAsyncSessionLocal() as session:
+        async with session.begin():
+            session.add_all([
+                ExecutionMetric(
+                    metric_type="LLM_CALL",
+                    metric_name="LLM_GENERATE",
+                    status="SUCCESS",
+                    provider=None,
+                    model=None,
+                    elapsed_ms=1100,
+                    created_at=completed_bucket + timedelta(minutes=3),
+                ),
+                ExecutionMetric(
+                    metric_type="LLM_CALL",
+                    metric_name="LLM_GENERATE",
+                    status="ERROR",
+                    provider="CODEX",
+                    model="gpt-5.4",
+                    elapsed_ms=2100,
+                    created_at=completed_bucket + timedelta(minutes=13),
+                ),
+            ])
+
+        service = ObservabilityMaintenanceService()
+        async with session.begin():
+            summary = await service.run_maintenance_for_session(session, now=current_time)
+
+    assert summary["execution_rollups_created"] == 2
+
+    async with TestAsyncSessionLocal() as session:
+        rows = (await session.execute(
+            select(ExecutionMetricHourlyRollup).order_by(
+                ExecutionMetricHourlyRollup.provider.asc(),
+                ExecutionMetricHourlyRollup.model.asc(),
+            )
+        )).scalars().all()
+
+    assert {(row.provider, row.model) for row in rows} == {
+        ("CODEX", "gpt-5.4"),
+        ("UNKNOWN", "UNKNOWN"),
+    }

@@ -37,6 +37,11 @@ def _percentile(values: list[int | float], ratio: float) -> float | None:
     return round(ordered[index], 1)
 
 
+def _normalize_rollup_dimension(value: str | None) -> str:
+    normalized = str(value or "").strip()
+    return normalized if normalized else "UNKNOWN"
+
+
 class ObservabilityMaintenanceService:
     async def run_maintenance(self, *, now: datetime | None = None) -> dict[str, Any]:
         async with AsyncSessionLocal() as session:
@@ -225,10 +230,10 @@ class ObservabilityMaintenanceService:
         for row in rows:
             key = (
                 _bucket_start(row.created_at),
-                row.metric_type,
-                row.metric_name,
-                row.provider,
-                row.model,
+                _normalize_rollup_dimension(row.metric_type),
+                _normalize_rollup_dimension(row.metric_name),
+                _normalize_rollup_dimension(row.provider),
+                _normalize_rollup_dimension(row.model),
             )
             grouped[key].append(row)
 

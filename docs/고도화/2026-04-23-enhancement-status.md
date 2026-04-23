@@ -48,6 +48,8 @@
 - `LLM_SLOW_CALL_WARN_SEC` 설정 추가. 기본 30초.
 - LLM 호출이 임계 시간을 넘기면 `LLM_CALL / PROGRESS` 활동 로그와 SSE 경고를 남긴다.
 - LLM 호출 실패/타임아웃은 `LLM_CALL / ERROR` 활동 로그를 남긴다.
+- Observability maintenance rollup key의 provider/model `NULL`을 `UNKNOWN`으로 정규화한다.
+- 최근 `OBSERVABILITY_MAINTENANCE` 실패는 system preflight의 `observability` WARN으로 노출한다.
 
 ## 부분 완료 또는 문서와 다른 항목
 
@@ -73,7 +75,8 @@
 ### Observability maintenance
 
 - raw metric, hourly rollup, reporting service는 구현되어 있다.
-- 다만 roadmap의 “provider/model NULL normalization”은 완전히 닫혔다고 보기 어렵다. reporting 쪽은 `UNKNOWN`으로 보정하지만, rollup key 자체는 `None`을 그대로 쓸 수 있다.
+- rollup 저장 단계에서 provider/model `NULL`은 `UNKNOWN`으로 정규화된다.
+- maintenance 실행 기록이 없으면 새 DB 호환을 위해 preflight는 OK 정보성 상태로 두고, 최근 실패가 있으면 WARN으로 노출한다.
 
 ## 아직 미구현으로 확인된 핵심 항목
 
