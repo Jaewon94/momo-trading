@@ -8,7 +8,9 @@
 
 ## 현재 결론
 
-어제/오늘 진행한 고도화 중 주문 안전, PnL 분리, 뉴스 deterministic enrichment, 뉴스 backfill API, LLM 지연 경고는 코드에 반영되어 있다. 다만 현재 떠 있는 9000 서버는 최신 커밋을 아직 로드하지 않아 신규 뉴스 backfill endpoint가 `404`로 확인됐다. 운영 반영에는 안전한 재시작이 필요하다.
+어제/오늘 진행한 고도화 중 주문 안전, PnL 분리, 뉴스 deterministic enrichment, 뉴스 backfill API, LLM 지연 경고, canonical decision event, forward return labeling, decision benchmark, 장마감 청산 이후 자동 BUY 차단은 코드와 운영 서버에 반영되어 있다.
+
+2026-04-23 16:09 KST 기준 `POST /api/v1/admin/news/backfill-enrichment?limit=100&apply=false` dry-run은 정상 응답했고, 변경 후보 1건을 `apply=true`로 반영했다. 재확인 dry-run은 `changed_count=0`으로 같은 범위의 남은 deterministic enrichment 후보가 없었다.
 
 ## 구현 완료로 확인된 항목
 
@@ -54,13 +56,6 @@
 
 ## 부분 완료 또는 문서와 다른 항목
 
-### 뉴스 backfill 운영 반영
-
-- 코드와 테스트는 있다.
-- 현재 9000 서버에서 `POST /api/v1/admin/news/backfill-enrichment?limit=1&apply=false`는 `404`로 확인됐다.
-- 원인: 실행 중인 서버가 최신 커밋을 아직 로드하지 않음.
-- 필요한 조치: 장중 영향을 피해서 서버 재시작 후 dry-run부터 실행.
-
 ### 뉴스 rollout mode
 
 - 현재는 `NEWS_GATE_ENABLED`, `NEWS_SHADOW_ENABLED`, `NEWS_POLL_ENABLED` 같은 boolean 조합이다.
@@ -73,6 +68,14 @@
 - decision event 기준 action/provider/stage/risk gate별 forward return benchmark API는 추가됐다.
 - source별 blocked candidate forward return, gate contribution, 실제 성과 기여도는 아직 없다.
 - 이유: source별 뉴스 attribution과 scanner/Tier 단계별 전체 decision event 연결이 아직 없음.
+
+### 뉴스 backfill 운영 반영
+
+- `POST /api/v1/admin/news/backfill-enrichment?limit=100&apply=false` dry-run 정상.
+- dry-run 결과: 후보 100건, 변경 1건, topic mapped 1건.
+- `apply=true` 적용 결과: Seeking Alpha의 TSM 애리조나 패키징 공장 기사에 `반도체` 토픽 metadata 반영.
+- 적용 후 재확인 dry-run 결과: 후보 100건, 변경 0건.
+- 현재 로컬 DB 기준 `news_items=1,481`, `stocks=0`, `portfolio_holdings=0`, `orders=0`, `market_snapshots=0`이다. 뉴스는 쌓이고 있지만 국내 종목 universe가 비어 있어 종목 attach와 source별 attribution 품질은 제한적이다.
 
 ### Observability maintenance
 
@@ -119,13 +122,11 @@
 
 ## 권장 실행 순서
 
-1. 최신 서버 재시작 후 신규 endpoint와 LLM 지연 경고가 운영에 반영되는지 확인.
-2. `POST /api/v1/admin/news/backfill-enrichment?limit=100&apply=false` dry-run 실행.
-3. dry-run 결과가 타당하면 `apply=true`로 기존 뉴스 deterministic enrichment 적용.
-4. DB 초기화 이후 비어 있을 수 있는 `stocks` universe bootstrap 구현.
-5. candidate scanner/Tier/risk 단계별 decision event 세부 연결과 source별 뉴스 attribution benchmark를 붙인다.
-6. 그 다음 `CandidateScoringService`, `PreAnalysisGate`, `DeterministicFinalGate`를 순서대로 붙인다.
-7. 뉴스 gate는 enum rollout mode로 바꾸고, `BUY_BLOCK_GATE`는 forward return 표본이 쌓인 뒤에만 허용한다.
+1. DB 초기화 이후 비어 있는 `stocks` universe bootstrap 구현. 현재 로컬 DB 기준 `stocks=0`이라 뉴스-종목 매핑과 후보 attribution 품질이 제한된다.
+2. candidate scanner/Tier/risk 단계별 decision event 세부 연결과 source별 뉴스 attribution benchmark를 붙인다.
+3. `CandidateScoringService`, `PreAnalysisGate`, `DeterministicFinalGate`를 순서대로 붙인다.
+4. 동일 종목/동일 조건 분석 캐시와 `AI_SKIPPED` metric을 추가한다.
+5. 뉴스 gate는 enum rollout mode로 바꾸고, `BUY_BLOCK_GATE`는 forward return 표본이 쌓인 뒤에만 허용한다.
 
 ## 당장 바꾸지 말 것
 

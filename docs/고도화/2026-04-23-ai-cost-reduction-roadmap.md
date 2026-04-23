@@ -55,9 +55,15 @@ AI를 없애는 것이 목표가 아니다. 현재 쓰는 Tier1/Tier2 AI는 유�
 - 해외 뉴스는 번역 없이 영문 키워드로 국내 섹터를 매핑한다.
 - 번역은 사람이 화면에서 읽을 필요가 있거나, 중요도가 높은 기사만 수동/오프피크 backfill로 처리한다.
 
+운영 반영:
+
+- 2026-04-23 16:09 KST 기준 `POST /api/v1/admin/news/backfill-enrichment?limit=100&apply=false` dry-run 정상.
+- dry-run 결과 변경 후보 1건을 `apply=true`로 반영했다.
+- 반영 내용: Seeking Alpha의 TSM 애리조나 패키징 공장 기사에 `반도체` 토픽 metadata 추가.
+- 적용 후 같은 범위 dry-run은 `changed_count=0`으로 재확인됐다.
+
 추가 과제:
 
-- 운영 재시작 후 `POST /api/v1/admin/news/backfill-enrichment?apply=true`로 기존 `news_items` 재분류 backfill 실행.
 - DB 초기화 후 `stocks` 테이블이 비면 뉴스-종목 매핑이 사실상 불가능하므로 국내 종목 universe bootstrap을 별도 구현.
 - KRX/YONHAP 국내 일반 뉴스의 리스크 키워드 확장.
 - 정책/매크로 이벤트 source/type 추가.
@@ -258,15 +264,17 @@ TDD 후보:
 
 ## 2026-04-23 코드 검증 업데이트
 
-- 뉴스 deterministic enrichment와 backfill 서비스/API는 코드 구현 및 테스트가 완료됐다.
-- 현재 실행 중인 9000 서버는 최신 커밋을 아직 로드하지 않아 `POST /api/v1/admin/news/backfill-enrichment`가 `404`로 확인됐다. 운영 반영은 서버 재시작 후 확인해야 한다.
-- LLM 지연 경고(`LLM_SLOW_CALL_WARN_SEC`)도 코드/테스트/커밋은 완료됐지만, 현재 실행 중인 서버에는 재시작 전까지 반영되지 않는다.
-- `CandidateScoringService`, `PreAnalysisGate`, `DeterministicFinalGate`, decision event, forward return labeling, `AI_SKIPPED` metric은 아직 구현되지 않았다.
+- 뉴스 deterministic enrichment와 backfill 서비스/API는 코드 구현, 테스트, 운영 API 확인까지 완료됐다.
+- `POST /api/v1/admin/news/backfill-enrichment`는 운영 서버에서 정상 동작한다.
+- `LLM_SLOW_CALL_WARN_SEC` 기반 지연 경고도 코드/테스트/커밋 및 운영 서버 재시작 반영이 완료됐다.
+- canonical decision event, forward return labeling job, decision benchmark read-only API는 구현 완료됐다.
+- 장마감 청산 이후 자동 BUY 차단과 청산 후 자동 재스캔 비활성화도 구현 및 운영 설정 확인이 완료됐다.
+- `CandidateScoringService`, `PreAnalysisGate`, `DeterministicFinalGate`, `AI_SKIPPED` metric은 아직 구현되지 않았다.
 - 세부 진행 현황은 `docs/고도화/2026-04-23-enhancement-status.md`를 기준 문서로 둔다.
 
 ### Phase 1: 뉴스와 후보 선정 입력 보강
 
-1. 뉴스 리스크 분류/테마 매핑 backfill. 코드 구현 완료, 운영 서버 재시작 및 dry-run 적용 대기.
+1. 뉴스 리스크 분류/테마 매핑 backfill. 코드/테스트/운영 적용 완료.
 2. 국내 종목 universe bootstrap. DB 초기화 후 `stocks=0`이면 뉴스 매핑률이 0에 가까워진다.
 3. `CandidateScoringService` 추가.
 4. 시장 스캔에서 deterministic top-N을 만들고 AI 시장 해설은 optional로 분리.

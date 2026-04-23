@@ -38,7 +38,7 @@
 - Track 1, Track 2, Track 3.1, Track 3.1a는 코드와 테스트 기준 완료 상태다.
 - Track 5.1은 observability rollup key의 provider/model `NULL` 정규화와 maintenance failure preflight WARN 노출까지 구현됐다.
 - Track 8 관련으로 LLM 지연 경고(`LLM_SLOW_CALL_WARN_SEC`)는 별도 커밋으로 구현됐다. 다만 cooldown incident dedupe는 아직 미구현이다.
-- 뉴스 deterministic enrichment/backfill은 별도 커밋으로 구현됐다. 다만 현재 라이브 9000 서버는 최신 코드를 로드하지 않아 backfill endpoint가 아직 동작하지 않는다.
+- 뉴스 deterministic enrichment/backfill은 별도 커밋으로 구현됐고, 운영 서버에서 dry-run/apply까지 확인됐다. 2026-04-23 16:09 KST 기준 변경 후보 1건을 적용했고 재확인 dry-run은 `changed_count=0`이었다.
 - Track 6.1 canonical decision event table/service, Track 6.2 forward return labeling job, decision benchmark read-only API는 구현됐다. 다만 scanner/Tier 단계별 전체 연결과 source별 뉴스 attribution은 후속 구현이 필요하다.
 - 장마감 청산 이후 자동 BUY 차단과 청산 후 재스캔 비활성화를 추가했다. 청산 이후 신호는 관측/로그로 남기되 실제 자동 BUY 주문은 막는다.
 - 전체 최신 현황은 `docs/고도화/2026-04-23-enhancement-status.md`에 별도 정리한다.
