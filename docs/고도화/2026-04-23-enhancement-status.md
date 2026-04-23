@@ -95,7 +95,7 @@
 
 - 국내 종목 universe bootstrap 구현. `POST /api/v1/admin/stocks/bootstrap-universe`로 보유/미체결/거래량/등락률 랭킹 기반 최소 universe를 dry-run/apply 할 수 있다.
 - `CandidateScoringService` 구현. 거래량/급등/급락/보유/현금 기반 deterministic top-N 후보 점수를 만들고 시장 스캔 프롬프트에 함께 넣는다.
-- `PreAnalysisGate`.
+- `PreAnalysisGate` 구현. 현재는 Tier1 직전에 `INSUFFICIENT_CASH`, `MISSING_CORE_MARKET_DATA`, `BEARISH_PRE_GATE`를 코드로 차단하고 activity log detail에 gate code를 남긴다.
 - `DeterministicFinalGate`.
 - 동일 종목/동일 조건 분석 캐시.
 - `AI_SKIPPED` metric.
@@ -125,7 +125,7 @@
 ## 권장 실행 순서
 
 1. `POST /api/v1/admin/stocks/bootstrap-universe?rank_limit=50&apply=false` dry-run 후 `apply=true`로 최소 국내 종목 universe를 채운다. 현재 로컬 DB 기준 `stocks=0`이라 먼저 운영 적용 확인이 필요하다.
-2. `PreAnalysisGate`, `DeterministicFinalGate`를 순서대로 붙인다.
+2. `DeterministicFinalGate`를 붙인다.
 3. 동일 종목/동일 조건 분석 캐시와 `AI_SKIPPED` metric을 추가한다.
 4. 뉴스 gate는 enum rollout mode로 바꾸고, `BUY_BLOCK_GATE`는 forward return 표본이 쌓인 뒤에만 허용한다.
 

@@ -130,10 +130,16 @@ TDD 후보:
 - 모든 후보에 AI를 호출하면 후보 수에 비례해 비용이 증가한다.
 - 단순 HOLD/스킵은 기술/리스크 규칙으로 먼저 걸러낼 수 있다.
 
-권장:
+현재 구현:
 
-- `PreAnalysisGate` 추가.
-- 강한 하락 추세, 거래량 부족, 손익비 계산 불가, 뉴스 리스크 과다, 비용 대비 edge 부족이면 Tier1 전에 스킵.
+- `PreAnalysisGateService`를 추가했다.
+- Tier1 직전에 `INSUFFICIENT_CASH`, `MISSING_CORE_MARKET_DATA`, `BEARISH_PRE_GATE`를 deterministic하게 차단한다.
+- `BEARISH_PRE_GATE`는 비보유 종목에만 적용하며, 차트 종합 시그널이 `BEARISH`이고 confidence가 0.6 이상일 때 Tier1 호출을 생략한다.
+- skip 사유는 activity log detail에 `pre_analysis_gate` 코드로 남긴다.
+
+다음 확장:
+
+- 거래량 부족, 손익비 계산 불가, 뉴스 리스크 과다, 비용 대비 edge 부족까지 확대.
 - 차트/추세/리스크 점수와 뉴스/비용 맥락을 정리해 Tier1 프롬프트 입력 품질을 높인다.
 - 명확한 제외 대상만 Tier1 전에 제거하고, 판단이 필요한 후보는 계속 Tier1로 보낸다.
 
@@ -277,22 +283,23 @@ TDD 후보:
 - 장마감 청산 이후 자동 BUY 차단과 청산 후 자동 재스캔 비활성화도 구현 및 운영 설정 확인이 완료됐다.
 - `POST /api/v1/admin/stocks/bootstrap-universe` 기반 최소 종목 universe bootstrap도 구현됐다. 보유/미체결/거래량·등락률 랭킹에서 관측된 국내 종목을 `stocks`에 dry-run/apply 할 수 있다.
 - `CandidateScoringService`는 구현 완료됐다.
-- `PreAnalysisGate`, `DeterministicFinalGate`, `AI_SKIPPED` metric은 아직 구현되지 않았다.
+- `PreAnalysisGate`는 구현 완료됐다.
+- `DeterministicFinalGate`, `AI_SKIPPED` metric은 아직 구현되지 않았다.
 - 세부 진행 현황은 `docs/고도화/2026-04-23-enhancement-status.md`를 기준 문서로 둔다.
 
 ### Phase 1: 뉴스와 후보 선정 입력 보강
 
 1. 뉴스 리스크 분류/테마 매핑 backfill. 코드/테스트/운영 적용 완료.
 2. 국내 종목 universe bootstrap. 코드/테스트는 완료됐고, 운영 DB에 dry-run/apply 확인이 다음 순서다.
-3. `PreAnalysisGate` 추가.
-4. 시장 스캔 deterministic 후보 점수에 cooldown/뉴스 감점을 붙이고, AI 시장 해설 optional 분리를 검토.
+3. 시장 스캔 deterministic 후보 점수에 cooldown/뉴스 감점을 붙이고, AI 시장 해설 optional 분리를 검토.
+4. `DeterministicFinalGate` 설계 및 연결.
 
 ### Phase 2: Tier1/Tier2 입력 품질과 호출 전 gate 강화
 
-1. `PreAnalysisGate` 추가.
-2. `DeterministicFinalGate` 추가.
-3. 동일 종목/동일 조건 분석 캐시.
-4. Tier1/Tier2 프롬프트에 deterministic reason code와 점수 입력.
+1. `DeterministicFinalGate` 추가.
+2. 동일 종목/동일 조건 분석 캐시.
+3. Tier1/Tier2 프롬프트에 deterministic reason code와 점수 입력.
+4. `AI_SKIPPED` metric 추가.
 
 ### Phase 3: 보유종목 재평가 비용 절감
 

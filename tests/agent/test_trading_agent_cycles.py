@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from analysis.chart_analyzer import ChartAnalysisResult
 from agent.trading_agent import TradingAgent
 from core.events import Event, EventType
 from trading.models import BuyingPowerInfo
@@ -648,6 +649,46 @@ async def test_run_trading_cycle_skips_buy_candidate_when_cash_is_blocked(monkey
     assert result["selected_symbols"] == [("005930", "KRX")]
     assert analyze_called is False
     assert any("현금 부족" in args[2] for args, _kwargs in logs)
+
+
+@pytest.mark.asyncio
+async def test_analyze_and_trade_skips_tier1_when_pre_analysis_gate_blocks_bearish_candidate(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    logs = []
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append((args, kwargs))
+
+    async def fake_fetch_symbol_market_data(_symbol: str):
+        price_resp = SimpleNamespace(success=True, data={"price": 70_000}, error=None)
+        daily_resp = SimpleNamespace(
+            success=True,
+            data={"prices": [{"open": 70_000, "high": 71_000, "low": 69_000, "close": 70_000, "volume": 1_000}]},
+            error=None,
+        )
+        minute_resp = SimpleNamespace(success=False, data={}, error="no-minute")
+        return price_resp, daily_resp, minute_resp
+
+    def fake_chart_analyze(*args, **kwargs) -> ChartAnalysisResult:
+        return ChartAnalysisResult(signal_summary={"direction": "BEARISH", "confidence": 0.8})
+
+    async def fail_tier1_analysis(*args, **kwargs):
+        raise AssertionError("Tier1 should not be called when PreAnalysisGate blocks the candidate")
+
+    monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
+    monkeypatch.setattr(agent, "_fetch_symbol_market_data", fake_fetch_symbol_market_data)
+    monkeypatch.setattr("agent.trading_agent.chart_analyzer.analyze", fake_chart_analyze)
+    monkeypatch.setattr(agent, "_tier1_analysis", fail_tier1_analysis)
+
+    result = await agent._analyze_and_trade(
+        {"symbol": "005930", "name": "삼성전자", "strategy_type": "STABLE_SHORT"},
+        "cycle-pre-analysis-gate",
+        portfolio_snapshot={"cash": 1_000_000, "holding_symbols": [], "holding_count": 0, "today_trade_count": 0},
+        dynamic_limits={"min_buy_quantity": 1},
+    )
+
+    assert result == {"symbol": "005930", "signal": False, "executed": False}
+    assert any("사전 게이트 차단" in args[2] for args, _kwargs in logs)
 
 
 @pytest.mark.asyncio

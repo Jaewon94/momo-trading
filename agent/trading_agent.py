@@ -22,6 +22,7 @@ from core.events import Event, EventType, event_bus
 from realtime.event_detector import event_detector
 from scheduler.market_calendar import market_calendar
 from services.activity_logger import activity_logger
+from services.pre_analysis_gate_service import pre_analysis_gate_service
 from services.runtime_reconfiguration_service import runtime_reconfiguration_service
 from strategy.aggressive_short import AggressiveShortStrategy
 from strategy.risk_manager import risk_manager
@@ -610,36 +611,48 @@ class TradingAgent:
         if not daily_df.empty:
             chart_result = chart_analyzer.analyze(daily_df, minute_df)
 
-        # 비보유종목 + 현금으로 1주 매수 불가 → Tier1 스킵 (LLM 비용 절감)
-        holding_syms = [
-            normalize_krx_symbol(item)
-            for item in (portfolio_snapshot or {}).get("holding_symbols", [])
-        ]
-        if symbol not in holding_syms and current_price > 0:
-            available_cash = (portfolio_snapshot or {}).get("cash", 0)
-            min_buy_cost = current_price * (
-                dynamic_limits.get("min_buy_quantity", settings.MIN_BUY_QUANTITY)
-                if dynamic_limits else settings.MIN_BUY_QUANTITY
-            )
-            if available_cash < min_buy_cost:
+        pre_gate = pre_analysis_gate_service.evaluate(
+            symbol=symbol,
+            current_price=current_price,
+            daily_df=daily_df,
+            chart_result=chart_result,
+            portfolio_snapshot=portfolio_snapshot,
+            dynamic_limits=dynamic_limits,
+        )
+        if not pre_gate.approved:
+            if pre_gate.code == "INSUFFICIENT_CASH":
+                available_cash = pre_gate.detail.get("available_cash", 0.0)
+                min_buy_cost = pre_gate.detail.get("min_buy_cost", 0.0)
                 logger.info(
                     "[{}] 현금 부족 → Tier1 스킵: {:,.0f}원 < {:,.0f}원/주",
                     symbol, available_cash, min_buy_cost,
                 )
-                await activity_logger.log(
-                    ActivityType.TIER1_ANALYSIS, ActivityPhase.SKIP,
-                    f"💰 [{name}] 현금 부족으로 Tier1 스킵 ({available_cash:,.0f}원 < {min_buy_cost:,.0f}원)",
-                    cycle_id=cycle_id, symbol=symbol,
+                message = (
+                    f"💰 [{name}] 현금 부족으로 Tier1 스킵 "
+                    f"({available_cash:,.0f}원 < {min_buy_cost:,.0f}원)"
                 )
-                return result
+            elif pre_gate.code == "MISSING_CORE_MARKET_DATA":
+                logger.warning("[{}] 현재가·일봉 모두 없음 → 분석 스킵", symbol)
+                message = f"⚠️ [{name}] 데이터 부족으로 분석 스킵 (현재가·일봉 조회 실패)"
+            elif pre_gate.code == "BEARISH_PRE_GATE":
+                confidence = float(pre_gate.detail.get("confidence", 0.0) or 0.0)
+                logger.info(
+                    "[{}] 강한 하락 추세 → Tier1 스킵: 신뢰도 {:.0%}",
+                    symbol, confidence,
+                )
+                message = (
+                    f"📉 [{name}] 사전 게이트 차단 "
+                    f"(강한 하락 추세, 신뢰도 {confidence:.0%})"
+                )
+            else:
+                logger.info("[{}] PreAnalysisGate 차단: {}", symbol, pre_gate.code)
+                message = f"⛔ [{name}] 사전 게이트 차단 ({pre_gate.code})"
 
-        # 핵심 데이터 없으면 AI 분석 스킵 (LLM 비용 + 무의미한 HOLD 방지)
-        if current_price == 0 and daily_df.empty:
-            logger.warning("[{}] 현재가·일봉 모두 없음 → 분석 스킵", symbol)
             await activity_logger.log(
                 ActivityType.TIER1_ANALYSIS, ActivityPhase.SKIP,
-                f"⚠️ [{name}] 데이터 부족으로 분석 스킵 (현재가·일봉 조회 실패)",
+                message,
                 cycle_id=cycle_id, symbol=symbol,
+                detail={"pre_analysis_gate": pre_gate.code, **pre_gate.detail},
             )
             return result
 
