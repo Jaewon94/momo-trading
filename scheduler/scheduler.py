@@ -806,12 +806,17 @@ class TradingScheduler:
         손절/익절 조건을 체크한다. 데이트레이딩 모드에서는 잔여 시간에 따라
         조기 익절/손절도 실행한다. KRX 장중(09:00~15:30)에만 작동.
         """
-        from scheduler.market_calendar import market_calendar
-        if not market_calendar.is_automated_trading_session():
-            return
-
         from services.activity_logger import activity_logger
         from util.time_util import now_kst
+        from scheduler.market_calendar import market_calendar
+
+        current_dt = now_kst()
+        try:
+            is_automated_session = market_calendar.is_automated_trading_session(current_dt)
+        except TypeError:
+            is_automated_session = market_calendar.is_automated_trading_session()
+        if not is_automated_session:
+            return
 
         try:
             from trading.account_manager import account_manager
@@ -824,13 +829,12 @@ class TradingScheduler:
             await self._update_realtime_subscriptions()
 
             # 강제 청산까지 남은 시간 계산
-            now = now_kst()
-            close_time = now.replace(
+            close_time = current_dt.replace(
                 hour=settings.FORCE_LIQUIDATION_HOUR,
                 minute=settings.FORCE_LIQUIDATION_MINUTE,
                 second=0, microsecond=0,
             )
-            minutes_left = max(0, int((close_time - now).total_seconds() / 60))
+            minutes_left = max(0, int((close_time - current_dt).total_seconds() / 60))
 
             alerts = []
             for h in holdings:
@@ -1291,6 +1295,7 @@ class TradingScheduler:
         import time
 
         from services.activity_logger import activity_logger
+        from services.holdings_precheck_service import holdings_precheck_service
         from strategy.holding_policy import evaluate_overnight_hold
 
         to_sell = []
@@ -1316,6 +1321,7 @@ class TradingScheduler:
 
         # ── 2) LLM Tier1 단일 호출 (전 종목 일괄 판정) ──
         llm_decisions = {}  # symbol → {"action": ..., "reason": ..., "confidence": ...}
+        prechecked_decisions = {}
         llm_provider = ""
         llm_elapsed_ms = 0
 
@@ -1331,28 +1337,48 @@ class TradingScheduler:
             from agent.trading_agent import trading_agent
             market_regime = trading_agent._market_regime or ""
 
-            prompt = build_overnight_prompt(holdings_data, market_regime)
+            llm_candidates = []
+            for data in holdings_data:
+                symbol = data["symbol"]
+                h, trade_result, current_price = holdings_map[symbol]
+                precheck = holdings_precheck_service.evaluate(
+                    holding=h,
+                    trade_result=trade_result,
+                    current_price=current_price,
+                    settings=settings,
+                )
+                if precheck.should_skip_llm:
+                    prechecked_decisions[symbol] = {
+                        "action": precheck.action,
+                        "reason": precheck.reason,
+                        "confidence": 0.0,
+                    }
+                else:
+                    llm_candidates.append(data)
 
-            start = time.time()
-            result_text, llm_provider = await llm_factory.generate_tier1(
-                prompt, system_prompt=OVERNIGHT_HOLD_SYSTEM,
-            )
-            llm_elapsed_ms = int((time.time() - start) * 1000)
+            if llm_candidates:
+                prompt = build_overnight_prompt(llm_candidates, market_regime)
 
-            parsed = parse_llm_json(result_text)
-            if parsed and "decisions" in parsed:
-                for d in parsed["decisions"]:
-                    symbol = d.get("symbol", "")
-                    if symbol and symbol in holdings_map:
-                        llm_decisions[symbol] = {
-                            "action": d.get("action", "SELL").upper(),
-                            "reason": d.get("reason", ""),
-                            "confidence": d.get("confidence", 0.0),
-                        }
+                start = time.time()
+                result_text, llm_provider = await llm_factory.generate_tier1(
+                    prompt, system_prompt=OVERNIGHT_HOLD_SYSTEM,
+                )
+                llm_elapsed_ms = int((time.time() - start) * 1000)
+
+                parsed = parse_llm_json(result_text)
+                if parsed and "decisions" in parsed:
+                    for d in parsed["decisions"]:
+                        symbol = d.get("symbol", "")
+                        if symbol and symbol in holdings_map:
+                            llm_decisions[symbol] = {
+                                "action": d.get("action", "SELL").upper(),
+                                "reason": d.get("reason", ""),
+                                "confidence": d.get("confidence", 0.0),
+                            }
 
             logger.info(
-                "스마트 청산 LLM 판정 완료: {}건 / {} ({}ms)",
-                len(llm_decisions), llm_provider, llm_elapsed_ms,
+                "스마트 청산 판정 완료: LLM {}건 / 정책 사전판단 {}건 / {} ({}ms)",
+                len(llm_decisions), len(prechecked_decisions), llm_provider, llm_elapsed_ms,
             )
         except Exception as e:
             logger.warning("스마트 청산 LLM 호출 실패 → 코드 룰 폴백: {}", str(e))
@@ -1369,7 +1395,21 @@ class TradingScheduler:
             h, trade_result, current_price = holdings_map[symbol]
             stock_name = data["stock_name"]
 
-            if symbol in llm_decisions:
+            if symbol in prechecked_decisions:
+                decision = prechecked_decisions[symbol]
+                action = decision["action"]
+                reason = decision["reason"]
+                conf = decision["confidence"]
+
+                if action == "HOLD":
+                    to_hold.append(h)
+                else:
+                    to_sell.append(h)
+                log_lines.append(
+                    f"  - {stock_name}({symbol}): {action} — {reason} (정책 사전판단)"
+                )
+                logger.info("스마트 청산 사전판단 {}: {} — {}", action, symbol, reason)
+            elif symbol in llm_decisions:
                 decision = llm_decisions[symbol]
                 action = decision["action"]
                 reason = decision["reason"]
@@ -1423,12 +1463,24 @@ class TradingScheduler:
         import asyncio
         import time
 
-        from scheduler.market_calendar import market_calendar
-        if not market_calendar.is_automated_trading_session():
-            return
-
         from services.activity_logger import activity_logger
+        from services.holdings_precheck_service import holdings_precheck_service
         from util.time_util import now_kst
+        from scheduler.market_calendar import market_calendar
+
+        current_dt = now_kst()
+        try:
+            is_trading_hours = market_calendar.is_krx_trading_hours(current_dt)
+        except TypeError:
+            is_trading_hours = market_calendar.is_krx_trading_hours()
+        if not is_trading_hours:
+            return
+        try:
+            is_automated_session = market_calendar.is_automated_trading_session(current_dt)
+        except TypeError:
+            is_automated_session = market_calendar.is_automated_trading_session()
+        if not is_automated_session:
+            return
 
         try:
             from trading.account_manager import account_manager
@@ -1458,16 +1510,16 @@ class TradingScheduler:
                 return
 
             # 잔여 거래 시간 계산
-            now = now_kst()
-            close_time = now.replace(
+            close_time = current_dt.replace(
                 hour=settings.FORCE_LIQUIDATION_HOUR,
                 minute=settings.FORCE_LIQUIDATION_MINUTE,
                 second=0, microsecond=0,
             )
-            minutes_left = max(0, int((close_time - now).total_seconds() / 60))
+            minutes_left = max(0, int((close_time - current_dt).total_seconds() / 60))
 
             # ── 2) LLM Tier1 호출 ──
             llm_decisions = {}
+            prechecked_decisions = {}
             llm_provider = ""
             llm_elapsed_ms = 0
 
@@ -1483,32 +1535,54 @@ class TradingScheduler:
                 market_regime = trading_agent._market_regime or ""
                 market_context = trading_agent._market_context or ""
 
-                prompt = build_holdings_review_prompt(
-                    holdings_data, market_regime, market_context, minutes_left,
-                )
+                llm_candidates = []
+                for data in holdings_data:
+                    symbol = data["symbol"]
+                    h, trade_result, current_price = holdings_map[symbol]
+                    precheck = holdings_precheck_service.evaluate(
+                        holding=h,
+                        trade_result=trade_result,
+                        current_price=current_price,
+                        settings=settings,
+                    )
+                    if precheck.should_skip_llm:
+                        prechecked_decisions[symbol] = {
+                            "action": precheck.action,
+                            "reason": precheck.reason,
+                            "confidence": 0.0,
+                            "adjusted_stop_loss_price": None,
+                            "adjusted_take_profit_price": None,
+                        }
+                    else:
+                        llm_candidates.append(data)
 
-                start = time.time()
-                result_text, llm_provider = await llm_factory.generate_tier1(
-                    prompt, system_prompt=HOLDINGS_REVIEW_SYSTEM,
-                )
-                llm_elapsed_ms = int((time.time() - start) * 1000)
+                if llm_candidates:
+                    prompt = build_holdings_review_prompt(
+                        llm_candidates, market_regime, market_context, minutes_left,
+                    )
 
-                parsed = parse_llm_json(result_text)
-                if parsed and "decisions" in parsed:
-                    for d in parsed["decisions"]:
-                        symbol = d.get("symbol", "")
-                        if symbol and symbol in holdings_map:
-                            llm_decisions[symbol] = {
-                                "action": d.get("action", "HOLD").upper(),
-                                "reason": d.get("reason", ""),
-                                "confidence": d.get("confidence", 0.0),
-                                "adjusted_stop_loss_price": d.get("adjusted_stop_loss_price"),
-                                "adjusted_take_profit_price": d.get("adjusted_take_profit_price"),
-                            }
+                    start = time.time()
+                    result_text, llm_provider = await llm_factory.generate_tier1(
+                        prompt, system_prompt=HOLDINGS_REVIEW_SYSTEM,
+                    )
+                    llm_elapsed_ms = int((time.time() - start) * 1000)
+
+                    parsed = parse_llm_json(result_text)
+                    if parsed and "decisions" in parsed:
+                        for d in parsed["decisions"]:
+                            symbol = d.get("symbol", "")
+                            if symbol and symbol in holdings_map:
+                                llm_decisions[symbol] = {
+                                    "action": d.get("action", "HOLD").upper(),
+                                    "reason": d.get("reason", ""),
+                                    "confidence": d.get("confidence", 0.0),
+                                    "adjusted_stop_loss_price": d.get("adjusted_stop_loss_price"),
+                                    "adjusted_take_profit_price": d.get("adjusted_take_profit_price"),
+                                }
 
                 logger.info(
-                    "장중 보유 재평가 LLM 완료: {}건 / {} ({}ms)",
-                    len(llm_decisions), llm_provider, llm_elapsed_ms,
+                    "장중 보유 재평가 완료: LLM {}건 / 정책 사전판단 {}건 / {} ({}ms)",
+                    len(llm_decisions), len(prechecked_decisions), llm_provider, llm_elapsed_ms,
                 )
             except Exception as e:
                 logger.warning("장중 보유 재평가 LLM 실패 → 폴백: {}", str(e))
@@ -1526,7 +1600,12 @@ class TradingScheduler:
                 h, trade_result, current_price = holdings_map[symbol]
                 stock_name = data["stock_name"]
 
-                if symbol in llm_decisions:
+                if symbol in prechecked_decisions:
+                    decision = prechecked_decisions[symbol]
+                    action = decision["action"]
+                    reason = decision["reason"]
+                    conf = decision["confidence"]
+                elif symbol in llm_decisions:
                     decision = llm_decisions[symbol]
                     action = decision["action"]
                     reason = decision["reason"]

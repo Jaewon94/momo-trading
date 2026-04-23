@@ -104,6 +104,9 @@
 - Tier1 비용 pre-gate 구현. Tier1 BUY 분석의 target/current price만으로 edge가 비용 대비 명백히 부족하면 Tier2 호출 전에 차단한다.
 - `AI_SKIPPED` metric 구현. `PRE_ANALYSIS_GATE`, `TIER1_CACHE`, `DETERMINISTIC_FINAL_GATE`, `TIER1_COST_GATE`에서 절감된 Tier와 reason code를 execution metric으로 남긴다.
 - Tier1/Tier2 deterministic prompt context 구현. 프롬프트에 `Deterministic 사전 판단` 섹션을 추가해 차트 신호, 현금/최소수량, RR 비율, 손절 필수 여부, 매수가능수량을 구조화해 전달한다.
+- `HoldingsPrecheckService` 구현. 장중 보유 재평가와 스마트 청산에서 `holding_policy`가 명확한 SELL 사유를 내는 종목은 LLM 전에 걸러 즉시 코드 판단을 사용한다.
+- 현재 precheck가 바로 차단하는 사유는 `TradeResult 없음`, `매입가 정보 없음`, `손실 과대`, `보유일 초과`, `AI 신뢰도 저하`, `목표가 도달` 계열이다.
+- precheck 평가 자체가 불가능하면 예외를 삼키고 기존 LLM 경로를 그대로 유지해 회귀를 막는다.
 - LLM cooldown incident dedupe.
 
 ### Admin UX 후속
@@ -130,7 +133,7 @@
 ## 권장 실행 순서
 
 1. `POST /api/v1/admin/stocks/bootstrap-universe?rank_limit=50&apply=false` dry-run 후 `apply=true`로 최소 국내 종목 universe를 채운다. 현재 로컬 DB 기준 `stocks=0`이라 먼저 운영 적용 확인이 필요하다.
-2. 보유종목 재평가 비용 절감 설계를 진행한다.
+2. 보유종목 장중 재평가/스마트 청산에서 명확한 HOLD 케이스까지 deterministic skip으로 확장할지 검토한다.
 3. 뉴스 gate의 Tier2 전 차단 이동은 shadow/rollout 표본을 더 확인한 뒤 재검토한다.
 
 ## 당장 바꾸지 말 것

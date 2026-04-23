@@ -192,6 +192,10 @@ TDD 후보:
 
 - 보유종목 전체를 Tier1 한 번에 넣어 HOLD/SELL/ADD_BUY를 판단한다.
 - LLM 실패 시 `holding_policy.evaluate_overnight_hold` 코드 룰로 폴백한다.
+- 2026-04-24 구현으로 `HoldingsPrecheckService`를 추가했다.
+- 장중 보유 재평가와 스마트 청산에서 `holding_policy`가 명확한 SELL 사유를 내는 종목은 LLM 전에 걸러 코드 판단을 바로 사용한다.
+- 현재 precheck 사유는 `TradeResult 없음`, `매입가 정보 없음`, `손실 과대`, `보유일 초과`, `AI 신뢰도 저하`, `목표가 도달` 계열이다.
+- precheck 평가 자체가 실패하면 예외를 삼키고 기존 LLM 경로를 그대로 유지한다.
 
 문제:
 
@@ -204,6 +208,12 @@ TDD 후보:
 - 예외 조건: 큰 갭, 뉴스 리스크 발생, 목표/손절 근처, 보유일 임계값 근처, 포트폴리오 현금 부족.
 - 보유종목별 last-review cache를 둔다.
 
+다음 확장:
+
+- 명확한 HOLD 정상 상태까지 deterministic skip을 넓힐지 shadow 데이터로 검토.
+- 보유종목 review cache를 붙여 30분 내 동일 조건 재호출을 줄인다.
+- precheck reason code를 `AI_SKIPPED` metric과 리포트에 더 직접 연결한다.
+
 TDD 후보:
 
 - 손절/목표/보유일 명확 -> LLM 미호출.
@@ -215,12 +225,20 @@ TDD 후보:
 현재:
 
 - 장마감/청산 쪽에서 보유종목 전체를 Tier1로 판단하고, 실패 시 코드 룰 폴백.
+- 2026-04-24 구현으로 스마트 청산도 같은 `HoldingsPrecheckService`를 먼저 태운다.
+- 명확한 SELL 사유는 LLM에 보내지 않고 `정책 사전판단`으로 바로 분류한다.
+- 애매한 케이스만 기존 overnight Tier1 일괄 호출로 넘긴다.
 
 권장:
 
 - `holding_policy` 결과를 LLM 입력의 구조화된 사전 판단으로 제공한다.
 - 손실 과대, 목표 도달, 보유일 초과, TradeResult 없음처럼 명확한 상태는 별도 reason code로 표시한다.
 - LLM은 이 reason code를 참고해 오버나이트 허용 여부와 예외 판단을 한다.
+
+다음 확장:
+
+- 명확한 HOLD 케이스를 shadow-only로 먼저 측정한 뒤 LLM skip 확대 여부 결정.
+- 스마트 청산 precheck 결과를 benchmark와 `AI_SKIPPED` metric에 더 직접 연결.
 
 TDD 후보:
 

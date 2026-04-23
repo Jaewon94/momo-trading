@@ -1927,6 +1927,39 @@ async def test_smart_liquidation_respects_explicit_llm_sell_decision(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_smart_liquidation_skips_llm_for_clear_policy_sell(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    logs: list[str] = []
+    holding = SimpleNamespace(symbol="005930", name="삼성전자", quantity=2)
+    trade_result = SimpleNamespace(stock_name="삼성전자", strategy_type="STABLE_SHORT")
+
+    async def fake_collect_holdings_data(_sellable):
+        return [{"symbol": "005930", "stock_name": "삼성전자"}], {"005930": (holding, trade_result, 95_000)}, []
+
+    async def fail_generate_tier1(prompt, system_prompt=None):
+        raise AssertionError("LLM should not be called for clear policy sell")
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append(args[2])
+
+    monkeypatch.setattr(scheduler, "_collect_holdings_data", fake_collect_holdings_data)
+    monkeypatch.setattr("analysis.llm.prompts.overnight_hold.build_overnight_prompt", lambda data, regime: "prompt")
+    monkeypatch.setattr("analysis.llm.llm_factory.llm_factory.generate_tier1", fail_generate_tier1)
+    monkeypatch.setattr(
+        "services.holdings_precheck_service.evaluate_overnight_hold",
+        lambda *args, **kwargs: SimpleNamespace(action="SELL", reason="손실 과대 (-5.0% < -3%) — 손절 수준 도달"),
+    )
+    monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.trading_agent.trading_agent._market_regime", "RANGE")
+
+    to_sell, to_hold = await scheduler._smart_liquidation([holding])
+
+    assert to_sell == [holding]
+    assert to_hold == []
+    assert "정책 사전판단" in logs[0]
+
+
+@pytest.mark.asyncio
 async def test_intraday_holdings_review_sells_position_and_triggers_rescan(monkeypatch) -> None:
     scheduler = TradingScheduler()
     logs: list[str] = []
