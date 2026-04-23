@@ -25,6 +25,7 @@ from services.activity_logger import activity_logger
 from services.deterministic_final_gate_service import deterministic_final_gate_service
 from services.pre_analysis_gate_service import pre_analysis_gate_service
 from services.runtime_reconfiguration_service import runtime_reconfiguration_service
+from services.tier1_analysis_cache_service import tier1_analysis_cache_service
 from strategy.aggressive_short import AggressiveShortStrategy
 from strategy.risk_manager import risk_manager
 from strategy.signal import TradeSignal
@@ -673,24 +674,55 @@ class TradingAgent:
         except Exception as e:
             logger.warning("피드백 컨텍스트 빌드 실패: {}", str(e))
 
-        # 3d. Tier 1 AI 심층 분석
-        t1_timer = activity_logger.timer()
-        await activity_logger.log(
-            ActivityType.TIER1_ANALYSIS, ActivityPhase.START,
-            f"\U0001f4ca [{name}] Tier1 분석 시작",
-            cycle_id=cycle_id, symbol=symbol,
+        cache_key = tier1_analysis_cache_service.build_key(
+            symbol=symbol,
+            strategy_type=strategy_type,
+            current_price=current_price,
+            chart_result=chart_result,
+            portfolio_snapshot=portfolio_snapshot,
+            market_regime=self._market_regime,
+            feedback_context=feedback_context,
         )
+        cache_allowed = not manual_provider_override and not manual_model_override
+        analysis = tier1_analysis_cache_service.get(cache_key) if cache_allowed else None
+        t1_elapsed = 0
+        if analysis:
+            await activity_logger.log(
+                ActivityType.TIER1_ANALYSIS, ActivityPhase.COMPLETE,
+                f"\U0001f4ca [{name}] Tier1 캐시 재사용: {analysis.get('recommendation', '')} "
+                f"| 신뢰도 {(analysis.get('confidence') or 0):.0%}",
+                cycle_id=cycle_id, symbol=symbol,
+                detail={
+                    "tier1_analysis_cache": "HIT",
+                    "recommendation": analysis.get("recommendation"),
+                    "confidence": analysis.get("confidence") or 0,
+                },
+                llm_provider=analysis.get("provider"),
+                llm_tier="TIER1",
+                execution_time_ms=0,
+                confidence=analysis.get("confidence") or 0,
+            )
+        else:
+            # 3d. Tier 1 AI 심층 분석
+            t1_timer = activity_logger.timer()
+            await activity_logger.log(
+                ActivityType.TIER1_ANALYSIS, ActivityPhase.START,
+                f"\U0001f4ca [{name}] Tier1 분석 시작",
+                cycle_id=cycle_id, symbol=symbol,
+            )
 
-        analysis = await self._tier1_analysis(
-            symbol, name, current_price, chart_result,
-            price_resp.data or {}, feedback_context,
-            market_context=self._market_context,
-            trading_context=self._trading_context,
-            cycle_id=cycle_id,
-            manual_provider_override=manual_provider_override,
-            manual_model_override=manual_model_override,
-        )
-        t1_elapsed = activity_logger.elapsed_ms(t1_timer)
+            analysis = await self._tier1_analysis(
+                symbol, name, current_price, chart_result,
+                price_resp.data or {}, feedback_context,
+                market_context=self._market_context,
+                trading_context=self._trading_context,
+                cycle_id=cycle_id,
+                manual_provider_override=manual_provider_override,
+                manual_model_override=manual_model_override,
+            )
+            t1_elapsed = activity_logger.elapsed_ms(t1_timer)
+            if cache_allowed:
+                tier1_analysis_cache_service.put(cache_key, analysis)
 
         if not analysis:
             await activity_logger.log(

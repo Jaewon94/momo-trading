@@ -8,6 +8,7 @@ import pytest
 from analysis.chart_analyzer import ChartAnalysisResult
 from agent.trading_agent import TradingAgent
 from core.events import Event, EventType
+from services.tier1_analysis_cache_service import tier1_analysis_cache_service
 from trading.models import BuyingPowerInfo
 
 
@@ -738,6 +739,56 @@ async def test_analyze_and_trade_skips_tier2_when_deterministic_final_gate_block
 
     assert result == {"symbol": "005930", "signal": False, "executed": False}
     assert any("신뢰도 게이트 차단" in args[2] for args, _kwargs in logs)
+
+
+@pytest.mark.asyncio
+async def test_analyze_and_trade_reuses_tier1_cache_for_same_symbol_conditions(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    logs = []
+    tier1_calls = 0
+    tier1_analysis_cache_service.clear()
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append((args, kwargs))
+
+    async def fake_fetch_symbol_market_data(_symbol: str):
+        price_resp = SimpleNamespace(success=True, data={"price": 70_000}, error=None)
+        daily_resp = SimpleNamespace(
+            success=True,
+            data={"prices": [{"open": 70_000, "high": 71_000, "low": 69_000, "close": 70_000, "volume": 1_000}]},
+            error=None,
+        )
+        minute_resp = SimpleNamespace(success=False, data={}, error="no-minute")
+        return price_resp, daily_resp, minute_resp
+
+    async def fake_tier1_analysis(*args, **kwargs) -> dict:
+        nonlocal tier1_calls
+        tier1_calls += 1
+        return {
+            "recommendation": "HOLD",
+            "confidence": 0.65,
+            "reason": "테스트 캐시",
+            "provider": "CODEX",
+        }
+
+    async def fail_tier2_review(*args, **kwargs):
+        raise AssertionError("Tier2 should not be called for HOLD")
+
+    monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
+    monkeypatch.setattr(agent, "_fetch_symbol_market_data", fake_fetch_symbol_market_data)
+    monkeypatch.setattr(agent, "_tier1_analysis", fake_tier1_analysis)
+    monkeypatch.setattr(agent, "_tier2_review", fail_tier2_review)
+
+    payload = {"symbol": "005930", "name": "삼성전자", "strategy_type": "STABLE_SHORT"}
+    snapshot = {"cash": 1_000_000, "holding_symbols": [], "holding_count": 0, "today_trade_count": 0}
+
+    first = await agent._analyze_and_trade(payload, "cycle-tier1-cache-1", portfolio_snapshot=snapshot)
+    second = await agent._analyze_and_trade(payload, "cycle-tier1-cache-2", portfolio_snapshot=snapshot)
+
+    assert first == {"symbol": "005930", "signal": False, "executed": False}
+    assert second == {"symbol": "005930", "signal": False, "executed": False}
+    assert tier1_calls == 1
+    assert any("Tier1 캐시 재사용" in args[2] for args, _kwargs in logs)
 
 
 @pytest.mark.asyncio
