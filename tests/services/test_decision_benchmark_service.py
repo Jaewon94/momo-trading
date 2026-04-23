@@ -96,6 +96,13 @@ async def test_decision_benchmark_service_groups_labeled_returns() -> None:
         scanner_score=0.84,
         strategy_type="AGGRESSIVE_SHORT",
         tier1_decision="BUY",
+        metadata={
+            "signal_metadata": {
+                "news_top_contributors": [
+                    {"source_code": "DART", "headline": "리스크 공시", "pressure": 0.6},
+                ]
+            }
+        },
         created_at=created_at,
     )
     await _add_labeled_decision(
@@ -141,8 +148,13 @@ async def test_decision_benchmark_service_groups_labeled_returns() -> None:
     assert report["by_tier1_decision"]["BUY"]["event_count"] == 3
     assert report["by_tier2_decision"]["BUY"]["event_count"] == 1
     assert report["by_tier2_decision"]["HOLD"]["event_count"] == 1
-    assert report["by_news_source_attribution"]["DART"]["event_count"] == 1
+    assert report["by_news_source_attribution"]["DART"]["event_count"] == 2
     assert report["by_news_source_attribution"]["BLOOMBERG"]["avg_return_pct"] == 0.5
+    assert report["by_news_source_blocked"]["DART"]["event_count"] == 1
+    assert report["by_news_source_blocked"]["DART"]["avg_return_pct"] == -1.0
+    assert report["by_news_source_blocked_comparison"]["DART"]["blocked"]["event_count"] == 1
+    assert report["by_news_source_blocked_comparison"]["DART"]["actual_buy"]["event_count"] == 1
+    assert report["by_news_source_blocked_comparison"]["DART"]["delta_avg_return_pct"] == -3.0
     assert report["controls"]["actual_buy"]["event_count"] == 2
     assert report["controls"]["non_buy_candidates"]["event_count"] == 1
     assert report["controls"]["blocked_or_skipped"]["event_count"] == 1

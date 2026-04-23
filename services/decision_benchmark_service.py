@@ -110,6 +110,8 @@ class DecisionBenchmarkService:
             "by_provider": self._group(points, lambda item: item.provider),
             "by_risk_gate": self._group(points, lambda item: item.risk_gate_result),
             "by_news_source_attribution": self._group_news_source(points),
+            "by_news_source_blocked": self._group_news_source_blocked(points),
+            "by_news_source_blocked_comparison": self._group_news_source_blocked_comparison(points),
             "controls": self._control_groups(points),
         }
 
@@ -147,6 +149,52 @@ class DecisionBenchmarkService:
                 seen.add(normalized)
                 grouped[normalized].append(item)
         return {key: self._metrics(items) for key, items in sorted(grouped.items())}
+
+    def _group_news_source_blocked(self, points: list[DecisionBenchmarkPoint]) -> dict:
+        grouped: dict[str, list[DecisionBenchmarkPoint]] = defaultdict(list)
+        for item in points:
+            if not self._is_blocked_candidate(item):
+                continue
+            seen: set[str] = set()
+            for code in item.news_source_codes:
+                normalized = str(code or "").upper().strip()
+                if not normalized or normalized in seen:
+                    continue
+                seen.add(normalized)
+                grouped[normalized].append(item)
+        return {key: self._metrics(items) for key, items in sorted(grouped.items())}
+
+    def _group_news_source_blocked_comparison(self, points: list[DecisionBenchmarkPoint]) -> dict:
+        blocked_by_source: dict[str, list[DecisionBenchmarkPoint]] = defaultdict(list)
+        buy_by_source: dict[str, list[DecisionBenchmarkPoint]] = defaultdict(list)
+
+        for item in points:
+            seen: set[str] = set()
+            for code in item.news_source_codes:
+                normalized = str(code or "").upper().strip()
+                if not normalized or normalized in seen:
+                    continue
+                seen.add(normalized)
+                if self._is_blocked_candidate(item):
+                    blocked_by_source[normalized].append(item)
+                if item.final_action == "BUY":
+                    buy_by_source[normalized].append(item)
+
+        keys = sorted(set(blocked_by_source) | set(buy_by_source))
+        report: dict[str, dict] = {}
+        for key in keys:
+            blocked_metrics = self._metrics(blocked_by_source.get(key, []))
+            buy_metrics = self._metrics(buy_by_source.get(key, []))
+            report[key] = {
+                "blocked": blocked_metrics,
+                "actual_buy": buy_metrics,
+                "delta_avg_return_pct": round(
+                    float(blocked_metrics.get("avg_return_pct") or 0.0)
+                    - float(buy_metrics.get("avg_return_pct") or 0.0),
+                    4,
+                ),
+            }
+        return report
 
     def _random_same_count(
         self,
@@ -191,6 +239,10 @@ class DecisionBenchmarkService:
             item.risk_gate_result,
         ])
         return hashlib.md5(payload.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _is_blocked_candidate(item: DecisionBenchmarkPoint) -> bool:
+        return item.final_action == "SKIP" or item.risk_gate_result == "BLOCKED"
 
     @staticmethod
     def _extract_news_source_codes(metadata_json: str | None) -> tuple[str, ...]:

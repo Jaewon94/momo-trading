@@ -313,7 +313,7 @@ TDD 후보:
 
 ### Phase 2: Tier1/Tier2 입력 품질과 호출 전 gate 강화
 
-1. 뉴스 source별 blocked candidate forward return attribution 고도화.
+1. 뉴스 source별 blocked candidate forward return attribution 고도화. 1차 read-only 비교는 완료.
 2. 보유종목 재평가 비용 절감 설계.
 3. 뉴스 gate의 Tier2 전 차단 이동은 shadow/rollout 표본을 더 확인한 뒤 재검토.
 

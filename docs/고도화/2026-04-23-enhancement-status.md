@@ -70,8 +70,9 @@
 - decision event 기준 action/provider/stage/risk gate별 forward return benchmark API는 추가됐다.
 - 현재 benchmark는 `event.source`, `strategy_type`, `tier1_decision`, `tier2_decision`, `metadata_json`의 `news_top_contributors.source_code`까지 read-only 집계한다.
 - 동일 표본 수 기준 `random_same_count`, `scanner_top_same_count`, `tier1_buy_only`, `tier2_buy_only` control group도 read-only로 추가됐다.
-- 다만 source별 blocked candidate forward return, gate contribution, 실제 성과 기여도는 아직 부족하다.
-- 이유: 현재 control group은 canonical decision event 기반의 근사 비교이며, 실제 동일 후보군 full attribution과 주문/차단 단계별 causal 비교는 아직 없음.
+- 이번 확장으로 source별 blocked candidate forward return과 actual buy 대비 평균 수익률 차이를 read-only로 볼 수 있게 됐다.
+- 현재 `by_news_source_blocked`, `by_news_source_blocked_comparison`가 추가되어 source별 blocked 후보군과 source별 실제 BUY 후보군을 비교할 수 있다.
+- 다만 gate contribution의 인과 추정과 동일 후보군 full attribution은 아직 없음.
 
 ### 뉴스 backfill 운영 반영
 
@@ -129,8 +130,8 @@
 ## 권장 실행 순서
 
 1. `POST /api/v1/admin/stocks/bootstrap-universe?rank_limit=50&apply=false` dry-run 후 `apply=true`로 최소 국내 종목 universe를 채운다. 현재 로컬 DB 기준 `stocks=0`이라 먼저 운영 적용 확인이 필요하다.
-2. 뉴스 source별 blocked candidate forward return attribution을 고도화한다.
-3. 보유종목 재평가 비용 절감 설계를 진행한다.
+2. 보유종목 재평가 비용 절감 설계를 진행한다.
+3. 뉴스 gate의 Tier2 전 차단 이동은 shadow/rollout 표본을 더 확인한 뒤 재검토한다.
 
 ## 당장 바꾸지 말 것
 
