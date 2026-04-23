@@ -89,12 +89,18 @@ TDD 후보:
 - 매 사이클 AI가 후보를 고르면 시장 변동이 작아도 비용이 계속 발생한다.
 - 후보 품질이 낮으면 Tier1/Tier2가 비싼 판단을 해도 결과가 좋아지기 어렵다.
 
-권장:
+현재 구현:
 
-- `CandidateScoringService`를 별도 추가한다.
-- 입력: 거래량 랭킹, 등락률, 현금, 보유종목, 최근 분석/매매 이력, 뉴스 압력.
-- 출력: 후보 점수, 전략 타입, 제외 사유.
-- AI는 정제된 후보군을 받아 시장 국면, 후보 간 우선순위, 예외 상황을 판단한다.
+- `CandidateScoringService`를 추가했다.
+- 현재 입력은 거래량 랭킹, 급등/급락, 보유종목, 현금이다.
+- 출력은 후보 점수, source, 1주 매수 가능 여부, 보유 후보 여부, 근거 문구다.
+- 시장 스캔 프롬프트에 deterministic 후보 top-N 요약을 함께 넣어 AI가 더 정제된 입력으로 시장 국면과 최종 종목을 판단하게 했다.
+
+다음 확장:
+
+- 최근 분석/매매 이력 cooldown 반영.
+- 뉴스 압력/리스크 감점 반영.
+- 전략 타입 추천과 제외 사유 코드 정교화.
 
 대체 규칙 예:
 
@@ -270,15 +276,16 @@ TDD 후보:
 - canonical decision event, forward return labeling job, decision benchmark read-only API는 구현 완료됐다.
 - 장마감 청산 이후 자동 BUY 차단과 청산 후 자동 재스캔 비활성화도 구현 및 운영 설정 확인이 완료됐다.
 - `POST /api/v1/admin/stocks/bootstrap-universe` 기반 최소 종목 universe bootstrap도 구현됐다. 보유/미체결/거래량·등락률 랭킹에서 관측된 국내 종목을 `stocks`에 dry-run/apply 할 수 있다.
-- `CandidateScoringService`, `PreAnalysisGate`, `DeterministicFinalGate`, `AI_SKIPPED` metric은 아직 구현되지 않았다.
+- `CandidateScoringService`는 구현 완료됐다.
+- `PreAnalysisGate`, `DeterministicFinalGate`, `AI_SKIPPED` metric은 아직 구현되지 않았다.
 - 세부 진행 현황은 `docs/고도화/2026-04-23-enhancement-status.md`를 기준 문서로 둔다.
 
 ### Phase 1: 뉴스와 후보 선정 입력 보강
 
 1. 뉴스 리스크 분류/테마 매핑 backfill. 코드/테스트/운영 적용 완료.
 2. 국내 종목 universe bootstrap. 코드/테스트는 완료됐고, 운영 DB에 dry-run/apply 확인이 다음 순서다.
-3. `CandidateScoringService` 추가.
-4. 시장 스캔에서 deterministic top-N을 만들고 AI 시장 해설은 optional로 분리.
+3. `PreAnalysisGate` 추가.
+4. 시장 스캔 deterministic 후보 점수에 cooldown/뉴스 감점을 붙이고, AI 시장 해설 optional 분리를 검토.
 
 ### Phase 2: Tier1/Tier2 입력 품질과 호출 전 gate 강화
 

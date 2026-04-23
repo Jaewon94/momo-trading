@@ -63,11 +63,13 @@ class FakeScannerBrokerAdapter:
 async def test_market_scanner_uses_broker_adapter_for_scan(monkeypatch) -> None:
     scanner = MarketScanner(broker_adapter=FakeScannerBrokerAdapter())
     logs = []
+    captured_prompt: dict[str, str] = {}
 
     async def fake_log(*args, **kwargs) -> None:
         logs.append((args, kwargs))
 
     async def fake_generate_tier1(*args, **kwargs) -> tuple[str, str]:
+        captured_prompt["prompt"] = args[0]
         return (
             """
             {
@@ -98,6 +100,9 @@ async def test_market_scanner_uses_broker_adapter_for_scan(monkeypatch) -> None:
     assert result["provider"] == "fake-provider"
     assert result["available_cash"] == 900_000
     assert result["selected"][0]["symbol"] == "005930"
+    assert result["scored_candidates"][0]["symbol"] == "005930"
+    assert "Deterministic 후보 점수" in captured_prompt["prompt"]
+    assert "삼성전자(005930)" in captured_prompt["prompt"]
     assert logs
     assert scanner._broker_adapter.calls == [
         ("balance", ""),

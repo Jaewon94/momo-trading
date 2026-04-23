@@ -8,6 +8,7 @@ from analysis.llm.llm_factory import llm_factory
 from analysis.llm.prompts.market_scan import MARKET_SCAN_PROMPT, MARKET_SCAN_SYSTEM
 from core.database import AsyncSessionLocal
 from services.activity_logger import activity_logger
+from services.candidate_scoring_service import candidate_scoring_service
 from trading.adapters.base import BrokerAdapter
 from trading.broker_factory import get_broker_adapter
 from trading.enums import ActivityPhase, ActivityType
@@ -105,6 +106,15 @@ class MarketScanner:
         data_elapsed = activity_logger.elapsed_ms(timer)
         logger.debug("MCP 데이터 수집 완료: {}ms", data_elapsed)
 
+        scored_candidates = candidate_scoring_service.score_candidates(
+            volume_rank=volume_rank,
+            surge_data=surge_data,
+            drop_data=drop_data,
+            holdings=holdings,
+            available_cash=available_cash,
+            max_candidates=8,
+        )
+
         # 2. AI 시장 분석 + 종목 선별 (통합 1회 호출)
         from util.time_util import now_kst
         from core.config import settings as _settings
@@ -130,6 +140,7 @@ class MarketScanner:
             holdings_data=self._format_holdings(holdings),
             holding_count=len(holdings),
             performance_summary=performance_summary,
+            scored_candidates=self._format_scored_candidates(scored_candidates),
         )
 
         try:
@@ -183,6 +194,7 @@ class MarketScanner:
                 detail={
                     "selected_count": len(selected),
                     "selected": selected,
+                    "scored_candidates": scored_candidates,
                     "market_regime": parsed.get("market_regime", ""),
                     "market_analysis": market_analysis,
                     "available_cash": available_cash,
@@ -198,6 +210,7 @@ class MarketScanner:
                 "market_regime": parsed.get("market_regime", ""),
                 "market_analysis": parsed.get("market_analysis", ""),
                 "leading_sectors": parsed.get("leading_sectors", []),
+                "scored_candidates": scored_candidates,
                 "available_cash": available_cash,
                 "max_per_stock": max_per_stock,
                 "provider": provider,
@@ -275,6 +288,21 @@ class MarketScanner:
             lines.append(
                 f"- {h.name}({h.symbol}) {h.quantity}주 "
                 f"평균단가:{h.avg_buy_price:,.0f} 수익률:{h.pnl_rate:+.2f}%"
+            )
+        return "\n".join(lines)
+
+    def _format_scored_candidates(self, candidates: list[dict]) -> str:
+        if not candidates:
+            return "후보 없음"
+        lines = []
+        for index, item in enumerate(candidates, 1):
+            reasons = ", ".join(item.get("reasons", [])[:3])
+            lines.append(
+                f"{index}. {item.get('name')}({item.get('symbol')}) "
+                f"score={item.get('score')} price={item.get('price')} "
+                f"chg={item.get('change_rate')}% buyable={item.get('buyable')} "
+                f"sources={','.join(item.get('sources', []))} "
+                f"reasons={reasons}"
             )
         return "\n".join(lines)
 

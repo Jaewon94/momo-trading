@@ -57,6 +57,9 @@ MARKET_SCAN_PROMPT = """## 시장 데이터
 ### 매매 성과
 {performance_summary}
 
+### Deterministic 후보 점수
+{scored_candidates}
+
 ---
 
 위 데이터를 분석하여 시장 국면을 판단하고, **심층 분석할 종목 5~10개**를 직접 선정하세요.
