@@ -176,6 +176,7 @@
 ### 남은 과제
 
 - 기존 DB에 이미 들어간 중립 뉴스는 운영 재시작 후 `POST /api/v1/admin/news/backfill-enrichment?apply=true`로 재분류한다.
+- 2026-04-23 점검 기준, backfill API 코드는 구현됐지만 현재 실행 중인 9000 서버는 최신 커밋을 로드하지 않아 endpoint가 아직 `404`다. 장중 영향을 피해서 재시작 후 `apply=false` dry-run부터 확인한다.
 - 2026-04-23 운영 점검에서 `stocks` 테이블과 보유/미체결/스냅샷이 0건인 상태를 확인했다. 이 상태에서는 리스크 분류는 가능하지만 종목/섹터 매핑은 stock universe가 없어 대부분 비어 남는다.
 - DB 초기화 후 국내 종목 universe를 다시 채우는 bootstrap 작업이 필요하다. 후보는 브로커 관심/보유 종목, 거래량 상위, KRX/KIS/Kiwoom 종목 마스터 중 하나다.
 - KRX 일반 공지와 국내 경제 뉴스의 종목/섹터 매핑률을 측정해야 한다.

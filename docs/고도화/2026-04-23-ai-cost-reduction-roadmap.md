@@ -256,9 +256,17 @@ TDD 후보:
 
 ## 단계별 실행 순서
 
+## 2026-04-23 코드 검증 업데이트
+
+- 뉴스 deterministic enrichment와 backfill 서비스/API는 코드 구현 및 테스트가 완료됐다.
+- 현재 실행 중인 9000 서버는 최신 커밋을 아직 로드하지 않아 `POST /api/v1/admin/news/backfill-enrichment`가 `404`로 확인됐다. 운영 반영은 서버 재시작 후 확인해야 한다.
+- LLM 지연 경고(`LLM_SLOW_CALL_WARN_SEC`)도 코드/테스트/커밋은 완료됐지만, 현재 실행 중인 서버에는 재시작 전까지 반영되지 않는다.
+- `CandidateScoringService`, `PreAnalysisGate`, `DeterministicFinalGate`, decision event, forward return labeling, `AI_SKIPPED` metric은 아직 구현되지 않았다.
+- 세부 진행 현황은 `docs/고도화/2026-04-23-enhancement-status.md`를 기준 문서로 둔다.
+
 ### Phase 1: 뉴스와 후보 선정 입력 보강
 
-1. 뉴스 리스크 분류/테마 매핑 backfill. 1차 서비스/API 구현 완료, 운영 적용 대기.
+1. 뉴스 리스크 분류/테마 매핑 backfill. 코드 구현 완료, 운영 서버 재시작 및 dry-run 적용 대기.
 2. 국내 종목 universe bootstrap. DB 초기화 후 `stocks=0`이면 뉴스 매핑률이 0에 가까워진다.
 3. `CandidateScoringService` 추가.
 4. 시장 스캔에서 deterministic top-N을 만들고 AI 시장 해설은 optional로 분리.

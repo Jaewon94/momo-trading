@@ -33,6 +33,15 @@
 | 8 | LLM/news simplification | F-007, F-027, F-028, F-029, F-030 | 장중 지연/오류를 줄이고 뉴스는 검증될 때까지 shadow로 제한 |
 | 9 | Strategy taxonomy and cleanup | F-017, F-018, F-020 | legacy/이름 혼동 제거, 과최적화 방지 |
 
+## 2026-04-23 현재 구현 검증 요약
+
+- Track 1, Track 2, Track 3.1, Track 3.1a는 코드와 테스트 기준 완료 상태다.
+- Track 5.1은 observability rollup 서비스와 테스트가 존재하지만, provider/model `NULL`을 rollup 저장 단계에서 완전히 `UNKNOWN`으로 정규화하지는 않는다. 별도 hardening으로 남긴다.
+- Track 8 관련으로 LLM 지연 경고(`LLM_SLOW_CALL_WARN_SEC`)는 별도 커밋으로 구현됐다. 다만 cooldown incident dedupe는 아직 미구현이다.
+- 뉴스 deterministic enrichment/backfill은 별도 커밋으로 구현됐다. 다만 현재 라이브 9000 서버는 최신 코드를 로드하지 않아 backfill endpoint가 아직 동작하지 않는다.
+- Track 6 decision event/forward return dataset은 아직 미구현이다. 이 항목이 없어서 뉴스/LLM/source별 실제 성과 검증은 아직 불가능하다.
+- 전체 최신 현황은 `docs/고도화/2026-04-23-enhancement-status.md`에 별도 정리한다.
+
 ## Phase Gate
 
 - Gate A: Track 1~5 완료 전에는 `AUTONOMY_MODE=AUTONOMOUS` 재개를 권장하지 않는다.
