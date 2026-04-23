@@ -504,6 +504,41 @@ async def test_llm_factory_serializes_codex_generation_globally(monkeypatch) -> 
     assert provider.max_active == 1
 
 
+@pytest.mark.asyncio
+async def test_llm_factory_logs_progress_when_llm_call_is_slow(monkeypatch) -> None:
+    async def fake_record_llm_call(**kwargs):
+        return None
+
+    warnings = []
+
+    async def fake_activity_log(*args, **kwargs):
+        warnings.append((args, kwargs))
+        return None
+
+    factory = LLMFactory()
+    provider = BlockingProvider(LLMProvider.CODEX)
+    factory._providers[LLMTier.TIER1] = {LLMProvider.CODEX: provider}
+    monkeypatch.setattr(factory, "_slow_call_warn_sec", lambda: 0.01)
+    monkeypatch.setattr("analysis.llm.llm_factory.observability_service.record_llm_call", fake_record_llm_call)
+    monkeypatch.setattr("analysis.llm.llm_factory.activity_logger.log", fake_activity_log)
+
+    task = asyncio.create_task(
+        factory.generate("slow", LLMTier.TIER1, provider_chain=[LLMProvider.CODEX], symbol="005930", cycle_id="cycle-1"),
+    )
+    await provider.entered.wait()
+    await asyncio.sleep(0.05)
+
+    assert warnings
+    assert warnings[0][0][0].value == "LLM_CALL"
+    assert warnings[0][0][1].value == "PROGRESS"
+    assert "호출 지연" in warnings[0][0][2]
+    assert warnings[0][1]["symbol"] == "005930"
+    assert warnings[0][1]["cycle_id"] == "cycle-1"
+
+    provider.release.set()
+    await task
+
+
 async def test_llm_factory_re_resolves_default_chain_after_primary_failure(monkeypatch) -> None:
     monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_PROVIDER_TIER1", "CODEX")
     monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_FALLBACK_PROVIDER_TIER1", "CLAUDE_CODE")

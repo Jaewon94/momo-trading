@@ -17,6 +17,7 @@ from analysis.llm.selection_policy import (
     resolve_tier_selection,
 )
 from core.config import DEFAULT_LLM_MODEL, normalize_llm_model_value, settings
+from services.activity_logger import activity_logger
 from services.error_capture_service import error_capture_service
 from services.observability_service import observability_service
 from trading.enums import ActivityPhase, ActivityType, LLMProvider, LLMTier
@@ -68,6 +69,10 @@ class LLMFactory:
             self._tier_concurrency_limit(LLMTier.TIER1),
             self._tier_concurrency_limit(LLMTier.TIER2),
         )
+
+    @staticmethod
+    def _slow_call_warn_sec() -> int:
+        return max(int(settings.LLM_SLOW_CALL_WARN_SEC or 0), 0)
 
     @staticmethod
     def _provider_concurrency_limit(provider_key: LLMProvider) -> int:
@@ -265,10 +270,20 @@ class LLMFactory:
                         continue
 
                     for attempt in range(2):
+                        start = time.time()
+                        slow_warning = self._schedule_slow_call_warning(
+                            tier=tier,
+                            provider=provider.provider.value,
+                            model=provider.model_id,
+                            started_at=start,
+                            symbol=symbol,
+                            cycle_id=cycle_id,
+                            attempt=attempt,
+                        )
                         try:
-                            start = time.time()
                             result = await provider.generate(prompt, system_prompt)
                             elapsed_ms = int((time.time() - start) * 1000)
+                            self._cancel_slow_call_warning(slow_warning)
                             provider_name = provider.provider.value
                             model_id = provider.model_id
 
@@ -309,6 +324,18 @@ class LLMFactory:
 
                             return result, provider_name
                         except Exception as e:
+                            elapsed_ms = int((time.time() - start) * 1000)
+                            self._cancel_slow_call_warning(slow_warning)
+                            await self._log_llm_call_error(
+                                tier=tier,
+                                provider=provider.provider.value,
+                                model=provider.model_id,
+                                elapsed_ms=elapsed_ms,
+                                error=e,
+                                symbol=symbol,
+                                cycle_id=cycle_id,
+                                attempt=attempt,
+                            )
                             last_error = e
                             should_retry = attempt == 0 and await provider.is_available()
                             if should_retry:
@@ -362,7 +389,6 @@ class LLMFactory:
     ) -> None:
         """LLM 프롬프트/응답을 activity log에 기록"""
         try:
-            from services.activity_logger import activity_logger
             await activity_logger.log(
                 ActivityType.LLM_CALL, ActivityPhase.COMPLETE,
                 f"[{tier.value}] {provider} ({model}) — {elapsed_ms/1000:.1f}초",
@@ -380,6 +406,83 @@ class LLMFactory:
             )
         except Exception as e:
             logger.debug("LLM 대화 로깅 실패 (무시): {}", str(e))
+
+    def _schedule_slow_call_warning(
+        self, *, tier: LLMTier, provider: str, model: str, started_at: float,
+        symbol: str | None, cycle_id: str | None, attempt: int,
+    ) -> asyncio.TimerHandle | None:
+        warn_sec = self._slow_call_warn_sec()
+        if warn_sec <= 0:
+            return None
+
+        loop = asyncio.get_running_loop()
+
+        def _enqueue_warning() -> None:
+            asyncio.create_task(self._log_llm_slow_call(
+                tier=tier,
+                provider=provider,
+                model=model,
+                started_at=started_at,
+                warn_sec=warn_sec,
+                symbol=symbol,
+                cycle_id=cycle_id,
+                attempt=attempt,
+            ))
+
+        return loop.call_later(warn_sec, _enqueue_warning)
+
+    @staticmethod
+    def _cancel_slow_call_warning(handle: asyncio.TimerHandle | None) -> None:
+        if handle is not None and not handle.cancelled():
+            handle.cancel()
+
+    async def _log_llm_slow_call(
+        self, *, tier: LLMTier, provider: str, model: str, started_at: float,
+        warn_sec: int, symbol: str | None, cycle_id: str | None, attempt: int,
+    ) -> None:
+        elapsed_ms = int((time.time() - started_at) * 1000)
+        try:
+            await activity_logger.log(
+                ActivityType.LLM_CALL,
+                ActivityPhase.PROGRESS,
+                f"[{tier.value}] {provider} ({model}) 호출 지연: {elapsed_ms/1000:.1f}초 경과",
+                detail={
+                    "event": "slow_llm_call",
+                    "warn_threshold_sec": warn_sec,
+                    "attempt": attempt + 1,
+                },
+                llm_provider=provider,
+                llm_tier=tier.value,
+                execution_time_ms=elapsed_ms,
+                symbol=symbol,
+                cycle_id=cycle_id,
+            )
+        except Exception as e:
+            logger.debug("LLM 지연 경고 로깅 실패 (무시): {}", str(e))
+
+    async def _log_llm_call_error(
+        self, *, tier: LLMTier, provider: str, model: str, elapsed_ms: int,
+        error: Exception, symbol: str | None, cycle_id: str | None, attempt: int,
+    ) -> None:
+        try:
+            await activity_logger.log(
+                ActivityType.LLM_CALL,
+                ActivityPhase.ERROR,
+                f"[{tier.value}] {provider} ({model}) 호출 실패: {str(error)[:120]}",
+                detail={
+                    "event": "llm_call_error",
+                    "attempt": attempt + 1,
+                    "error_type": type(error).__name__,
+                },
+                llm_provider=provider,
+                llm_tier=tier.value,
+                execution_time_ms=elapsed_ms,
+                symbol=symbol,
+                cycle_id=cycle_id,
+                error_message=str(error)[:500],
+            )
+        except Exception as log_error:
+            logger.debug("LLM 오류 로깅 실패 (무시): {}", str(log_error))
 
     async def generate_tier1(
         self, prompt: str, system_prompt: str = "",

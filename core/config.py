@@ -77,6 +77,7 @@ class Settings(BaseSettings):
     CODEX_TIMEOUT_SEC_TIER1: int = 90
     CODEX_TIMEOUT_SEC_TIER2: int = 120
     CODEX_PATH: str = ""  # 비어있으면 자동 탐색 (예: /opt/homebrew/bin/codex)
+    LLM_SLOW_CALL_WARN_SEC: int = 30
     LLM_TIER1_CONCURRENCY: int = 2
     LLM_TIER2_CONCURRENCY: int = 1
     MANUAL_LLM_PROVIDER: str = "CLAUDE_CODE"  # CLAUDE_CODE | CODEX | OLLAMA

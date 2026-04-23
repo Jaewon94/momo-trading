@@ -47,6 +47,7 @@ MUTABLE_SETTINGS = [
     "CODEX_MODEL_TIER2",
     "CODEX_TIMEOUT_SEC_TIER1",
     "CODEX_TIMEOUT_SEC_TIER2",
+    "LLM_SLOW_CALL_WARN_SEC",
     "LLM_TIER1_CONCURRENCY",
     "LLM_TIER2_CONCURRENCY",
     "OLLAMA_BASE_URL",
@@ -122,6 +123,9 @@ def coerce_runtime_setting_value(key: str, value: Any) -> Any:
         }:
             if normalized_int < 30 or normalized_int > 300:
                 raise HTTPException(status_code=400, detail=f"{key} must be between 30 and 300")
+        if key == "LLM_SLOW_CALL_WARN_SEC":
+            if normalized_int < 0 or normalized_int > 300:
+                raise HTTPException(status_code=400, detail=f"{key} must be between 0 and 300")
         if key == "NEWS_SOURCE_FAILURE_COOLDOWN_MIN":
             if normalized_int < 1 or normalized_int > 240:
                 raise HTTPException(status_code=400, detail=f"{key} must be between 1 and 240")
