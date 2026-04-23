@@ -222,6 +222,35 @@ async def test_admin_news_backfill_enrichment_route_returns_summary(client, monk
 
 
 @pytest.mark.asyncio
+async def test_admin_stocks_bootstrap_universe_route_returns_summary(client, monkeypatch):
+    async def fake_process(db, *, rank_limit, apply):
+        assert rank_limit == 30
+        assert apply is False
+        return {
+            "status": "SUCCESS",
+            "apply": False,
+            "candidate_count": 4,
+            "created_count": 4,
+            "updated_count": 0,
+            "unchanged_count": 0,
+            "source_counts": {"volume_rank": 4},
+            "items": [],
+        }
+
+    monkeypatch.setattr(
+        "api.routes.admin.stock_universe_bootstrap_service.process",
+        fake_process,
+    )
+
+    response = await client.post("/api/v1/admin/stocks/bootstrap-universe?rank_limit=30&apply=false")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["data"]["candidate_count"] == 4
+    assert "DRY_RUN" in payload["message"]
+
+
+@pytest.mark.asyncio
 async def test_admin_news_ingest_and_items_routes(client):
     response = await client.post(
         "/api/v1/admin/news/ingest",

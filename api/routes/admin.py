@@ -61,6 +61,7 @@ from services.news_reporting_service import news_reporting_service
 from services.news_runtime_service import news_runtime_service
 from services.order_reconciliation_service import order_reconciliation_service
 from services.stale_pending_cleanup_service import stale_pending_cleanup_service
+from services.stock_universe_bootstrap_service import stock_universe_bootstrap_service
 from services.error_incident_service import error_incident_service
 from services.decision_benchmark_service import decision_benchmark_service
 from services.observability_reporting_service import observability_reporting_service
@@ -1565,6 +1566,22 @@ async def backfill_news_enrichment(
     )
     mode = "적용" if apply else "DRY_RUN"
     return SuccessResponse(data=summary, message=f"뉴스 enrichment backfill {mode} 완료")
+
+
+@router.post("/stocks/bootstrap-universe")
+async def bootstrap_stock_universe(
+    rank_limit: int = Query(50, ge=0, le=200),
+    apply: bool = Query(False),
+    db: AsyncSession = Depends(get_async_db_with_transaction),
+):
+    """브로커 관측 종목으로 비어 있는 stocks universe를 복구."""
+    summary = await stock_universe_bootstrap_service.process(
+        db,
+        rank_limit=rank_limit,
+        apply=apply,
+    )
+    mode = "적용" if apply else "DRY_RUN"
+    return SuccessResponse(data=summary, message=f"종목 universe bootstrap {mode} 완료")
 
 
 @router.get("/positions/{symbol}")

@@ -91,7 +91,7 @@
 
 ### AI 비용/지연 절감
 
-- 국내 종목 universe bootstrap.
+- 국내 종목 universe bootstrap 구현. `POST /api/v1/admin/stocks/bootstrap-universe`로 보유/미체결/거래량/등락률 랭킹 기반 최소 universe를 dry-run/apply 할 수 있다.
 - `CandidateScoringService`.
 - `PreAnalysisGate`.
 - `DeterministicFinalGate`.
@@ -122,7 +122,7 @@
 
 ## 권장 실행 순서
 
-1. DB 초기화 이후 비어 있는 `stocks` universe bootstrap 구현. 현재 로컬 DB 기준 `stocks=0`이라 뉴스-종목 매핑과 후보 attribution 품질이 제한된다.
+1. `POST /api/v1/admin/stocks/bootstrap-universe?rank_limit=50&apply=false` dry-run 후 `apply=true`로 최소 국내 종목 universe를 채운다. 현재 로컬 DB 기준 `stocks=0`이라 먼저 운영 적용 확인이 필요하다.
 2. candidate scanner/Tier/risk 단계별 decision event 세부 연결과 source별 뉴스 attribution benchmark를 붙인다.
 3. `CandidateScoringService`, `PreAnalysisGate`, `DeterministicFinalGate`를 순서대로 붙인다.
 4. 동일 종목/동일 조건 분석 캐시와 `AI_SKIPPED` metric을 추가한다.
