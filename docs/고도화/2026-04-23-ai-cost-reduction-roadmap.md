@@ -269,11 +269,13 @@ TDD 후보:
 
 - `observability_service.record_llm_call`로 LLM 호출 기록이 있다.
 - Admin에 provider 상태와 일부 사용량이 노출된다.
+- `AI_SKIPPED` execution metric을 추가했다.
+- 현재 기록 지점은 `PRE_ANALYSIS_GATE`, `TIER1_CACHE`, `DETERMINISTIC_FINAL_GATE`다.
+- metric detail에는 `stage`, `reason_code`, `skipped_tier`와 각 gate의 세부 값이 들어간다.
 
-권장:
+다음 확장:
 
 - 기능별 LLM 호출 수/평균 시간/실패율/토큰 또는 비용 추정치를 별도 집계한다.
-- "AI 호출 전 deterministic skip 수"를 같이 기록한다.
 - 비용 절감 작업은 호출 수 감소와 성과 악화 여부를 같이 봐야 한다.
 
 TDD 후보:
@@ -295,7 +297,7 @@ TDD 후보:
 - `PreAnalysisGate`는 구현 완료됐다.
 - `DeterministicFinalGate`는 구현 완료됐다.
 - 동일 종목/동일 조건 분석 캐시는 구현 완료됐다.
-- `AI_SKIPPED` metric은 아직 구현되지 않았다.
+- `AI_SKIPPED` metric은 구현 완료됐다.
 - 세부 진행 현황은 `docs/고도화/2026-04-23-enhancement-status.md`를 기준 문서로 둔다.
 
 ### Phase 1: 뉴스와 후보 선정 입력 보강
@@ -303,13 +305,13 @@ TDD 후보:
 1. 뉴스 리스크 분류/테마 매핑 backfill. 코드/테스트/운영 적용 완료.
 2. 국내 종목 universe bootstrap. 코드/테스트는 완료됐고, 운영 DB에 dry-run/apply 확인이 다음 순서다.
 3. 시장 스캔 deterministic 후보 점수에 cooldown/뉴스 감점을 붙이고, AI 시장 해설 optional 분리를 검토.
-4. `AI_SKIPPED` metric 설계 및 연결.
+4. 뉴스 gate rollout mode 설계 및 연결.
 
 ### Phase 2: Tier1/Tier2 입력 품질과 호출 전 gate 강화
 
-1. `AI_SKIPPED` metric 추가.
-2. Tier1/Tier2 프롬프트에 deterministic reason code와 점수 입력.
-3. 비용/뉴스 게이트의 Tier2 전 이동 검토.
+1. Tier1/Tier2 프롬프트에 deterministic reason code와 점수 입력.
+2. 비용/뉴스 게이트의 Tier2 전 이동 검토.
+3. 뉴스 gate enum rollout mode 추가.
 
 ### Phase 3: 보유종목 재평가 비용 절감
 

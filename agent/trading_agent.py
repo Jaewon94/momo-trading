@@ -22,6 +22,7 @@ from core.events import Event, EventType, event_bus
 from realtime.event_detector import event_detector
 from scheduler.market_calendar import market_calendar
 from services.activity_logger import activity_logger
+from services.ai_skip_metric_service import ai_skip_metric_service
 from services.deterministic_final_gate_service import deterministic_final_gate_service
 from services.pre_analysis_gate_service import pre_analysis_gate_service
 from services.runtime_reconfiguration_service import runtime_reconfiguration_service
@@ -656,6 +657,14 @@ class TradingAgent:
                 cycle_id=cycle_id, symbol=symbol,
                 detail={"pre_analysis_gate": pre_gate.code, **pre_gate.detail},
             )
+            await ai_skip_metric_service.record(
+                stage="PRE_ANALYSIS_GATE",
+                reason_code=pre_gate.code,
+                skipped_tier="TIER1",
+                cycle_id=cycle_id,
+                symbol=symbol,
+                detail=pre_gate.detail,
+            )
             return result
 
         indicators = chart_result.indicators
@@ -701,6 +710,17 @@ class TradingAgent:
                 llm_tier="TIER1",
                 execution_time_ms=0,
                 confidence=analysis.get("confidence") or 0,
+            )
+            await ai_skip_metric_service.record(
+                stage="TIER1_CACHE",
+                reason_code="CACHE_HIT",
+                skipped_tier="TIER1",
+                cycle_id=cycle_id,
+                symbol=symbol,
+                detail={
+                    "recommendation": analysis.get("recommendation"),
+                    "confidence": analysis.get("confidence") or 0,
+                },
             )
         else:
             # 3d. Tier 1 AI 심층 분석
@@ -856,6 +876,14 @@ class TradingAgent:
                 message,
                 cycle_id=cycle_id, symbol=symbol,
                 detail={"deterministic_final_gate": final_gate.code, **final_gate.detail},
+            )
+            await ai_skip_metric_service.record(
+                stage="DETERMINISTIC_FINAL_GATE",
+                reason_code=final_gate.code,
+                skipped_tier="TIER2",
+                cycle_id=cycle_id,
+                symbol=symbol,
+                detail=final_gate.detail,
             )
             return result
 

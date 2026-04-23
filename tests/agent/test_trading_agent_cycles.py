@@ -656,9 +656,13 @@ async def test_run_trading_cycle_skips_buy_candidate_when_cash_is_blocked(monkey
 async def test_analyze_and_trade_skips_tier1_when_pre_analysis_gate_blocks_bearish_candidate(monkeypatch) -> None:
     agent = TradingAgent(broker_adapter=StubBrokerAdapter())
     logs = []
+    skipped_metrics = []
 
     async def fake_log(*args, **kwargs) -> None:
         logs.append((args, kwargs))
+
+    async def fake_record_ai_skip(**kwargs) -> None:
+        skipped_metrics.append(kwargs)
 
     async def fake_fetch_symbol_market_data(_symbol: str):
         price_resp = SimpleNamespace(success=True, data={"price": 70_000}, error=None)
@@ -677,6 +681,7 @@ async def test_analyze_and_trade_skips_tier1_when_pre_analysis_gate_blocks_beari
         raise AssertionError("Tier1 should not be called when PreAnalysisGate blocks the candidate")
 
     monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.trading_agent.ai_skip_metric_service.record", fake_record_ai_skip)
     monkeypatch.setattr(agent, "_fetch_symbol_market_data", fake_fetch_symbol_market_data)
     monkeypatch.setattr("agent.trading_agent.chart_analyzer.analyze", fake_chart_analyze)
     monkeypatch.setattr(agent, "_tier1_analysis", fail_tier1_analysis)
@@ -690,17 +695,31 @@ async def test_analyze_and_trade_skips_tier1_when_pre_analysis_gate_blocks_beari
 
     assert result == {"symbol": "005930", "signal": False, "executed": False}
     assert any("사전 게이트 차단" in args[2] for args, _kwargs in logs)
+    assert skipped_metrics == [
+        {
+            "stage": "PRE_ANALYSIS_GATE",
+            "reason_code": "BEARISH_PRE_GATE",
+            "skipped_tier": "TIER1",
+            "cycle_id": "cycle-pre-analysis-gate",
+            "symbol": "005930",
+            "detail": {"direction": "BEARISH", "confidence": 0.8},
+        }
+    ]
 
 
 @pytest.mark.asyncio
 async def test_analyze_and_trade_skips_tier2_when_deterministic_final_gate_blocks_low_confidence(monkeypatch) -> None:
     agent = TradingAgent(broker_adapter=StubBrokerAdapter())
     logs = []
+    skipped_metrics = []
     agent._active_trading_rules = {"param_overrides": {"ALL": {"min_confidence": 0.7}}}
     agent._market_regime = "SIDEWAYS"
 
     async def fake_log(*args, **kwargs) -> None:
         logs.append((args, kwargs))
+
+    async def fake_record_ai_skip(**kwargs) -> None:
+        skipped_metrics.append(kwargs)
 
     async def fake_fetch_symbol_market_data(_symbol: str):
         price_resp = SimpleNamespace(success=True, data={"price": 70_000}, error=None)
@@ -726,6 +745,7 @@ async def test_analyze_and_trade_skips_tier2_when_deterministic_final_gate_block
         raise AssertionError("Tier2 should not be called when DeterministicFinalGate blocks the candidate")
 
     monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.trading_agent.ai_skip_metric_service.record", fake_record_ai_skip)
     monkeypatch.setattr(agent, "_fetch_symbol_market_data", fake_fetch_symbol_market_data)
     monkeypatch.setattr(agent, "_tier1_analysis", fake_tier1_analysis)
     monkeypatch.setattr(agent, "_tier2_review", fail_tier2_review)
@@ -739,17 +759,25 @@ async def test_analyze_and_trade_skips_tier2_when_deterministic_final_gate_block
 
     assert result == {"symbol": "005930", "signal": False, "executed": False}
     assert any("신뢰도 게이트 차단" in args[2] for args, _kwargs in logs)
+    assert skipped_metrics
+    assert skipped_metrics[0]["stage"] == "DETERMINISTIC_FINAL_GATE"
+    assert skipped_metrics[0]["reason_code"] == "CONFIDENCE_GATE"
+    assert skipped_metrics[0]["skipped_tier"] == "TIER2"
 
 
 @pytest.mark.asyncio
 async def test_analyze_and_trade_reuses_tier1_cache_for_same_symbol_conditions(monkeypatch) -> None:
     agent = TradingAgent(broker_adapter=StubBrokerAdapter())
     logs = []
+    skipped_metrics = []
     tier1_calls = 0
     tier1_analysis_cache_service.clear()
 
     async def fake_log(*args, **kwargs) -> None:
         logs.append((args, kwargs))
+
+    async def fake_record_ai_skip(**kwargs) -> None:
+        skipped_metrics.append(kwargs)
 
     async def fake_fetch_symbol_market_data(_symbol: str):
         price_resp = SimpleNamespace(success=True, data={"price": 70_000}, error=None)
@@ -775,6 +803,7 @@ async def test_analyze_and_trade_reuses_tier1_cache_for_same_symbol_conditions(m
         raise AssertionError("Tier2 should not be called for HOLD")
 
     monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.trading_agent.ai_skip_metric_service.record", fake_record_ai_skip)
     monkeypatch.setattr(agent, "_fetch_symbol_market_data", fake_fetch_symbol_market_data)
     monkeypatch.setattr(agent, "_tier1_analysis", fake_tier1_analysis)
     monkeypatch.setattr(agent, "_tier2_review", fail_tier2_review)
@@ -789,6 +818,7 @@ async def test_analyze_and_trade_reuses_tier1_cache_for_same_symbol_conditions(m
     assert second == {"symbol": "005930", "signal": False, "executed": False}
     assert tier1_calls == 1
     assert any("Tier1 캐시 재사용" in args[2] for args, _kwargs in logs)
+    assert any(item["stage"] == "TIER1_CACHE" and item["reason_code"] == "CACHE_HIT" for item in skipped_metrics)
 
 
 @pytest.mark.asyncio
