@@ -48,6 +48,7 @@ import {
   buildTaskCardDescriptor,
   resolveTaskCardRouting,
 } from './activity_card_state.js';
+import { createQaPendingCard, renderQaAnswer, renderQaError } from './qa_state.js';
 import {
   buildClaudeUsageCopy,
   buildCodexAuthLabel,
@@ -3334,13 +3335,20 @@ async function askQuestion() {
   const input = document.getElementById('qa-input');
   const btn = document.getElementById('qa-btn');
   const respEl = document.getElementById('qa-response');
+  const container = document.getElementById('chat-container');
   const question = input.value.trim();
   if (!question) return;
 
   btn.disabled = true;
   btn.textContent = '...';
-  respEl.classList.remove('hidden');
-  respEl.innerHTML = '<span class="text-gray-500">답변 생성 중...</span>';
+  if (respEl) {
+    respEl.classList.add('hidden');
+    respEl.innerHTML = '';
+  }
+  const qaCard = createQaPendingCard(container, { question });
+  if (autoScroll) {
+    container.scrollTop = container.scrollHeight;
+  }
 
   try {
     const res = await fetch(`${API}/qa/ask`, {
@@ -3350,19 +3358,19 @@ async function askQuestion() {
     });
     const json = await res.json();
     if (json.data) {
-      const d = json.data;
-      respEl.innerHTML =
-        `<div class="text-xs text-gray-500 mb-1">${d.context_summary} | ${d.llm_provider} | ${(d.execution_time_ms/1000).toFixed(1)}s</div>` +
-        `<div class="whitespace-pre-wrap">${escapeHtml(d.answer)}</div>`;
+      renderQaAnswer(qaCard, json.data);
     } else {
-      respEl.innerHTML = `<span class="text-red-400">${json.message || '답변 생성 실패'}</span>`;
+      renderQaError(qaCard, json.message || '답변 생성 실패');
     }
   } catch (e) {
-    respEl.innerHTML = `<span class="text-red-400">요청 실패: ${e.message}</span>`;
+    renderQaError(qaCard, `요청 실패: ${e.message}`);
   } finally {
     btn.disabled = false;
     btn.textContent = '질문';
     input.value = '';
+    if (autoScroll) {
+      container.scrollTop = container.scrollHeight;
+    }
   }
 }
 
