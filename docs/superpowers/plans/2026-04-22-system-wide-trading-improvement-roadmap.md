@@ -39,7 +39,7 @@
 - Track 5.1은 observability rollup key의 provider/model `NULL` 정규화와 maintenance failure preflight WARN 노출까지 구현됐다.
 - Track 8 관련으로 LLM 지연 경고(`LLM_SLOW_CALL_WARN_SEC`)는 별도 커밋으로 구현됐다. 다만 cooldown incident dedupe는 아직 미구현이다.
 - 뉴스 deterministic enrichment/backfill은 별도 커밋으로 구현됐다. 다만 현재 라이브 9000 서버는 최신 코드를 로드하지 않아 backfill endpoint가 아직 동작하지 않는다.
-- Track 6 decision event/forward return dataset은 아직 미구현이다. 이 항목이 없어서 뉴스/LLM/source별 실제 성과 검증은 아직 불가능하다.
+- Track 6.1 canonical decision event table/service는 구현됐다. 다만 forward return labeling과 benchmark report가 아직 없어 뉴스/LLM/source별 실제 성과 검증은 아직 불가능하다.
 - 전체 최신 현황은 `docs/고도화/2026-04-23-enhancement-status.md`에 별도 정리한다.
 
 ## Phase Gate
@@ -560,30 +560,34 @@
 - Create: `repositories/decision_event_repository.py`
 - Create: `services/decision_event_service.py`
 - Add: `alembic/versions/<revision>_add_decision_events.py`
-- Modify: `agent/trading_agent.py`
 - Modify: `agent/decision_maker.py`
 - Test: `tests/services/test_decision_event_service.py`
-- Test: `tests/agent/test_trading_agent_decision_events.py`
+- Test: `tests/agent/test_decision_maker.py`
 
-- [ ] **Step 1: 실패 테스트 작성**
+- [x] **Step 1: 실패 테스트 작성**
   - 후보 symbol별 scanner score, Tier1/Tier2 decision, risk gate result, final action이 하나의 decision event로 저장되는지 테스트한다.
   - LLM provider/model/latency/status가 함께 저장되는지 테스트한다.
+  - Result: canonical event 저장/정규화 service 테스트와 order gate blocked path에서 decision event가 기록되는 DecisionMaker 테스트를 추가했다.
 
-- [ ] **Step 2: 실패 확인**
-  - Run: `./.venv313/bin/python -m pytest tests/services/test_decision_event_service.py tests/agent/test_trading_agent_decision_events.py -q`
+- [x] **Step 2: 실패 확인**
+  - Run: `./.venv/bin/python -m pytest tests/services/test_decision_event_service.py tests/agent/test_decision_maker.py::test_decision_maker_records_decision_event_when_order_submission_is_blocked -q`
   - Expected: 모델/서비스 부재로 실패.
+  - Result: `models.decision_event` 부재로 실패 확인.
 
-- [ ] **Step 3: 최소 구현**
+- [x] **Step 3: 최소 구현**
   - append-only decision event 저장 경로를 추가한다.
   - 거래 실행에는 연결하지 않고 write-only 관측으로 시작한다.
+  - Result: `decision_events` 모델, repository, service, Alembic revision을 추가했다. `DecisionMaker`의 order validation/gate/submission/recommendation path에서 best-effort write-only event를 남긴다.
 
-- [ ] **Step 4: 통과 확인**
-  - Run: `./.venv313/bin/python -m pytest tests/services/test_decision_event_service.py tests/agent/test_trading_agent_decision_events.py -q`
+- [x] **Step 4: 통과 확인**
+  - Run: `./.venv/bin/python -m pytest tests/agent/test_decision_maker.py tests/services/test_decision_event_service.py -q`
   - Expected: PASS.
+  - Result: 38 passed.
 
-- [ ] **Step 5: 문서/커밋**
+- [x] **Step 5: 문서/커밋**
   - Update: F-016/F-019/F-026.
   - Commit: `feat: record canonical decision events`
+  - Result: F-016/F-019/F-026과 고도화 현황 문서를 갱신했다. 커밋은 이 작업 검증 후 생성.
 
 ### Task 6.2: forward return labeling job
 

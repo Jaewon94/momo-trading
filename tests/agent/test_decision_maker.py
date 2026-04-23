@@ -481,6 +481,43 @@ async def test_decision_maker_creates_recommendation_in_semi_auto(monkeypatch) -
 
 
 @pytest.mark.asyncio
+async def test_decision_maker_records_decision_event_when_order_submission_is_blocked(monkeypatch) -> None:
+    records = []
+    adapter = FakeBrokerAdapter(OrderResult(success=True, order_id="ORD-1", message="ok"))
+    decision_maker = DecisionMaker(broker_adapter=adapter)
+
+    async def fake_log(*args, **kwargs):
+        return None
+
+    async def fake_publish(_event):
+        return None
+
+    async def fake_record_event(**kwargs):
+        records.append(kwargs)
+        return SimpleNamespace(id="decision-event-1")
+
+    monkeypatch.setattr("agent.decision_maker.settings.ORDER_SUBMISSION_MODE", "READ_ONLY")
+    monkeypatch.setattr("agent.decision_maker.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.decision_maker.event_bus.publish", fake_publish)
+    monkeypatch.setattr("agent.decision_maker.decision_event_service.record_event", fake_record_event)
+
+    result = await decision_maker._execute_autonomous(
+        build_signal(metadata={"scanner_score": 0.81, "provider": "CODEX", "model": "gpt-5.4"}),
+        cycle_id="cycle-decision-event",
+    )
+
+    assert result["success"] is False
+    assert len(records) == 1
+    assert records[0]["cycle_id"] == "cycle-decision-event"
+    assert records[0]["symbol"] == "005930"
+    assert records[0]["decision_stage"] == "ORDER_GATE"
+    assert records[0]["risk_gate_result"] == "BLOCKED"
+    assert records[0]["final_action"] == "SKIP"
+    assert records[0]["provider"] == "CODEX"
+    assert records[0]["model"] == "gpt-5.4"
+
+
+@pytest.mark.asyncio
 async def test_decision_maker_create_pending_record_returns_existing_id(monkeypatch) -> None:
     decision_maker = DecisionMaker(
         broker_adapter=FakeBrokerAdapter(OrderResult(success=True, order_id="ORD-P", message="ok"))

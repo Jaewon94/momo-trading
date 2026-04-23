@@ -16,6 +16,7 @@ from models.recommendation import Recommendation
 from models.trade_result import TradeResult
 from repositories.trade_result_repository import TradeResultRepository
 from services.activity_logger import activity_logger
+from services.decision_event_service import decision_event_service
 from strategy.signal import TradeSignal
 from trading.adapters.base import BrokerAdapter
 from trading.broker_factory import get_broker_adapter
@@ -108,6 +109,17 @@ class DecisionMaker:
                 data=result,
                 source="decision_maker",
             ))
+            await self._record_decision_event(
+                signal,
+                cycle_id=cycle_id,
+                decision_stage="ORDER_VALIDATION",
+                risk_gate_result="BLOCKED",
+                final_action="SKIP",
+                status="SKIPPED",
+                reason=error_msg,
+                result=result,
+                analysis_context=analysis_context,
+            )
             return result
 
         submission_decision = decide_order_submission(signal.action.value)
@@ -133,6 +145,17 @@ class DecisionMaker:
                 data=result,
                 source="decision_maker",
             ))
+            await self._record_decision_event(
+                signal,
+                cycle_id=cycle_id,
+                decision_stage="ORDER_GATE",
+                risk_gate_result="BLOCKED",
+                final_action="SKIP",
+                status="SKIPPED",
+                reason=skip_msg,
+                result=result,
+                analysis_context=analysis_context,
+            )
             return result
 
         if signal.action.value == OrderSide.BUY.value:
@@ -166,6 +189,17 @@ class DecisionMaker:
                     data=result,
                     source="decision_maker",
                 ))
+                await self._record_decision_event(
+                    signal,
+                    cycle_id=cycle_id,
+                    decision_stage="ORDER_GATE",
+                    risk_gate_result="BLOCKED",
+                    final_action="SKIP",
+                    status="SKIPPED",
+                    reason=skip_msg,
+                    result=result,
+                    analysis_context=analysis_context,
+                )
                 return result
 
         order_result = await self._broker_adapter.place_order(self._build_order_request(signal))
@@ -235,8 +269,70 @@ class DecisionMaker:
             data=result,
             source="decision_maker",
         ))
+        await self._record_decision_event(
+            signal,
+            cycle_id=cycle_id,
+            decision_stage="ORDER_SUBMISSION",
+            risk_gate_result="PASS" if is_submitted else "ORDER_REJECTED",
+            final_action=signal.action.value if is_submitted else "SKIP",
+            status="ORDER_SUBMITTED" if is_submitted else "ORDER_REJECTED",
+            reason=result["message"],
+            result=result,
+            analysis_context=analysis_context,
+        )
 
         return result
+
+    async def _record_decision_event(
+        self,
+        signal: TradeSignal,
+        *,
+        cycle_id: str | None,
+        decision_stage: str,
+        risk_gate_result: str,
+        final_action: str,
+        status: str,
+        reason: str,
+        result: dict | None = None,
+        analysis_context: dict | None = None,
+    ) -> None:
+        context = {**(analysis_context or {}), **(signal.metadata or {})}
+        result_data = (result or {}).get("data") or {}
+        if not isinstance(result_data, dict):
+            result_data = {}
+        metadata = {
+            "signal_strength": signal.strength,
+            "urgency": getattr(signal.urgency, "value", str(signal.urgency)),
+            "order_result": result,
+            "analysis_context": analysis_context or {},
+            "signal_metadata": signal.metadata or {},
+        }
+        try:
+            await decision_event_service.record_event(
+                cycle_id=cycle_id,
+                symbol=signal.symbol,
+                stock_name=str(context.get("stock_name") or context.get("name") or signal.symbol),
+                market=str(context.get("market") or "KRX"),
+                decision_stage=decision_stage,
+                source="decision_maker",
+                strategy_type=signal.strategy_type or context.get("strategy_type"),
+                scanner_score=context.get("scanner_score"),
+                tier1_decision=context.get("tier1_decision") or context.get("recommendation") or signal.action.value,
+                tier2_decision=context.get("tier2_decision"),
+                risk_gate_result=risk_gate_result,
+                final_action=final_action,
+                confidence=signal.confidence,
+                reference_price=signal.suggested_price,
+                quantity=signal.suggested_quantity,
+                provider=context.get("provider") or context.get("llm_provider") or result_data.get("provider"),
+                model=context.get("model") or context.get("llm_model") or result_data.get("model"),
+                elapsed_ms=context.get("elapsed_ms") or context.get("llm_elapsed_ms"),
+                status=status,
+                reason=reason,
+                metadata=metadata,
+            )
+        except Exception as exc:
+            logger.debug("decision event 기록 실패 ({}): {}", signal.symbol, str(exc))
 
     async def _find_existing_pending_buy(self, symbol: str) -> PendingOrderInfo | None:
         normalized_symbol = normalize_krx_symbol(symbol)
@@ -839,6 +935,17 @@ class DecisionMaker:
             data={**rec_data, "symbol": signal.symbol},
             source="decision_maker",
         ))
+        await self._record_decision_event(
+            signal,
+            cycle_id=cycle_id,
+            decision_stage="RECOMMENDATION",
+            risk_gate_result="PENDING_APPROVAL",
+            final_action=signal.action.value,
+            status="RECOMMENDED",
+            reason=signal.reason,
+            result={"mode": "SEMI_AUTO", "recommendation": rec_data},
+            analysis_context={"analysis_id": analysis_id},
+        )
 
         return {
             "mode": "SEMI_AUTO",

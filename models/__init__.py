@@ -20,3 +20,4 @@ from models.error_event import ErrorEvent
 from models.error_incident import ErrorIncident
 from models.account_day_baseline import AccountDayBaseline
 from models.account_equity_snapshot import AccountEquitySnapshot
+from models.decision_event import DecisionEvent
