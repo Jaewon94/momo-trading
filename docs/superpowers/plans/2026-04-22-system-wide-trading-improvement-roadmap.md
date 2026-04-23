@@ -455,26 +455,31 @@
 - Test: `tests/realtime/test_monitor.py`
 - Test: `tests/api/test_admin_observability_routes.py`
 
-- [ ] **Step 1: 실패 테스트 작성**
+- [x] **Step 1: 실패 테스트 작성**
   - 42개 이상 symbol에서 held position이 new candidate보다 우선 구독되는지 테스트한다.
   - 구독되지 못한 종목이 polling fallback watchlist에 포함되는지 테스트한다.
+  - Result: `tests/realtime/test_stream_manager.py`, `tests/realtime/test_monitor.py`, `tests/api/test_admin_observability_routes.py`에 우선순위/fallback/운영 노출 테스트를 추가했다.
 
-- [ ] **Step 2: 실패 확인**
-  - Run: `./.venv313/bin/python -m pytest tests/realtime/test_stream_manager.py tests/realtime/test_monitor.py tests/api/test_admin_observability_routes.py -q`
+- [x] **Step 2: 실패 확인**
+  - Run: `./.venv/bin/python -m pytest tests/realtime/test_stream_manager.py tests/realtime/test_monitor.py tests/api/test_admin_observability_routes.py -q`
   - Expected: 우선순위/폴백 부재로 실패.
+  - Result: `SubscriptionPriority`/fallback 상태와 Admin realtime payload 부재로 실패 확인.
 
-- [ ] **Step 3: 최소 구현**
+- [x] **Step 3: 최소 구현**
   - priority enum을 `HELD_POSITION > PENDING_ORDER > ACTIVE_THRESHOLD > NEW_CANDIDATE`로 둔다.
   - 한도 초과 시 낮은 priority를 skip하고 watchlist에 넣는다.
-  - Admin status에 skipped subscription count를 노출한다.
+  - Admin observability status에 skipped subscription count를 노출한다.
+  - Result: `SubscriptionRequest`/`SubscriptionPriority`를 추가하고, scheduler는 보유종목을 `HELD_POSITION`, 신규 후보를 `NEW_CANDIDATE`로 넘긴다. `RealtimeMonitor`는 stream 한도에서 밀린 종목을 polling fallback으로 조회한다.
 
-- [ ] **Step 4: 통과 확인**
-  - Run: `./.venv313/bin/python -m pytest tests/realtime/test_stream_manager.py tests/realtime/test_monitor.py tests/api/test_admin_observability_routes.py -q`
+- [x] **Step 4: 통과 확인**
+  - Run: `./.venv/bin/python -m pytest tests/realtime/test_stream_manager.py tests/realtime/test_monitor.py tests/api/test_admin_observability_routes.py -q`
   - Expected: PASS.
+  - Result: 관련 realtime/API 테스트 묶음 16 passed.
 
-- [ ] **Step 5: 문서/커밋**
+- [x] **Step 5: 문서/커밋**
   - Update: F-036.
   - Commit: `feat: prioritize realtime subscriptions`
+  - Result: F-036과 고도화 현황 문서를 갱신했다. 커밋은 이 작업 검증 후 생성.
 
 ## Track 5: Observability and Admin Safety
 

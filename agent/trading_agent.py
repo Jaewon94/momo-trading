@@ -2546,8 +2546,10 @@ class TradingAgent:
     async def _ensure_realtime_subscription(self, symbol: str) -> None:
         """매수 후 WebSocket 실시간 구독 확인/추가"""
         try:
-            from realtime.stream_manager import stream_manager
-            await stream_manager.subscribe_symbols([(symbol, "KRX")])
+            from realtime.stream_manager import SubscriptionPriority, SubscriptionRequest, stream_manager
+            await stream_manager.subscribe_symbols([
+                SubscriptionRequest(symbol=symbol, market="KRX", priority=SubscriptionPriority.HELD_POSITION)
+            ])
             logger.debug("매수 종목 WebSocket 구독 추가: {}", symbol)
         except Exception as e:
             logger.warning("WebSocket 구독 추가 실패 ({}): {}", symbol, str(e))

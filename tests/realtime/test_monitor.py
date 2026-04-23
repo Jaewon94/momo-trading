@@ -65,6 +65,42 @@ async def test_realtime_monitor_polls_prices_via_broker_adapter(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
+async def test_realtime_monitor_polls_stream_fallback_watchlist(monkeypatch) -> None:
+    monitor = RealtimeMonitor()
+    adapter = FakeBrokerAdapter()
+    emitted: list[dict] = []
+
+    async def fake_get_holdings() -> list[HoldingInfo]:
+        return [
+            HoldingInfo(
+                symbol="005930",
+                name="삼성전자",
+                quantity=3,
+                avg_buy_price=70_000,
+                current_price=71_500,
+                pnl=4_500,
+                pnl_rate=2.14,
+            )
+        ]
+
+    async def fake_on_price_update(data: dict) -> None:
+        emitted.append(data)
+
+    monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
+    monkeypatch.setattr("realtime.monitor.get_broker_adapter", lambda: adapter)
+    monkeypatch.setattr("realtime.monitor.event_detector.on_price_update", fake_on_price_update)
+    monkeypatch.setattr(
+        "realtime.monitor.stream_manager",
+        SimpleNamespace(polling_fallback_symbols=["000660"]),
+    )
+
+    await monitor._poll_holdings_prices()
+
+    assert adapter.calls == [("005930", Market.KRX), ("000660", Market.KRX)]
+    assert [item["symbol"] for item in emitted] == ["005930", "000660"]
+
+
+@pytest.mark.asyncio
 async def test_realtime_monitor_start_uses_streams_when_realtime_is_supported(monkeypatch) -> None:
     monitor = RealtimeMonitor()
     observed: list[str] = []

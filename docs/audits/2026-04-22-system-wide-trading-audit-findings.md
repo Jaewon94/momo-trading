@@ -588,17 +588,18 @@
 ### F-036: 실시간 구독 41개 초과 시 우선순위/폴백 정책이 없음
 
 - 심각도: `P2`
-- 상태: `확정`
+- 상태: `해결됨`
 - 영역: `실시간 | 이벤트 | 리스크`
-- 현상: `StreamManager.subscribe_symbols()`는 adapter subscription count가 41 이상이면 경고 후 추가 구독을 중단합니다. 보유종목, 손절선이 있는 종목, 신규 후보 간 우선순위 eviction이 없습니다.
+- 현상: 이전에는 `StreamManager.subscribe_symbols()`가 adapter subscription count가 41 이상이면 경고 후 추가 구독을 중단했습니다. 보유종목, 손절선이 있는 종목, 신규 후보 간 우선순위 eviction이 없었습니다.
 - 영향: 후보/보유 종목이 많아지면 중요한 보유종목 이벤트가 실시간 감시에서 빠질 수 있고, 손절/익절은 polling fallback 주기 5분에 의존할 수 있습니다.
 - 증거: `realtime/stream_manager.py:subscribe_symbols`, `realtime/monitor.py:POLL_INTERVAL_SEC=300`.
 - 재현/검증: 42개 이상 symbol 업데이트 fixture에서 후순위 종목은 구독되지 않고, 어떤 종목이 빠졌는지 운영 상태에 명확히 남지 않습니다.
 - 권고: 구독 priority를 `held_position > pending_order > active_threshold > new_candidate`로 정의하고, 한도 초과 시 낮은 우선순위를 eviction하거나 polling watchlist에 강제 편입합니다.
 - 구현 전 테스트: `tests/realtime/test_stream_manager.py`에 41개 초과 priority eviction/fallback 테스트 추가.
-- Rollout: 우선순위 로그와 Admin status 노출부터 추가하고, eviction은 다음 단계에서 적용.
-- Rollback: 기존 append-only 구독 정책으로 되돌릴 수 있습니다.
-- 분류: `유지하되 harden`
+- Rollout: `HELD_POSITION > PENDING_ORDER > ACTIVE_THRESHOLD > NEW_CANDIDATE` 우선순위를 적용하고, 한도에서 밀린 종목은 polling fallback watchlist로 편입합니다. Admin observability overview에 현재 구독 수, skipped count, fallback symbol 목록을 노출합니다.
+- Rollback: 기존 append-only 구독 정책으로 되돌릴 수 있으나 보유종목 감시 누락 위험이 재발합니다.
+- 분류: `완료`
+- 조치: Track 4 Task 4.2에서 `SubscriptionRequest`/`SubscriptionPriority`를 추가했습니다. scheduler는 보유종목을 `HELD_POSITION`, 신규 후보를 `NEW_CANDIDATE`로 넘기며, `RealtimeMonitor`는 stream 한도 초과로 밀린 종목도 polling fallback으로 현재가를 조회합니다.
 
 ## Open Questions
 

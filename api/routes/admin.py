@@ -34,6 +34,7 @@ from repositories.daily_report_repository import DailyReportRepository
 from repositories.news_item_repository import NewsItemRepository
 from repositories.trade_result_repository import TradeResultRepository
 from realtime.event_detector import event_detector
+from realtime.stream_manager import stream_manager
 from schemas.activity_schema import ActivityResponse, CycleResponse
 from schemas.common import SuccessResponse
 from schemas.daily_report_schema import DailyReportResponse, ReportTradeComparisonResponse
@@ -710,6 +711,12 @@ async def get_observability_overview(
         hours=hours,
         points=points,
     )
+    data["realtime"] = {
+        "connected": stream_manager.is_connected,
+        "subscription_count": stream_manager.subscription_count,
+        "skipped_subscription_count": stream_manager.skipped_subscription_count,
+        "polling_fallback_symbols": stream_manager.polling_fallback_symbols,
+    }
     return SuccessResponse(data=data)
 
 

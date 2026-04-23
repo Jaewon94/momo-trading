@@ -8,6 +8,18 @@ async def test_admin_observability_overview_route_returns_payload(client, monkey
         "jobs": {"news_poll": {"runs": 2}, "maintenance": {"runs": 1}},
         "storage": {"raw_retention_days": 30},
     }
+    realtime_status = {
+        "is_connected": True,
+        "subscription_count": 41,
+        "skipped_subscription_count": 3,
+        "polling_fallback_symbols": ["000040", "000041", "000042"],
+    }
+    expected_realtime_status = {
+        "connected": True,
+        "subscription_count": 41,
+        "skipped_subscription_count": 3,
+        "polling_fallback_symbols": ["000040", "000041", "000042"],
+    }
 
     async def fake_build_overview(db, *, hours, points):
         assert hours == 24
@@ -19,11 +31,16 @@ async def test_admin_observability_overview_route_returns_payload(client, monkey
         fake_build_overview,
         raising=False,
     )
+    monkeypatch.setattr(
+        "api.routes.admin.stream_manager",
+        type("FakeStreamManager", (), realtime_status)(),
+        raising=False,
+    )
 
     response = await client.get("/api/v1/admin/observability/overview")
 
     assert response.status_code == 200
-    assert response.json()["data"] == expected
+    assert response.json()["data"] == {**expected, "realtime": expected_realtime_status}
 
 
 async def test_admin_observability_overview_route_accepts_custom_hours_and_points(client, monkeypatch):

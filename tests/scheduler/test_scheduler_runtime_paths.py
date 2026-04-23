@@ -812,7 +812,11 @@ async def test_intraday_rescan_refreshes_subscriptions_when_new_symbols_exist(mo
     await scheduler._intraday_rescan()
 
     assert observed[0:2] == ["run_cycle", "get_holdings"]
-    assert observed[2] == [("005930", "KRX"), ("000660", "KRX"), ("035720", "KRX")]
+    assert [(item.symbol, item.market, item.priority.name) for item in observed[2]] == [
+        ("005930", "KRX", "HELD_POSITION"),
+        ("000660", "KRX", "NEW_CANDIDATE"),
+        ("035720", "KRX", "HELD_POSITION"),
+    ]
 
 
 @pytest.mark.asyncio

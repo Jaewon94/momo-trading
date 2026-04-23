@@ -139,23 +139,28 @@ class RealtimeMonitor:
 
         try:
             holdings = await account_manager.get_holdings()
-            if not holdings:
+            holding_symbols = [
+                h.symbol
+                for h in holdings
+                if getattr(h, "symbol", None) and getattr(h, "quantity", 0) > 0
+            ]
+            fallback_symbols = list(getattr(stream_manager, "polling_fallback_symbols", []) or [])
+            symbols = list(dict.fromkeys(holding_symbols + fallback_symbols))
+            if not symbols:
                 return
 
             broker_adapter = get_broker_adapter()
             polled_count = 0
-            for h in holdings:
-                if not h.symbol or h.quantity <= 0:
-                    continue
+            for symbol in symbols:
                 try:
-                    quote = await broker_adapter.get_current_price(h.symbol, market=Market.KRX)
+                    quote = await broker_adapter.get_current_price(symbol, market=Market.KRX)
                     price = float(quote.price or 0)
                     if price <= 0:
                         continue
 
                     # event_detector에 주입 (기존 손절/익절 로직 재사용)
                     await event_detector.on_price_update({
-                        "symbol": h.symbol,
+                        "symbol": symbol,
                         "price": price,
                         "volume": int(quote.volume or 0),
                         "change_rate": float(quote.change_rate or 0.0),
@@ -163,7 +168,7 @@ class RealtimeMonitor:
                     })
                     polled_count += 1
                 except Exception as e:
-                    logger.debug("폴링 현재가 조회 실패 {}: {}", h.symbol, str(e))
+                    logger.debug("폴링 현재가 조회 실패 {}: {}", symbol, str(e))
 
             if polled_count > 0:
                 logger.debug("폴링 폴백: {}종목 현재가 조회 완료", polled_count)

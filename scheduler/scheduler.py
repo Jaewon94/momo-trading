@@ -580,8 +580,18 @@ class TradingScheduler:
             holdings = await account_manager.get_holdings()
             holding_symbols = [(h.symbol, "KRX") for h in holdings if h.symbol]
 
-            # 합치기 (중복 제거, 최대 41)
-            all_symbols = list({s[0]: s for s in selected + holding_symbols}.values())[:41]
+            from realtime.stream_manager import SubscriptionPriority, SubscriptionRequest
+
+            # StreamManager가 우선순위와 한도를 적용한다. 보유종목은 신규 후보보다 우선 감시한다.
+            subscription_requests = {
+                s: SubscriptionRequest(symbol=s, market=m, priority=SubscriptionPriority.NEW_CANDIDATE)
+                for s, m in selected
+            }
+            subscription_requests.update({
+                s: SubscriptionRequest(symbol=s, market=m, priority=SubscriptionPriority.HELD_POSITION)
+                for s, m in holding_symbols
+            })
+            all_symbols = list(subscription_requests.values())
 
             if all_symbols:
                 from realtime.stream_manager import stream_manager
@@ -631,10 +641,18 @@ class TradingScheduler:
             selected = result.get("selected_symbols", [])
             if selected:
                 from trading.account_manager import account_manager
-                from realtime.stream_manager import stream_manager
+                from realtime.stream_manager import SubscriptionPriority, SubscriptionRequest, stream_manager
                 holdings = await account_manager.get_holdings()
                 holding_symbols = [(h.symbol, "KRX") for h in holdings if h.symbol]
-                all_symbols = list({s[0]: s for s in selected + holding_symbols}.values())[:41]
+                subscription_requests = {
+                    s: SubscriptionRequest(symbol=s, market=m, priority=SubscriptionPriority.NEW_CANDIDATE)
+                    for s, m in selected
+                }
+                subscription_requests.update({
+                    s: SubscriptionRequest(symbol=s, market=m, priority=SubscriptionPriority.HELD_POSITION)
+                    for s, m in holding_symbols
+                })
+                all_symbols = list(subscription_requests.values())
                 if all_symbols:
                     await stream_manager.update_subscriptions(all_symbols)
 
@@ -650,11 +668,15 @@ class TradingScheduler:
         """보유종목 WebSocket 구독 갱신 (임계값은 AI가 설정)"""
         try:
             from trading.account_manager import account_manager
-            from realtime.stream_manager import stream_manager
+            from realtime.stream_manager import SubscriptionPriority, SubscriptionRequest, stream_manager
 
             holdings = await account_manager.get_holdings()
             if holdings:
-                symbols = [(h.symbol, "KRX") for h in holdings if h.symbol]
+                symbols = [
+                    SubscriptionRequest(symbol=h.symbol, market="KRX", priority=SubscriptionPriority.HELD_POSITION)
+                    for h in holdings
+                    if h.symbol
+                ]
                 await stream_manager.update_subscriptions(symbols)
                 logger.debug("WebSocket 구독 갱신: {}종목", len(symbols))
         except Exception as e:
