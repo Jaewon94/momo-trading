@@ -36,6 +36,7 @@ from services.news_translation_backfill_service import news_translation_backfill
 from trading.broker_factory import get_broker_adapter
 from trading.enums import ActivityPhase, ActivityType, Market, OrderSide, OrderType
 from trading.models import OrderRequest
+from scheduler.jobs.forward_return_label_job import forward_return_label_job
 
 
 class TradingScheduler:
@@ -261,6 +262,29 @@ class TradingScheduler:
             )
             raise
 
+    async def _forward_return_label(self) -> None:
+        started_at = _time.perf_counter()
+        try:
+            summary = await forward_return_label_job.run_once()
+            elapsed_ms = int((_time.perf_counter() - started_at) * 1000)
+            await observability_service.record_execution_metric(
+                metric_type="JOB",
+                metric_name="FORWARD_RETURN_LABEL",
+                status="SUCCESS",
+                elapsed_ms=elapsed_ms,
+                detail=summary,
+            )
+        except Exception as exc:
+            elapsed_ms = int((_time.perf_counter() - started_at) * 1000)
+            await observability_service.record_execution_metric(
+                metric_type="JOB",
+                metric_name="FORWARD_RETURN_LABEL",
+                status="ERROR",
+                elapsed_ms=elapsed_ms,
+                detail={"error": str(exc)},
+            )
+            raise
+
     def _setup_jobs(
         self,
         *,
@@ -346,6 +370,15 @@ class TradingScheduler:
                 minutes=max(int(getattr(settings, "METRICS_MAINTENANCE_INTERVAL_MIN", 60) or 60), 1),
                 id="observability_maintenance",
                 name="운영 메트릭 롤업/정리",
+            )
+
+        if bool(getattr(settings, "FORWARD_RETURN_LABEL_ENABLED", True)):
+            self.scheduler.add_job(
+                self._forward_return_label,
+                "interval",
+                minutes=max(int(getattr(settings, "FORWARD_RETURN_LABEL_INTERVAL_MIN", 5) or 5), 1),
+                id="forward_return_label",
+                name="Decision forward return 라벨링",
             )
 
         if include_trading_jobs:

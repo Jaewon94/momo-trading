@@ -21,3 +21,4 @@ from models.error_incident import ErrorIncident
 from models.account_day_baseline import AccountDayBaseline
 from models.account_equity_snapshot import AccountEquitySnapshot
 from models.decision_event import DecisionEvent
+from models.decision_forward_return import DecisionForwardReturn

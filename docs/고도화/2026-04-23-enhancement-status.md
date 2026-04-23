@@ -83,7 +83,7 @@
 
 ### P0/P1 성격
 
-- forward return labeling job.
+- intraday forward return 정밀도 개선용 분봉/틱 snapshot history.
 
 ### AI 비용/지연 절감
 
@@ -115,7 +115,7 @@
 2. `POST /api/v1/admin/news/backfill-enrichment?limit=100&apply=false` dry-run 실행.
 3. dry-run 결과가 타당하면 `apply=true`로 기존 뉴스 deterministic enrichment 적용.
 4. DB 초기화 이후 비어 있을 수 있는 `stocks` universe bootstrap 구현.
-5. forward return labeling을 붙여 새로 추가된 canonical decision event를 LLM/뉴스/전략 성과 검증 dataset으로 완성한다.
+5. candidate scanner/Tier/risk 단계별 decision event 세부 연결과 benchmark/control report를 붙여 LLM/뉴스/전략 성과 검증을 리포트화한다.
 6. 그 다음 `CandidateScoringService`, `PreAnalysisGate`, `DeterministicFinalGate`를 순서대로 붙인다.
 7. 뉴스 gate는 enum rollout mode로 바꾸고, `BUY_BLOCK_GATE`는 forward return 표본이 쌓인 뒤에만 허용한다.
 

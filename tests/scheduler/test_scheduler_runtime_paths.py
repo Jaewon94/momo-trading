@@ -115,7 +115,14 @@ async def test_scheduler_start_runs_news_jobs_when_trading_disabled(monkeypatch)
     assert startup_called is False
     assert news_poll_called is True
     assert news_translation_called is True
-    assert set(job_ids) == {"news_poll_trading", "news_poll_off_hours", "news_translation_backfill", "resource_snapshot", "observability_maintenance"}
+    assert set(job_ids) == {
+        "news_poll_trading",
+        "news_poll_off_hours",
+        "news_translation_backfill",
+        "resource_snapshot",
+        "observability_maintenance",
+        "forward_return_label",
+    }
 
 
 @pytest.mark.asyncio
@@ -176,6 +183,7 @@ async def test_scheduler_start_runs_news_poll_once_on_startup_when_trading_enabl
     assert "news_translation_backfill" in job_ids
     assert "resource_snapshot" in job_ids
     assert "observability_maintenance" in job_ids
+    assert "forward_return_label" in job_ids
     assert "account_equity_snapshot" in job_ids
 
 
@@ -332,6 +340,7 @@ def test_scheduler_setup_jobs_registers_expected_job_ids() -> None:
         "news_translation_backfill",
         "resource_snapshot",
         "observability_maintenance",
+        "forward_return_label",
         "account_equity_snapshot",
         "holdings_check",
         "intraday_holdings_review",
@@ -531,6 +540,61 @@ async def test_scheduler_observability_maintenance_records_error_metric(monkeypa
         await scheduler._observability_maintenance()
 
     assert observed["metric_name"] == "OBSERVABILITY_MAINTENANCE"
+    assert observed["status"] == "ERROR"
+
+
+@pytest.mark.asyncio
+async def test_scheduler_forward_return_label_records_success_metric(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    observed = {}
+
+    async def fake_run_once():
+        return {"labeled": 2, "waiting_data": 1}
+
+    async def fake_record_execution_metric(**kwargs):
+        observed.update(kwargs)
+
+    monkeypatch.setattr(
+        "scheduler.scheduler.forward_return_label_job.run_once",
+        fake_run_once,
+    )
+    monkeypatch.setattr(
+        "scheduler.scheduler.observability_service.record_execution_metric",
+        fake_record_execution_metric,
+    )
+
+    await scheduler._forward_return_label()
+
+    assert observed["metric_type"] == "JOB"
+    assert observed["metric_name"] == "FORWARD_RETURN_LABEL"
+    assert observed["status"] == "SUCCESS"
+    assert observed["detail"]["labeled"] == 2
+
+
+@pytest.mark.asyncio
+async def test_scheduler_forward_return_label_records_error_metric(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    observed = {}
+
+    async def fake_run_once():
+        raise RuntimeError("label failed")
+
+    async def fake_record_execution_metric(**kwargs):
+        observed.update(kwargs)
+
+    monkeypatch.setattr(
+        "scheduler.scheduler.forward_return_label_job.run_once",
+        fake_run_once,
+    )
+    monkeypatch.setattr(
+        "scheduler.scheduler.observability_service.record_execution_metric",
+        fake_record_execution_metric,
+    )
+
+    with pytest.raises(RuntimeError):
+        await scheduler._forward_return_label()
+
+    assert observed["metric_name"] == "FORWARD_RETURN_LABEL"
     assert observed["status"] == "ERROR"
 
 

@@ -289,14 +289,14 @@
 - 영역: `전략 | 성과 측정 | 백테스트`
 - 현상: `analysis_results`, `recommendations`, `strategy_signals`, `market_data_daily`, `market_snapshots`가 모두 0 rows입니다. `agent_activity_logs`에는 단계별 로그가 있지만, 후보별 decision event와 이후 5분/15분/30분/1시간/종가 수익률이 구조화되어 저장되지 않습니다.
 - 영향: 어떤 후보를 샀어야 했는지, HOLD/SKIP이 맞았는지, Tier1/Tier2/risk gate가 기대값을 높였는지 판단할 수 없습니다. 현재 상태에서 “돈을 더 잘 벌게” 하는 전략 개선은 근거 없이 파라미터를 만지는 과최적화가 될 수 있습니다.
-- 증거: 운영 DB row count `analysis_results=0`, `recommendations=0`, `strategy_signals=0`, `market_data_daily=0`, `market_snapshots=0`; activity log는 존재하지만 forward return label이 없음.
+- 증거: 운영 DB row count `analysis_results=0`, `recommendations=0`, `strategy_signals=0`, `market_data_daily=0`, `market_snapshots=0`; activity log는 존재하지만 forward return label이 없었습니다. Track 6.1/6.2 이후 신규 `decision_events`/`decision_forward_returns`에 write-only label을 쌓을 수 있습니다.
 - 재현/검증: `sqlite3 -readonly data/app.db` row count와 `agent_activity_logs` 단계별 count 비교.
 - 권고: 구현 1순위로 `decision_events`와 `decision_forward_returns` 또는 동등한 canonical dataset을 추가합니다. 모든 scan/Tier1/Tier2/risk/recommend/order/fill 후보에 대해 기준가와 future return을 저장해야 합니다.
 - 구현 전 테스트: 신규 `tests/services/test_decision_event_service.py`에 후보 이벤트 생성, 중복 방지, 5m/15m/30m/60m/close label 업데이트 테스트를 먼저 작성합니다.
 - Rollout: shadow/write-only로 시작해 최소 1~2주 데이터 수집 후 리포트와 gate에 연결합니다.
 - Rollback: 수집 테이블 write를 feature flag로 끄고 기존 매매 경로는 유지합니다.
 - 분류: `유지하되 harden`
-- 조치: Track 6.1에서 `decision_events` 모델/repository/service/Alembic revision을 추가했고, `DecisionMaker`의 recommendation/order gate/order submission path에서 best-effort write-only event를 남기도록 했습니다. Forward return labeling과 scanner/Tier 단계별 전체 연결은 후속 작업으로 남깁니다.
+- 조치: Track 6.1에서 `decision_events` 모델/repository/service/Alembic revision을 추가했고, `DecisionMaker`의 recommendation/order gate/order submission path에서 best-effort write-only event를 남기도록 했습니다. Track 6.2에서 `decision_forward_returns`와 scheduler label job을 추가했습니다. Scanner/Tier 단계별 전체 연결과 정밀 intraday price history는 후속 작업으로 남깁니다.
 
 ### F-017: `StockScreener`가 현재 funnel에서 사용되지 않는 legacy 단계로 보임
 
@@ -342,7 +342,7 @@
 - Rollout: 최소 표본 수 미달 시 `INSUFFICIENT_SAMPLE`만 반환하고, gate에는 연결하지 않습니다.
 - Rollback: report-only service 제거 가능.
 - 분류: `실험`
-- 조치: Track 6.1에서 benchmark의 입력이 될 canonical `decision_events` 저장 기반을 추가했습니다. Forward return label과 benchmark/control report는 아직 미구현입니다.
+- 조치: Track 6.1/6.2에서 benchmark의 입력이 될 canonical `decision_events`와 `decision_forward_returns` 저장 기반을 추가했습니다. Benchmark/control report는 아직 미구현입니다.
 
 ### F-020: 현재 상태에서 전략/뉴스/LLM 파라미터를 바로 조정하면 과최적화 위험이 큼
 
@@ -442,13 +442,13 @@
 - 현상: `execution_metrics`에는 provider/model/latency/status가 저장되지만, 후보별 이후 수익률이나 stage별 benchmark와 연결되지 않습니다.
 - 영향: Codex, Claude, Ollama 중 무엇이 돈을 더 벌게 하는지, 또는 지연만 늘리는지 판단할 수 없습니다. Tier1+Tier2 지연이 50~80초인 후보도 있어 단기 전략에서는 latency 자체가 edge를 없앨 수 있습니다.
 - 증거: Phase 7 `LLM_CALL` 집계, F-016의 forward return dataset 부재.
-- 재현/검증: 특정 `cycle_id/symbol`의 LLM latency는 조회 가능하지만, 같은 decision event의 5m/15m/30m/close return은 조회할 수 없습니다.
+- 재현/검증: Track 6.1/6.2 이후 신규 decision event는 5m/15m/30m/60m/close return label과 연결될 수 있습니다. 기존 데이터와 benchmark report 연결은 후속 작업입니다.
 - 권고: decision event에 `provider`, `model`, `prompt_version`, `elapsed_ms`, `fallback_used`, `decision_action`, `forward_returns`를 함께 저장합니다.
 - 구현 전 테스트: `tests/services/test_decision_event_service.py`에 LLM metadata와 forward return label 저장 테스트 추가.
 - Rollout: write-only metric enrichment부터 시작하고 gate에는 연결하지 않습니다.
 - Rollback: enrichment feature flag를 끄면 기존 LLM 라우팅은 유지됩니다.
 - 분류: `유지하되 harden`
-- 조치: Track 6.1에서 decision event에 provider/model/elapsed/status와 action/risk/stage를 함께 저장할 수 있게 했습니다. Forward return label과 prompt/fallback 세부 attribution은 후속 작업으로 남깁니다.
+- 조치: Track 6.1에서 decision event에 provider/model/elapsed/status와 action/risk/stage를 함께 저장할 수 있게 했고, Track 6.2에서 forward return label을 연결했습니다. Prompt/fallback 세부 attribution과 benchmark report는 후속 작업으로 남깁니다.
 
 ### F-027: Codex timeout cooldown이 후보별 오류로 증폭되어 incident 수가 과대 집계될 수 있음
 

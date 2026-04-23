@@ -39,7 +39,7 @@
 - Track 5.1은 observability rollup key의 provider/model `NULL` 정규화와 maintenance failure preflight WARN 노출까지 구현됐다.
 - Track 8 관련으로 LLM 지연 경고(`LLM_SLOW_CALL_WARN_SEC`)는 별도 커밋으로 구현됐다. 다만 cooldown incident dedupe는 아직 미구현이다.
 - 뉴스 deterministic enrichment/backfill은 별도 커밋으로 구현됐다. 다만 현재 라이브 9000 서버는 최신 코드를 로드하지 않아 backfill endpoint가 아직 동작하지 않는다.
-- Track 6.1 canonical decision event table/service는 구현됐다. 다만 forward return labeling과 benchmark report가 아직 없어 뉴스/LLM/source별 실제 성과 검증은 아직 불가능하다.
+- Track 6.1 canonical decision event table/service와 Track 6.2 forward return labeling job은 구현됐다. 다만 benchmark/control report와 scanner/Tier 단계별 전체 연결은 아직 없어 뉴스/LLM/source별 실제 성과 검증은 report 수준에서 후속 구현이 필요하다.
 - 전체 최신 현황은 `docs/고도화/2026-04-23-enhancement-status.md`에 별도 정리한다.
 
 ## Phase Gate
@@ -593,30 +593,39 @@
 
 **Files:**
 - Create: `scheduler/jobs/forward_return_label_job.py`
+- Create: `models/decision_forward_return.py`
+- Create: `repositories/decision_forward_return_repository.py`
+- Create: `services/decision_forward_return_service.py`
+- Add: `alembic/versions/<revision>_add_decision_forward_returns_table.py`
 - Modify: `scheduler/scheduler.py`
-- Modify: `services/decision_event_service.py`
+- Modify: `core/config.py`
 - Test: `tests/scheduler/test_forward_return_label_job.py`
-- Test: `tests/services/test_decision_event_service.py`
+- Test: `tests/scheduler/test_scheduler_runtime_paths.py`
 
-- [ ] **Step 1: 실패 테스트 작성**
+- [x] **Step 1: 실패 테스트 작성**
   - decision event 이후 5m/15m/30m/close 가격이 들어왔을 때 forward return labels가 채워지는지 테스트한다.
   - 가격 데이터가 없으면 `label_status=WAITING_DATA`로 남는지 테스트한다.
+  - Result: intraday snapshot, daily close, missing data WAITING_DATA 테스트를 추가했다.
 
-- [ ] **Step 2: 실패 확인**
-  - Run: `./.venv313/bin/python -m pytest tests/scheduler/test_forward_return_label_job.py tests/services/test_decision_event_service.py -q`
+- [x] **Step 2: 실패 확인**
+  - Run: `./.venv/bin/python -m pytest tests/scheduler/test_forward_return_label_job.py -q`
   - Expected: labeling job 부재로 실패.
+  - Result: `models.decision_forward_return` 부재로 실패 확인.
 
-- [ ] **Step 3: 최소 구현**
+- [x] **Step 3: 최소 구현**
   - scheduler interval job으로 labels를 backfill한다.
   - BUY/HOLD/SKIP별 counterfactual return을 모두 저장한다.
+  - Result: `decision_forward_returns` 테이블, service, scheduler interval job, observability job metric을 추가했다. 현재 intraday label은 사용 가능한 최신 `market_snapshots`의 `updated_at`이 target 이후일 때 라벨링하고, close label은 `market_data_daily.close`를 사용한다.
 
-- [ ] **Step 4: 통과 확인**
-  - Run: `./.venv313/bin/python -m pytest tests/scheduler/test_forward_return_label_job.py tests/services/test_decision_event_service.py -q`
+- [x] **Step 4: 통과 확인**
+  - Run: `./.venv/bin/python -m pytest tests/scheduler/test_forward_return_label_job.py tests/scheduler/test_scheduler_runtime_paths.py::test_scheduler_forward_return_label_records_success_metric tests/scheduler/test_scheduler_runtime_paths.py::test_scheduler_forward_return_label_records_error_metric -q`
   - Expected: PASS.
+  - Result: 부분 검증 8 passed. 전체 관련 테스트는 커밋 전 재실행한다.
 
-- [ ] **Step 5: 문서/커밋**
+- [x] **Step 5: 문서/커밋**
   - Update: F-016/F-019.
   - Commit: `feat: label decision forward returns`
+  - Result: F-016/F-019/F-026과 고도화 현황 문서를 갱신했다. 커밋은 최종 검증 후 생성.
 
 ## Track 7: Backtest Hygiene
 
