@@ -43,6 +43,9 @@ FINAL_REVIEW_PROMPT = """## 최종 검토 요청
 ### 매매 상황
 {trading_context}
 
+### Deterministic 사전 판단
+{deterministic_context}
+
 ### Tier 1 AI 분석 결과
 {tier1_analysis}
 

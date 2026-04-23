@@ -101,6 +101,7 @@
 - `DeterministicFinalGate` 구현. 현재는 Tier2 직전에 `CONFIDENCE_GATE`, `RR_RATIO_GATE`, `RR_UNDEFINED_GATE`, `STOP_LOSS_REQUIRED_GATE`, `BUYING_POWER_GATE`를 코드로 차단하고 activity log detail에 gate code를 남긴다.
 - 동일 종목/동일 조건 분석 캐시 구현. 같은 종목/전략/현재가/시장국면/보유여부/차트 신호/피드백 컨텍스트 조건이면 짧은 TTL 동안 Tier1 결과를 재사용하며, 수동 provider/model override 호출은 캐시를 우회한다.
 - `AI_SKIPPED` metric 구현. `PRE_ANALYSIS_GATE`, `TIER1_CACHE`, `DETERMINISTIC_FINAL_GATE`에서 절감된 Tier와 reason code를 execution metric으로 남긴다.
+- Tier1/Tier2 deterministic prompt context 구현. 프롬프트에 `Deterministic 사전 판단` 섹션을 추가해 차트 신호, 현금/최소수량, RR 비율, 손절 필수 여부, 매수가능수량을 구조화해 전달한다.
 - LLM cooldown incident dedupe.
 
 ### Admin UX 후속
@@ -127,8 +128,8 @@
 ## 권장 실행 순서
 
 1. `POST /api/v1/admin/stocks/bootstrap-universe?rank_limit=50&apply=false` dry-run 후 `apply=true`로 최소 국내 종목 universe를 채운다. 현재 로컬 DB 기준 `stocks=0`이라 먼저 운영 적용 확인이 필요하다.
-2. Tier1/Tier2 프롬프트에 deterministic reason code와 점수 입력을 검토한다.
-3. 비용/뉴스 게이트의 Tier2 전 이동을 검토한다.
+2. 비용/뉴스 게이트의 Tier2 전 이동을 검토한다.
+3. 뉴스 source별 blocked candidate forward return attribution을 고도화한다.
 
 ## 당장 바꾸지 말 것
 

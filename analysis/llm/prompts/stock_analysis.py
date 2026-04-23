@@ -33,6 +33,9 @@ STOCK_ANALYSIS_PROMPT = """## 종목 분석 요청: {stock_name} ({symbol})
 ### 매매 상황
 {trading_context}
 
+### Deterministic 사전 판단
+{deterministic_context}
+
 ### 현재가 정보
 - 현재가: {current_price:,.0f}원
 - 전일 대비: {change:+,.0f}원 ({change_rate:+.2f}%)

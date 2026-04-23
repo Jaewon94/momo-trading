@@ -24,6 +24,7 @@ from scheduler.market_calendar import market_calendar
 from services.activity_logger import activity_logger
 from services.ai_skip_metric_service import ai_skip_metric_service
 from services.deterministic_final_gate_service import deterministic_final_gate_service
+from services.deterministic_prompt_context_service import deterministic_prompt_context_service
 from services.news_gate_rollout_service import news_gate_rollout_service
 from services.pre_analysis_gate_service import pre_analysis_gate_service
 from services.runtime_reconfiguration_service import runtime_reconfiguration_service
@@ -734,12 +735,21 @@ class TradingAgent:
 
             analysis = await self._tier1_analysis(
                 symbol, name, current_price, chart_result,
-                price_resp.data or {}, feedback_context,
-                market_context=self._market_context,
-                trading_context=self._trading_context,
-                cycle_id=cycle_id,
-                manual_provider_override=manual_provider_override,
-                manual_model_override=manual_model_override,
+            price_resp.data or {}, feedback_context,
+            market_context=self._market_context,
+            trading_context=self._trading_context,
+            deterministic_context=deterministic_prompt_context_service.build_tier1_context(
+                symbol=symbol,
+                strategy_type=strategy_type,
+                current_price=current_price,
+                chart_result=chart_result,
+                portfolio_snapshot=portfolio_snapshot,
+                market_regime=self._market_regime,
+                dynamic_limits=dynamic_limits,
+            ),
+            cycle_id=cycle_id,
+            manual_provider_override=manual_provider_override,
+            manual_model_override=manual_model_override,
             )
             t1_elapsed = activity_logger.elapsed_ms(t1_timer)
             if cache_allowed:
@@ -904,6 +914,17 @@ class TradingAgent:
             market_context=self._market_context,
             trading_context=self._trading_context,
             portfolio_snapshot=portfolio_snapshot,
+            deterministic_context=deterministic_prompt_context_service.build_tier2_context(
+                symbol=symbol,
+                strategy_type=strategy_type,
+                current_price=current_price,
+                tier1_analysis=analysis,
+                portfolio_snapshot=portfolio_snapshot,
+                market_regime=self._market_regime,
+                dynamic_limits=dynamic_limits,
+                active_rules=self._active_trading_rules,
+                buying_power=stock_info.get("_buying_power"),
+            ),
             cycle_id=cycle_id,
             manual_provider_override=manual_provider_override,
             manual_model_override=manual_model_override,
@@ -2160,6 +2181,7 @@ class TradingAgent:
         feedback_context: str = "",
         market_context: str = "",
         trading_context: str = "",
+        deterministic_context: str = "",
         cycle_id: str | None = None,
         manual_provider_override: str | None = None,
         manual_model_override: str | None = None,
@@ -2181,6 +2203,7 @@ class TradingAgent:
             feedback_context=feedback_context or "매매 이력 없음",
             market_context=market_context or "시장 컨텍스트 없음",
             trading_context=trading_context or "매매 컨텍스트 없음",
+            deterministic_context=deterministic_context or "사전 판단 데이터 없음",
         )
 
         try:
@@ -2233,6 +2256,7 @@ class TradingAgent:
         market_context: str = "",
         trading_context: str = "",
         portfolio_snapshot: dict | None = None,
+        deterministic_context: str = "",
         cycle_id: str | None = None,
         manual_provider_override: str | None = None,
         manual_model_override: str | None = None,
@@ -2282,6 +2306,7 @@ class TradingAgent:
             tuning_suggestions=tuning_suggestions,
             market_context=market_context or "시장 컨텍스트 없음",
             trading_context=trading_context or "매매 컨텍스트 없음",
+            deterministic_context=deterministic_context or "사전 판단 데이터 없음",
         )
 
         try:

@@ -139,12 +139,13 @@ TDD 후보:
 - `Tier1AnalysisCacheService`를 추가했다.
 - 같은 종목/전략/현재가/시장국면/보유여부/차트 신호/피드백 컨텍스트 조건이면 짧은 TTL 동안 Tier1 결과를 재사용한다.
 - 수동 provider/model override가 있는 호출은 캐시를 우회한다.
+- `DeterministicPromptContextService`를 추가했다.
+- Tier1/Tier2 프롬프트에 `Deterministic 사전 판단` 섹션을 추가해 코드가 계산한 chart signal, cash/min quantity, RR ratio, stop-loss requirement, buying power 등을 구조화해 전달한다.
 
 다음 확장:
 
 - 거래량 부족, 손익비 계산 불가, 뉴스 리스크 과다, 비용 대비 edge 부족까지 확대.
-- 차트/추세/리스크 점수와 뉴스/비용 맥락을 정리해 Tier1 프롬프트 입력 품질을 높인다.
-- 캐시 hit와 deterministic skip을 `AI_SKIPPED` metric으로 집계한다.
+- 뉴스/비용 게이트 결과도 Tier2 전 deterministic context로 더 당겨 넣을지 검토한다.
 
 TDD 후보:
 
@@ -299,6 +300,7 @@ TDD 후보:
 - `DeterministicFinalGate`는 구현 완료됐다.
 - 동일 종목/동일 조건 분석 캐시는 구현 완료됐다.
 - `AI_SKIPPED` metric은 구현 완료됐다.
+- Tier1/Tier2 deterministic prompt context는 구현 완료됐다.
 - 세부 진행 현황은 `docs/고도화/2026-04-23-enhancement-status.md`를 기준 문서로 둔다.
 
 ### Phase 1: 뉴스와 후보 선정 입력 보강
@@ -310,9 +312,9 @@ TDD 후보:
 
 ### Phase 2: Tier1/Tier2 입력 품질과 호출 전 gate 강화
 
-1. Tier1/Tier2 프롬프트에 deterministic reason code와 점수 입력.
-2. 비용/뉴스 게이트의 Tier2 전 이동 검토.
-3. 뉴스 source별 blocked candidate forward return attribution 고도화.
+1. 비용/뉴스 게이트의 Tier2 전 이동 검토.
+2. 뉴스 source별 blocked candidate forward return attribution 고도화.
+3. 보유종목 재평가 비용 절감 설계.
 
 ### Phase 3: 보유종목 재평가 비용 절감
 

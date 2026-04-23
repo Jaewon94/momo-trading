@@ -372,13 +372,15 @@ async def test_run_trading_cycle_respects_configured_analysis_concurrency(monkey
 @pytest.mark.asyncio
 async def test_tier1_analysis_retries_once_when_first_response_is_unparseable(monkeypatch) -> None:
     agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    prompts = []
     responses = iter([
         ("not-json", "CODEX"),
         ('{"recommendation":"BUY","confidence":0.7,"reason":"ok","target_price":12000,"stop_loss_price":11000}', "CODEX"),
     ])
     parse_calls = []
 
-    async def fake_generate_tier1(*args, **kwargs):
+    async def fake_generate_tier1(prompt, *args, **kwargs):
+        prompts.append(prompt)
         return next(responses)
 
     def fake_parse_json(text: str):
@@ -403,12 +405,15 @@ async def test_tier1_analysis_retries_once_when_first_response_is_unparseable(mo
         current_price=11500.0,
         chart_result=SimpleNamespace(indicators_text="", patterns_text="", trend_text=""),
         price_data={},
+        deterministic_context="- deterministic_stage: TIER1_PRECHECK\n- chart_signal: BULLISH / confidence 70%",
     )
 
     assert result is not None
     assert result["recommendation"] == "BUY"
     assert result["provider"] == "CODEX"
     assert parse_calls == ["not-json", '{"recommendation":"BUY","confidence":0.7,"reason":"ok","target_price":12000,"stop_loss_price":11000}']
+    assert "### Deterministic 사전 판단" in prompts[0]
+    assert "deterministic_stage: TIER1_PRECHECK" in prompts[0]
 
 
 @pytest.mark.asyncio
@@ -458,7 +463,8 @@ async def test_tier2_review_uses_tier_provider_without_manual_override(monkeypat
     agent = TradingAgent(broker_adapter=StubBrokerAdapter())
     captured = {}
 
-    async def fake_generate_tier2(*args, **kwargs):
+    async def fake_generate_tier2(prompt, *args, **kwargs):
+        captured["prompt"] = prompt
         captured["symbol"] = kwargs.get("symbol")
         captured["cycle_id"] = kwargs.get("cycle_id")
         return '{"approved":true,"reason":"ok","suggested_quantity":10}', "CLAUDE_CODE"
@@ -482,14 +488,15 @@ async def test_tier2_review_uses_tier_provider_without_manual_override(monkeypat
         strategy_type="STABLE_SHORT",
         tier1_analysis={"recommendation": "BUY"},
         cycle_id="cycle-tier2",
+        deterministic_context="- deterministic_stage: TIER2_PRECHECK\n- code_rr_ratio: 2.00",
     )
 
     assert result is not None
     assert result["provider"] == "CLAUDE_CODE"
-    assert captured == {
-        "symbol": "005930",
-        "cycle_id": "cycle-tier2",
-    }
+    assert captured["symbol"] == "005930"
+    assert captured["cycle_id"] == "cycle-tier2"
+    assert "### Deterministic 사전 판단" in captured["prompt"]
+    assert "deterministic_stage: TIER2_PRECHECK" in captured["prompt"]
 
 
 @pytest.mark.asyncio
