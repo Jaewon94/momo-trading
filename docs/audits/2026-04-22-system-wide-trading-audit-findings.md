@@ -558,17 +558,18 @@
 ### F-034: Admin 고위험 거래/DB 액션에 서버 측 transaction authorization 단계가 없음
 
 - 심각도: `P1`
-- 상태: `확정`
+- 상태: `완화됨`
 - 영역: `Admin | 보안 | 운영`
-- 현상: Admin route에는 운영 DB reset, pending 복구, 보유 즉시 매도, 미체결 취소, 취소 후 시장가 재매도 같은 고위험 endpoint가 있습니다. 서비스 내부에서 일부 안전 조건은 확인하지만 route 레벨 auth dependency, re-auth, 2-step confirmation token, idempotency key가 보이지 않습니다.
+- 현상: 이전에는 Admin route의 운영 DB reset, 보유 즉시 매도, 미체결 취소, 취소 후 시장가 재매도, stale pending apply 같은 고위험 endpoint에 route 레벨 transaction authorization 단계가 없었습니다.
 - 영향: 브라우저 세션 오남용, 실수 클릭, CSRF/XSS, 로컬 포트 노출 상황에서 운영 데이터 삭제나 실주문이 실행될 수 있습니다.
 - 증거: `api/routes/admin.py`의 `reset_operational_baseline`, `sell_account_holding`, `cancel_pending_buy_order`, `cancel_pending_sell_and_resubmit`; `main.py`의 Admin static mount와 router include.
 - 재현/검증: 기존 API 테스트는 해당 endpoint가 바로 service에 delegate되는 것을 확인하지만 별도 confirmation/auth 단계는 검증하지 않습니다.
 - 권고: OWASP Transaction Authorization 기준에 맞춰 고위험 endpoint에 서버 생성 confirmation challenge, 짧은 TTL, idempotency key, request audit hash, 필요 시 re-auth를 추가합니다.
-- 구현 전 테스트: `tests/api/test_admin_manual_actions.py`, `tests/api/test_admin_trade_routes.py`에 confirmation token 없이는 409/428을 반환하는 실패 테스트 추가.
-- Rollout: 먼저 `ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED=false` compatibility flag로 도입하고, UI가 지원되면 기본 true로 전환.
+- 구현 전 테스트: `tests/services/test_admin_action_confirmation_service.py`, `tests/api/test_admin_account_routes.py`, `tests/api/test_admin_trade_routes.py`에 confirmation token 없이는 428을 반환하는 실패 테스트 추가.
+- Rollout: `ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED=false` compatibility flag로 도입했습니다. 서버 측 token 생성/검증은 구현됐고, UI confirmation flow를 붙인 뒤 기본 true 전환을 검토합니다.
 - Rollback: runtime flag로 confirmation requirement를 임시 비활성화.
-- 분류: `유지하되 harden`
+- 분류: `부분 완료`
+- 조치: Track 5 Task 5.2에서 `POST /api/v1/admin/actions/confirmations`와 HMAC 기반 confirmation token을 추가했습니다. token은 action/resource/quantity/TTL/nonce에 묶이고 1회 사용 후 재사용이 차단됩니다. reset, manual sell, cancel-buy, cancel-and-sell, stale pending cleanup apply에 적용했습니다. 남은 작업은 Admin UI의 2-step confirmation flow와 기본 true 전환입니다.
 
 ### F-035: Observability maintenance job이 provider/model NULL 때문에 반복 실패함
 

@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from fastapi.responses import StreamingResponse
 from loguru import logger
+from pydantic import BaseModel
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import OperationalError
@@ -64,6 +65,7 @@ from services.error_incident_service import error_incident_service
 from services.observability_reporting_service import observability_reporting_service
 from services.performance_reporting_service import performance_reporting_service
 from services.account_equity_service import account_equity_service
+from services.admin_action_confirmation_service import admin_action_confirmation_service
 from services.runtime_settings_service import runtime_settings_service
 from services.runtime_reconfiguration_service import runtime_reconfiguration_service
 from services.runtime_backup_service import runtime_backup_service
@@ -83,6 +85,16 @@ POSITION_DETAIL_HOLDING_CACHE_TTL_SEC = 15.0
 _position_holdings_cache = {"items": None, "fetched_at": 0.0}
 
 
+class AdminActionConfirmationCreateRequest(BaseModel):
+    action: str
+    resource_id: str
+    quantity: str | int | None = None
+
+
+class AdminActionConfirmationVerifyRequest(BaseModel):
+    confirmation_token: str | None = None
+
+
 def _parse_json_detail(detail):
     if not detail:
         return None
@@ -92,6 +104,34 @@ def _parse_json_detail(detail):
         return _json.loads(detail)
     except (TypeError, ValueError):
         return None
+
+
+def _require_admin_action_confirmation(
+    payload: AdminActionConfirmationVerifyRequest | None,
+    *,
+    action: str,
+    resource_id: str,
+    quantity: str | int | None = None,
+) -> None:
+    if not bool(getattr(settings, "ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED", False)):
+        return
+    try:
+        admin_action_confirmation_service.verify_token(
+            getattr(payload, "confirmation_token", None),
+            action=action,
+            resource_id=resource_id,
+            quantity=quantity,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=428,
+            detail={
+                "code": "ADMIN_ACTION_CONFIRMATION_REQUIRED",
+                "message": str(exc),
+                "action": action,
+                "resource_id": str(resource_id),
+            },
+        ) from exc
 
 
 def _extract_latest_signal(trades, activities):
@@ -720,6 +760,16 @@ async def get_observability_overview(
     return SuccessResponse(data=data)
 
 
+@router.post("/actions/confirmations")
+async def create_admin_action_confirmation(payload: AdminActionConfirmationCreateRequest):
+    data = admin_action_confirmation_service.create_challenge(
+        action=payload.action,
+        resource_id=payload.resource_id,
+        quantity=payload.quantity,
+    )
+    return SuccessResponse(data=data, message="고위험 관리자 액션 확인 토큰 생성 완료")
+
+
 @router.patch("/observability/incidents/{fingerprint}")
 async def update_observability_incident(
     fingerprint: str,
@@ -806,9 +856,17 @@ async def get_trade_reconciliation_report(db: AsyncSession = Depends(get_async_d
 @router.post("/trades/reconciliation/cleanup")
 async def cleanup_stale_pending_trades(
     apply: bool = Query(False, description="true일 때만 DB PENDING_CONFIRM을 CONFIRM_FAILED로 변경"),
+    confirmation: AdminActionConfirmationVerifyRequest | None = None,
     db: AsyncSession = Depends(get_async_db),
 ):
     """브로커 pending에 없는 오래된 DB-only BUY PENDING_CONFIRM을 수동 정리"""
+    if apply:
+        _require_admin_action_confirmation(
+            confirmation,
+            action="CLEANUP_STALE_PENDING",
+            resource_id="TRADE_RECONCILIATION",
+            quantity="ALL",
+        )
     broker_pending_orders = await get_broker_adapter().get_pending_orders()
     db_pending_confirms = await TradeResultRepository(db).get_pending_confirms()
     result = await stale_pending_cleanup_service.cleanup(
@@ -859,8 +917,14 @@ async def reconcile_holdings_trades():
 
 
 @router.post("/system/reset-operational-baseline")
-async def reset_operational_baseline():
+async def reset_operational_baseline(confirmation: AdminActionConfirmationVerifyRequest | None = None):
     """설정은 유지하고 운영 이력 DB를 초기화한 뒤 현재 보유 기준선으로 재구성"""
+    _require_admin_action_confirmation(
+        confirmation,
+        action="RESET_OPERATIONAL_BASELINE",
+        resource_id="OPERATIONAL_BASELINE",
+        quantity="ALL",
+    )
     backup = runtime_backup_service.create_database_backup(reason="before-reset")
     deleted: dict[str, int] = {}
     models_to_clear = [
@@ -1066,19 +1130,38 @@ async def get_pending_orders():
 
 
 @router.post("/account/holdings/{symbol}/sell")
-async def sell_account_holding(symbol: str):
+async def sell_account_holding(symbol: str, confirmation: AdminActionConfirmationVerifyRequest | None = None):
+    normalized_symbol = normalize_krx_symbol(symbol)
+    _require_admin_action_confirmation(
+        confirmation,
+        action="SELL_HOLDING",
+        resource_id=normalized_symbol,
+        quantity="ALL",
+    )
     result = await manual_trade_service.sell_position(symbol)
     return SuccessResponse(data=result, message=f"{result['symbol']} 즉시 매도 주문 접수")
 
 
 @router.post("/account/pending-orders/{order_id}/cancel-buy")
-async def cancel_pending_buy_order(order_id: str):
+async def cancel_pending_buy_order(order_id: str, confirmation: AdminActionConfirmationVerifyRequest | None = None):
+    _require_admin_action_confirmation(
+        confirmation,
+        action="CANCEL_PENDING_BUY",
+        resource_id=order_id,
+        quantity="ALL",
+    )
     result = await manual_trade_service.cancel_pending_buy(order_id)
     return SuccessResponse(data=result, message="미체결 매수 주문 취소 완료")
 
 
 @router.post("/account/pending-orders/{order_id}/cancel-and-sell")
-async def cancel_pending_sell_and_resubmit(order_id: str):
+async def cancel_pending_sell_and_resubmit(order_id: str, confirmation: AdminActionConfirmationVerifyRequest | None = None):
+    _require_admin_action_confirmation(
+        confirmation,
+        action="CANCEL_AND_SELL_PENDING",
+        resource_id=order_id,
+        quantity="ALL",
+    )
     result = await manual_trade_service.replace_pending_sell_with_market_order(order_id)
     return SuccessResponse(data=result, message="취소 후 즉시 매도 주문 접수")
 

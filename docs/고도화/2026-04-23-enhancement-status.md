@@ -23,6 +23,7 @@
 - 강제 청산 재시도 성공 기록 누락 수정.
 - 스마트 청산 데이터 수집 실패를 `REVIEW_REQUIRED`/HOLD로 분리. 현재가 조회 실패, open BUY 누락, repository 예외는 즉시 SELL하지 않고 운영 로그에 확인 필요 사유를 남긴다.
 - 실시간 구독 우선순위와 polling fallback watchlist 구현. 보유종목은 신규 후보보다 우선 구독되고, 41개 한도에서 밀린 종목은 polling fallback과 Admin observability 상태에 남는다.
+- Admin 고위험 액션 confirmation token 서버 검증 구현. 기본값은 호환을 위해 `ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED=false`이며, true일 때 reset/manual sell/cancel/cancel-and-sell/stale cleanup apply는 서버 생성 token 없이는 428로 거부된다.
 
 ### PnL/리스크
 
@@ -82,7 +83,6 @@
 
 ### P0/P1 성격
 
-- Admin 고위험 액션 서버 측 confirmation challenge.
 - canonical decision event table/service.
 - forward return labeling job.
 
@@ -95,6 +95,11 @@
 - 동일 종목/동일 조건 분석 캐시.
 - `AI_SKIPPED` metric.
 - LLM cooldown incident dedupe.
+
+### Admin UX 후속
+
+- 고위험 액션 confirmation UI flow.
+- confirmation 기본값 true 전환 여부 결정.
 
 ### 실험/성과 검증
 

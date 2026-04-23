@@ -169,6 +169,36 @@ async def test_admin_trade_reconciliation_cleanup_defaults_to_dry_run(client, mo
 
 
 @pytest.mark.asyncio
+async def test_admin_trade_reconciliation_cleanup_apply_requires_confirmation_when_enabled(client, monkeypatch):
+    called = False
+
+    class FakeRepo:
+        def __init__(self, _db) -> None:
+            pass
+
+        async def get_pending_confirms(self):
+            return []
+
+    async def fake_cleanup(*args, **kwargs):
+        nonlocal called
+        called = True
+        return {"mode": "apply", "summary": {"eligible_count": 0, "updated_count": 0}}
+
+    monkeypatch.setattr("api.routes.admin.settings.ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED", True, raising=False)
+    monkeypatch.setattr("api.routes.admin.TradeResultRepository", FakeRepo, raising=False)
+    monkeypatch.setattr(
+        "api.routes.admin.get_broker_adapter",
+        lambda: SimpleNamespace(get_pending_orders=lambda: __import__("asyncio").sleep(0, result=[])),
+    )
+    monkeypatch.setattr("api.routes.admin.stale_pending_cleanup_service.cleanup", fake_cleanup)
+
+    response = await client.post("/api/v1/admin/trades/reconciliation/cleanup?apply=true")
+
+    assert response.status_code == 428
+    assert called is False
+
+
+@pytest.mark.asyncio
 async def test_admin_reconcile_holdings_trades_route_returns_summary(client, monkeypatch):
     captured = {}
 
@@ -326,6 +356,24 @@ async def test_admin_reset_operational_baseline_route_returns_summary(client, mo
     assert len(snapshots) == 1
     assert snapshots[0].session_phase == "RESET_BASELINE"
     assert snapshots[0].total_asset == pytest.approx(527064565.0)
+
+
+@pytest.mark.asyncio
+async def test_admin_reset_operational_baseline_requires_confirmation_when_enabled(client, monkeypatch):
+    called = False
+
+    def fake_backup(reason="manual"):
+        nonlocal called
+        called = True
+        return {}
+
+    monkeypatch.setattr("api.routes.admin.settings.ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED", True, raising=False)
+    monkeypatch.setattr("api.routes.admin.runtime_backup_service.create_database_backup", fake_backup)
+
+    response = await client.post("/api/v1/admin/system/reset-operational-baseline")
+
+    assert response.status_code == 428
+    assert called is False
 
 
 @pytest.mark.asyncio
