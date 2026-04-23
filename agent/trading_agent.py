@@ -898,6 +898,36 @@ class TradingAgent:
             )
             return result
 
+        if analysis.get("recommendation") == "BUY":
+            pre_horizon = decide_trade_horizon(
+                strategy_type=strategy_type,
+                trigger=str(stock_info.get("trigger", "")),
+                change_rate=float(price_resp.data.get("change_rate", 0.0) if price_resp.data else 0.0),
+                confidence=float(analysis.get("confidence", 0.0) or 0.0),
+                market_regime=self._market_regime,
+            )
+            tier1_cost_gate = self._evaluate_tier1_cost_gate(
+                analysis=analysis,
+                current_price=current_price,
+                horizon=pre_horizon,
+            )
+            if not tier1_cost_gate["approved"]:
+                await activity_logger.log(
+                    ActivityType.RISK_GATE, ActivityPhase.SKIP,
+                    f"🚫 [{name}] 비용 게이트 사전 차단: {tier1_cost_gate['reason']}",
+                    cycle_id=cycle_id, symbol=symbol,
+                    detail=tier1_cost_gate,
+                )
+                await ai_skip_metric_service.record(
+                    stage="TIER1_COST_GATE",
+                    reason_code="LOW_EDGE_AFTER_COST",
+                    skipped_tier="TIER2",
+                    cycle_id=cycle_id,
+                    symbol=symbol,
+                    detail=tier1_cost_gate,
+                )
+                return result
+
         # 3d. Tier 2 최종 검토 (모든 BUY에 대해 필수 실행)
         t2_timer = activity_logger.timer()
         await activity_logger.log(
@@ -2018,6 +2048,23 @@ class TradingAgent:
                 symbol,
                 ", ".join(f"{k}={v}" for k, v in kwargs.items()),
             )
+
+    @staticmethod
+    def _evaluate_tier1_cost_gate(analysis: dict, current_price: float, horizon: str | None = None) -> dict:
+        if str(analysis.get("recommendation", "") or "").upper() != "BUY":
+            return {"approved": True, "reason": "BUY 추천 아님", "stage": "TIER1_COST_GATE"}
+        signal = TradeSignal(
+            symbol="",
+            stock_id="",
+            action=SignalAction.BUY,
+            strength=float(analysis.get("confidence", 0.0) or 0.0),
+            suggested_price=float(current_price or 0.0),
+            suggested_quantity=1,
+            target_price=float(analysis.get("target_price", 0.0) or 0.0),
+            confidence=float(analysis.get("confidence", 0.0) or 0.0),
+        )
+        result = TradingAgent._evaluate_cost_gate(signal, current_price=current_price, horizon=horizon)
+        return {"stage": "TIER1_COST_GATE", **result}
 
     @staticmethod
     def _evaluate_cost_gate(signal: TradeSignal, current_price: float, horizon: str | None = None) -> dict:

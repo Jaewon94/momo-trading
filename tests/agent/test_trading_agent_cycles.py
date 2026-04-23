@@ -773,6 +773,58 @@ async def test_analyze_and_trade_skips_tier2_when_deterministic_final_gate_block
 
 
 @pytest.mark.asyncio
+async def test_analyze_and_trade_skips_tier2_when_tier1_cost_gate_blocks_low_edge(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    logs = []
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append((args, kwargs))
+
+    async def fake_fetch_symbol_market_data(_symbol: str):
+        price_resp = SimpleNamespace(success=True, data={"price": 100.0, "change_rate": 0.0}, error=None)
+        daily_resp = SimpleNamespace(
+            success=True,
+            data={"prices": [{"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1_000}]},
+            error=None,
+        )
+        minute_resp = SimpleNamespace(success=False, data={}, error="no-minute")
+        return price_resp, daily_resp, minute_resp
+
+    async def fake_tier1_analysis(*args, **kwargs) -> dict:
+        return {
+            "recommendation": "BUY",
+            "confidence": 0.9,
+            "reason": "edge too small",
+            "target_price": 100.3,
+            "stop_loss_price": 99.0,
+            "provider": "CODEX",
+        }
+
+    async def fail_tier2_review(*args, **kwargs):
+        raise AssertionError("Tier2 should not be called when Tier1 cost gate blocks the candidate")
+
+    monkeypatch.setattr("agent.trading_agent.settings.COST_GATE_ENABLED", True)
+    monkeypatch.setattr("agent.trading_agent.settings.ESTIMATED_ENTRY_COST_BPS", 8)
+    monkeypatch.setattr("agent.trading_agent.settings.ESTIMATED_EXIT_COST_BPS", 8)
+    monkeypatch.setattr("agent.trading_agent.settings.ESTIMATED_SLIPPAGE_BPS_SHORT", 12)
+    monkeypatch.setattr("agent.trading_agent.settings.MIN_EDGE_TO_COST_RATIO_SHORT", 1.5)
+    monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
+    monkeypatch.setattr(agent, "_fetch_symbol_market_data", fake_fetch_symbol_market_data)
+    monkeypatch.setattr(agent, "_tier1_analysis", fake_tier1_analysis)
+    monkeypatch.setattr(agent, "_tier2_review", fail_tier2_review)
+
+    result = await agent._analyze_and_trade(
+        {"symbol": "005930", "name": "삼성전자", "strategy_type": "AGGRESSIVE_SHORT", "_buying_power": {"success": True, "max_qty": 10}},
+        "cycle-tier1-cost-gate",
+        portfolio_snapshot={"cash": 1_000_000, "holding_symbols": [], "holding_count": 0, "today_trade_count": 0},
+        dynamic_limits={"min_buy_quantity": 1},
+    )
+
+    assert result == {"symbol": "005930", "signal": False, "executed": False}
+    assert any("비용 게이트 사전 차단" in args[2] for args, _kwargs in logs)
+
+
+@pytest.mark.asyncio
 async def test_analyze_and_trade_reuses_tier1_cache_for_same_symbol_conditions(monkeypatch) -> None:
     agent = TradingAgent(broker_adapter=StubBrokerAdapter())
     logs = []

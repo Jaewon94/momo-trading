@@ -301,6 +301,7 @@ TDD 후보:
 - 동일 종목/동일 조건 분석 캐시는 구현 완료됐다.
 - `AI_SKIPPED` metric은 구현 완료됐다.
 - Tier1/Tier2 deterministic prompt context는 구현 완료됐다.
+- Tier1 비용 pre-gate는 구현 완료됐다. 뉴스 gate는 rollout/shadow 의미 보존을 위해 아직 Tier2 전 차단으로 옮기지 않았다.
 - 세부 진행 현황은 `docs/고도화/2026-04-23-enhancement-status.md`를 기준 문서로 둔다.
 
 ### Phase 1: 뉴스와 후보 선정 입력 보강
@@ -312,9 +313,9 @@ TDD 후보:
 
 ### Phase 2: Tier1/Tier2 입력 품질과 호출 전 gate 강화
 
-1. 비용/뉴스 게이트의 Tier2 전 이동 검토.
-2. 뉴스 source별 blocked candidate forward return attribution 고도화.
-3. 보유종목 재평가 비용 절감 설계.
+1. 뉴스 source별 blocked candidate forward return attribution 고도화.
+2. 보유종목 재평가 비용 절감 설계.
+3. 뉴스 gate의 Tier2 전 차단 이동은 shadow/rollout 표본을 더 확인한 뒤 재검토.
 
 ### Phase 3: 보유종목 재평가 비용 절감
 

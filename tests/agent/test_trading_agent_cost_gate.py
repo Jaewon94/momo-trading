@@ -46,3 +46,20 @@ def test_cost_gate_passes_when_edge_large_enough(monkeypatch):
     )
 
     assert result["approved"] is True
+
+
+def test_tier1_cost_gate_blocks_when_edge_too_small(monkeypatch):
+    monkeypatch.setattr("agent.trading_agent.settings.COST_GATE_ENABLED", True)
+    monkeypatch.setattr("agent.trading_agent.settings.ESTIMATED_ENTRY_COST_BPS", 8)
+    monkeypatch.setattr("agent.trading_agent.settings.ESTIMATED_EXIT_COST_BPS", 8)
+    monkeypatch.setattr("agent.trading_agent.settings.ESTIMATED_SLIPPAGE_BPS_SHORT", 12)
+    monkeypatch.setattr("agent.trading_agent.settings.MIN_EDGE_TO_COST_RATIO_SHORT", 1.5)
+
+    result = TradingAgent._evaluate_tier1_cost_gate(
+        analysis={"recommendation": "BUY", "target_price": 100.3},
+        current_price=100.0,
+        horizon="SHORT",
+    )
+
+    assert result["approved"] is False
+    assert result["stage"] == "TIER1_COST_GATE"
