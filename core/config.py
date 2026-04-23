@@ -95,6 +95,7 @@ class Settings(BaseSettings):
     NEWS_INCLUDE_FOREIGN: bool = True
     NEWS_TRANSLATE_FOREIGN_ENABLED: bool = True
     NEWS_NASDAQ_ENABLED: bool = False
+    NEWS_GATE_ROLLOUT_MODE: str = ""  # OFF | POLL_ONLY | SHADOW_ONLY | BUY_BLOCK_GATE | empty=legacy booleans
     NEWS_GATE_ENABLED: bool = True
     NEWS_LOOKBACK_HOURS: int = 24
     NEWS_MAX_ITEMS_PER_SYMBOL: int = 20

@@ -58,9 +58,11 @@
 
 ### 뉴스 rollout mode
 
-- 현재는 `NEWS_GATE_ENABLED`, `NEWS_SHADOW_ENABLED`, `NEWS_POLL_ENABLED` 같은 boolean 조합이다.
-- 문서에 제안한 `OFF|POLL_ONLY|SHADOW_ONLY|SEMI_AUTO_GATE_RECOMMENDATION|BUY_BLOCK_GATE` enum mode는 아직 없다.
-- 표본 수/forward return 조건을 만족해야 `BUY_BLOCK_GATE`를 허용하는 guard도 아직 없다.
+- `NEWS_GATE_ROLLOUT_MODE`를 추가했다.
+- 지원 mode는 `OFF`, `POLL_ONLY`, `SHADOW_ONLY`, `BUY_BLOCK_GATE`다.
+- 값이 비어 있으면 기존 `NEWS_GATE_ENABLED`, `NEWS_SHADOW_ENABLED`, `NEWS_POLL_ENABLED` boolean 조합을 그대로 따른다.
+- 명시적 `BUY_BLOCK_GATE`는 성과 rollout 상태가 `PROMOTE`일 때만 실제 BUY 차단으로 동작한다.
+- rollout 조건이 부족하면 자동으로 `SHADOW_ONLY`로 낮춰 평가와 shadow 기록만 수행한다.
 
 ### 뉴스 source별 성과
 
@@ -125,8 +127,8 @@
 ## 권장 실행 순서
 
 1. `POST /api/v1/admin/stocks/bootstrap-universe?rank_limit=50&apply=false` dry-run 후 `apply=true`로 최소 국내 종목 universe를 채운다. 현재 로컬 DB 기준 `stocks=0`이라 먼저 운영 적용 확인이 필요하다.
-2. 뉴스 gate는 enum rollout mode로 바꾸고, `BUY_BLOCK_GATE`는 forward return 표본이 쌓인 뒤에만 허용한다.
-3. Tier1/Tier2 프롬프트에 deterministic reason code와 점수 입력을 검토한다.
+2. Tier1/Tier2 프롬프트에 deterministic reason code와 점수 입력을 검토한다.
+3. 비용/뉴스 게이트의 Tier2 전 이동을 검토한다.
 
 ## 당장 바꾸지 말 것
 

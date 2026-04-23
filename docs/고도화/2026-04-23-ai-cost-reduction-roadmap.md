@@ -288,6 +288,7 @@ TDD 후보:
 ## 2026-04-23 코드 검증 업데이트
 
 - 뉴스 deterministic enrichment와 backfill 서비스/API는 코드 구현, 테스트, 운영 API 확인까지 완료됐다.
+- `NEWS_GATE_ROLLOUT_MODE`를 추가했다. `OFF`, `POLL_ONLY`, `SHADOW_ONLY`, `BUY_BLOCK_GATE`를 지원하며, 명시적 `BUY_BLOCK_GATE`는 rollout 상태가 `PROMOTE`일 때만 실제 차단한다.
 - `POST /api/v1/admin/news/backfill-enrichment`는 운영 서버에서 정상 동작한다.
 - `LLM_SLOW_CALL_WARN_SEC` 기반 지연 경고도 코드/테스트/커밋 및 운영 서버 재시작 반영이 완료됐다.
 - canonical decision event, forward return labeling job, decision benchmark read-only API는 구현 완료됐다.
@@ -305,13 +306,13 @@ TDD 후보:
 1. 뉴스 리스크 분류/테마 매핑 backfill. 코드/테스트/운영 적용 완료.
 2. 국내 종목 universe bootstrap. 코드/테스트는 완료됐고, 운영 DB에 dry-run/apply 확인이 다음 순서다.
 3. 시장 스캔 deterministic 후보 점수에 cooldown/뉴스 감점을 붙이고, AI 시장 해설 optional 분리를 검토.
-4. 뉴스 gate rollout mode 설계 및 연결.
+4. 뉴스 gate rollout mode 설계 및 연결. 코드/테스트 완료.
 
 ### Phase 2: Tier1/Tier2 입력 품질과 호출 전 gate 강화
 
 1. Tier1/Tier2 프롬프트에 deterministic reason code와 점수 입력.
 2. 비용/뉴스 게이트의 Tier2 전 이동 검토.
-3. 뉴스 gate enum rollout mode 추가.
+3. 뉴스 source별 blocked candidate forward return attribution 고도화.
 
 ### Phase 3: 보유종목 재평가 비용 절감
 

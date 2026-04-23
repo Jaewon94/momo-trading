@@ -6,6 +6,7 @@ from agent.trading_agent import TradingAgent
 @pytest.mark.asyncio
 async def test_trading_agent_news_gate_uses_service_result(monkeypatch):
     monkeypatch.setattr("agent.trading_agent.settings.NEWS_GATE_ENABLED", True)
+    monkeypatch.setattr("agent.trading_agent.settings.NEWS_GATE_ROLLOUT_MODE", "", raising=False)
 
     class FakeSession:
         async def __aenter__(self):
@@ -34,11 +35,45 @@ async def test_trading_agent_news_gate_uses_service_result(monkeypatch):
 
     assert result["approved"] is False
     assert result["negative_count"] == 1
+    assert result["blocking_enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_trading_agent_news_gate_shadow_mode_evaluates_without_blocking(monkeypatch):
+    monkeypatch.setattr("agent.trading_agent.settings.NEWS_GATE_ROLLOUT_MODE", "SHADOW_ONLY", raising=False)
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def fake_evaluate_gate(session, *, symbol, horizon=None):
+        return {
+            "approved": False,
+            "reason": "부정 뉴스 압력 0.80 >= 0.55",
+            "negative_pressure": 0.8,
+            "negative_count": 1,
+            "threshold": 0.55,
+        }
+
+    monkeypatch.setattr("agent.trading_agent.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("agent.trading_agent.news_signal_service.evaluate_gate", fake_evaluate_gate)
+
+    agent = TradingAgent()
+
+    result = await agent._evaluate_news_gate(symbol="005930", horizon="MID")
+
+    assert result["approved"] is False
+    assert result["blocking_enabled"] is False
+    assert result["news_gate_rollout"]["effective_mode"] == "SHADOW_ONLY"
 
 
 @pytest.mark.asyncio
 async def test_trading_agent_records_shadow_policy_decision(monkeypatch):
     records = []
+    monkeypatch.setattr("agent.trading_agent.settings.NEWS_GATE_ROLLOUT_MODE", "SHADOW_ONLY", raising=False)
 
     async def fake_log(*args, **kwargs):
         records.append((args, kwargs))

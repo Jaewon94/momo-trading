@@ -24,6 +24,7 @@ from scheduler.market_calendar import market_calendar
 from services.activity_logger import activity_logger
 from services.ai_skip_metric_service import ai_skip_metric_service
 from services.deterministic_final_gate_service import deterministic_final_gate_service
+from services.news_gate_rollout_service import news_gate_rollout_service
 from services.pre_analysis_gate_service import pre_analysis_gate_service
 from services.runtime_reconfiguration_service import runtime_reconfiguration_service
 from services.tier1_analysis_cache_service import tier1_analysis_cache_service
@@ -1071,7 +1072,7 @@ class TradingAgent:
                 news_gate=news_gate,
                 cycle_id=cycle_id,
             )
-            if not news_gate["approved"]:
+            if not news_gate["approved"] and bool(news_gate.get("blocking_enabled", True)):
                 await activity_logger.log(
                     ActivityType.RISK_GATE, ActivityPhase.SKIP,
                     f"🚫 [{name}] 뉴스 게이트 차단: {news_gate['reason']}",
@@ -2055,16 +2056,36 @@ class TradingAgent:
         return trend or None
 
     async def _evaluate_news_gate(self, *, symbol: str, horizon: str | None = None) -> dict:
-        if not settings.NEWS_GATE_ENABLED:
-            return {"approved": True, "reason": "뉴스 게이트 비활성화"}
+        rollout = await news_gate_rollout_service.resolve()
+        if not rollout.evaluate_gate:
+            return {
+                "approved": True,
+                "reason": rollout.reason,
+                "negative_pressure": 0.0,
+                "negative_count": 0,
+                "news_gate_rollout": {
+                    "requested_mode": rollout.requested_mode,
+                    "effective_mode": rollout.effective_mode,
+                    "block_buy": rollout.block_buy,
+                },
+            }
 
         try:
             async with AsyncSessionLocal() as session:
-                return await news_signal_service.evaluate_gate(
+                result = await news_signal_service.evaluate_gate(
                     session,
                     symbol=symbol,
                     horizon=horizon,
                 )
+                result["blocking_enabled"] = rollout.block_buy
+                result["news_gate_rollout"] = {
+                    "requested_mode": rollout.requested_mode,
+                    "effective_mode": rollout.effective_mode,
+                    "block_buy": rollout.block_buy,
+                    "reason": rollout.reason,
+                    **rollout.detail,
+                }
+                return result
         except Exception as exc:
             logger.warning("[{}] 뉴스 게이트 평가 실패, 보수적 통과: {}", symbol, str(exc))
             return {
@@ -2085,7 +2106,7 @@ class TradingAgent:
         news_gate: dict | None,
         cycle_id: str | None,
     ) -> None:
-        if not bool(getattr(settings, "NEWS_SHADOW_ENABLED", True)):
+        if not news_gate_rollout_service.should_record_shadow():
             return
 
         detail = {

@@ -32,6 +32,7 @@ async def test_admin_settings_exposes_manual_llm_provider(client):
     assert "NEWS_INCLUDE_FOREIGN" in payload["data"]
     assert "NEWS_TRANSLATE_FOREIGN_ENABLED" in payload["data"]
     assert "NEWS_NASDAQ_ENABLED" in payload["data"]
+    assert "NEWS_GATE_ROLLOUT_MODE" in payload["data"]
     assert "NEWS_GATE_ENABLED" in payload["data"]
     assert "NEWS_LOOKBACK_HOURS" in payload["data"]
     assert "NEWS_NEGATIVE_BLOCK_THRESHOLD" in payload["data"]
@@ -101,6 +102,7 @@ async def test_admin_settings_updates_news_llm_provider(client):
             "NEWS_INCLUDE_FOREIGN": False,
             "NEWS_TRANSLATE_FOREIGN_ENABLED": False,
             "NEWS_NASDAQ_ENABLED": False,
+            "NEWS_GATE_ROLLOUT_MODE": "SHADOW_ONLY",
             "NEWS_GATE_ENABLED": False,
             "NEWS_POLL_ENABLED": False,
             "NEWS_POLL_INTERVAL_MIN_TRADING": 7,
@@ -131,6 +133,7 @@ async def test_admin_settings_updates_news_llm_provider(client):
     assert settings_response.json()["data"]["NEWS_INCLUDE_FOREIGN"] is False
     assert settings_response.json()["data"]["NEWS_TRANSLATE_FOREIGN_ENABLED"] is False
     assert settings_response.json()["data"]["NEWS_NASDAQ_ENABLED"] is False
+    assert settings_response.json()["data"]["NEWS_GATE_ROLLOUT_MODE"] == "SHADOW_ONLY"
     assert settings_response.json()["data"]["NEWS_GATE_ENABLED"] is False
     assert settings_response.json()["data"]["NEWS_POLL_ENABLED"] is False
     assert settings_response.json()["data"]["NEWS_POLL_INTERVAL_MIN_TRADING"] == 7
