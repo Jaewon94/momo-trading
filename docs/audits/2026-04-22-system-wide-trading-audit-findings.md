@@ -237,7 +237,7 @@
 ### F-013: closed trade 표본이 0건이라 기대값/승률/PF 기반 성과 판단이 불가능함
 
 - 심각도: `P1`
-- 상태: `확정`
+- 상태: `부분 완료`
 - 영역: `PnL | 성과 측정 | 전략`
 - 현상: 운영 DB에서 `side=BUY`, `status=CONFIRMED`, `exit_at IS NOT NULL`인 closed trade가 0건입니다. PerformanceReportingService와 PerformanceTracker는 이 closed BUY만 기대값/승률/PF/연속손실의 기준으로 사용합니다.
 - 영향: 현재 “전략이 돈을 잘 버는지”를 closed-trade 지표로 판단할 수 없습니다. LLM risk tuning과 trading guard의 성과 입력도 사실상 비어 있어 전략 개선 판단이 왜곡됩니다.
@@ -335,14 +335,14 @@
 - 영역: `전략 | LLM | 성과 측정`
 - 현상: no-trade, random same candidates, scanner-only, technical-only, Tier1-only, Tier2-only, risk/cost-gated, actual recommendation/order 간 비교 결과가 저장되지 않습니다.
 - 영향: 특정 단계가 수익을 높이는지, 지연과 비용만 늘리는지 알 수 없습니다. 특히 LLM 호출 비용/지연과 뉴스/기술분석 단계의 가치를 평가할 수 없습니다.
-- 증거: Phase 5 funnel과 DB row count. Benchmark를 산출하는 service/test가 확인되지 않음.
-- 재현/검증: 저장된 후보 이벤트와 future return dataset이 없어서 benchmark query 자체를 구성할 수 없습니다.
+- 증거: Phase 5 funnel과 DB row count. Track 6.1~6.3 이후 저장된 decision event와 forward return에 대한 action/provider/stage/risk gate benchmark는 가능합니다.
+- 재현/검증: `/api/v1/admin/performance/decision-benchmark`에서 horizon별 action/provider/stage/risk gate 집계를 조회할 수 있습니다. 다만 동일 후보군 random/scanner-only/Tier-only benchmark는 아직 없습니다.
 - 권고: forward return dataset 위에 benchmark report를 먼저 read-only로 추가합니다. 각 benchmark는 같은 시간, 같은 후보군, 같은 비용 가정으로 비교해야 합니다.
 - 구현 전 테스트: 신규 `tests/services/test_strategy_benchmark_service.py`에 동일 후보군 랜덤 baseline, scanner-only baseline, Tier1/Tier2 filter 비교 fixture 추가.
 - Rollout: 최소 표본 수 미달 시 `INSUFFICIENT_SAMPLE`만 반환하고, gate에는 연결하지 않습니다.
 - Rollback: report-only service 제거 가능.
 - 분류: `실험`
-- 조치: Track 6.1/6.2에서 benchmark의 입력이 될 canonical `decision_events`와 `decision_forward_returns` 저장 기반을 추가했습니다. Benchmark/control report는 아직 미구현입니다.
+- 조치: Track 6.1/6.2에서 benchmark의 입력이 될 canonical `decision_events`와 `decision_forward_returns` 저장 기반을 추가했습니다. 이어서 read-only decision benchmark API를 추가해 final action, provider, decision stage, risk gate별 forward return을 집계할 수 있게 했습니다. 동일 후보군 random/scanner-only/Tier-only control group은 후속 작업입니다.
 
 ### F-020: 현재 상태에서 전략/뉴스/LLM 파라미터를 바로 조정하면 과최적화 위험이 큼
 
@@ -442,7 +442,7 @@
 - 현상: `execution_metrics`에는 provider/model/latency/status가 저장되지만, 후보별 이후 수익률이나 stage별 benchmark와 연결되지 않습니다.
 - 영향: Codex, Claude, Ollama 중 무엇이 돈을 더 벌게 하는지, 또는 지연만 늘리는지 판단할 수 없습니다. Tier1+Tier2 지연이 50~80초인 후보도 있어 단기 전략에서는 latency 자체가 edge를 없앨 수 있습니다.
 - 증거: Phase 7 `LLM_CALL` 집계, F-016의 forward return dataset 부재.
-- 재현/검증: Track 6.1/6.2 이후 신규 decision event는 5m/15m/30m/60m/close return label과 연결될 수 있습니다. 기존 데이터와 benchmark report 연결은 후속 작업입니다.
+- 재현/검증: Track 6.1/6.2 이후 신규 decision event는 5m/15m/30m/60m/close return label과 연결될 수 있습니다. `/api/v1/admin/performance/decision-benchmark`에서 provider별 forward return 집계를 조회할 수 있습니다.
 - 권고: decision event에 `provider`, `model`, `prompt_version`, `elapsed_ms`, `fallback_used`, `decision_action`, `forward_returns`를 함께 저장합니다.
 - 구현 전 테스트: `tests/services/test_decision_event_service.py`에 LLM metadata와 forward return label 저장 테스트 추가.
 - Rollout: write-only metric enrichment부터 시작하고 gate에는 연결하지 않습니다.

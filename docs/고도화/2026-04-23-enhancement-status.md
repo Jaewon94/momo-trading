@@ -70,8 +70,9 @@
 ### 뉴스 source별 성과
 
 - source별 수집 count, 실패/중복/스킵, enrichment 비율은 일부 볼 수 있다.
+- decision event 기준 action/provider/stage/risk gate별 forward return benchmark API는 추가됐다.
 - source별 blocked candidate forward return, gate contribution, 실제 성과 기여도는 아직 없다.
-- 이유: canonical decision event 기반은 추가됐지만 forward return dataset과 source별 benchmark가 아직 없음.
+- 이유: source별 뉴스 attribution과 scanner/Tier 단계별 전체 decision event 연결이 아직 없음.
 
 ### Observability maintenance
 
@@ -103,7 +104,8 @@
 ### 실험/성과 검증
 
 - candidate scanner/Tier/risk 단계별 decision event 세부 연결.
-- benchmark/control group report.
+- source별 뉴스 attribution benchmark.
+- 동일 후보군 random/scanner-only/Tier-only benchmark.
 - source별 뉴스 성과와 차단 후보 사후 수익률.
 - backtest same-bar execution 제거.
 - fee/fill/report metadata 분리.
@@ -115,7 +117,7 @@
 2. `POST /api/v1/admin/news/backfill-enrichment?limit=100&apply=false` dry-run 실행.
 3. dry-run 결과가 타당하면 `apply=true`로 기존 뉴스 deterministic enrichment 적용.
 4. DB 초기화 이후 비어 있을 수 있는 `stocks` universe bootstrap 구현.
-5. candidate scanner/Tier/risk 단계별 decision event 세부 연결과 benchmark/control report를 붙여 LLM/뉴스/전략 성과 검증을 리포트화한다.
+5. candidate scanner/Tier/risk 단계별 decision event 세부 연결과 source별 뉴스 attribution benchmark를 붙인다.
 6. 그 다음 `CandidateScoringService`, `PreAnalysisGate`, `DeterministicFinalGate`를 순서대로 붙인다.
 7. 뉴스 gate는 enum rollout mode로 바꾸고, `BUY_BLOCK_GATE`는 forward return 표본이 쌓인 뒤에만 허용한다.
 

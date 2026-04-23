@@ -39,7 +39,7 @@
 - Track 5.1은 observability rollup key의 provider/model `NULL` 정규화와 maintenance failure preflight WARN 노출까지 구현됐다.
 - Track 8 관련으로 LLM 지연 경고(`LLM_SLOW_CALL_WARN_SEC`)는 별도 커밋으로 구현됐다. 다만 cooldown incident dedupe는 아직 미구현이다.
 - 뉴스 deterministic enrichment/backfill은 별도 커밋으로 구현됐다. 다만 현재 라이브 9000 서버는 최신 코드를 로드하지 않아 backfill endpoint가 아직 동작하지 않는다.
-- Track 6.1 canonical decision event table/service와 Track 6.2 forward return labeling job은 구현됐다. 다만 benchmark/control report와 scanner/Tier 단계별 전체 연결은 아직 없어 뉴스/LLM/source별 실제 성과 검증은 report 수준에서 후속 구현이 필요하다.
+- Track 6.1 canonical decision event table/service, Track 6.2 forward return labeling job, decision benchmark read-only API는 구현됐다. 다만 scanner/Tier 단계별 전체 연결과 source별 뉴스 attribution은 후속 구현이 필요하다.
 - 전체 최신 현황은 `docs/고도화/2026-04-23-enhancement-status.md`에 별도 정리한다.
 
 ## Phase Gate
@@ -626,6 +626,34 @@
   - Update: F-016/F-019.
   - Commit: `feat: label decision forward returns`
   - Result: F-016/F-019/F-026과 고도화 현황 문서를 갱신했다. 커밋은 최종 검증 후 생성.
+
+### Task 6.3: decision benchmark read-only report
+
+**Files:**
+- Create: `services/decision_benchmark_service.py`
+- Modify: `api/routes/admin.py`
+- Test: `tests/services/test_decision_benchmark_service.py`
+- Test: `tests/api/test_admin_performance_routes.py`
+
+- [x] **Step 1: 실패 테스트 작성**
+  - decision event + forward return label을 final action, provider, stage, risk gate별로 집계하는 테스트를 추가했다.
+  - 관리자 API가 service payload를 반환하는 테스트를 추가했다.
+
+- [x] **Step 2: 실패 확인**
+  - Run: `./.venv/bin/python -m pytest tests/services/test_decision_benchmark_service.py tests/api/test_admin_performance_routes.py::test_admin_performance_decision_benchmark_route_returns_service_payload -q`
+  - Result: `services.decision_benchmark_service` 부재로 실패 확인.
+
+- [x] **Step 3: 최소 구현**
+  - `DecisionBenchmarkService`를 추가해 `decision_events`와 `decision_forward_returns`를 horizon별로 조인하고, `overall`, `by_final_action`, `by_decision_stage`, `by_provider`, `by_risk_gate`, `controls`를 반환한다.
+  - `/api/v1/admin/performance/decision-benchmark` read-only endpoint를 추가했다.
+
+- [x] **Step 4: 통과 확인**
+  - Run: `./.venv/bin/python -m pytest tests/services/test_decision_benchmark_service.py tests/api/test_admin_performance_routes.py -q`
+  - Expected: PASS.
+
+- [x] **Step 5: 문서/커밋**
+  - Update: F-019/F-026.
+  - Commit: `feat: decision benchmark report 추가`
 
 ## Track 7: Backtest Hygiene
 

@@ -62,6 +62,7 @@ from services.news_runtime_service import news_runtime_service
 from services.order_reconciliation_service import order_reconciliation_service
 from services.stale_pending_cleanup_service import stale_pending_cleanup_service
 from services.error_incident_service import error_incident_service
+from services.decision_benchmark_service import decision_benchmark_service
 from services.observability_reporting_service import observability_reporting_service
 from services.performance_reporting_service import performance_reporting_service
 from services.account_equity_service import account_equity_service
@@ -736,6 +737,25 @@ async def get_performance_periodic(
         db,
         period=normalized,
         size=size,
+    )
+    return SuccessResponse(data=data)
+
+
+@router.get("/performance/decision-benchmark")
+async def get_performance_decision_benchmark(
+    days: int = Query(30, ge=1, le=365),
+    horizon: str = Query("close"),
+    min_sample_size: int = Query(12, ge=1, le=10000),
+):
+    """Decision event + forward return 기반 stage/provider/action benchmark."""
+    normalized_horizon = horizon.strip().lower()
+    if normalized_horizon not in {"5m", "15m", "30m", "60m", "close"}:
+        raise HTTPException(status_code=400, detail="horizon must be one of 5m, 15m, 30m, 60m, close")
+    data = await decision_benchmark_service.build_report(
+        AsyncSessionLocal,
+        days=days,
+        horizon=normalized_horizon,
+        min_sample_size=min_sample_size,
     )
     return SuccessResponse(data=data)
 
