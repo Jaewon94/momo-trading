@@ -40,7 +40,7 @@
 - Track 8 관련으로 LLM 지연 경고(`LLM_SLOW_CALL_WARN_SEC`)는 별도 커밋으로 구현됐다. 다만 cooldown incident dedupe는 아직 미구현이다.
 - 뉴스 deterministic enrichment/backfill은 별도 커밋으로 구현됐고, 운영 서버에서 dry-run/apply까지 확인됐다. 2026-04-23 16:09 KST 기준 변경 후보 1건을 적용했고 재확인 dry-run은 `changed_count=0`이었다.
 - DB 초기화 이후 `stocks=0` 상태를 보완하기 위해 broker-observed symbol 기반 `stocks` universe bootstrap 서비스/API를 추가했다. 운영 DB 적용은 dry-run/apply 확인이 남아 있다.
-- Track 6.1 canonical decision event table/service, Track 6.2 forward return labeling job, decision benchmark read-only API는 구현됐다. 현재 benchmark는 `event.source`, `strategy_type`, `tier1_decision`, `tier2_decision`, `news_top_contributors.source_code`까지 집계한다. 다만 동일 후보군 control group과 full attribution은 후속 구현이 필요하다.
+- Track 6.1 canonical decision event table/service, Track 6.2 forward return labeling job, decision benchmark read-only API는 구현됐다. 현재 benchmark는 `event.source`, `strategy_type`, `tier1_decision`, `tier2_decision`, `news_top_contributors.source_code`와 read-only control group(`random_same_count`, `scanner_top_same_count`, `tier1_buy_only`, `tier2_buy_only`)까지 집계한다. 다만 full attribution과 causal 비교는 후속 구현이 필요하다.
 - 장마감 청산 이후 자동 BUY 차단과 청산 후 재스캔 비활성화를 추가했다. 청산 이후 신호는 관측/로그로 남기되 실제 자동 BUY 주문은 막는다.
 - 전체 최신 현황은 `docs/고도화/2026-04-23-enhancement-status.md`에 별도 정리한다.
 

@@ -18,6 +18,7 @@ async def _add_labeled_decision(
     stage: str = "ORDER_SUBMISSION",
     risk_gate: str = "PASS",
     event_source: str = "decision_maker",
+    scanner_score: float | None = None,
     strategy_type: str | None = None,
     tier1_decision: str | None = None,
     tier2_decision: str | None = None,
@@ -33,6 +34,7 @@ async def _add_labeled_decision(
             decision_stage=stage,
             source=event_source,
             strategy_type=strategy_type,
+            scanner_score=scanner_score,
             tier1_decision=tier1_decision,
             tier2_decision=tier2_decision,
             risk_gate_result=risk_gate,
@@ -70,6 +72,7 @@ async def test_decision_benchmark_service_groups_labeled_returns() -> None:
         final_action="BUY",
         return_pct=2.0,
         provider="CODEX",
+        scanner_score=0.91,
         strategy_type="STABLE_SHORT",
         tier1_decision="BUY",
         tier2_decision="BUY",
@@ -90,6 +93,7 @@ async def test_decision_benchmark_service_groups_labeled_returns() -> None:
         provider="CODEX",
         risk_gate="BLOCKED",
         event_source="risk_gate",
+        scanner_score=0.84,
         strategy_type="AGGRESSIVE_SHORT",
         tier1_decision="BUY",
         created_at=created_at,
@@ -101,6 +105,7 @@ async def test_decision_benchmark_service_groups_labeled_returns() -> None:
         provider="OLLAMA",
         stage="RECOMMENDATION",
         risk_gate="PENDING_APPROVAL",
+        scanner_score=0.72,
         tier1_decision="BUY",
         tier2_decision="HOLD",
         metadata={
@@ -141,6 +146,11 @@ async def test_decision_benchmark_service_groups_labeled_returns() -> None:
     assert report["controls"]["actual_buy"]["event_count"] == 2
     assert report["controls"]["non_buy_candidates"]["event_count"] == 1
     assert report["controls"]["blocked_or_skipped"]["event_count"] == 1
+    assert report["controls"]["random_same_count"]["event_count"] == 2
+    assert report["controls"]["scanner_top_same_count"]["event_count"] == 2
+    assert report["controls"]["scanner_top_same_count"]["avg_return_pct"] == 0.5
+    assert report["controls"]["tier1_buy_only"]["event_count"] == 3
+    assert report["controls"]["tier2_buy_only"]["event_count"] == 1
 
 
 @pytest.mark.asyncio

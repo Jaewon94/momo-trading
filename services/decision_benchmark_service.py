@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import timedelta
@@ -20,6 +21,7 @@ class DecisionBenchmarkPoint:
     final_action: str
     decision_stage: str
     event_source: str
+    scanner_score: float | None
     strategy_type: str
     tier1_decision: str
     tier2_decision: str
@@ -76,6 +78,7 @@ class DecisionBenchmarkService:
                 final_action=str(event.final_action or "UNKNOWN").upper(),
                 decision_stage=str(event.decision_stage or "UNKNOWN").upper(),
                 event_source=str(event.source or "UNKNOWN").upper(),
+                scanner_score=float(event.scanner_score) if event.scanner_score is not None else None,
                 strategy_type=str(event.strategy_type or "UNKNOWN").upper(),
                 tier1_decision=str(event.tier1_decision or "UNKNOWN").upper(),
                 tier2_decision=str(event.tier2_decision or "UNKNOWN").upper(),
@@ -111,14 +114,20 @@ class DecisionBenchmarkService:
         }
 
     def _control_groups(self, points: list[DecisionBenchmarkPoint]) -> dict:
+        actual_buy = [item for item in points if item.final_action == "BUY"]
+        sample_count = len(actual_buy)
         return {
-            "actual_buy": self._metrics([item for item in points if item.final_action == "BUY"]),
+            "actual_buy": self._metrics(actual_buy),
             "non_buy_candidates": self._metrics([item for item in points if item.final_action != "BUY"]),
             "blocked_or_skipped": self._metrics([
                 item
                 for item in points
                 if item.final_action == "SKIP" or item.risk_gate_result == "BLOCKED"
             ]),
+            "random_same_count": self._metrics(self._random_same_count(points, sample_count)),
+            "scanner_top_same_count": self._metrics(self._scanner_top_same_count(points, sample_count)),
+            "tier1_buy_only": self._metrics([item for item in points if item.tier1_decision == "BUY"]),
+            "tier2_buy_only": self._metrics([item for item in points if item.tier2_decision == "BUY"]),
         }
 
     def _group(self, points: list[DecisionBenchmarkPoint], key_fn) -> dict:
@@ -138,6 +147,50 @@ class DecisionBenchmarkService:
                 seen.add(normalized)
                 grouped[normalized].append(item)
         return {key: self._metrics(items) for key, items in sorted(grouped.items())}
+
+    def _random_same_count(
+        self,
+        points: list[DecisionBenchmarkPoint],
+        sample_count: int,
+    ) -> list[DecisionBenchmarkPoint]:
+        if sample_count <= 0:
+            return []
+        decorated = sorted(
+            points,
+            key=lambda item: self._stable_rank_key(item),
+        )
+        return decorated[:sample_count]
+
+    def _scanner_top_same_count(
+        self,
+        points: list[DecisionBenchmarkPoint],
+        sample_count: int,
+    ) -> list[DecisionBenchmarkPoint]:
+        if sample_count <= 0:
+            return []
+        ranked = [item for item in points if item.scanner_score is not None]
+        ranked.sort(
+            key=lambda item: (
+                -float(item.scanner_score or 0.0),
+                item.symbol,
+                item.final_action,
+                item.decision_stage,
+            )
+        )
+        return ranked[:sample_count]
+
+    @staticmethod
+    def _stable_rank_key(item: DecisionBenchmarkPoint) -> str:
+        payload = "|".join([
+            item.symbol,
+            item.final_action,
+            item.decision_stage,
+            item.event_source,
+            item.strategy_type,
+            item.provider,
+            item.risk_gate_result,
+        ])
+        return hashlib.md5(payload.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _extract_news_source_codes(metadata_json: str | None) -> tuple[str, ...]:

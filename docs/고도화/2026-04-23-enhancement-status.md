@@ -67,8 +67,9 @@
 - source별 수집 count, 실패/중복/스킵, enrichment 비율은 일부 볼 수 있다.
 - decision event 기준 action/provider/stage/risk gate별 forward return benchmark API는 추가됐다.
 - 현재 benchmark는 `event.source`, `strategy_type`, `tier1_decision`, `tier2_decision`, `metadata_json`의 `news_top_contributors.source_code`까지 read-only 집계한다.
+- 동일 표본 수 기준 `random_same_count`, `scanner_top_same_count`, `tier1_buy_only`, `tier2_buy_only` control group도 read-only로 추가됐다.
 - 다만 source별 blocked candidate forward return, gate contribution, 실제 성과 기여도는 아직 부족하다.
-- 이유: 동일 후보군 random/scanner-only/Tier-only control group과 실제 주문/차단 단계별 full attribution은 아직 없음.
+- 이유: 현재 control group은 canonical decision event 기반의 근사 비교이며, 실제 동일 후보군 full attribution과 주문/차단 단계별 causal 비교는 아직 없음.
 
 ### 뉴스 backfill 운영 반영
 
@@ -124,10 +125,9 @@
 ## 권장 실행 순서
 
 1. `POST /api/v1/admin/stocks/bootstrap-universe?rank_limit=50&apply=false` dry-run 후 `apply=true`로 최소 국내 종목 universe를 채운다. 현재 로컬 DB 기준 `stocks=0`이라 먼저 운영 적용 확인이 필요하다.
-2. 동일 후보군 random/scanner-only/Tier-only control group을 benchmark에 붙여 현재 read-only attribution을 실험 비교까지 확장한다.
-3. `CandidateScoringService`, `PreAnalysisGate`, `DeterministicFinalGate`를 순서대로 붙인다.
-4. 동일 종목/동일 조건 분석 캐시와 `AI_SKIPPED` metric을 추가한다.
-5. 뉴스 gate는 enum rollout mode로 바꾸고, `BUY_BLOCK_GATE`는 forward return 표본이 쌓인 뒤에만 허용한다.
+2. `CandidateScoringService`, `PreAnalysisGate`, `DeterministicFinalGate`를 순서대로 붙인다.
+3. 동일 종목/동일 조건 분석 캐시와 `AI_SKIPPED` metric을 추가한다.
+4. 뉴스 gate는 enum rollout mode로 바꾸고, `BUY_BLOCK_GATE`는 forward return 표본이 쌓인 뒤에만 허용한다.
 
 ## 당장 바꾸지 말 것
 
