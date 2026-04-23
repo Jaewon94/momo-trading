@@ -16,6 +16,7 @@ MUTABLE_SETTINGS = [
     "BUY_SLIPPAGE_GUARD_BPS",
     "AUTO_RISK_KILL_SWITCH_ENABLED",
     "MAX_DAILY_DRAWDOWN_PCT",
+    "ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE",
     "MAX_CONSECUTIVE_LOSSES",
     "MIN_STRATEGY_EXPECTANCY",
     "EXPECTANCY_SAMPLE_SIZE",
@@ -176,6 +177,12 @@ def coerce_runtime_setting_value(key: str, value: Any) -> Any:
     if key == "ORDER_SUBMISSION_MODE":
         normalized = normalize_order_submission_mode(value)
         if normalized not in VALID_ORDER_SUBMISSION_MODES:
+            return _SKIP
+        return normalized
+
+    if key == "ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE":
+        normalized = str(value or "").upper().strip()
+        if normalized not in {"OFF", "REPORT_ONLY", "BLOCK_BUY", "KILL_SWITCH"}:
             return _SKIP
         return normalized
 

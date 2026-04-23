@@ -7,6 +7,7 @@ from analysis.feedback.performance_tracker import PerformanceTracker
 from core.config import settings
 from core.database import AsyncSessionLocal
 from models.trade_result import TradeResult
+from services.pnl_truth_service import pnl_truth_service
 from services.runtime_settings_service import runtime_settings_service
 
 
@@ -21,6 +22,15 @@ class TradingGuard:
                 "DAILY_DRAWDOWN",
                 f"일손실 한도 초과 ({drawdown_pct:.2f}% <= -{max_drawdown:.2f}%)",
             )
+
+        warnings = []
+        account_guard = await self._evaluate_account_equity_drawdown(max_drawdown=max_drawdown)
+        if account_guard["action"] == "BLOCK":
+            return await self._reject("ACCOUNT_EQUITY_DRAWDOWN", account_guard["reason"])
+        if account_guard["action"] == "KILL_SWITCH":
+            return await self._block("ACCOUNT_EQUITY_DRAWDOWN", account_guard["reason"])
+        if account_guard["action"] == "WARN":
+            warnings.append(account_guard["warning"])
 
         consecutive_losses = await self._get_consecutive_losses()
         max_losses = int(settings.MAX_CONSECUTIVE_LOSSES or 0)
@@ -43,6 +53,7 @@ class TradingGuard:
             "reason": "트레이딩 가드 통과",
             "trigger": "",
             "kill_switched": False,
+            "warnings": warnings,
         }
 
     @staticmethod
@@ -54,6 +65,17 @@ class TradingGuard:
             "reason": f"자동 킬스위치: {reason}",
             "trigger": trigger,
             "kill_switched": bool(settings.AUTO_RISK_KILL_SWITCH_ENABLED),
+            "warnings": [],
+        }
+
+    @staticmethod
+    async def _reject(trigger: str, reason: str) -> dict:
+        return {
+            "approved": False,
+            "reason": f"트레이딩 가드 차단: {reason}",
+            "trigger": trigger,
+            "kill_switched": False,
+            "warnings": [],
         }
 
     async def _get_daily_realized_pnl_pct(self, *, portfolio_budget: float) -> float:
@@ -77,6 +99,60 @@ class TradingGuard:
             result = await session.execute(stmt)
             total_realized = sum(float(row[0] or 0.0) for row in result.all())
         return (total_realized / portfolio_budget) * 100
+
+    async def _evaluate_account_equity_drawdown(self, *, max_drawdown: float) -> dict:
+        mode = str(getattr(settings, "ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE", "REPORT_ONLY") or "REPORT_ONLY").upper()
+        if mode == "OFF" or max_drawdown <= 0:
+            return {"action": "ALLOW"}
+
+        account_drawdown = await self._get_account_equity_drawdown()
+        if not account_drawdown.get("available"):
+            return {"action": "ALLOW"}
+
+        drawdown_pct = float(account_drawdown.get("drawdown_pct") or 0.0)
+        if drawdown_pct > -max_drawdown:
+            return {"action": "ALLOW"}
+
+        reason = (
+            f"계좌 총자산 일중 손실 한도 초과 "
+            f"({drawdown_pct:.2f}% <= -{max_drawdown:.2f}%, "
+            f"{float(account_drawdown.get('asset_delta') or 0.0):+,.0f}원)"
+        )
+        warning = {
+            "trigger": "ACCOUNT_EQUITY_DRAWDOWN",
+            "reason": reason,
+            "drawdown_pct": drawdown_pct,
+            "asset_delta": float(account_drawdown.get("asset_delta") or 0.0),
+            "baseline_total_asset": float(account_drawdown.get("baseline_total_asset") or 0.0),
+        }
+
+        if mode == "REPORT_ONLY":
+            return {"action": "WARN", "warning": warning}
+        if mode == "BLOCK_BUY":
+            return {"action": "BLOCK", "reason": reason}
+        return {"action": "KILL_SWITCH", "reason": reason}
+
+    async def _get_account_equity_drawdown(self) -> dict:
+        async with AsyncSessionLocal() as session:
+            summary = await pnl_truth_service.build_summary(session)
+
+        baseline_total_asset = float(summary.get("baseline_total_asset") or 0.0)
+        total_asset = float(summary.get("total_asset") or 0.0)
+        if baseline_total_asset <= 0 or total_asset <= 0:
+            return {
+                "available": False,
+                "drawdown_pct": 0.0,
+                "asset_delta": 0.0,
+                "baseline_total_asset": baseline_total_asset,
+            }
+
+        asset_delta = float(summary.get("total_asset_delta") or 0.0)
+        return {
+            "available": True,
+            "drawdown_pct": (asset_delta / baseline_total_asset) * 100.0,
+            "asset_delta": asset_delta,
+            "baseline_total_asset": baseline_total_asset,
+        }
 
     async def _get_consecutive_losses(self) -> int:
         async with AsyncSessionLocal() as session:

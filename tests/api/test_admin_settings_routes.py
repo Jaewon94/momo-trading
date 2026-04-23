@@ -51,6 +51,7 @@ async def test_admin_settings_exposes_manual_llm_provider(client):
     assert "OLLAMA_MODEL_TIER2" in payload["data"]
     assert "strategy_insights" in payload["data"]
     assert "ORDER_SUBMISSION_MODE" in payload["data"]
+    assert "ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE" in payload["data"]
 
 
 async def test_admin_system_status_exposes_effective_order_submission_mode(client, monkeypatch):

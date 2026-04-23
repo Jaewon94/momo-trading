@@ -27,6 +27,7 @@
 - `PnlTruthService`로 realized trade PnL, broker unrealized PnL, total asset delta를 분리.
 - 성과 요약에 `pnl_truth`와 `metric_contract` 노출.
 - AI risk tuner hard cap 추가: 일일 거래 수, 단일 주문금액, 단일 포지션 비중.
+- `ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE=OFF|REPORT_ONLY|BLOCK_BUY|KILL_SWITCH` 추가. 기본값은 `REPORT_ONLY`이며, account equity baseline/latest snapshot 기준 총자산 drawdown을 BUY guard warning 또는 차단에 연결.
 
 ### 뉴스
 
@@ -76,7 +77,6 @@
 
 ### P0/P1 성격
 
-- account equity 기반 intraday drawdown kill switch.
 - 스마트 청산 데이터 수집 실패를 즉시 SELL로 해석하지 않는 `UNKNOWN/REVIEW_REQUIRED` 분리.
 - realtime subscription priority와 polling fallback watchlist.
 - Admin 고위험 액션 서버 측 confirmation challenge.

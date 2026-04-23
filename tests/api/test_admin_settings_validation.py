@@ -64,6 +64,40 @@ async def test_admin_settings_rejects_invalid_news_provider_without_overwriting(
 
 
 @pytest.mark.asyncio
+async def test_admin_settings_accepts_account_equity_drawdown_guard_mode(client):
+    response = await client.put(
+        "/api/v1/admin/settings",
+        json={"ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE": "block_buy"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE"]["new"] == "BLOCK_BUY"
+
+    settings_response = await client.get("/api/v1/admin/settings")
+
+    assert settings_response.status_code == 200
+    assert settings_response.json()["data"]["ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE"] == "BLOCK_BUY"
+
+
+@pytest.mark.asyncio
+async def test_admin_settings_rejects_invalid_account_equity_drawdown_guard_mode(client, monkeypatch):
+    monkeypatch.setattr("api.routes.admin.settings.ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE", "REPORT_ONLY")
+
+    response = await client.put(
+        "/api/v1/admin/settings",
+        json={"ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE": "INVALID"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"] == {}
+
+    settings_response = await client.get("/api/v1/admin/settings")
+
+    assert settings_response.status_code == 200
+    assert settings_response.json()["data"]["ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE"] == "REPORT_ONLY"
+
+
+@pytest.mark.asyncio
 async def test_admin_settings_normalizes_empty_news_model_to_default(client, monkeypatch):
     monkeypatch.setattr("api.routes.admin.settings.NEWS_LLM_MODEL", "qwen2.5:14b")
 

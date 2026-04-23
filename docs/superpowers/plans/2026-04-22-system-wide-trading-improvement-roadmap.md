@@ -379,29 +379,37 @@
 
 **Files:**
 - Modify: `strategy/trading_guard.py`
-- Modify: `services/account_equity_service.py`
+- Modify: `core/config.py`
+- Modify: `core/runtime_settings.py`
 - Test: `tests/strategy/test_trading_guard.py`
 - Test: `tests/services/test_account_equity_service.py`
+- Test: `tests/api/test_admin_settings_routes.py`
+- Test: `tests/api/test_admin_settings_validation.py`
 
-- [ ] **Step 1: 실패 테스트 작성**
+- [x] **Step 1: 실패 테스트 작성**
   - closed trade PnL은 0이지만 account equity delta가 일중 -3%인 fixture에서 BUY가 차단되는지 테스트한다.
   - 첫 rollout은 `ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE=report_only`에서 차단하지 않고 warning만 반환하는 테스트도 추가한다.
+  - Result: `TradingGuard` 단위 테스트에 report-only warning, kill-switch 차단, 실제 snapshot 기반 drawdown 계산 테스트를 추가했다.
 
-- [ ] **Step 2: 실패 확인**
+- [x] **Step 2: 실패 확인**
   - Run: `./.venv313/bin/python -m pytest tests/strategy/test_trading_guard.py tests/services/test_account_equity_service.py -q`
   - Expected: closed trade only 계산 때문에 실패.
+  - Result: `_get_account_equity_drawdown` 부재로 신규 테스트 2건 실패를 확인했다.
 
-- [ ] **Step 3: 최소 구현**
+- [x] **Step 3: 최소 구현**
   - `TradingGuard`에 account equity drawdown input을 받는 별도 method를 추가한다.
   - `report_only|block_buy|kill_switch` mode를 runtime setting으로 둔다.
+  - Result: `ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE=OFF|REPORT_ONLY|BLOCK_BUY|KILL_SWITCH`를 추가했다. `TradingGuard`는 `PnlTruthService`의 baseline/latest snapshot summary를 읽어 총자산 drawdown을 계산한다.
 
-- [ ] **Step 4: 통과 확인**
+- [x] **Step 4: 통과 확인**
   - Run: `./.venv313/bin/python -m pytest tests/strategy/test_trading_guard.py tests/services/test_account_equity_service.py -q`
   - Expected: PASS.
+  - Result: 관련 설정 API 테스트 포함 `36 passed`.
 
-- [ ] **Step 5: 문서/커밋**
+- [x] **Step 5: 문서/커밋**
   - Update: F-009/F-014.
   - Commit: `feat: add account equity drawdown guard`
+  - Result: findings와 고도화 현황 문서를 갱신했다. 커밋은 이 작업 검증 후 생성.
 
 ## Track 4: Scheduler Liquidation and Realtime Safety
 

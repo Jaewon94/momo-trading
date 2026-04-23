@@ -173,7 +173,7 @@
 ### F-009: kill switch가 실현손익만 보고 평가손실과 총자산 하락을 반영하지 않음
 
 - 심각도: `P1`
-- 상태: `확정`
+- 상태: `완화됨`
 - 영역: `리스크 | PnL`
 - 현상: `TradingGuard`의 daily drawdown은 닫힌 BUY 거래의 `TradeResult.pnl`만 합산합니다. 열린 포지션 평가손익과 account equity delta는 반영하지 않습니다.
 - 영향: 열린 포지션에서 큰 손실이 발생해도 청산 전에는 kill switch가 작동하지 않을 수 있습니다. 현재 DB의 confirmed PnL 신뢰도가 낮기 때문에 더 위험합니다.
@@ -184,6 +184,7 @@
 - Rollout: report-only 경고 -> BUY 차단 -> TRADING_ENABLED kill switch 순서로 단계 적용.
 - Rollback: BUY 차단 gate만 feature flag로 끌 수 있게 분리.
 - 분류: `유지하되 harden`
+- 조치: Track 3 Task 3.2에서 `ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE=OFF|REPORT_ONLY|BLOCK_BUY|KILL_SWITCH`를 추가했습니다. 기본값은 `REPORT_ONLY`이며, `TradingGuard`가 `PnlTruthService`의 baseline/latest account equity summary를 읽어 계좌 총자산 drawdown을 warning 또는 BUY 차단/kill switch에 반영합니다.
 
 ### F-010: `.env`와 runtime DB의 `TRADING_ENABLED`가 충돌해 운영자가 실주문 상태를 오판할 수 있음
 
@@ -220,7 +221,7 @@
 ### F-012: DB open BUY 노출이 실제 브로커 보유 평가액보다 크게 부풀어 있음
 
 - 심각도: `P1`
-- 상태: `확정`
+- 상태: `완화됨`
 - 영역: `리스크 | PnL | 주문`
 - 현상: DB `CONFIRMED BUY AND exit_at IS NULL`은 48건, entry notional 약 981,916,149원입니다. 브로커 보유 종목은 6개, account snapshot 주식평가액은 약 430,159,408원입니다.
 - 영향: DB open BUY를 노출/PnL/성과 학습에 쓰면 실제보다 큰 포지션으로 판단할 수 있고, 반대로 브로커 snapshot만 쓰면 stale DB lot이 계속 학습 데이터에 남습니다.
@@ -263,7 +264,7 @@
 - Rollout: 먼저 리포트 경고와 chart, 이후 BUY gate/kill switch에 연결.
 - Rollback: gate 적용 전 report-only 단계는 제거 가능.
 - 분류: `유지하되 harden`
-- 조치: Track 3 Task 3.1에서 latest account equity snapshot과 day baseline을 이용한 `total_asset_delta`, `unrealized_broker_pnl` report-only 요약을 추가했습니다. kill switch 연결은 Task 3.2에서 진행합니다.
+- 조치: Track 3 Task 3.1에서 latest account equity snapshot과 day baseline을 이용한 `total_asset_delta`, `unrealized_broker_pnl` report-only 요약을 추가했습니다. Track 3 Task 3.2에서 같은 canonical summary를 `TradingGuard`의 account equity drawdown guard에 연결했습니다.
 
 ### F-015: daily report의 주문 count와 TradeResult count가 섞여 리포트 해석이 혼란스러움
 
