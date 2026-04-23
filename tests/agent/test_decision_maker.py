@@ -70,6 +70,7 @@ class FakeTradeResultRecord:
 def _default_order_submission_mode(monkeypatch) -> None:
     monkeypatch.setattr("agent.decision_maker.settings.TRADING_ENABLED", True)
     monkeypatch.setattr("agent.decision_maker.settings.ORDER_SUBMISSION_MODE", "FULL")
+    monkeypatch.setattr("agent.decision_maker.is_post_liquidation_buy_blocked", lambda: False)
 
 
 def build_signal(
@@ -163,6 +164,37 @@ async def test_decision_maker_sell_only_mode_blocks_autonomous_buy_submission(mo
     assert result["success"] is False
     assert result["data"]["order_submission_mode"] == "SELL_ONLY"
     assert adapter.requests == []
+
+
+@pytest.mark.asyncio
+async def test_decision_maker_blocks_auto_buy_after_force_liquidation_time(monkeypatch) -> None:
+    adapter = FakeBrokerAdapter(OrderResult(success=True, order_id="ORD-BUY", message="ok"))
+    decision_maker = DecisionMaker(broker_adapter=adapter)
+    logs = []
+    records = []
+
+    async def fake_log(*args, **kwargs):
+        logs.append((args, kwargs))
+
+    async def fake_record_event(**kwargs):
+        records.append(kwargs)
+        return SimpleNamespace(id="decision-event-1")
+
+    monkeypatch.setattr("agent.decision_maker.settings.AUTONOMY_MODE", "AUTONOMOUS")
+    monkeypatch.setattr("agent.decision_maker.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr("agent.decision_maker.settings.ORDER_SUBMISSION_MODE", "FULL")
+    monkeypatch.setattr("agent.decision_maker.is_post_liquidation_buy_blocked", lambda: True)
+    monkeypatch.setattr("agent.decision_maker.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.decision_maker.decision_event_service.record_event", fake_record_event)
+
+    result = await decision_maker._execute_autonomous(build_signal(), cycle_id="cycle-post-liquidation")
+
+    assert result["success"] is False
+    assert result["error"] == "POST_LIQUIDATION_BUY_BLOCK"
+    assert adapter.requests == []
+    assert any("청산 이후 자동 BUY 차단" in item[0][2] for item in logs)
+    assert records[0]["risk_gate_result"] == "BLOCKED"
+    assert records[0]["final_action"] == "SKIP"
 
 
 @pytest.mark.asyncio

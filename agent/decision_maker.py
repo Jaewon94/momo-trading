@@ -11,6 +11,7 @@ from core.config import settings
 from core.database import AsyncSessionLocal
 from core.events import Event, EventType, event_bus
 from core.order_submission import decide_order_submission
+from core.post_liquidation_guard import POST_LIQUIDATION_BUY_BLOCK_REASON, is_post_liquidation_buy_blocked
 from models.order import Order
 from models.recommendation import Recommendation
 from models.trade_result import TradeResult
@@ -123,6 +124,45 @@ class DecisionMaker:
             return result
 
         submission_decision = decide_order_submission(signal.action.value)
+        if signal.action.value == OrderSide.BUY.value and is_post_liquidation_buy_blocked():
+            block_msg = "장마감 청산 이후 자동 BUY 차단"
+            result = {
+                "success": False,
+                "mode": "AUTONOMOUS",
+                "action": signal.action.value,
+                "symbol": signal.symbol,
+                "order_id": "",
+                "message": block_msg,
+                "error": POST_LIQUIDATION_BUY_BLOCK_REASON,
+                "data": {
+                    "order_submission": {
+                        "reason": POST_LIQUIDATION_BUY_BLOCK_REASON,
+                    }
+                },
+            }
+            logger.info("[{}] {}", signal.symbol, block_msg)
+            await activity_logger.log(
+                ActivityType.DECISION,
+                ActivityPhase.SKIP,
+                f"⏸️ [{signal.symbol}] {block_msg}",
+                cycle_id=cycle_id, symbol=signal.symbol,
+                confidence=signal.confidence,
+                data=result,
+                source="decision_maker",
+            )
+            await self._record_decision_event(
+                signal,
+                cycle_id=cycle_id,
+                decision_stage="ORDER_GATE",
+                risk_gate_result="BLOCKED",
+                final_action="SKIP",
+                status="SKIPPED",
+                reason=block_msg,
+                result=result,
+                analysis_context=analysis_context,
+            )
+            return result
+
         if not submission_decision.allowed:
             skip_msg = f"주문 제출 차단: {submission_decision.reason}"
             result = {

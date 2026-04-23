@@ -1312,7 +1312,7 @@ async def test_force_liquidation_returns_when_smart_liquidation_keeps_all_holdin
 
 
 @pytest.mark.asyncio
-async def test_force_liquidation_triggers_rescan_after_successful_swing_sell(monkeypatch) -> None:
+async def test_force_liquidation_does_not_rescan_after_successful_swing_sell(monkeypatch) -> None:
     scheduler = TradingScheduler()
     logs: list[str] = []
     removed_levels: list[str] = []
@@ -1381,7 +1381,7 @@ async def test_force_liquidation_triggers_rescan_after_successful_swing_sell(mon
     assert confirmed_orders[0]["exit_reason"] == "FORCE_LIQUIDATION"
     assert removed_levels == ["005930"]
     assert released == ["005930"]
-    assert len(created_tasks) == 1
+    assert created_tasks == []
     assert any("완료: 1건 매도" in message for message in logs)
 
 

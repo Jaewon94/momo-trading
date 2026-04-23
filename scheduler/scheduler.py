@@ -1144,10 +1144,6 @@ class TradingScheduler:
                 summary += f" | 실패 {len(failed_holdings)}건"
             await activity_logger.log(ActivityType.SCHEDULE, ActivityPhase.PROGRESS, summary)
 
-            # 스윙 모드 스마트 청산 후 재스캔 (일부만 매도 → 현금 확보 → 새 포지션)
-            if not settings.DAY_TRADING_ONLY and sold_count > 0:
-                asyncio.create_task(self._trigger_rescan_after_sell())
-
             # 매도한 종목만 이벤트 감시 임계값 제거 (HOLD 종목은 유지)
             from realtime.event_detector import event_detector
             sold_symbols = {h.symbol for h in to_sell}

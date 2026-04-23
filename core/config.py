@@ -146,6 +146,7 @@ class Settings(BaseSettings):
     BUY_CUTOFF_MINUTE: int = 30
     FORCE_LIQUIDATION_HOUR: int = 15  # 강제 청산 시각 (종가경매 전)
     FORCE_LIQUIDATION_MINUTE: int = 10
+    POST_LIQUIDATION_BUY_BLOCK_ENABLED: bool = True
     MAX_HOLD_DAYS_STABLE: int = 5  # STABLE_SHORT 최대 보유일
     MAX_HOLD_DAYS_AGGRESSIVE: int = 3  # AGGRESSIVE_SHORT 최대 보유일
     MAX_DAILY_TRADES: int = 0  # 0 = 무제한

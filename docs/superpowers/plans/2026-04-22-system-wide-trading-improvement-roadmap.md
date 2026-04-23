@@ -40,6 +40,7 @@
 - Track 8 관련으로 LLM 지연 경고(`LLM_SLOW_CALL_WARN_SEC`)는 별도 커밋으로 구현됐다. 다만 cooldown incident dedupe는 아직 미구현이다.
 - 뉴스 deterministic enrichment/backfill은 별도 커밋으로 구현됐다. 다만 현재 라이브 9000 서버는 최신 코드를 로드하지 않아 backfill endpoint가 아직 동작하지 않는다.
 - Track 6.1 canonical decision event table/service, Track 6.2 forward return labeling job, decision benchmark read-only API는 구현됐다. 다만 scanner/Tier 단계별 전체 연결과 source별 뉴스 attribution은 후속 구현이 필요하다.
+- 장마감 청산 이후 자동 BUY 차단과 청산 후 재스캔 비활성화를 추가했다. 청산 이후 신호는 관측/로그로 남기되 실제 자동 BUY 주문은 막는다.
 - 전체 최신 현황은 `docs/고도화/2026-04-23-enhancement-status.md`에 별도 정리한다.
 
 ## Phase Gate
