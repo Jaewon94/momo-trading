@@ -21,6 +21,7 @@
 - Kiwoom 미체결 취소주문 매핑 구현.
 - cycle-local cash reservation ledger 구현. 기본은 `SHADOW`, `ENFORCE`에서 차단.
 - 강제 청산 재시도 성공 기록 누락 수정.
+- 스마트 청산 데이터 수집 실패를 `REVIEW_REQUIRED`/HOLD로 분리. 현재가 조회 실패, open BUY 누락, repository 예외는 즉시 SELL하지 않고 운영 로그에 확인 필요 사유를 남긴다.
 
 ### PnL/리스크
 
@@ -77,7 +78,6 @@
 
 ### P0/P1 성격
 
-- 스마트 청산 데이터 수집 실패를 즉시 SELL로 해석하지 않는 `UNKNOWN/REVIEW_REQUIRED` 분리.
 - realtime subscription priority와 polling fallback watchlist.
 - Admin 고위험 액션 서버 측 confirmation challenge.
 - canonical decision event table/service.

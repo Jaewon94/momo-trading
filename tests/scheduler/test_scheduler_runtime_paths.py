@@ -1318,19 +1318,19 @@ async def test_force_liquidation_triggers_rescan_after_successful_swing_sell(mon
 
 
 @pytest.mark.asyncio
-async def test_smart_liquidation_returns_fallback_sell_when_no_holdings_data(monkeypatch) -> None:
+async def test_smart_liquidation_holds_for_review_when_no_holdings_data(monkeypatch) -> None:
     scheduler = TradingScheduler()
     holding = SimpleNamespace(symbol="005930", name="삼성전자", quantity=3)
 
     async def fake_collect_holdings_data(_sellable):
-        return [], {}, [holding]
+        return [], {}, [{"holding": holding, "reason": "현재가 조회 실패"}]
 
     monkeypatch.setattr(scheduler, "_collect_holdings_data", fake_collect_holdings_data)
 
     to_sell, to_hold = await scheduler._smart_liquidation([holding])
 
-    assert to_sell == [holding]
-    assert to_hold == []
+    assert to_sell == []
+    assert to_hold == [holding]
 
 
 @pytest.mark.asyncio
@@ -1381,7 +1381,7 @@ async def test_smart_liquidation_combines_llm_and_fallback_decisions(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_collect_holdings_data_marks_symbol_for_fallback_when_price_lookup_fails(monkeypatch) -> None:
+async def test_collect_holdings_data_marks_symbol_for_review_when_price_lookup_fails(monkeypatch) -> None:
     scheduler = TradingScheduler()
     holding = SimpleNamespace(symbol="005930", name="삼성전자", quantity=2, avg_buy_price=70_000)
 
@@ -1410,11 +1410,12 @@ async def test_collect_holdings_data_marks_symbol_for_fallback_when_price_lookup
     monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
     monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
 
-    holdings_data, holdings_map, fallback_sell = await scheduler._collect_holdings_data([holding])
+    holdings_data, holdings_map, review_required = await scheduler._collect_holdings_data([holding])
 
     assert holdings_data == []
     assert holdings_map == {}
-    assert fallback_sell == [holding]
+    assert review_required[0]["holding"] == holding
+    assert review_required[0]["reason_code"] == "PRICE_LOOKUP_FAILED"
 
 
 @pytest.mark.asyncio
@@ -1468,9 +1469,9 @@ async def test_collect_holdings_data_builds_prompt_payload_for_valid_holding(mon
     monkeypatch.setattr("strategy.holding_policy._calc_hold_days", lambda _tr: 2)
     monkeypatch.setattr("strategy.holding_policy._get_max_hold_days", lambda _strategy, _settings: 5)
 
-    holdings_data, holdings_map, fallback_sell = await scheduler._collect_holdings_data([holding])
+    holdings_data, holdings_map, review_required = await scheduler._collect_holdings_data([holding])
 
-    assert fallback_sell == []
+    assert review_required == []
     assert holdings_map["005930"] == (holding, trade_result, 73_000)
     assert holdings_data[0]["symbol"] == "005930"
     assert holdings_data[0]["stock_name"] == "삼성전자"
@@ -1721,7 +1722,7 @@ async def test_force_liquidation_subtracts_pending_sell_quantity(monkeypatch) ->
 
 
 @pytest.mark.asyncio
-async def test_collect_holdings_data_marks_symbol_for_fallback_when_trade_result_is_missing(monkeypatch) -> None:
+async def test_collect_holdings_data_marks_symbol_for_review_when_trade_result_is_missing(monkeypatch) -> None:
     scheduler = TradingScheduler()
     holding = SimpleNamespace(symbol="005930", name="삼성전자", quantity=2, avg_buy_price=70_000)
 
@@ -1739,22 +1740,24 @@ async def test_collect_holdings_data_marks_symbol_for_fallback_when_trade_result
         async def get_open_buy(self, _symbol: str):
             return None
 
-    async def fake_get_current_price(_symbol: str):
-        return SimpleNamespace(success=True, data={"price": 73_000})
+    class FakeBrokerAdapter:
+        async def get_current_price(self, symbol, market):
+            return SimpleNamespace(price=73_000)
 
     monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
     monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
-    monkeypatch.setattr("trading.mcp_client.mcp_client.get_current_price", fake_get_current_price)
+    monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
 
-    holdings_data, holdings_map, fallback_sell = await scheduler._collect_holdings_data([holding])
+    holdings_data, holdings_map, review_required = await scheduler._collect_holdings_data([holding])
 
     assert holdings_data == []
     assert holdings_map == {}
-    assert fallback_sell == [holding]
+    assert review_required[0]["holding"] == holding
+    assert review_required[0]["reason_code"] == "TRADE_RESULT_MISSING"
 
 
 @pytest.mark.asyncio
-async def test_collect_holdings_data_marks_symbol_for_fallback_on_repository_error(monkeypatch) -> None:
+async def test_collect_holdings_data_marks_symbol_for_review_on_repository_error(monkeypatch) -> None:
     scheduler = TradingScheduler()
     holding = SimpleNamespace(symbol="005930", name="삼성전자", quantity=2, avg_buy_price=70_000)
 
@@ -1772,18 +1775,20 @@ async def test_collect_holdings_data_marks_symbol_for_fallback_on_repository_err
         async def get_open_buy(self, _symbol: str):
             raise RuntimeError("db failure")
 
-    async def fake_get_current_price(_symbol: str):
-        return SimpleNamespace(success=True, data={"price": 73_000})
+    class FakeBrokerAdapter:
+        async def get_current_price(self, symbol, market):
+            return SimpleNamespace(price=73_000)
 
     monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
     monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
-    monkeypatch.setattr("trading.mcp_client.mcp_client.get_current_price", fake_get_current_price)
+    monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
 
-    holdings_data, holdings_map, fallback_sell = await scheduler._collect_holdings_data([holding])
+    holdings_data, holdings_map, review_required = await scheduler._collect_holdings_data([holding])
 
     assert holdings_data == []
     assert holdings_map == {}
-    assert fallback_sell == [holding]
+    assert review_required[0]["holding"] == holding
+    assert review_required[0]["reason_code"] == "HOLDING_DATA_ERROR"
 
 
 @pytest.mark.asyncio

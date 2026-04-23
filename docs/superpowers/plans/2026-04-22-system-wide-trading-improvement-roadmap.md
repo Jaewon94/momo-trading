@@ -416,30 +416,34 @@
 ### Task 4.1: smart liquidation data failure action 분리
 
 **Files:**
-- Modify: `core/config.py`
 - Modify: `scheduler/scheduler.py`
-- Test: `tests/scheduler/test_scheduler_smart_liquidation.py`
+- Test: `tests/scheduler/test_scheduler_runtime_paths.py`
 
-- [ ] **Step 1: 실패 테스트 작성**
+- [x] **Step 1: 실패 테스트 작성**
   - quote failure 또는 open BUY missing fixture에서 해당 종목이 즉시 `to_sell`에 들어가지 않는지 테스트한다.
-  - 기본값은 `HOLD_AND_ALERT`로 검증한다.
+  - 기본값은 자동 SELL이 아니라 `REVIEW_REQUIRED`/HOLD로 검증한다.
+  - Result: 현재가 조회 실패, open BUY `TradeResult` 없음, repository 예외, 수집 결과 없음 path의 회귀 테스트를 추가/수정했다.
 
-- [ ] **Step 2: 실패 확인**
-  - Run: `./.venv313/bin/python -m pytest tests/scheduler/test_scheduler_smart_liquidation.py -q`
+- [x] **Step 2: 실패 확인**
+  - Run: `./.venv/bin/python -m pytest tests/scheduler/test_scheduler_runtime_paths.py::test_smart_liquidation_holds_for_review_when_no_holdings_data tests/scheduler/test_scheduler_runtime_paths.py::test_collect_holdings_data_marks_symbol_for_review_when_price_lookup_fails tests/scheduler/test_scheduler_runtime_paths.py::test_collect_holdings_data_marks_symbol_for_review_when_trade_result_is_missing tests/scheduler/test_scheduler_runtime_paths.py::test_collect_holdings_data_marks_symbol_for_review_on_repository_error -q`
   - Expected: 현재는 fallback sell이라 실패.
+  - Result: 기존 구현은 데이터 실패 종목을 `to_sell`로 보내 실패했다.
 
-- [ ] **Step 3: 최소 구현**
-  - `SMART_LIQUIDATION_DATA_FAILURE_ACTION=HOLD_AND_ALERT|SELL|RETRY_THEN_HOLD` 설정을 추가한다.
-  - 기본값은 `HOLD_AND_ALERT`로 둔다.
+- [x] **Step 3: 최소 구현**
+  - `_collect_holdings_data()`가 데이터 실패를 `fallback_sell`이 아니라 `review_required`로 반환하게 한다.
+  - `_smart_liquidation()`과 장중 보유 재평가는 `review_required` 종목을 HOLD로 유지하고 운영 로그에 남긴다.
   - alert에는 symbol, reason, missing data type을 남긴다.
+  - Result: 즉시 SELL 모드를 추가하지 않고 안전 기본값을 코드 기본 동작으로 고정했다. 설정 기반 SELL rollback은 의도치 않은 청산 위험을 되살리므로 이번 구현 범위에서 제외했다.
 
-- [ ] **Step 4: 통과 확인**
-  - Run: `./.venv313/bin/python -m pytest tests/scheduler/test_scheduler_smart_liquidation.py tests/scheduler/test_scheduler_runtime_paths.py -q`
+- [x] **Step 4: 통과 확인**
+  - Run: `./.venv/bin/python -m pytest tests/scheduler/test_scheduler_runtime_paths.py -q`
   - Expected: PASS.
+  - Result: 63 passed.
 
-- [ ] **Step 5: 문서/커밋**
+- [x] **Step 5: 문서/커밋**
   - Update: F-033.
   - Commit: `fix: avoid selling on smart liquidation data failure`
+  - Result: F-033과 고도화 현황 문서를 갱신했다. 커밋은 이 작업 검증 후 생성.
 
 ### Task 4.2: realtime subscription priority와 fallback watchlist
 

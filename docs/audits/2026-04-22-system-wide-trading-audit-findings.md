@@ -542,17 +542,18 @@
 ### F-033: 스마트 청산이 데이터 수집 실패를 즉시 SELL로 해석함
 
 - 심각도: `P1`
-- 상태: `확정`
+- 상태: `해결됨`
 - 영역: `스케줄러 | 리스크 | 전략`
-- 현상: `_collect_holdings_data()`는 현재가 조회 실패, open BUY `TradeResult` 없음, 예외 발생 시 해당 보유종목을 `fallback_sell`에 넣고, `_smart_liquidation()`은 이를 곧바로 `to_sell`에 추가합니다.
+- 현상: 이전에는 `_collect_holdings_data()`가 현재가 조회 실패, open BUY `TradeResult` 없음, 예외 발생 시 해당 보유종목을 `fallback_sell`에 넣고, `_smart_liquidation()`이 이를 곧바로 `to_sell`에 추가했습니다.
 - 영향: 일시적인 quote 장애나 DB 정합성 오류가 “위험 회피”가 아니라 실제 시장가 매도로 이어질 수 있습니다. 특히 `DAY_TRADING_ONLY=false`인 스윙 모드에서는 의도치 않은 포지션 청산이 발생할 수 있습니다.
 - 증거: `scheduler/scheduler.py:_collect_holdings_data`, `scheduler/scheduler.py:_smart_liquidation`.
 - 재현/검증: `get_current_price`가 0을 반환하거나 open BUY가 없는 fixture에서 해당 보유종목이 LLM/룰 판단 없이 `to_sell`에 들어갑니다.
 - 권고: 데이터 실패는 `UNKNOWN`/`REVIEW_REQUIRED`로 분리하고, 청산 전 재시도/브로커 스냅샷/수동 확인 또는 설정 기반 conservative action을 거치게 합니다.
-- 구현 전 테스트: `tests/scheduler/test_scheduler_smart_liquidation.py`에 quote failure/open BUY missing이 즉시 SELL이 되지 않는 테스트 추가.
-- Rollout: 초기에는 `SMART_LIQUIDATION_DATA_FAILURE_ACTION=HOLD_AND_ALERT` 기본값으로 도입하고, 기존 즉시 SELL은 명시 설정으로만 허용.
-- Rollback: 설정값을 `SELL`로 되돌릴 수 있게 하되 기본값은 안전 모드 유지.
-- 분류: `수정 필요`
+- 구현 전 테스트: `tests/scheduler/test_scheduler_runtime_paths.py`에 quote failure/open BUY missing/repository error가 즉시 SELL이 되지 않는 테스트 추가.
+- Rollout: 별도 위험 설정값 없이 기본 동작을 `REVIEW_REQUIRED`/HOLD로 고정했습니다. 해당 종목은 자동 청산하지 않고 운영 활동 로그에 symbol/reason을 남깁니다.
+- Rollback: 이전 fallback SELL 동작으로 되돌리는 것은 의도치 않은 청산 위험을 재도입하므로 권장하지 않습니다.
+- 분류: `완료`
+- 조치: Track 4 Task 4.1에서 `_collect_holdings_data()` 반환값을 `fallback_sell`에서 `review_required`로 바꾸고, `_smart_liquidation()`과 장중 보유 재평가가 데이터 실패 종목을 HOLD/수동 확인 대상으로 처리하도록 수정했습니다. 현재가 조회 실패는 `PRICE_LOOKUP_FAILED`, open BUY 누락은 `TRADE_RESULT_MISSING`, repository/기타 예외는 `HOLDING_DATA_ERROR`로 기록합니다.
 
 ### F-034: Admin 고위험 거래/DB 액션에 서버 측 transaction authorization 단계가 없음
 

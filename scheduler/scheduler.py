@@ -1129,14 +1129,14 @@ class TradingScheduler:
 
     async def _collect_holdings_data(
         self, sellable: list,
-    ) -> tuple[list[dict], dict, list]:
+    ) -> tuple[list[dict], dict, list[dict]]:
         """보유종목 데이터 수집 — LLM 프롬프트용 공통 헬퍼
 
         Returns:
-            (holdings_data, holdings_map, fallback_sell)
+            (holdings_data, holdings_map, review_required)
             - holdings_data: LLM 프롬프트에 넣을 종목별 데이터 리스트
             - holdings_map: symbol → (holding, trade_result, current_price)
-            - fallback_sell: 데이터 수집 실패로 바로 SELL 처리할 종목 리스트
+            - review_required: 데이터 수집 실패로 자동 청산하지 않고 확인이 필요한 항목
         """
         from core.database import AsyncSessionLocal
         from realtime.event_detector import event_detector
@@ -1145,25 +1145,42 @@ class TradingScheduler:
 
         holdings_data: list[dict] = []
         holdings_map: dict = {}
-        fallback_sell: list = []
+        review_required: list[dict] = []
 
         async with AsyncSessionLocal() as session:
             repo = TradeResultRepository(session)
 
             for h in sellable:
                 try:
-                    current_price = await self._fetch_current_price(h.symbol)
+                    try:
+                        current_price = await self._fetch_current_price(h.symbol)
+                    except Exception as price_error:
+                        review_required.append(self._holding_review_required(
+                            h,
+                            reason_code="PRICE_LOOKUP_FAILED",
+                            reason=f"현재가 조회 실패: {str(price_error)[:120]}",
+                        ))
+                        logger.warning("현재가 조회 실패 {} → REVIEW_REQUIRED: {}", h.symbol, str(price_error))
+                        continue
 
                     if current_price <= 0:
-                        fallback_sell.append(h)
-                        logger.warning("현재가 조회 실패 {} → SELL", h.symbol)
+                        review_required.append(self._holding_review_required(
+                            h,
+                            reason_code="PRICE_LOOKUP_FAILED",
+                            reason="현재가 조회 실패",
+                        ))
+                        logger.warning("현재가 조회 실패 {} → REVIEW_REQUIRED", h.symbol)
                         continue
 
                     trade_result = await repo.get_open_buy(h.symbol)
 
                     if trade_result is None:
-                        fallback_sell.append(h)
-                        logger.warning("TradeResult 없음 {} → SELL", h.symbol)
+                        review_required.append(self._holding_review_required(
+                            h,
+                            reason_code="TRADE_RESULT_MISSING",
+                            reason="open BUY TradeResult 없음",
+                        ))
+                        logger.warning("TradeResult 없음 {} → REVIEW_REQUIRED", h.symbol)
                         continue
 
                     avg_price = h.avg_buy_price
@@ -1194,10 +1211,22 @@ class TradingScheduler:
                     holdings_map[h.symbol] = (h, trade_result, current_price)
 
                 except Exception as e:
-                    fallback_sell.append(h)
-                    logger.warning("보유종목 데이터 수집 오류 {} → SELL: {}", h.symbol, str(e))
+                    review_required.append(self._holding_review_required(
+                        h,
+                        reason_code="HOLDING_DATA_ERROR",
+                        reason=f"보유종목 데이터 수집 오류: {str(e)[:120]}",
+                    ))
+                    logger.warning("보유종목 데이터 수집 오류 {} → REVIEW_REQUIRED: {}", h.symbol, str(e))
 
-        return holdings_data, holdings_map, fallback_sell
+        return holdings_data, holdings_map, review_required
+
+    @staticmethod
+    def _holding_review_required(holding, *, reason_code: str, reason: str) -> dict:
+        return {
+            "holding": holding,
+            "reason_code": reason_code,
+            "reason": reason,
+        }
 
     async def _smart_liquidation(self, sellable: list) -> tuple[list, list]:
         """스윙 모드: LLM Tier1 기반 종목별 HOLD/SELL 판정
@@ -1217,10 +1246,21 @@ class TradingScheduler:
         to_hold = []
 
         # ── 1) 전 종목 데이터 수집 (공통 헬퍼) ──
-        holdings_data, holdings_map, fallback_sell = await self._collect_holdings_data(sellable)
-        to_sell.extend(fallback_sell)
+        holdings_data, holdings_map, review_required = await self._collect_holdings_data(sellable)
+        if review_required:
+            to_hold.extend(item["holding"] for item in review_required)
 
         if not holdings_data:
+            if review_required:
+                lines = [
+                    f"  - {getattr(item['holding'], 'name', item['holding'].symbol)}"
+                    f"({item['holding'].symbol}): REVIEW_REQUIRED — {item['reason']}"
+                    for item in review_required
+                ]
+                await activity_logger.log(
+                    ActivityType.SCHEDULE, ActivityPhase.PROGRESS,
+                    "📊 스마트 청산 데이터 확인 필요:\n" + "\n".join(lines),
+                )
             return to_sell, to_hold
 
         # ── 2) LLM Tier1 단일 호출 (전 종목 일괄 판정) ──
@@ -1267,7 +1307,11 @@ class TradingScheduler:
             logger.warning("스마트 청산 LLM 호출 실패 → 코드 룰 폴백: {}", str(e))
 
         # ── 3) 판정 결과 분류 + 누락 종목 폴백 ──
-        log_lines = []
+        log_lines = [
+            f"  - {getattr(item['holding'], 'name', item['holding'].symbol)}"
+            f"({item['holding'].symbol}): REVIEW_REQUIRED — {item['reason']}"
+            for item in review_required
+        ]
 
         for data in holdings_data:
             symbol = data["symbol"]
@@ -1347,7 +1391,17 @@ class TradingScheduler:
                 return
 
             # ── 1) 데이터 수집 ──
-            holdings_data, holdings_map, fallback_sell = await self._collect_holdings_data(sellable)
+            holdings_data, holdings_map, review_required = await self._collect_holdings_data(sellable)
+            if review_required:
+                review_lines = [
+                    f"{getattr(item['holding'], 'name', item['holding'].symbol)}"
+                    f"({item['holding'].symbol}): {item['reason']}"
+                    for item in review_required
+                ]
+                await activity_logger.log(
+                    ActivityType.SCHEDULE, ActivityPhase.PROGRESS,
+                    "📊 장중 보유 재평가 데이터 확인 필요:\n" + "\n".join(review_lines),
+                )
 
             if not holdings_data:
                 return
