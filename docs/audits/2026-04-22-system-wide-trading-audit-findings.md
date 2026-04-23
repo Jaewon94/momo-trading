@@ -342,7 +342,7 @@
 - Rollout: 최소 표본 수 미달 시 `INSUFFICIENT_SAMPLE`만 반환하고, gate에는 연결하지 않습니다.
 - Rollback: report-only service 제거 가능.
 - 분류: `실험`
-- 조치: Track 6.1/6.2에서 benchmark의 입력이 될 canonical `decision_events`와 `decision_forward_returns` 저장 기반을 추가했습니다. 이어서 read-only decision benchmark API를 추가해 final action, provider, decision stage, risk gate별 forward return을 집계할 수 있게 했습니다. 동일 후보군 random/scanner-only/Tier-only control group은 후속 작업입니다.
+- 조치: Track 6.1/6.2에서 benchmark의 입력이 될 canonical `decision_events`와 `decision_forward_returns` 저장 기반을 추가했습니다. 이어서 read-only decision benchmark API를 추가해 final action, provider, decision stage, risk gate뿐 아니라 `event.source`, `strategy_type`, `tier1_decision`, `tier2_decision`, `news_top_contributors.source_code`별 forward return도 집계할 수 있게 했습니다. 동일 후보군 random/scanner-only/Tier-only control group은 후속 작업입니다.
 
 ### F-020: 현재 상태에서 전략/뉴스/LLM 파라미터를 바로 조정하면 과최적화 위험이 큼
 
