@@ -692,6 +692,55 @@ async def test_analyze_and_trade_skips_tier1_when_pre_analysis_gate_blocks_beari
 
 
 @pytest.mark.asyncio
+async def test_analyze_and_trade_skips_tier2_when_deterministic_final_gate_blocks_low_confidence(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    logs = []
+    agent._active_trading_rules = {"param_overrides": {"ALL": {"min_confidence": 0.7}}}
+    agent._market_regime = "SIDEWAYS"
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append((args, kwargs))
+
+    async def fake_fetch_symbol_market_data(_symbol: str):
+        price_resp = SimpleNamespace(success=True, data={"price": 70_000}, error=None)
+        daily_resp = SimpleNamespace(
+            success=True,
+            data={"prices": [{"open": 70_000, "high": 71_000, "low": 69_000, "close": 70_000, "volume": 1_000}]},
+            error=None,
+        )
+        minute_resp = SimpleNamespace(success=False, data={}, error="no-minute")
+        return price_resp, daily_resp, minute_resp
+
+    async def fake_tier1_analysis(*args, **kwargs) -> dict:
+        return {
+            "recommendation": "BUY",
+            "confidence": 0.6,
+            "reason": "테스트",
+            "target_price": 72_000,
+            "stop_loss_price": 68_000,
+            "provider": "CODEX",
+        }
+
+    async def fail_tier2_review(*args, **kwargs):
+        raise AssertionError("Tier2 should not be called when DeterministicFinalGate blocks the candidate")
+
+    monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
+    monkeypatch.setattr(agent, "_fetch_symbol_market_data", fake_fetch_symbol_market_data)
+    monkeypatch.setattr(agent, "_tier1_analysis", fake_tier1_analysis)
+    monkeypatch.setattr(agent, "_tier2_review", fail_tier2_review)
+
+    result = await agent._analyze_and_trade(
+        {"symbol": "005930", "name": "삼성전자", "strategy_type": "STABLE_SHORT", "_buying_power": {"success": True, "max_qty": 10}},
+        "cycle-deterministic-final-gate",
+        portfolio_snapshot={"cash": 1_000_000, "holding_symbols": [], "holding_count": 0, "today_trade_count": 0},
+        dynamic_limits={"min_buy_quantity": 1},
+    )
+
+    assert result == {"symbol": "005930", "signal": False, "executed": False}
+    assert any("신뢰도 게이트 차단" in args[2] for args, _kwargs in logs)
+
+
+@pytest.mark.asyncio
 async def test_run_trading_cycle_skips_buy_candidate_when_buying_power_is_too_low(monkeypatch) -> None:
     agent = TradingAgent(broker_adapter=StubBrokerAdapter())
     analyze_called = False

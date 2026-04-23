@@ -22,6 +22,7 @@ from core.events import Event, EventType, event_bus
 from realtime.event_detector import event_detector
 from scheduler.market_calendar import market_calendar
 from services.activity_logger import activity_logger
+from services.deterministic_final_gate_service import deterministic_final_gate_service
 from services.pre_analysis_gate_service import pre_analysis_gate_service
 from services.runtime_reconfiguration_service import runtime_reconfiguration_service
 from strategy.aggressive_short import AggressiveShortStrategy
@@ -765,103 +766,66 @@ class TradingAgent:
             confidence=analysis.get("confidence"),
         )
 
-        # ── [하드 게이트] 트레이딩 규칙 기반 검증 (Tier2 진행 전) ──
-        tier1_confidence = analysis.get("confidence") or 0
-        active_rules = self._active_trading_rules
-        _param_overrides = active_rules.get("param_overrides", {})
-        _validation_flags = active_rules.get("validation_flags", {})
-
-        # (A) 신뢰도 게이트: 규칙이 지정한 최소 신뢰도 미달 시 차단
-        rule_min_conf = None
-        for scope in [strategy_type, "ALL"]:
-            val = _param_overrides.get(scope, {}).get("min_confidence")
-            if val is not None and (rule_min_conf is None or val > rule_min_conf):
-                rule_min_conf = val
-
-        is_sell_or_holding = (
-            analysis.get("recommendation") == "SELL"
-            or symbol in [
-                normalize_krx_symbol(item)
-                for item in (portfolio_snapshot or {}).get("holding_symbols", [])
-            ]
+        final_gate = deterministic_final_gate_service.evaluate(
+            symbol=symbol,
+            strategy_type=strategy_type,
+            analysis=analysis,
+            current_price=current_price,
+            market_regime=self._market_regime,
+            portfolio_snapshot=portfolio_snapshot,
+            dynamic_limits=dynamic_limits,
+            active_rules=self._active_trading_rules,
+            buying_power=stock_info.get("_buying_power"),
         )
-        # 시장 국면별 신뢰도 임계값 동적 조정
-        if rule_min_conf and not is_sell_or_holding:
-            _regime_adj = {"BULL": -0.05, "THEME": -0.03, "SIDEWAYS": 0.0, "BEAR": 0.03}
-            adj = _regime_adj.get(self._market_regime, 0.0)
-            effective_min_conf = max(0.50, min(0.85, rule_min_conf + adj))
-
-            if tier1_confidence < effective_min_conf:
-                adj_note = f" (국면 {self._market_regime}: {rule_min_conf:.0%}→{effective_min_conf:.0%})" if adj != 0 else ""
-                await activity_logger.log(
-                    ActivityType.TRADING_RULE, ActivityPhase.SKIP,
-                    f"🚫 [{name}] 신뢰도 게이트 차단: {tier1_confidence:.0%} < "
-                    f"실효 최소 {effective_min_conf:.0%}{adj_note}",
-                    cycle_id=cycle_id, symbol=symbol,
+        if not final_gate.approved:
+            if final_gate.code == "CONFIDENCE_GATE":
+                confidence = float(final_gate.detail.get("confidence", 0.0) or 0.0)
+                effective_min_conf = float(final_gate.detail.get("effective_min_confidence", 0.0) or 0.0)
+                rule_min_conf = float(final_gate.detail.get("rule_min_confidence", 0.0) or 0.0)
+                market_regime = str(final_gate.detail.get("market_regime", "") or "")
+                adj_note = ""
+                if market_regime and rule_min_conf and rule_min_conf != effective_min_conf:
+                    adj_note = f" (국면 {market_regime}: {rule_min_conf:.0%}→{effective_min_conf:.0%})"
+                message = (
+                    f"🚫 [{name}] 신뢰도 게이트 차단: {confidence:.0%} < "
+                    f"실효 최소 {effective_min_conf:.0%}{adj_note}"
                 )
-                return result
-
-        # (B) RR 비율 코드 레벨 재검증 (LLM 보고값 vs 실제 계산)
-        if _validation_flags.get("revalidate_rr_ratio"):
-            t1_target = analysis.get("target_price") or 0
-            t1_stop = analysis.get("stop_loss_price") or 0
-
-            if current_price > 0 and t1_target > 0 and t1_stop > 0:
-                code_reward = abs(t1_target - current_price)
-                code_risk = abs(current_price - t1_stop)
-
-                if code_risk > 0:
-                    code_rr = code_reward / code_risk
-                    rr_overrides = active_rules.get("rr_floor_overrides", {})
-                    min_rr = rr_overrides.get(
-                        self._market_regime,
-                        risk_manager.RR_FLOOR.get(self._market_regime, 1.2),
-                    )
-                    if code_rr < min_rr:
-                        await activity_logger.log(
-                            ActivityType.TRADING_RULE, ActivityPhase.SKIP,
-                            f"🚫 [{name}] RR 비율 검증 실패: "
-                            f"코드 계산 {code_rr:.2f}:1 < 최소 {min_rr}:1 "
-                            f"(target={t1_target:,.0f}, stop={t1_stop:,.0f}, "
-                            f"현재가={current_price:,.0f})",
-                            cycle_id=cycle_id, symbol=symbol,
-                        )
-                        return result
-                elif code_risk == 0 and analysis.get("recommendation") == "BUY":
-                    await activity_logger.log(
-                        ActivityType.TRADING_RULE, ActivityPhase.SKIP,
-                        f"🚫 [{name}] 손절가=현재가 → RR 계산 불가, 차단",
-                        cycle_id=cycle_id, symbol=symbol,
-                    )
-                    return result
-
-        # (C) 손절가 필수 검증 (매수 추천인데 손절가 없으면 차단)
-        if _validation_flags.get("require_stop_loss_logging"):
-            if analysis.get("recommendation") == "BUY":
-                t1_stop = analysis.get("stop_loss_price") or 0
-                if t1_stop <= 0:
-                    await activity_logger.log(
-                        ActivityType.TRADING_RULE, ActivityPhase.SKIP,
-                        f"🚫 [{name}] 손절가 미설정 차단 (require_stop_loss_logging 규칙)",
-                        cycle_id=cycle_id, symbol=symbol,
-                    )
-                    return result
-
-        # (D) 매수가능수량 부족 게이트: BUY 추천인데 매수 불가 → Tier2 스킵
-        if analysis.get("recommendation") == "BUY":
-            min_buy_qty = (
-                dynamic_limits.get("min_buy_quantity", settings.MIN_BUY_QUANTITY)
-                if dynamic_limits else settings.MIN_BUY_QUANTITY
-            )
-            bp = stock_info.get("_buying_power")
-            if bp and bp.get("success") and bp["max_qty"] < min_buy_qty:
-                await activity_logger.log(
-                    ActivityType.RISK_GATE, ActivityPhase.SKIP,
+                activity_type = ActivityType.TRADING_RULE
+            elif final_gate.code == "RR_RATIO_GATE":
+                message = (
+                    f"🚫 [{name}] RR 비율 검증 실패: "
+                    f"코드 계산 {float(final_gate.detail.get('code_rr', 0.0) or 0.0):.2f}:1 "
+                    f"< 최소 {float(final_gate.detail.get('min_rr', 0.0) or 0.0)}:1 "
+                    f"(target={float(final_gate.detail.get('target_price', 0.0) or 0.0):,.0f}, "
+                    f"stop={float(final_gate.detail.get('stop_loss_price', 0.0) or 0.0):,.0f}, "
+                    f"현재가={float(final_gate.detail.get('current_price', 0.0) or 0.0):,.0f})"
+                )
+                activity_type = ActivityType.TRADING_RULE
+            elif final_gate.code == "RR_UNDEFINED_GATE":
+                message = f"🚫 [{name}] 손절가=현재가 → RR 계산 불가, 차단"
+                activity_type = ActivityType.TRADING_RULE
+            elif final_gate.code == "STOP_LOSS_REQUIRED_GATE":
+                message = f"🚫 [{name}] 손절가 미설정 차단 (require_stop_loss_logging 규칙)"
+                activity_type = ActivityType.TRADING_RULE
+            elif final_gate.code == "BUYING_POWER_GATE":
+                max_qty = int(final_gate.detail.get("max_qty", 0) or 0)
+                min_buy_qty = int(final_gate.detail.get("min_buy_quantity", 0) or 0)
+                message = (
                     f"💰 [{name}] 매수가능수량 부족 → Tier2 스킵 "
-                    f"(가능 {bp['max_qty']}주 < 최소 {min_buy_qty}주)",
-                    cycle_id=cycle_id, symbol=symbol,
+                    f"(가능 {max_qty}주 < 최소 {min_buy_qty}주)"
                 )
-                return result
+                activity_type = ActivityType.RISK_GATE
+            else:
+                message = f"🚫 [{name}] DeterministicFinalGate 차단 ({final_gate.code})"
+                activity_type = ActivityType.TRADING_RULE
+
+            await activity_logger.log(
+                activity_type, ActivityPhase.SKIP,
+                message,
+                cycle_id=cycle_id, symbol=symbol,
+                detail={"deterministic_final_gate": final_gate.code, **final_gate.detail},
+            )
+            return result
 
         # 3d. Tier 2 최종 검토 (모든 BUY에 대해 필수 실행)
         t2_timer = activity_logger.timer()

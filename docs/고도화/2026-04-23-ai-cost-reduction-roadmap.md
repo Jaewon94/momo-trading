@@ -162,11 +162,17 @@ TDD 후보:
 - Tier2는 비싼 검토 단계인데, 코드로 이미 강하게 차단 가능한 후보까지 호출될 수 있다.
 - Tier2가 수량/가격을 제안하지만 주문 수량은 계좌/리스크/호가 제약을 따라야 한다.
 
-권장:
+현재 구현:
 
-- Tier2 호출 전 `DeterministicFinalGate`를 둔다.
-- 비용/손익비/최소 신뢰도/세션/매수가능수량/뉴스 리스크를 모두 먼저 통과해야 Tier2 호출.
-- Tier2는 유지하되, 이미 코드상 불가능하거나 위험한 후보를 넘기지 않는다.
+- `DeterministicFinalGateService`를 추가했다.
+- Tier2 직전에 `CONFIDENCE_GATE`, `RR_RATIO_GATE`, `RR_UNDEFINED_GATE`, `STOP_LOSS_REQUIRED_GATE`, `BUYING_POWER_GATE`를 deterministic하게 차단한다.
+- 기존에 `_analyze_and_trade` 내부에 흩어져 있던 Tier2 직전 하드 게이트를 서비스로 분리했다.
+- skip 사유는 activity log detail에 `deterministic_final_gate` 코드로 남긴다.
+
+다음 확장:
+
+- 비용 게이트와 뉴스 게이트까지 Tier2 전 단계로 더 당길지 검토.
+- 세션/시장 상태/최근 주문 이력까지 함께 묶어 최종 deterministic pre-check로 확장.
 - Tier2에는 수량/가격 제약과 뉴스/비용/차트 근거를 구조화해서 넘겨 판단 품질을 높인다.
 
 TDD 후보:
@@ -284,7 +290,8 @@ TDD 후보:
 - `POST /api/v1/admin/stocks/bootstrap-universe` 기반 최소 종목 universe bootstrap도 구현됐다. 보유/미체결/거래량·등락률 랭킹에서 관측된 국내 종목을 `stocks`에 dry-run/apply 할 수 있다.
 - `CandidateScoringService`는 구현 완료됐다.
 - `PreAnalysisGate`는 구현 완료됐다.
-- `DeterministicFinalGate`, `AI_SKIPPED` metric은 아직 구현되지 않았다.
+- `DeterministicFinalGate`는 구현 완료됐다.
+- `AI_SKIPPED` metric은 아직 구현되지 않았다.
 - 세부 진행 현황은 `docs/고도화/2026-04-23-enhancement-status.md`를 기준 문서로 둔다.
 
 ### Phase 1: 뉴스와 후보 선정 입력 보강
@@ -292,14 +299,14 @@ TDD 후보:
 1. 뉴스 리스크 분류/테마 매핑 backfill. 코드/테스트/운영 적용 완료.
 2. 국내 종목 universe bootstrap. 코드/테스트는 완료됐고, 운영 DB에 dry-run/apply 확인이 다음 순서다.
 3. 시장 스캔 deterministic 후보 점수에 cooldown/뉴스 감점을 붙이고, AI 시장 해설 optional 분리를 검토.
-4. `DeterministicFinalGate` 설계 및 연결.
+4. 동일 종목/동일 조건 분석 캐시 설계 및 연결.
 
 ### Phase 2: Tier1/Tier2 입력 품질과 호출 전 gate 강화
 
-1. `DeterministicFinalGate` 추가.
-2. 동일 종목/동일 조건 분석 캐시.
-3. Tier1/Tier2 프롬프트에 deterministic reason code와 점수 입력.
-4. `AI_SKIPPED` metric 추가.
+1. 동일 종목/동일 조건 분석 캐시.
+2. Tier1/Tier2 프롬프트에 deterministic reason code와 점수 입력.
+3. `AI_SKIPPED` metric 추가.
+4. 비용/뉴스 게이트의 Tier2 전 이동 검토.
 
 ### Phase 3: 보유종목 재평가 비용 절감
 
