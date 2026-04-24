@@ -77,6 +77,11 @@ class ObservabilityReportingService:
             start_at=start_at,
             metric_type="JOB",
         )
+        ai_skipped_rows = await self._fetch_execution_metrics(
+            session,
+            start_at=start_at,
+            metric_type="AI_SKIPPED",
+        )
 
         news_poll_rows = [row for row in job_rows if str(row.metric_name or "").upper() == "NEWS_POLL"]
         maintenance_rows = [row for row in job_rows if str(row.metric_name or "").upper() == "OBSERVABILITY_MAINTENANCE"]
@@ -111,6 +116,7 @@ class ObservabilityReportingService:
             "resource_summary": resource_summary,
             "resource_series": resource_series_payload,
             "llm": llm_summary,
+            "ai_skipped": self._build_ai_skipped_summary(ai_skipped_rows),
             "jobs": {
                 "news_poll": news_poll_summary,
                 "maintenance": self._build_maintenance_summary(maintenance_rows),
@@ -421,6 +427,61 @@ class ObservabilityReportingService:
             "last_execution_rollups_created": int(detail.get("execution_rollups_created") or 0),
             "last_deleted_resource_rows": int(detail.get("deleted_resource_rows") or 0),
             "last_deleted_execution_rows": int(detail.get("deleted_execution_rows") or 0),
+        }
+
+    def _build_ai_skipped_summary(self, rows: list[ExecutionMetric]) -> dict[str, Any]:
+        stage_counter: Counter[str] = Counter()
+        reason_counter: Counter[tuple[str, str]] = Counter()
+        tier_counter: Counter[str] = Counter()
+        symbol_counter: Counter[str] = Counter()
+
+        for row in rows:
+            detail = _safe_json_loads(row.detail)
+            stage = str(detail.get("stage") or row.metric_name or "UNKNOWN").upper()
+            reason = str(detail.get("reason_code") or "UNKNOWN").upper()
+            tier = str(detail.get("skipped_tier") or "UNKNOWN").upper()
+            stage_counter[stage] += 1
+            reason_counter[(stage, reason)] += 1
+            tier_counter[tier] += 1
+            if row.symbol:
+                symbol_counter[str(row.symbol)] += 1
+
+        recent_rows = sorted(rows, key=lambda item: item.created_at or now_kst(), reverse=True)[:10]
+        return {
+            "total_skipped": len(rows),
+            "by_stage": [
+                {"stage": stage, "count": count}
+                for stage, count in sorted(stage_counter.items(), key=lambda item: (-item[1], item[0]))
+            ],
+            "by_reason": [
+                {"stage": stage, "reason_code": reason, "count": count}
+                for (stage, reason), count in sorted(reason_counter.items(), key=lambda item: (-item[1], item[0]))
+            ],
+            "by_tier": [
+                {"tier": tier, "count": count}
+                for tier, count in sorted(tier_counter.items(), key=lambda item: (-item[1], item[0]))
+            ],
+            "top_symbols": [
+                {"symbol": symbol, "count": count}
+                for symbol, count in sorted(symbol_counter.items(), key=lambda item: (-item[1], item[0]))[:10]
+            ],
+            "recent": [
+                self._serialize_ai_skipped_row(row)
+                for row in recent_rows
+            ],
+        }
+
+    def _serialize_ai_skipped_row(self, row: ExecutionMetric) -> dict[str, Any]:
+        detail = _safe_json_loads(row.detail)
+        return {
+            "created_at": ensure_kst(row.created_at).isoformat(),
+            "stage": str(detail.get("stage") or row.metric_name or "UNKNOWN").upper(),
+            "reason_code": str(detail.get("reason_code") or "UNKNOWN").upper(),
+            "skipped_tier": str(detail.get("skipped_tier") or "UNKNOWN").upper(),
+            "symbol": row.symbol,
+            "source": detail.get("source"),
+            "action": detail.get("action"),
+            "reason": _truncate_text(detail.get("reason"), 160),
         }
 
     def _build_llm_trend_from_rows(self, rows: list[ExecutionMetric]) -> list[dict[str, Any]]:

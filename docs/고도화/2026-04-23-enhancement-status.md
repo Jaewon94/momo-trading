@@ -120,6 +120,7 @@
 - `HoldingsReviewCacheService` 구현. 장중 보유 재평가에서 동일 종목/가격/손익/보유일/활성 임계값/시장 국면/남은 시간 조건이면 짧은 TTL 동안 이전 LLM 결정을 재사용한다.
 - 캐시 hit 종목은 `AI_SKIPPED`에 `HOLDINGS_REVIEW_CACHE/CACHE_HIT/TIER1`로 기록한다.
 - 보유종목 precheck skip도 `AI_SKIPPED`에 `HOLDINGS_PRECHECK/{SELL|HOLD}/TIER1`로 기록한다.
+- Admin observability overview에 `ai_skipped` 요약을 추가했다. stage/reason/tier/symbol/recent 표본을 API에서 확인할 수 있어 HOLD skip 플래그 활성화 전 운영 표본을 볼 수 있다.
 
 ## 아직 미구현 또는 추가 검증이 필요한 핵심 항목
 
@@ -132,7 +133,7 @@
 - 보유종목 명확 HOLD skip은 플래그 기반 코드 경로까지 구현 완료. 운영 기본값은 OFF이므로, `AI_SKIPPED/HOLDINGS_PRECHECK` 표본을 본 뒤 활성화 여부를 결정한다.
 - 스마트 청산 review cache는 현재 보류한다. `_force_liquidation()`에서 청산 시각에 단발 호출되는 경로라 반복 호출 절감 효과가 작고, 캐시가 청산 직전 최신 판단을 흐릴 수 있다.
 - review cache TTL/key 조건 운영 데이터 기준 조정.
-- `AI_SKIPPED`와 benchmark/report의 보유종목 precheck/cache 결과 집계 화면 또는 API 확장.
+- `AI_SKIPPED`와 benchmark/report의 보유종목 precheck/cache 결과 집계 화면 확장.
 
 ### Admin UX 후속
 

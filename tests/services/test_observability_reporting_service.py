@@ -115,6 +115,28 @@ async def test_observability_reporting_service_builds_overview_from_recent_metri
                     detail='{"resource_rollups_created": 1, "execution_rollups_created": 2, "deleted_resource_rows": 4, "deleted_execution_rows": 1}',
                     created_at=now - timedelta(minutes=4),
                 ),
+                ExecutionMetric(
+                    metric_type="AI_SKIPPED",
+                    metric_name="HOLDINGS_PRECHECK",
+                    status="SKIPPED",
+                    symbol="005930",
+                    item_count=1,
+                    success_count=1,
+                    error_count=0,
+                    detail='{"stage": "HOLDINGS_PRECHECK", "reason_code": "HOLD", "skipped_tier": "TIER1", "source": "HOLDING_POLICY", "reason": "명확한 HOLD 사전판단"}',
+                    created_at=now - timedelta(minutes=2),
+                ),
+                ExecutionMetric(
+                    metric_type="AI_SKIPPED",
+                    metric_name="HOLDINGS_REVIEW_CACHE",
+                    status="SKIPPED",
+                    symbol="005930",
+                    item_count=1,
+                    success_count=1,
+                    error_count=0,
+                    detail='{"stage": "HOLDINGS_REVIEW_CACHE", "reason_code": "CACHE_HIT", "skipped_tier": "TIER1", "action": "HOLD"}',
+                    created_at=now - timedelta(minutes=1),
+                ),
                 ErrorEvent(
                     fingerprint="abc123",
                     severity="ERROR",
@@ -152,6 +174,11 @@ async def test_observability_reporting_service_builds_overview_from_recent_metri
     assert payload["llm"]["success_rate"] == pytest.approx(50.0)
     assert payload["llm"]["fallback_rate"] == pytest.approx(50.0)
     assert payload["llm"]["provider_breakdown"][0]["provider"] == "OLLAMA"
+    assert payload["ai_skipped"]["total_skipped"] == 2
+    assert payload["ai_skipped"]["by_stage"][0] == {"stage": "HOLDINGS_PRECHECK", "count": 1}
+    assert {"stage": "HOLDINGS_REVIEW_CACHE", "reason_code": "CACHE_HIT", "count": 1} in payload["ai_skipped"]["by_reason"]
+    assert payload["ai_skipped"]["top_symbols"] == [{"symbol": "005930", "count": 2}]
+    assert payload["ai_skipped"]["recent"][0]["stage"] == "HOLDINGS_REVIEW_CACHE"
     assert payload["jobs"]["news_poll"]["runs"] == 2
     assert payload["jobs"]["news_poll"]["created_total"] == 8
     assert payload["jobs"]["news_poll"]["source_error_total"] == 2
