@@ -101,6 +101,7 @@ TDD 후보:
 - 최근 분석/매매 이력 cooldown 반영.
 - 뉴스 압력/리스크 감점 반영.
 - 전략 타입 추천과 제외 사유 코드 정교화.
+- deterministic 후보 점수 top-N은 `CANDIDATE_SCORING` decision event로 기록해 scanner-only 후보의 사후 수익률을 benchmark할 수 있게 했다.
 
 대체 규칙 예:
 

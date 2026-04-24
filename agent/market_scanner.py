@@ -9,6 +9,7 @@ from analysis.llm.prompts.market_scan import MARKET_SCAN_PROMPT, MARKET_SCAN_SYS
 from core.database import AsyncSessionLocal
 from services.activity_logger import activity_logger
 from services.candidate_scoring_service import candidate_scoring_service
+from services.decision_event_service import decision_event_service
 from trading.adapters.base import BrokerAdapter
 from trading.broker_factory import get_broker_adapter
 from trading.enums import ActivityPhase, ActivityType
@@ -113,6 +114,11 @@ class MarketScanner:
             holdings=holdings,
             available_cash=available_cash,
             max_candidates=8,
+        )
+        await self._record_scored_candidate_events(
+            cycle_id=cycle_id,
+            scored_candidates=scored_candidates,
+            available_cash=available_cash,
         )
 
         # 2. AI 시장 분석 + 종목 선별 (통합 1회 호출)
@@ -309,6 +315,47 @@ class MarketScanner:
     def _parse_json_response(self, text: str) -> dict:
         from core.json_utils import parse_llm_json
         return parse_llm_json(text)
+
+    async def _record_scored_candidate_events(
+        self,
+        *,
+        cycle_id: str | None,
+        scored_candidates: list[dict],
+        available_cash: float,
+    ) -> None:
+        """Deterministic scanner 후보군을 benchmark용 decision event로 남긴다."""
+        for rank, item in enumerate(scored_candidates[:8], 1):
+            try:
+                buyable = bool(item.get("buyable", True))
+                await decision_event_service.record_event(
+                    cycle_id=cycle_id,
+                    symbol=str(item.get("symbol") or ""),
+                    stock_name=str(item.get("name") or item.get("symbol") or ""),
+                    decision_stage="CANDIDATE_SCORING",
+                    source="candidate_scoring",
+                    scanner_score=item.get("score"),
+                    risk_gate_result="PASS" if buyable else "NOT_BUYABLE",
+                    final_action="CANDIDATE" if buyable else "SKIP",
+                    reference_price=item.get("price"),
+                    provider="DETERMINISTIC",
+                    model="candidate_scoring_v1",
+                    reason=", ".join(str(reason) for reason in item.get("reasons", [])[:4]),
+                    metadata={
+                        "rank": rank,
+                        "available_cash": available_cash,
+                        "sources": item.get("sources", []),
+                        "buyable": buyable,
+                        "hold_candidate": bool(item.get("hold_candidate")),
+                        "change_rate": item.get("change_rate"),
+                        "volume": item.get("volume"),
+                    },
+                )
+            except Exception as exc:
+                logger.debug(
+                    "candidate scoring decision event 기록 실패: {} {}",
+                    item.get("symbol"),
+                    str(exc),
+                )
 
 
 market_scanner = MarketScanner()

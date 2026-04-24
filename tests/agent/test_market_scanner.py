@@ -63,10 +63,14 @@ class FakeScannerBrokerAdapter:
 async def test_market_scanner_uses_broker_adapter_for_scan(monkeypatch) -> None:
     scanner = MarketScanner(broker_adapter=FakeScannerBrokerAdapter())
     logs = []
+    decision_events = []
     captured_prompt: dict[str, str] = {}
 
     async def fake_log(*args, **kwargs) -> None:
         logs.append((args, kwargs))
+
+    async def fake_record_event(**kwargs) -> None:
+        decision_events.append(kwargs)
 
     async def fake_generate_tier1(*args, **kwargs) -> tuple[str, str]:
         captured_prompt["prompt"] = args[0]
@@ -93,6 +97,7 @@ async def test_market_scanner_uses_broker_adapter_for_scan(monkeypatch) -> None:
 
     monkeypatch.setattr("agent.market_scanner.activity_logger.log", fake_log)
     monkeypatch.setattr("agent.market_scanner.llm_factory.generate_tier1", fake_generate_tier1)
+    monkeypatch.setattr("agent.market_scanner.decision_event_service.record_event", fake_record_event)
     monkeypatch.setattr(scanner, "_get_performance_summary", fake_performance_summary)
 
     result = await scanner.scan(cycle_id="cycle-1")
@@ -103,6 +108,15 @@ async def test_market_scanner_uses_broker_adapter_for_scan(monkeypatch) -> None:
     assert result["scored_candidates"][0]["symbol"] == "005930"
     assert "Deterministic 후보 점수" in captured_prompt["prompt"]
     assert "삼성전자(005930)" in captured_prompt["prompt"]
+    assert decision_events
+    assert decision_events[0]["cycle_id"] == "cycle-1"
+    assert decision_events[0]["decision_stage"] == "CANDIDATE_SCORING"
+    assert decision_events[0]["source"] == "candidate_scoring"
+    assert decision_events[0]["symbol"] == "005930"
+    assert decision_events[0]["scanner_score"] == result["scored_candidates"][0]["score"]
+    assert decision_events[0]["final_action"] == "CANDIDATE"
+    assert decision_events[0]["risk_gate_result"] == "PASS"
+    assert decision_events[0]["metadata"]["rank"] == 1
     assert logs
     assert scanner._broker_adapter.calls == [
         ("balance", ""),
