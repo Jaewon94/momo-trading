@@ -75,6 +75,7 @@ async def test_observability_reporting_service_builds_overview_from_recent_metri
                     model="ollama:qwen3:14b",
                     elapsed_ms=1500,
                     fallback_used=False,
+                    detail='{"tier": "TIER1", "call_context": "news_translation", "prompt_chars": 1200, "response_chars": 320}',
                     created_at=now - timedelta(minutes=10),
                 ),
                 ExecutionMetric(
@@ -85,6 +86,7 @@ async def test_observability_reporting_service_builds_overview_from_recent_metri
                     model="ollama:qwen3:14b",
                     elapsed_ms=2200,
                     fallback_used=True,
+                    detail='{"tier": "TIER2", "prompt_chars": 1800}',
                     created_at=now - timedelta(minutes=8),
                 ),
                 ExecutionMetric(
@@ -174,6 +176,14 @@ async def test_observability_reporting_service_builds_overview_from_recent_metri
     assert payload["llm"]["success_rate"] == pytest.approx(50.0)
     assert payload["llm"]["fallback_rate"] == pytest.approx(50.0)
     assert payload["llm"]["provider_breakdown"][0]["provider"] == "OLLAMA"
+    assert payload["llm"]["function_breakdown"][0]["function"] in {"NEWS_TRANSLATION", "TIER2"}
+    assert {
+        row["function"]: row["calls"]
+        for row in payload["llm"]["function_breakdown"]
+    } == {"NEWS_TRANSLATION": 1, "TIER2": 1}
+    news_function = next(row for row in payload["llm"]["function_breakdown"] if row["function"] == "NEWS_TRANSLATION")
+    assert news_function["prompt_chars"] == 1200
+    assert news_function["response_chars"] == 320
     assert payload["ai_skipped"]["total_skipped"] == 2
     assert payload["ai_skipped"]["by_stage"][0] == {"stage": "HOLDINGS_PRECHECK", "count": 1}
     assert {"stage": "HOLDINGS_REVIEW_CACHE", "reason_code": "CACHE_HIT", "count": 1} in payload["ai_skipped"]["by_reason"]

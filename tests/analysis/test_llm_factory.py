@@ -412,6 +412,7 @@ async def test_llm_factory_records_observability_metric_on_success(monkeypatch) 
     assert observed["status"] == "SUCCESS"
     assert observed["provider"] == "OLLAMA"
     assert observed["prompt_chars"] == 5
+    assert observed["detail"]["call_context"] == "tier1_analysis"
 
 
 @pytest.mark.asyncio

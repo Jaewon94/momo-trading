@@ -206,6 +206,7 @@ class LLMFactory:
         provider_chain: list[LLMProvider] | None = None,
         provider_model_overrides: dict[LLMProvider, str] | None = None,
         provider_selection_resolver: Callable[[], tuple[list[LLMProvider], dict[LLMProvider, str] | None]] | None = None,
+        call_context: str | None = None,
     ) -> tuple[str, str]:
         """텍스트 생성 (최대 2회 시도)
 
@@ -316,6 +317,7 @@ class LLMFactory:
                                 cycle_id=cycle_id,
                                 symbol=symbol,
                                 detail={
+                                    "call_context": call_context or f"{tier.value.lower()}_analysis",
                                     "provider_chain": [item.value for item in active_chain],
                                     "selected_provider_index": index,
                                     "system_prompt_chars": len(system_prompt or ""),
@@ -361,6 +363,7 @@ class LLMFactory:
                 cycle_id=cycle_id,
                 symbol=symbol,
                 detail={
+                    "call_context": call_context or f"{tier.value.lower()}_analysis",
                     "provider_chain": [item.value for item in active_chain],
                     "system_prompt_chars": len(system_prompt or ""),
                     "error": str(last_error)[:200] if last_error else "unknown",
@@ -489,14 +492,28 @@ class LLMFactory:
         *, symbol: str | None = None, cycle_id: str | None = None,
     ) -> tuple[str, str]:
         """Tier 1 (빠른 분석용)"""
-        return await self.generate(prompt, LLMTier.TIER1, system_prompt, symbol=symbol, cycle_id=cycle_id)
+        return await self.generate(
+            prompt,
+            LLMTier.TIER1,
+            system_prompt,
+            symbol=symbol,
+            cycle_id=cycle_id,
+            call_context="tier1_analysis",
+        )
 
     async def generate_tier2(
         self, prompt: str, system_prompt: str = "",
         *, symbol: str | None = None, cycle_id: str | None = None,
     ) -> tuple[str, str]:
         """Tier 2 (프리미엄 분석용)"""
-        return await self.generate(prompt, LLMTier.TIER2, system_prompt, symbol=symbol, cycle_id=cycle_id)
+        return await self.generate(
+            prompt,
+            LLMTier.TIER2,
+            system_prompt,
+            symbol=symbol,
+            cycle_id=cycle_id,
+            call_context="tier2_review",
+        )
 
     async def generate_manual(
         self,
@@ -525,6 +542,7 @@ class LLMFactory:
                 manual_provider_override=manual_provider_override,
                 manual_model_override=manual_model_override,
             ),
+            call_context="manual_analysis",
         )
 
     async def generate_news(
@@ -548,6 +566,7 @@ class LLMFactory:
             symbol=symbol,
             cycle_id=cycle_id,
             provider_selection_resolver=self._news_selection_resolver(news_selection),
+            call_context="news_translation",
         )
 
     def get_llm_status(self) -> dict:

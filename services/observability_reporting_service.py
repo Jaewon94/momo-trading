@@ -391,7 +391,47 @@ class ObservabilityReportingService:
             "avg_elapsed_ms": _round_or_none(sum(elapsed_values) / len(elapsed_values), 1) if elapsed_values else None,
             "p95_elapsed_ms": self._percentile(elapsed_values, 0.95),
             "provider_breakdown": provider_rows,
+            "function_breakdown": self._build_llm_function_breakdown(rows),
         }
+
+    def _build_llm_function_breakdown(self, rows: list[ExecutionMetric]) -> list[dict[str, Any]]:
+        groups: dict[str, list[ExecutionMetric]] = defaultdict(list)
+        for row in rows:
+            detail = _safe_json_loads(row.detail)
+            call_context = str(detail.get("call_context") or "").strip().upper()
+            if not call_context:
+                tier = str(detail.get("tier") or "").strip().upper()
+                call_context = tier if tier else "UNKNOWN"
+            groups[call_context].append(row)
+
+        breakdown = []
+        for call_context, context_rows in sorted(groups.items(), key=lambda item: (-len(item[1]), item[0])):
+            elapsed_values = [int(row.elapsed_ms) for row in context_rows if row.elapsed_ms is not None]
+            success_count = sum(1 for row in context_rows if str(row.status or "").upper() == "SUCCESS")
+            fallback_count = sum(1 for row in context_rows if bool(row.fallback_used))
+            prompt_chars = 0
+            response_chars = 0
+            providers: Counter[str] = Counter()
+            for row in context_rows:
+                detail = _safe_json_loads(row.detail)
+                prompt_chars += int(detail.get("prompt_chars") or 0)
+                response_chars += int(detail.get("response_chars") or 0)
+                providers[str(row.provider or "UNKNOWN").upper()] += 1
+            breakdown.append({
+                "function": call_context,
+                "calls": len(context_rows),
+                "success_rate": self._percent(success_count, len(context_rows)),
+                "avg_elapsed_ms": _round_or_none(sum(elapsed_values) / len(elapsed_values), 1) if elapsed_values else None,
+                "p95_elapsed_ms": self._percentile(elapsed_values, 0.95),
+                "fallback_rate": self._percent(fallback_count, len(context_rows)),
+                "prompt_chars": prompt_chars,
+                "response_chars": response_chars,
+                "provider_breakdown": [
+                    {"provider": provider, "calls": calls}
+                    for provider, calls in sorted(providers.items(), key=lambda item: (-item[1], item[0]))
+                ],
+            })
+        return breakdown
 
     def _build_news_poll_summary(self, rows: list[ExecutionMetric]) -> dict[str, Any]:
         elapsed_values = [int(row.elapsed_ms) for row in rows if row.elapsed_ms is not None]

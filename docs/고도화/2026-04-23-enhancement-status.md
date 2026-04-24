@@ -132,6 +132,7 @@
 - observability 추천은 뉴스 번역 Ollama 모델을 `qwen3:4b`로 낮추라고 표시했다. `qwen3:4b` 설치는 완료됐지만 샘플 검증에서 응답 지연과 JSON 형식 안정성 문제가 확인되어 운영 `NEWS_LLM_MODEL`은 `qwen3:14b`를 유지한다.
 - 뉴스 번역 추천 서비스는 이미 목표 모델을 쓰고 있을 때도 `DOWNGRADE`로 표시하던 상태 판정을 보정했다. 추천 모델과 현재 모델이 같으면 `KEEP`으로 표시한다.
 - 해외 뉴스 번역이 비활성화된 상태에서는 observability가 뉴스 번역 모델 다운그레이드를 운영 액션으로 추천하지 않도록 보정했다.
+- LLM 호출 metric detail에 `call_context`를 기록하고 Admin observability overview에 기능별 `llm.function_breakdown`을 추가했다. 기능별 호출 수/성공률/지연/prompt·response 문자 수를 분리해 볼 수 있다.
 
 ## 아직 미구현 또는 추가 검증이 필요한 핵심 항목
 
@@ -145,6 +146,7 @@
 - 스마트 청산 review cache는 현재 보류한다. `_force_liquidation()`에서 청산 시각에 단발 호출되는 경로라 반복 호출 절감 효과가 작고, 캐시가 청산 직전 최신 판단을 흐릴 수 있다.
 - review cache key의 잔여시간 조건은 15분 버킷으로 조정 완료. TTL 자체는 30분 기본값을 유지한다.
 - 장중 보유 재평가 precheck/cache, 스마트 청산 precheck, 일반 분석 `PRE_ANALYSIS_GATE`, `DETERMINISTIC_FINAL_GATE`, `TIER1_COST_GATE` 판단은 `decision_events`에 연결 완료.
+- 기능별 LLM 호출 집계는 overview API까지 구현 완료. UI 노출은 필요 시 별도 작업.
 - 뉴스 번역 `qwen3:4b` 다운그레이드는 설치 완료 후 샘플 검증까지 진행했으나 보류한다. 파싱 보강/프롬프트 조정/지연 시간 재측정 후 운영 전환 여부를 다시 판단한다.
 
 ### Admin UX 후속
