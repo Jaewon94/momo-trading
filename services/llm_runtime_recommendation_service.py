@@ -159,6 +159,8 @@ class LLMRuntimeRecommendationService:
 
         if not reasons:
             reasons.append("현재 뉴스 번역 설정 유지 권장")
+        if target_model == model:
+            action = "KEEP"
 
         return {
             "current": {"provider": provider, "model": model},

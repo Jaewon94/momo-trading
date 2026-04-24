@@ -208,6 +208,7 @@ TDD 후보:
 - 스마트 청산에서 precheck로 LLM을 건너뛴 HOLD/SELL 판단도 `decision_events`에 `SMART_LIQUIDATION` stage로 기록한다.
 - 일반 BUY 분석 파이프라인의 `PRE_ANALYSIS_GATE` 차단도 `decision_events`에 `PRE_ANALYSIS_GATE` stage로 기록한다.
 - 일반 BUY 분석 파이프라인의 `DETERMINISTIC_FINAL_GATE`, `TIER1_COST_GATE` 차단도 `decision_events`에 기록한다.
+- 2026-04-24 운영 확인 결과 `AI_SKIPPED/HOLDINGS_PRECHECK` 표본은 0건이라 명확 HOLD skip 활성화는 보류한다.
 
 문제:
 
@@ -222,7 +223,7 @@ TDD 후보:
 
 다음 확장:
 
-- 명확한 HOLD skip 플래그를 실제로 켤지는 `AI_SKIPPED/HOLDINGS_PRECHECK` 표본과 운영 로그를 보고 결정한다.
+- 명확한 HOLD skip 플래그는 `AI_SKIPPED/HOLDINGS_PRECHECK` 표본이 쌓인 뒤 다시 판단한다. 현재는 0건이라 OFF 유지.
 - review cache TTL과 key 조건을 운영 데이터로 조정한다.
 - Tier2 전 final/cost gate도 `decision_events`에 연결 완료. 이후 forward return labeling 결과를 보고 gate 기준을 조정한다.
 
@@ -302,8 +303,9 @@ TDD 후보:
 - `observability_service.record_llm_call`로 LLM 호출 기록이 있다.
 - Admin에 provider 상태와 일부 사용량이 노출된다.
 - `AI_SKIPPED` execution metric을 추가했다.
-- 현재 기록 지점은 `PRE_ANALYSIS_GATE`, `TIER1_CACHE`, `DETERMINISTIC_FINAL_GATE`, `TIER1_COST_GATE`, `HOLDINGS_REVIEW_CACHE`다.
+- 현재 기록 지점은 `PRE_ANALYSIS_GATE`, `TIER1_CACHE`, `DETERMINISTIC_FINAL_GATE`, `TIER1_COST_GATE`, `HOLDINGS_PRECHECK`, `HOLDINGS_REVIEW_CACHE`다.
 - metric detail에는 `stage`, `reason_code`, `skipped_tier`와 각 gate의 세부 값이 들어간다.
+- 뉴스 번역 Ollama 4b 다운그레이드는 observability 추천으로 확인됐다. `qwen3:4b` 설치를 진행 중이며, 설치 완료 전 설정만 바꾸면 번역 실패 위험이 있어 운영은 `qwen3:14b`를 유지한다.
 
 다음 확장:
 
