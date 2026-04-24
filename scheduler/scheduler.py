@@ -1293,6 +1293,7 @@ class TradingScheduler:
         decision: dict,
         source: str,
         reason_code: str,
+        decision_stage: str = "HOLDINGS_REVIEW",
     ) -> None:
         """보유 재평가의 deterministic/cache 판단도 forward return 라벨링 대상으로 남긴다."""
         try:
@@ -1304,7 +1305,7 @@ class TradingScheduler:
                 symbol=str(data.get("symbol") or getattr(holding, "symbol", "")),
                 stock_name=str(data.get("stock_name") or getattr(holding, "name", "") or ""),
                 market="KRX",
-                decision_stage="HOLDINGS_REVIEW",
+                decision_stage=decision_stage,
                 source=source,
                 strategy_type=str(data.get("strategy_type") or getattr(trade_result, "strategy_type", "") or ""),
                 tier1_decision=action,
@@ -1457,6 +1458,16 @@ class TradingScheduler:
                 action = decision["action"]
                 reason = decision["reason"]
                 conf = decision["confidence"]
+                await self._record_holdings_review_decision_event(
+                    data=data,
+                    holding=h,
+                    trade_result=trade_result,
+                    current_price=current_price,
+                    decision=decision,
+                    source="holdings_precheck",
+                    reason_code=f"PRECHECK_{action}",
+                    decision_stage="SMART_LIQUIDATION",
+                )
 
                 if action == "HOLD":
                     to_hold.append(h)

@@ -1930,17 +1930,33 @@ async def test_smart_liquidation_respects_explicit_llm_sell_decision(monkeypatch
 async def test_smart_liquidation_skips_llm_for_clear_policy_sell(monkeypatch) -> None:
     scheduler = TradingScheduler()
     logs: list[str] = []
+    decision_events: list[dict] = []
     holding = SimpleNamespace(symbol="005930", name="삼성전자", quantity=2)
     trade_result = SimpleNamespace(stock_name="삼성전자", strategy_type="STABLE_SHORT")
 
     async def fake_collect_holdings_data(_sellable):
-        return [{"symbol": "005930", "stock_name": "삼성전자"}], {"005930": (holding, trade_result, 95_000)}, []
+        return (
+            [{
+                "symbol": "005930",
+                "stock_name": "삼성전자",
+                "strategy_type": "STABLE_SHORT",
+                "pnl_rate": -5.0,
+                "hold_days": 1,
+                "max_hold_days": 5,
+            }],
+            {"005930": (holding, trade_result, 95_000)},
+            [],
+        )
 
     async def fail_generate_tier1(prompt, system_prompt=None):
         raise AssertionError("LLM should not be called for clear policy sell")
 
     async def fake_log(*args, **kwargs) -> None:
         logs.append(args[2])
+
+    async def fake_record_event(**kwargs):
+        decision_events.append(kwargs)
+        return SimpleNamespace(id="smart-liquidation-event-1")
 
     monkeypatch.setattr(scheduler, "_collect_holdings_data", fake_collect_holdings_data)
     monkeypatch.setattr("analysis.llm.prompts.overnight_hold.build_overnight_prompt", lambda data, regime: "prompt")
@@ -1950,6 +1966,7 @@ async def test_smart_liquidation_skips_llm_for_clear_policy_sell(monkeypatch) ->
         lambda *args, **kwargs: SimpleNamespace(action="SELL", reason="손실 과대 (-5.0% < -3%) — 손절 수준 도달"),
     )
     monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
+    monkeypatch.setattr("services.decision_event_service.decision_event_service.record_event", fake_record_event)
     monkeypatch.setattr("agent.trading_agent.trading_agent._market_regime", "RANGE")
 
     to_sell, to_hold = await scheduler._smart_liquidation([holding])
@@ -1957,6 +1974,12 @@ async def test_smart_liquidation_skips_llm_for_clear_policy_sell(monkeypatch) ->
     assert to_sell == [holding]
     assert to_hold == []
     assert "정책 사전판단" in logs[0]
+    assert decision_events[0]["decision_stage"] == "SMART_LIQUIDATION"
+    assert decision_events[0]["source"] == "holdings_precheck"
+    assert decision_events[0]["final_action"] == "SELL"
+    assert decision_events[0]["reference_price"] == 95_000.0
+    assert decision_events[0]["risk_gate_result"] == "PRECHECK_SELL"
+    assert decision_events[0]["metadata"]["pnl_rate"] == -5.0
 
 
 @pytest.mark.asyncio
