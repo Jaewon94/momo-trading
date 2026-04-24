@@ -243,7 +243,8 @@ TDD 후보:
 다음 확장:
 
 - 명확한 HOLD 케이스를 shadow-only로 먼저 측정한 뒤 LLM skip 확대 여부 결정.
-- 스마트 청산 precheck 결과를 benchmark와 `AI_SKIPPED` metric에 더 직접 연결.
+- 스마트 청산 precheck 결과는 `AI_SKIPPED/HOLDINGS_PRECHECK` metric으로 기록한다.
+- review cache는 현재 보류한다. 스마트 청산은 청산 시각 단발 호출이라 반복 절감 효과가 작고, 캐시가 청산 직전 최신 판단을 흐릴 수 있다.
 
 TDD 후보:
 
@@ -346,7 +347,7 @@ TDD 후보:
 1. `holding_policy` 기반 deterministic precheck. 구현 완료.
 2. 보유종목 review cache. 구현 완료.
 3. HOLD 정상 상태 deterministic skip shadow 검증.
-4. 스마트 청산 precheck/cache 확장 여부 검토.
+4. 장중 보유 재평가 cache TTL/key 운영 조정.
 5. review cache hit율/오판율 리포트.
 
 ### Phase 4: 장마감 리뷰 구조화

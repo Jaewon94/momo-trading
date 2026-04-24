@@ -130,7 +130,7 @@
 ### AI 비용/지연 절감 후속
 
 - 보유종목 명확 HOLD skip은 플래그 기반 코드 경로까지 구현 완료. 운영 기본값은 OFF이므로, `AI_SKIPPED/HOLDINGS_PRECHECK` 표본을 본 뒤 활성화 여부를 결정한다.
-- 스마트 청산에도 review cache가 필요한지 분리 검토.
+- 스마트 청산 review cache는 현재 보류한다. `_force_liquidation()`에서 청산 시각에 단발 호출되는 경로라 반복 호출 절감 효과가 작고, 캐시가 청산 직전 최신 판단을 흐릴 수 있다.
 - review cache TTL/key 조건 운영 데이터 기준 조정.
 - `AI_SKIPPED`와 benchmark/report의 보유종목 precheck/cache 결과 집계 화면 또는 API 확장.
 
@@ -158,7 +158,7 @@
 ## 권장 실행 순서
 
 1. `AI_SKIPPED/HOLDINGS_PRECHECK` 표본을 확인한 뒤 `HOLDINGS_PRECHECK_SKIP_CLEAR_HOLD_ENABLED` 활성화 여부를 결정한다.
-2. 스마트 청산에도 review cache가 필요한지 분리 검토한다.
+2. 장중 보유 재평가 review cache TTL/key 조건을 운영 데이터 기준으로 조정한다.
 3. 뉴스 gate의 Tier2 전 차단 이동은 shadow/rollout 표본을 더 확인한 뒤 재검토한다.
 
 ## 당장 바꾸지 말 것
