@@ -203,6 +203,7 @@ TDD 후보:
 - 보유종목 precheck skip은 `AI_SKIPPED` metric에 `HOLDINGS_PRECHECK/{SELL|HOLD}/TIER1`로 기록한다.
 - Admin observability overview에 `ai_skipped` 요약을 추가했다. stage/reason/tier/symbol/recent 표본으로 precheck/cache 절감 효과를 확인할 수 있다.
 - Admin 관측 화면에도 `AI Skip` 섹션을 추가했다. 사유별 집계와 최근 표본을 운영자가 바로 확인할 수 있다.
+- Decision benchmark 응답에 `ai_skipped_observation`을 추가했다. `AI_SKIPPED`는 forward return이 직접 붙은 표본이 아니므로 수익률 benchmark와 분리된 관측 섹션으로 둔다.
 
 문제:
 
@@ -219,7 +220,7 @@ TDD 후보:
 
 - 명확한 HOLD skip 플래그를 실제로 켤지는 `AI_SKIPPED/HOLDINGS_PRECHECK` 표본과 운영 로그를 보고 결정한다.
 - review cache TTL과 key 조건을 운영 데이터로 조정한다.
-- precheck/cache reason code를 benchmark에 더 직접 연결한다.
+- precheck/cache reason code의 직접 수익률 attribution은 별도 decision event 연결이 필요하다.
 
 TDD 후보:
 

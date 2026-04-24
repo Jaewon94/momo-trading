@@ -12,6 +12,7 @@ from core.config import settings
 from core.database import AsyncSessionLocal
 from models.decision_event import DecisionEvent
 from models.decision_forward_return import DecisionForwardReturn
+from models.execution_metric import ExecutionMetric
 from util.time_util import now_kst
 
 
@@ -71,6 +72,19 @@ class DecisionBenchmarkService:
                     .order_by(DecisionEvent.created_at.asc())
                 )
             ).all()
+            ai_skipped_rows = (
+                await session.execute(
+                    select(ExecutionMetric)
+                    .where(
+                        and_(
+                            ExecutionMetric.created_at >= from_dt,
+                            ExecutionMetric.created_at <= to_dt,
+                            ExecutionMetric.metric_type == "AI_SKIPPED",
+                        )
+                    )
+                    .order_by(ExecutionMetric.created_at.asc())
+                )
+            ).scalars().all()
 
         points = [
             DecisionBenchmarkPoint(
@@ -113,6 +127,54 @@ class DecisionBenchmarkService:
             "by_news_source_blocked": self._group_news_source_blocked(points),
             "by_news_source_blocked_comparison": self._group_news_source_blocked_comparison(points),
             "controls": self._control_groups(points),
+            "ai_skipped_observation": self._ai_skipped_observation(list(ai_skipped_rows)),
+        }
+
+    def _ai_skipped_observation(self, rows: list[ExecutionMetric]) -> dict:
+        grouped: dict[tuple[str, str, str], int] = defaultdict(int)
+        symbol_counts: dict[str, int] = defaultdict(int)
+        recent_rows = sorted(rows, key=lambda item: item.created_at or now_kst(), reverse=True)[:10]
+
+        for row in rows:
+            detail = self._safe_json(row.detail)
+            stage = str(detail.get("stage") or row.metric_name or "UNKNOWN").upper()
+            reason = str(detail.get("reason_code") or "UNKNOWN").upper()
+            tier = str(detail.get("skipped_tier") or "UNKNOWN").upper()
+            grouped[(stage, reason, tier)] += 1
+            if row.symbol:
+                symbol_counts[str(row.symbol)] += 1
+
+        return {
+            "note": "AI_SKIPPED는 execution metric 기반 관측값이며 forward return이 직접 붙은 benchmark 표본은 아니다.",
+            "total_skipped": len(rows),
+            "by_stage_reason": [
+                {
+                    "stage": stage,
+                    "reason_code": reason,
+                    "skipped_tier": tier,
+                    "count": count,
+                }
+                for (stage, reason, tier), count in sorted(grouped.items(), key=lambda item: (-item[1], item[0]))
+            ],
+            "top_symbols": [
+                {"symbol": symbol, "count": count}
+                for symbol, count in sorted(symbol_counts.items(), key=lambda item: (-item[1], item[0]))[:10]
+            ],
+            "recent": [
+                self._serialize_ai_skipped(row)
+                for row in recent_rows
+            ],
+        }
+
+    def _serialize_ai_skipped(self, row: ExecutionMetric) -> dict:
+        detail = self._safe_json(row.detail)
+        return {
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "stage": str(detail.get("stage") or row.metric_name or "UNKNOWN").upper(),
+            "reason_code": str(detail.get("reason_code") or "UNKNOWN").upper(),
+            "skipped_tier": str(detail.get("skipped_tier") or "UNKNOWN").upper(),
+            "symbol": row.symbol,
+            "reason": str(detail.get("reason") or "")[:160],
         }
 
     def _control_groups(self, points: list[DecisionBenchmarkPoint]) -> dict:
@@ -270,6 +332,16 @@ class DecisionBenchmarkService:
                 if code:
                     codes.append(code)
         return tuple(codes)
+
+    @staticmethod
+    def _safe_json(value: str | None) -> dict:
+        if not value:
+            return {}
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
 
     @staticmethod
     def _metrics(points: list[DecisionBenchmarkPoint]) -> dict:

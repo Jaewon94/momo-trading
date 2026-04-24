@@ -5,6 +5,7 @@ import pytest
 
 from models.decision_event import DecisionEvent
 from models.decision_forward_return import DecisionForwardReturn
+from models.execution_metric import ExecutionMetric
 from services.decision_benchmark_service import DecisionBenchmarkService
 from tests.conftest import TestAsyncSessionLocal
 
@@ -124,6 +125,42 @@ async def test_decision_benchmark_service_groups_labeled_returns() -> None:
         },
         created_at=created_at,
     )
+    async with TestAsyncSessionLocal() as session:
+        session.add_all([
+            ExecutionMetric(
+                metric_type="AI_SKIPPED",
+                metric_name="HOLDINGS_PRECHECK",
+                status="SKIPPED",
+                symbol="005930",
+                item_count=1,
+                success_count=1,
+                error_count=0,
+                detail=json.dumps({
+                    "stage": "HOLDINGS_PRECHECK",
+                    "reason_code": "HOLD",
+                    "skipped_tier": "TIER1",
+                    "reason": "명확한 HOLD 사전판단",
+                }, ensure_ascii=False),
+                created_at=created_at,
+            ),
+            ExecutionMetric(
+                metric_type="AI_SKIPPED",
+                metric_name="HOLDINGS_PRECHECK",
+                status="SKIPPED",
+                symbol="005930",
+                item_count=1,
+                success_count=1,
+                error_count=0,
+                detail=json.dumps({
+                    "stage": "HOLDINGS_PRECHECK",
+                    "reason_code": "SELL",
+                    "skipped_tier": "TIER1",
+                    "reason": "손실 과대",
+                }, ensure_ascii=False),
+                created_at=created_at,
+            ),
+        ])
+        await session.commit()
 
     report = await DecisionBenchmarkService().build_report(
         TestAsyncSessionLocal,
@@ -163,6 +200,15 @@ async def test_decision_benchmark_service_groups_labeled_returns() -> None:
     assert report["controls"]["scanner_top_same_count"]["avg_return_pct"] == 0.5
     assert report["controls"]["tier1_buy_only"]["event_count"] == 3
     assert report["controls"]["tier2_buy_only"]["event_count"] == 1
+    assert report["ai_skipped_observation"]["total_skipped"] == 2
+    assert {
+        "stage": "HOLDINGS_PRECHECK",
+        "reason_code": "HOLD",
+        "skipped_tier": "TIER1",
+        "count": 1,
+    } in report["ai_skipped_observation"]["by_stage_reason"]
+    assert report["ai_skipped_observation"]["top_symbols"] == [{"symbol": "005930", "count": 2}]
+    assert "forward return" in report["ai_skipped_observation"]["note"]
 
 
 @pytest.mark.asyncio

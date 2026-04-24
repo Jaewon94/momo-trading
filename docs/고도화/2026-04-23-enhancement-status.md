@@ -122,6 +122,7 @@
 - 보유종목 precheck skip도 `AI_SKIPPED`에 `HOLDINGS_PRECHECK/{SELL|HOLD}/TIER1`로 기록한다.
 - Admin observability overview에 `ai_skipped` 요약을 추가했다. stage/reason/tier/symbol/recent 표본을 API에서 확인할 수 있어 HOLD skip 플래그 활성화 전 운영 표본을 볼 수 있다.
 - Admin 관측 화면에 `AI Skip` 섹션을 추가했다. 사유별 집계와 최근 표본을 화면에서 확인할 수 있다.
+- Decision benchmark 응답에 `ai_skipped_observation`을 추가했다. 단, `AI_SKIPPED`는 forward return이 직접 붙은 표본이 아니므로 수익률 benchmark와 분리된 관측 섹션으로 노출한다.
 
 ## 아직 미구현 또는 추가 검증이 필요한 핵심 항목
 
@@ -134,7 +135,7 @@
 - 보유종목 명확 HOLD skip은 플래그 기반 코드 경로까지 구현 완료. 운영 기본값은 OFF이므로, `AI_SKIPPED/HOLDINGS_PRECHECK` 표본을 본 뒤 활성화 여부를 결정한다.
 - 스마트 청산 review cache는 현재 보류한다. `_force_liquidation()`에서 청산 시각에 단발 호출되는 경로라 반복 호출 절감 효과가 작고, 캐시가 청산 직전 최신 판단을 흐릴 수 있다.
 - review cache TTL/key 조건 운영 데이터 기준 조정.
-- `AI_SKIPPED`와 benchmark의 보유종목 precheck/cache 결과 연결.
+- `AI_SKIPPED`와 benchmark의 보유종목 precheck/cache 결과는 관측 섹션으로 연결 완료. 직접 수익률 attribution은 아직 아님.
 
 ### Admin UX 후속
 
