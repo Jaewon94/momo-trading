@@ -146,7 +146,7 @@
 - 스마트 청산 review cache는 현재 보류한다. `_force_liquidation()`에서 청산 시각에 단발 호출되는 경로라 반복 호출 절감 효과가 작고, 캐시가 청산 직전 최신 판단을 흐릴 수 있다.
 - review cache key의 잔여시간 조건은 15분 버킷으로 조정 완료. TTL 자체는 30분 기본값을 유지한다.
 - 장중 보유 재평가 precheck/cache, 스마트 청산 precheck, 일반 분석 `PRE_ANALYSIS_GATE`, `DETERMINISTIC_FINAL_GATE`, `TIER1_COST_GATE` 판단은 `decision_events`에 연결 완료.
-- 기능별 LLM 호출 집계는 overview API까지 구현 완료. UI 노출은 필요 시 별도 작업.
+- 기능별 LLM 호출 집계는 overview API와 Admin 관측 화면 노출까지 구현 완료.
 - 뉴스 번역 `qwen3:4b` 다운그레이드는 설치 완료 후 샘플 검증까지 진행했으나 보류한다. 파싱 보강/프롬프트 조정/지연 시간 재측정 후 운영 전환 여부를 다시 판단한다.
 
 ### Admin UX 후속

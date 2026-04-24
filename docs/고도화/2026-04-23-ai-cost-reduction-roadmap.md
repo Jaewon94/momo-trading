@@ -313,7 +313,7 @@ TDD 후보:
 
 - 기능별 LLM 호출 수/평균 시간/실패율/토큰 또는 비용 추정치를 별도 집계한다.
 - 비용 절감 작업은 호출 수 감소와 성과 악화 여부를 같이 봐야 한다.
-- LLM 호출 metric detail에 `call_context`를 기록하고 observability overview의 `llm.function_breakdown`에서 기능별 호출 수, 성공률, 지연, prompt/response 문자 수를 집계한다.
+- LLM 호출 metric detail에 `call_context`를 기록하고 observability overview의 `llm.function_breakdown`에서 기능별 호출 수, 성공률, 지연, prompt/response 문자 수를 집계한다. Admin 관측 화면에서도 기능별 집계를 확인할 수 있다.
 
 TDD 후보:
 

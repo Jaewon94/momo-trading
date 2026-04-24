@@ -210,6 +210,18 @@ export function buildObservabilityDashboardState(payload = {}) {
         fallbackRate: formatPercent(row.fallback_rate),
       }))
       : [],
+    functionRows: Array.isArray(llm.function_breakdown)
+      ? llm.function_breakdown.map((row) => ({
+        functionName: String(row.function || "UNKNOWN"),
+        calls: `${Number(row.calls || 0)}회`,
+        successRate: formatPercent(row.success_rate),
+        avgLatency: formatLatency(row.avg_elapsed_ms),
+        p95Latency: formatLatency(row.p95_elapsed_ms),
+        fallbackRate: formatPercent(row.fallback_rate),
+        promptChars: `${Number(row.prompt_chars || 0).toLocaleString("ko-KR")}자`,
+        responseChars: `${Number(row.response_chars || 0).toLocaleString("ko-KR")}자`,
+      }))
+      : [],
     newsRows: [
       { label: "실행 횟수", value: `${Number(newsPoll.runs || 0)}회` },
       { label: "평균 지연", value: formatLatency(newsPoll.avg_elapsed_ms) },

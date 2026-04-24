@@ -4004,6 +4004,22 @@ function createObservabilityDashboard(observabilityState) {
               <span>성공률</span><span>평균</span><span>p95</span>
             </div>
           </div>
+          ${obs.functionRows.length ? `
+            <div class="mb-4">
+              <div class="text-[11px] text-gray-500 mb-2">기능별 집계</div>
+              <div class="performance-table">
+                ${obs.functionRows.map((row) => `
+                  <div class="performance-table-row compact">
+                    <div class="performance-table-cell metric-name">${escapeHtml(row.functionName)} · ${escapeHtml(row.calls)} · In ${escapeHtml(row.promptChars)} · Out ${escapeHtml(row.responseChars)}</div>
+                    <div class="performance-table-cell">${escapeHtml(row.successRate)}</div>
+                    <div class="performance-table-cell">${escapeHtml(row.avgLatency)}</div>
+                    <div class="performance-table-cell">${escapeHtml(row.p95Latency)}</div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+          <div class="text-[11px] text-gray-500 mb-2">프로바이더별 집계</div>
           ${obs.providerRows.length ? `
             <div class="performance-table">
               ${obs.providerRows.map((row) => `

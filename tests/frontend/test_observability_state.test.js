@@ -38,6 +38,28 @@ describe("observability_state", () => {
         provider_breakdown: [
           { provider: "OLLAMA", calls: 3, success_rate: 66.7, avg_elapsed_ms: 1800, p95_elapsed_ms: 2200, fallback_rate: 33.3 },
         ],
+        function_breakdown: [
+          {
+            function: "NEWS_TRANSLATION",
+            calls: 2,
+            success_rate: 100,
+            avg_elapsed_ms: 1400,
+            p95_elapsed_ms: 1500,
+            fallback_rate: 0,
+            prompt_chars: 2600,
+            response_chars: 720,
+          },
+          {
+            function: "TIER2",
+            calls: 1,
+            success_rate: 0,
+            avg_elapsed_ms: 2200,
+            p95_elapsed_ms: 2200,
+            fallback_rate: 100,
+            prompt_chars: 1800,
+            response_chars: 0,
+          },
+        ],
       },
       ai_skipped: {
         total_skipped: 2,
@@ -170,6 +192,13 @@ describe("observability_state", () => {
     expect(state.trendCharts[0]).toMatchObject({ label: "LLM Avg Latency", meta: "호출 3회" });
     expect(state.trendCharts[3]).toMatchObject({ label: "News Created", meta: "생성 9건" });
     expect(state.providerRows[0]).toMatchObject({ provider: "OLLAMA", calls: "3회" });
+    expect(state.functionRows[0]).toMatchObject({
+      functionName: "NEWS_TRANSLATION",
+      calls: "2회",
+      successRate: "100.0%",
+      promptChars: "2,600자",
+      responseChars: "720자",
+    });
     expect(state.aiSkippedRows[0]).toMatchObject({ stage: "HOLDINGS_PRECHECK", reasonCode: "HOLD", count: "1회" });
     expect(state.aiSkippedRecentRows[0]).toMatchObject({ title: "HOLDINGS_PRECHECK · HOLD · 005930" });
     expect(state.newsRows[4]).toMatchObject({ label: "생성 기사", value: "9건" });
