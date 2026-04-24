@@ -1283,6 +1283,52 @@ class TradingScheduler:
             "reason": reason,
         }
 
+    async def _record_holdings_review_decision_event(
+        self,
+        *,
+        data: dict,
+        holding,
+        trade_result,
+        current_price: float,
+        decision: dict,
+        source: str,
+        reason_code: str,
+    ) -> None:
+        """보유 재평가의 deterministic/cache 판단도 forward return 라벨링 대상으로 남긴다."""
+        try:
+            from services.decision_event_service import decision_event_service
+
+            action = str(decision.get("action") or "HOLD").upper()
+            await decision_event_service.record_event(
+                cycle_id=None,
+                symbol=str(data.get("symbol") or getattr(holding, "symbol", "")),
+                stock_name=str(data.get("stock_name") or getattr(holding, "name", "") or ""),
+                market="KRX",
+                decision_stage="HOLDINGS_REVIEW",
+                source=source,
+                strategy_type=str(data.get("strategy_type") or getattr(trade_result, "strategy_type", "") or ""),
+                tier1_decision=action,
+                risk_gate_result=reason_code,
+                final_action=action,
+                confidence=float(decision.get("confidence") or 0.0),
+                reference_price=float(current_price or 0.0),
+                quantity=int(getattr(holding, "quantity", 0) or 0),
+                provider="DETERMINISTIC",
+                model=source.upper(),
+                status="RECORDED",
+                reason=str(decision.get("reason") or ""),
+                metadata={
+                    "ai_skipped": True,
+                    "reason_code": reason_code,
+                    "source": source,
+                    "pnl_rate": data.get("pnl_rate"),
+                    "hold_days": data.get("hold_days"),
+                    "max_hold_days": data.get("max_hold_days"),
+                },
+            )
+        except Exception as exc:
+            logger.debug("보유 재평가 decision event 기록 실패 (무시): {}", str(exc))
+
     async def _smart_liquidation(self, sellable: list) -> tuple[list, list]:
         """스윙 모드: LLM Tier1 기반 종목별 HOLD/SELL 판정
 
@@ -1656,11 +1702,29 @@ class TradingScheduler:
                     action = decision["action"]
                     reason = decision["reason"]
                     conf = decision["confidence"]
+                    await self._record_holdings_review_decision_event(
+                        data=data,
+                        holding=h,
+                        trade_result=trade_result,
+                        current_price=current_price,
+                        decision=decision,
+                        source="holdings_precheck",
+                        reason_code=f"PRECHECK_{action}",
+                    )
                 elif symbol in cached_decisions:
                     decision = cached_decisions[symbol]
                     action = decision["action"]
                     reason = f"{decision['reason']} (캐시)"
                     conf = decision["confidence"]
+                    await self._record_holdings_review_decision_event(
+                        data=data,
+                        holding=h,
+                        trade_result=trade_result,
+                        current_price=current_price,
+                        decision=decision,
+                        source="holdings_review_cache",
+                        reason_code="CACHE_HIT",
+                    )
                 elif symbol in llm_decisions:
                     decision = llm_decisions[symbol]
                     action = decision["action"]

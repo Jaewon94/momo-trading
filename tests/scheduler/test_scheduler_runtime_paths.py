@@ -2226,6 +2226,7 @@ async def test_intraday_holdings_review_uses_cache_without_llm(monkeypatch) -> N
     logs: list[str] = []
     thresholds: list[tuple[str, dict]] = []
     skipped_metrics: list[dict] = []
+    decision_events: list[dict] = []
     trade_result = SimpleNamespace(ai_stop_loss_price=None, ai_target_price=None, stock_name="삼성전자", strategy_type="STABLE_SHORT")
     holding = SimpleNamespace(symbol="005930", name="삼성전자", quantity=2)
 
@@ -2289,6 +2290,10 @@ async def test_intraday_holdings_review_uses_cache_without_llm(monkeypatch) -> N
     async def fake_skip_metric(**kwargs) -> None:
         skipped_metrics.append(kwargs)
 
+    async def fake_record_event(**kwargs):
+        decision_events.append(kwargs)
+        return SimpleNamespace(id="decision-event-1")
+
     monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_trading_hours", lambda: True)
     monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_automated_trading_session", lambda: True)
     monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
@@ -2319,6 +2324,7 @@ async def test_intraday_holdings_review_uses_cache_without_llm(monkeypatch) -> N
     monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
     monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
     monkeypatch.setattr("services.ai_skip_metric_service.ai_skip_metric_service.record", fake_skip_metric)
+    monkeypatch.setattr("services.decision_event_service.decision_event_service.record_event", fake_record_event)
     monkeypatch.setattr("agent.trading_agent.trading_agent._market_regime", "BULLISH")
     monkeypatch.setattr("agent.trading_agent.trading_agent._market_context", "강세 유지")
 
@@ -2329,6 +2335,33 @@ async def test_intraday_holdings_review_uses_cache_without_llm(monkeypatch) -> N
     assert session.committed == 1
     assert any("캐시" in message for message in logs)
     assert any(item["stage"] == "HOLDINGS_REVIEW_CACHE" and item["reason_code"] == "CACHE_HIT" for item in skipped_metrics)
+    assert decision_events == [{
+        "cycle_id": None,
+        "symbol": "005930",
+        "stock_name": "삼성전자",
+        "market": "KRX",
+        "decision_stage": "HOLDINGS_REVIEW",
+        "source": "holdings_review_cache",
+        "strategy_type": "STABLE_SHORT",
+        "tier1_decision": "HOLD",
+        "risk_gate_result": "CACHE_HIT",
+        "final_action": "HOLD",
+        "confidence": 0.88,
+        "reference_price": 72_000.0,
+        "quantity": 2,
+        "provider": "DETERMINISTIC",
+        "model": "HOLDINGS_REVIEW_CACHE",
+        "status": "RECORDED",
+        "reason": "상승 추세 유지",
+        "metadata": {
+            "ai_skipped": True,
+            "reason_code": "CACHE_HIT",
+            "source": "holdings_review_cache",
+            "pnl_rate": 2.857,
+            "hold_days": 1,
+            "max_hold_days": 5,
+        },
+    }]
 
 
 @pytest.mark.asyncio
