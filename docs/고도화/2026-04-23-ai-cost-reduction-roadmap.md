@@ -292,7 +292,7 @@ TDD 후보:
 - `observability_service.record_llm_call`로 LLM 호출 기록이 있다.
 - Admin에 provider 상태와 일부 사용량이 노출된다.
 - `AI_SKIPPED` execution metric을 추가했다.
-- 현재 기록 지점은 `PRE_ANALYSIS_GATE`, `TIER1_CACHE`, `DETERMINISTIC_FINAL_GATE`다.
+- 현재 기록 지점은 `PRE_ANALYSIS_GATE`, `TIER1_CACHE`, `DETERMINISTIC_FINAL_GATE`, `TIER1_COST_GATE`, `HOLDINGS_REVIEW_CACHE`다.
 - metric detail에는 `stage`, `reason_code`, `skipped_tier`와 각 gate의 세부 값이 들어간다.
 
 다음 확장:
@@ -323,6 +323,7 @@ TDD 후보:
 - `AI_SKIPPED` metric은 구현 완료됐다.
 - Tier1/Tier2 deterministic prompt context는 구현 완료됐다.
 - Tier1 비용 pre-gate는 구현 완료됐다. 뉴스 gate는 rollout/shadow 의미 보존을 위해 아직 Tier2 전 차단으로 옮기지 않았다.
+- `HoldingsPrecheckService`와 `HoldingsReviewCacheService`도 구현 완료됐다.
 - 세부 진행 현황은 `docs/고도화/2026-04-23-enhancement-status.md`를 기준 문서로 둔다.
 
 ### Phase 1: 뉴스와 후보 선정 입력 보강

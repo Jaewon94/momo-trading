@@ -10,6 +10,8 @@
 
 어제/오늘 진행한 고도화 중 주문 안전, PnL 분리, 뉴스 deterministic enrichment, 뉴스 backfill API, LLM 지연 경고, canonical decision event, forward return labeling, decision benchmark, 장마감 청산 이후 자동 BUY 차단은 코드와 운영 서버에 반영되어 있다.
 
+최근 추가된 AI 비용 절감 축인 `CandidateScoringService`, `PreAnalysisGate`, `DeterministicFinalGate`, `Tier1AnalysisCacheService`, `AI_SKIPPED` metric, `HoldingsPrecheckService`, `HoldingsReviewCacheService`는 코드와 테스트 기준으로 구현 완료 상태다. 다만 이 문서에서 `운영 반영`은 실제 9000 프로세스 재기동과 런타임 확인까지 끝난 항목만 뜻하므로, 최신 보유종목 precheck/review cache는 현재 기준 `코드 반영 완료`로 적는다.
+
 2026-04-23 16:09 KST 기준 `POST /api/v1/admin/news/backfill-enrichment?limit=100&apply=false` dry-run은 정상 응답했고, 변경 후보 1건을 `apply=true`로 반영했다. 재확인 dry-run은 `changed_count=0`으로 같은 범위의 남은 deterministic enrichment 후보가 없었다.
 
 ## 구현 완료로 확인된 항목
@@ -88,11 +90,7 @@
 - rollup 저장 단계에서 provider/model `NULL`은 `UNKNOWN`으로 정규화된다.
 - maintenance 실행 기록이 없으면 새 DB 호환을 위해 preflight는 OK 정보성 상태로 두고, 최근 실패가 있으면 WARN으로 노출한다.
 
-## 아직 미구현으로 확인된 핵심 항목
-
-### P0/P1 성격
-
-- intraday forward return 정밀도 개선용 분봉/틱 snapshot history.
+## 최근 구현 완료 항목
 
 ### AI 비용/지연 절감
 
@@ -109,6 +107,20 @@
 - precheck 평가 자체가 불가능하면 예외를 삼키고 기존 LLM 경로를 그대로 유지해 회귀를 막는다.
 - `HoldingsReviewCacheService` 구현. 장중 보유 재평가에서 동일 종목/가격/손익/보유일/활성 임계값/시장 국면/남은 시간 조건이면 짧은 TTL 동안 이전 LLM 결정을 재사용한다.
 - 캐시 hit 종목은 `AI_SKIPPED`에 `HOLDINGS_REVIEW_CACHE/CACHE_HIT/TIER1`로 기록한다.
+
+## 아직 미구현 또는 추가 검증이 필요한 핵심 항목
+
+### P0/P1 성격
+
+- intraday forward return 정밀도 개선용 분봉/틱 snapshot history.
+
+### AI 비용/지연 절감 후속
+
+- `stocks` universe bootstrap 운영 DB dry-run/apply 확인.
+- 보유종목 장중 재평가에서 명확한 HOLD 케이스까지 deterministic skip으로 확장할지 shadow 데이터로 검토.
+- 스마트 청산에도 review cache가 필요한지 분리 검토.
+- review cache TTL/key 조건 운영 데이터 기준 조정.
+- `AI_SKIPPED`와 benchmark/report에 보유종목 precheck/cache 결과를 더 직접 연결.
 - LLM cooldown incident dedupe.
 
 ### Admin UX 후속
