@@ -39,6 +39,25 @@ describe("observability_state", () => {
           { provider: "OLLAMA", calls: 3, success_rate: 66.7, avg_elapsed_ms: 1800, p95_elapsed_ms: 2200, fallback_rate: 33.3 },
         ],
       },
+      ai_skipped: {
+        total_skipped: 2,
+        by_stage: [{ stage: "HOLDINGS_PRECHECK", count: 2 }],
+        by_reason: [
+          { stage: "HOLDINGS_PRECHECK", reason_code: "HOLD", count: 1 },
+          { stage: "HOLDINGS_PRECHECK", reason_code: "SELL", count: 1 },
+        ],
+        recent: [
+          {
+            created_at: "2026-04-08T00:24:00+09:00",
+            stage: "HOLDINGS_PRECHECK",
+            reason_code: "HOLD",
+            skipped_tier: "TIER1",
+            symbol: "005930",
+            source: "HOLDING_POLICY",
+            reason: "명확한 HOLD 사전판단",
+          },
+        ],
+      },
       window: {
         hours: 168,
         resolution: "hourly_rollup",
@@ -133,8 +152,9 @@ describe("observability_state", () => {
     expect(state.window).toMatchObject({ hours: 168, resolution: "hourly_rollup" });
     expect(state.summaryCards[0].value).toBe("62.4%");
     expect(state.summaryCards[4].help).toContain("호출 3회");
-    expect(state.summaryCards[6]).toMatchObject({ label: "Raw 보존", value: "30일" });
-    expect(state.summaryCards[7]).toMatchObject({ label: "Hourly Rollup", value: "22개" });
+    expect(state.summaryCards[5]).toMatchObject({ label: "AI 스킵", value: "2회" });
+    expect(state.summaryCards[7]).toMatchObject({ label: "Raw 보존", value: "30일" });
+    expect(state.summaryCards[8]).toMatchObject({ label: "Hourly Rollup", value: "22개" });
     expect(state.maintenanceRows[1]).toMatchObject({ label: "최근 상태", value: "SUCCESS" });
     expect(state.maintenanceRows[4]).toMatchObject({ label: "최근 raw 정리", value: "15건" });
     expect(state.recommendationCards[0]).toMatchObject({ label: "머신 압박", value: "MEDIUM" });
@@ -150,6 +170,8 @@ describe("observability_state", () => {
     expect(state.trendCharts[0]).toMatchObject({ label: "LLM Avg Latency", meta: "호출 3회" });
     expect(state.trendCharts[3]).toMatchObject({ label: "News Created", meta: "생성 9건" });
     expect(state.providerRows[0]).toMatchObject({ provider: "OLLAMA", calls: "3회" });
+    expect(state.aiSkippedRows[0]).toMatchObject({ stage: "HOLDINGS_PRECHECK", reasonCode: "HOLD", count: "1회" });
+    expect(state.aiSkippedRecentRows[0]).toMatchObject({ title: "HOLDINGS_PRECHECK · HOLD · 005930" });
     expect(state.newsRows[4]).toMatchObject({ label: "생성 기사", value: "9건" });
     expect(state.statusRows[0]).toMatchObject({ status: "SUCCESS", count: "3회" });
   });

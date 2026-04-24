@@ -69,6 +69,7 @@ export function buildObservabilityDashboardState(payload = {}) {
   const resourceSummary = payload?.resource_summary || {};
   const series = Array.isArray(payload?.resource_series) ? payload.resource_series : [];
   const llm = payload?.llm || {};
+  const aiSkipped = payload?.ai_skipped || {};
   const newsPoll = payload?.jobs?.news_poll || {};
   const maintenance = payload?.jobs?.maintenance || {};
   const storage = payload?.storage || {};
@@ -121,6 +122,11 @@ export function buildObservabilityDashboardState(payload = {}) {
         label: "LLM 성공률",
         value: formatPercent(llm.success_rate),
         help: `호출 ${llm.total_calls || 0}회 · p95 ${formatLatency(llm.p95_elapsed_ms)}`,
+      },
+      {
+        label: "AI 스킵",
+        value: `${Number(aiSkipped.total_skipped || 0)}회`,
+        help: `최근 ${String((aiSkipped.by_stage || [])[0]?.stage || "-")} ${Number((aiSkipped.by_stage || [])[0]?.count || 0)}회`,
       },
       {
         label: "뉴스 폴링",
@@ -220,6 +226,21 @@ export function buildObservabilityDashboardState(payload = {}) {
       { label: "최근 raw 정리", value: `${Number(maintenance.last_deleted_resource_rows || 0) + Number(maintenance.last_deleted_execution_rows || 0)}건` },
       { label: "최근 rollup 생성", value: `${Number(maintenance.last_resource_rollups_created || 0) + Number(maintenance.last_execution_rollups_created || 0)}개` },
     ],
+    aiSkippedRows: Array.isArray(aiSkipped.by_reason)
+      ? aiSkipped.by_reason.map((row) => ({
+        stage: String(row.stage || "UNKNOWN"),
+        reasonCode: String(row.reason_code || "UNKNOWN"),
+        count: `${Number(row.count || 0)}회`,
+      }))
+      : [],
+    aiSkippedRecentRows: Array.isArray(aiSkipped.recent)
+      ? aiSkipped.recent.map((row) => ({
+        title: [row.stage, row.reason_code, row.symbol].filter(Boolean).join(" · ") || "-",
+        meta: [row.skipped_tier, row.source, row.action].filter(Boolean).join(" · "),
+        reason: String(row.reason || "-"),
+        createdAt: formatDateTimeLabel(row.created_at),
+      }))
+      : [],
     statusRows: Array.isArray(newsPoll.status_breakdown)
       ? newsPoll.status_breakdown.map((row) => ({
         status: String(row.status || "UNKNOWN"),

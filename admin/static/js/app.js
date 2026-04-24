@@ -4033,6 +4033,44 @@ function createObservabilityDashboard(observabilityState) {
         </section>
       </div>
       <section class="rounded-2xl border border-gray-700 bg-dark-950/40 px-4 py-4 mt-4">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <div class="text-xs uppercase tracking-[0.12em] text-gray-500">AI Skip</div>
+            <div class="text-sm text-gray-400 mt-1">LLM 호출을 deterministic gate/cache/precheck로 줄인 내역</div>
+          </div>
+        </div>
+        <div class="grid gap-4 xl:grid-cols-2 mt-3">
+          <div>
+            <div class="text-[11px] text-gray-500 mb-2">사유별 집계</div>
+            ${obs.aiSkippedRows.length ? `
+              <div class="performance-table">
+                ${obs.aiSkippedRows.map((row) => `
+                  <div class="performance-table-row compact">
+                    <div class="performance-table-cell metric-name">${escapeHtml(row.stage)} · ${escapeHtml(row.reasonCode)}</div>
+                    <div class="performance-table-cell">${escapeHtml(row.count)}</div>
+                  </div>
+                `).join('')}
+              </div>
+            ` : '<div class="text-xs text-gray-500">최근 AI 스킵 메트릭이 없습니다.</div>'}
+          </div>
+          <div>
+            <div class="text-[11px] text-gray-500 mb-2">최근 표본</div>
+            <div class="space-y-2">
+              ${obs.aiSkippedRecentRows.length ? obs.aiSkippedRecentRows.slice(0, 5).map((row) => `
+                <div class="rounded-xl border border-gray-700/70 bg-dark-900/45 px-3 py-2">
+                  <div class="flex items-start justify-between gap-2">
+                    <div class="text-xs text-white font-medium">${escapeHtml(row.title)}</div>
+                    <div class="text-[10px] text-gray-500">${escapeHtml(row.createdAt)}</div>
+                  </div>
+                  <div class="text-[11px] text-gray-500 mt-1">${escapeHtml(row.meta || '-')}</div>
+                  <div class="text-[11px] text-gray-300 mt-1">${escapeHtml(row.reason)}</div>
+                </div>
+              `).join('') : '<div class="text-xs text-gray-500">최근 표본이 없습니다.</div>'}
+            </div>
+          </div>
+        </div>
+      </section>
+      <section class="rounded-2xl border border-gray-700 bg-dark-950/40 px-4 py-4 mt-4">
         <div class="text-xs uppercase tracking-[0.12em] text-gray-500">Maintenance</div>
         <div class="grid grid-cols-2 xl:grid-cols-3 gap-3 text-sm mt-3">
           ${obs.maintenanceRows.map((row) => `
