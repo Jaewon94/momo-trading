@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from typing import Any
 
 from loguru import logger
@@ -10,6 +9,7 @@ from loguru import logger
 from analysis.llm.llm_factory import llm_factory
 from analysis.llm.selection_policy import resolve_news_selection
 from core.config import settings
+from core.json_utils import parse_llm_json
 from services.error_capture_service import error_capture_service
 from trading.enums import LLMTier
 
@@ -116,9 +116,7 @@ Summary: {summary}
                 "",
                 news_selection=selected_news,
             )
-            start = result.find("{")
-            end = result.rfind("}") + 1
-            payload = json.loads(result[start:end]) if start >= 0 and end > start else {}
+            payload = parse_llm_json(result)
             if not payload:
                 raise ValueError("translation JSON parse failed")
             translated_title = str(payload.get("translated_title") or "").strip()

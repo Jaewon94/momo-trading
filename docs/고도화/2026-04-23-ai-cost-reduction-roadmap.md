@@ -306,7 +306,7 @@ TDD 후보:
 - `AI_SKIPPED` execution metric을 추가했다.
 - 현재 기록 지점은 `PRE_ANALYSIS_GATE`, `TIER1_CACHE`, `DETERMINISTIC_FINAL_GATE`, `TIER1_COST_GATE`, `HOLDINGS_PRECHECK`, `HOLDINGS_REVIEW_CACHE`다.
 - metric detail에는 `stage`, `reason_code`, `skipped_tier`와 각 gate의 세부 값이 들어간다.
-- 뉴스 번역 Ollama 4b 다운그레이드는 observability 추천으로 확인됐다. `qwen3:4b` 설치를 진행 중이며, 설치 완료 전 설정만 바꾸면 번역 실패 위험이 있어 운영은 `qwen3:14b`를 유지한다.
+- 뉴스 번역 Ollama 4b 다운그레이드는 observability 추천으로 확인됐다. `qwen3:4b` 설치는 완료됐지만 샘플 검증에서 응답 지연과 JSON 형식 안정성 문제가 확인되어 운영은 `qwen3:14b`를 유지한다.
 
 다음 확장:
 

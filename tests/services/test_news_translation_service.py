@@ -230,6 +230,47 @@ async def test_news_translation_service_records_parse_failure_reason(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_news_translation_service_parses_repaired_llm_json(monkeypatch):
+    service = NewsTranslationService()
+
+    async def fake_generate_news(*args, **kwargs):
+        return (
+            """
+            ```json
+            {
+              "translated_title": "현대차 상승",
+              "translated_summary": "현지 판매 호조 기대가 주가를 지지했다.",
+              "sentiment_label": "POSITIVE",
+              "sentiment_score": 0.61,
+            }
+            ```
+            """,
+            "OLLAMA",
+        )
+
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_ENABLED", True)
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_PROVIDER", "OLLAMA")
+    monkeypatch.setattr(
+        "services.news_translation_service.llm_factory.generate_news",
+        fake_generate_news,
+    )
+
+    items = await service.translate_items([
+        {
+            "source_code": "INVESTING",
+            "language": "en",
+            "title": "Hyundai shares rise on stronger outlook",
+            "summary": "Investors cheered the stronger guidance.",
+        },
+    ])
+
+    assert items[0]["metadata"]["translation_status"] == "SUCCESS"
+    assert items[0]["metadata"]["translated_title"] == "현대차 상승"
+    assert items[0]["sentiment_label"] == "POSITIVE"
+    assert items[0]["sentiment_score"] == pytest.approx(0.61)
+
+
+@pytest.mark.asyncio
 async def test_news_translation_service_captures_translation_failures(monkeypatch):
     service = NewsTranslationService()
     captured = {}

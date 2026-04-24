@@ -129,7 +129,7 @@
 - 일반 BUY 분석 파이프라인의 `PRE_ANALYSIS_GATE` 차단도 `decision_events`에 `PRE_ANALYSIS_GATE` stage로 기록한다. 강한 하락 추세 등 Tier1 전 차단 후보가 forward return labeling 대상이 된다.
 - 일반 BUY 분석 파이프라인의 `DETERMINISTIC_FINAL_GATE`, `TIER1_COST_GATE` 차단도 `decision_events`에 기록한다. Tier1은 호출했지만 Tier2 전에 막은 후보도 이후 forward return 기준으로 판단 품질을 비교할 수 있다.
 - 2026-04-24 14시 기준 운영 observability에서 `AI_SKIPPED/HOLDINGS_PRECHECK` 표본은 0건이다. 명확 HOLD skip 플래그는 근거 부족으로 계속 OFF 유지한다.
-- observability 추천은 뉴스 번역 Ollama 모델을 `qwen3:4b`로 낮추라고 표시했다. 로컬 Ollama에는 아직 `qwen3:14b`만 설치되어 있어 `qwen3:4b` pull을 진행 중이며, 설치 완료 전까지 운영 `NEWS_LLM_MODEL`은 설치된 `qwen3:14b`를 유지한다.
+- observability 추천은 뉴스 번역 Ollama 모델을 `qwen3:4b`로 낮추라고 표시했다. `qwen3:4b` 설치는 완료됐지만 샘플 검증에서 응답 지연과 JSON 형식 안정성 문제가 확인되어 운영 `NEWS_LLM_MODEL`은 `qwen3:14b`를 유지한다.
 - 뉴스 번역 추천 서비스는 이미 목표 모델을 쓰고 있을 때도 `DOWNGRADE`로 표시하던 상태 판정을 보정했다. 추천 모델과 현재 모델이 같으면 `KEEP`으로 표시한다.
 
 ## 아직 미구현 또는 추가 검증이 필요한 핵심 항목
@@ -144,7 +144,7 @@
 - 스마트 청산 review cache는 현재 보류한다. `_force_liquidation()`에서 청산 시각에 단발 호출되는 경로라 반복 호출 절감 효과가 작고, 캐시가 청산 직전 최신 판단을 흐릴 수 있다.
 - review cache key의 잔여시간 조건은 15분 버킷으로 조정 완료. TTL 자체는 30분 기본값을 유지한다.
 - 장중 보유 재평가 precheck/cache, 스마트 청산 precheck, 일반 분석 `PRE_ANALYSIS_GATE`, `DETERMINISTIC_FINAL_GATE`, `TIER1_COST_GATE` 판단은 `decision_events`에 연결 완료.
-- 뉴스 번역 `qwen3:4b` 다운그레이드는 모델 설치 완료 후 적용한다. 설치 전 설정만 변경하면 번역 실패 위험이 있어 현재는 `qwen3:14b` 유지.
+- 뉴스 번역 `qwen3:4b` 다운그레이드는 설치 완료 후 샘플 검증까지 진행했으나 보류한다. 파싱 보강/프롬프트 조정/지연 시간 재측정 후 운영 전환 여부를 다시 판단한다.
 
 ### Admin UX 후속
 
@@ -169,7 +169,7 @@
 
 ## 권장 실행 순서
 
-1. 진행 중인 `qwen3:4b` 설치가 완료되면 뉴스 번역 모델을 `qwen3:4b`로 전환하고 observability 추천 상태를 재확인한다.
+1. `qwen3:4b` 뉴스 번역은 파싱 보강/프롬프트 조정/지연 시간 재측정 후 운영 전환 여부를 다시 판단한다.
 2. `AI_SKIPPED/HOLDINGS_PRECHECK` 표본이 쌓이면 `HOLDINGS_PRECHECK_SKIP_CLEAR_HOLD_ENABLED` 활성화 여부를 결정한다.
 3. 장중 보유 재평가 review cache hit율/오판율을 운영 표본으로 확인한다.
 4. 뉴스 gate의 Tier2 전 차단 이동은 shadow/rollout 표본을 더 확인한 뒤 재검토한다.
