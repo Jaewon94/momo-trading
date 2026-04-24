@@ -14,6 +14,8 @@
 
 2026-04-23 16:09 KST 기준 `POST /api/v1/admin/news/backfill-enrichment?limit=100&apply=false` dry-run은 정상 응답했고, 변경 후보 1건을 `apply=true`로 반영했다. 재확인 dry-run은 `changed_count=0`으로 같은 범위의 남은 deterministic enrichment 후보가 없었다.
 
+2026-04-24 10:09 KST 기준 `POST /api/v1/admin/stocks/bootstrap-universe?rank_limit=50&apply=false` dry-run은 후보 128건, 생성 128건으로 정상 응답했다. 이후 `apply=true`로 128건을 생성했고, 랭킹 데이터가 호출 사이에 바뀌며 추가 관측된 6건도 2차 `apply=true`로 생성했다. 이 작업은 `stocks` universe upsert만 수행하며 주문은 제출하지 않는다.
+
 ## 구현 완료로 확인된 항목
 
 ### 주문/운영 안전
@@ -53,6 +55,7 @@
 - `LLM_SLOW_CALL_WARN_SEC` 설정 추가. 기본 30초.
 - LLM 호출이 임계 시간을 넘기면 `LLM_CALL / PROGRESS` 활동 로그와 SSE 경고를 남긴다.
 - LLM 호출 실패/타임아웃은 `LLM_CALL / ERROR` 활동 로그를 남긴다.
+- LLM provider cooldown 오류의 incident fingerprint에서 `(N초 남음)`처럼 매번 바뀌는 잔여 시간을 정규화해 같은 cooldown 장애를 하나의 incident로 누적한다.
 - Observability maintenance rollup key의 provider/model `NULL`을 `UNKNOWN`으로 정규화한다.
 - 최근 `OBSERVABILITY_MAINTENANCE` 실패는 system preflight의 `observability` WARN으로 노출한다.
 
@@ -82,7 +85,15 @@
 - dry-run 결과: 후보 100건, 변경 1건, topic mapped 1건.
 - `apply=true` 적용 결과: Seeking Alpha의 TSM 애리조나 패키징 공장 기사에 `반도체` 토픽 metadata 반영.
 - 적용 후 재확인 dry-run 결과: 후보 100건, 변경 0건.
-- 현재 로컬 DB 기준 `news_items=1,481`, `stocks=0`, `portfolio_holdings=0`, `orders=0`, `market_snapshots=0`이다. 뉴스는 쌓이고 있지만 국내 종목 universe가 비어 있어 종목 attach와 source별 attribution 품질은 제한적이다.
+- 2026-04-23 당시 로컬 DB 기준 `news_items=1,481`, `stocks=0`, `portfolio_holdings=0`, `orders=0`, `market_snapshots=0`이었다.
+
+### 종목 universe bootstrap 운영 반영
+
+- 2026-04-24 10:09 KST 기준 `POST /api/v1/admin/stocks/bootstrap-universe?rank_limit=50&apply=false` dry-run 정상.
+- dry-run 결과: 후보 128건, 생성 128건, 갱신 0건. 소스는 보유 1건, 미체결 0건, 거래량 50건, 등락 상위 50건, 등락 하위 50건이다.
+- 1차 `apply=true` 적용 결과: 128건 생성.
+- 적용 직후 재확인 dry-run에서 랭킹 데이터 변동으로 추가 생성 후보 4건이 보였고, 2차 `apply=true`에서 추가 관측 후보 6건을 생성했다.
+- 거래량/등락 랭킹은 실시간성이 있어 호출 시점마다 후보가 조금 달라질 수 있다. 운영 목적은 비어 있던 `stocks` universe를 최소 관측 universe로 복구하는 것이다.
 
 ### Observability maintenance
 
@@ -116,12 +127,10 @@
 
 ### AI 비용/지연 절감 후속
 
-- `stocks` universe bootstrap 운영 DB dry-run/apply 확인.
 - 보유종목 장중 재평가에서 명확한 HOLD 케이스까지 deterministic skip으로 확장할지 shadow 데이터로 검토.
 - 스마트 청산에도 review cache가 필요한지 분리 검토.
 - review cache TTL/key 조건 운영 데이터 기준 조정.
 - `AI_SKIPPED`와 benchmark/report에 보유종목 precheck/cache 결과를 더 직접 연결.
-- LLM cooldown incident dedupe.
 
 ### Admin UX 후속
 
@@ -146,10 +155,9 @@
 
 ## 권장 실행 순서
 
-1. `POST /api/v1/admin/stocks/bootstrap-universe?rank_limit=50&apply=false` dry-run 후 `apply=true`로 최소 국내 종목 universe를 채운다. 현재 로컬 DB 기준 `stocks=0`이라 먼저 운영 적용 확인이 필요하다.
-2. 보유종목 장중 재평가에서 명확한 HOLD 케이스까지 deterministic skip으로 확장할지 shadow 데이터로 검토한다.
-3. 스마트 청산에도 review cache가 필요한지 분리 검토한다.
-4. 뉴스 gate의 Tier2 전 차단 이동은 shadow/rollout 표본을 더 확인한 뒤 재검토한다.
+1. 보유종목 장중 재평가에서 명확한 HOLD 케이스까지 deterministic skip으로 확장할지 shadow 데이터로 검토한다.
+2. 스마트 청산에도 review cache가 필요한지 분리 검토한다.
+3. 뉴스 gate의 Tier2 전 차단 이동은 shadow/rollout 표본을 더 확인한 뒤 재검토한다.
 
 ## 당장 바꾸지 말 것
 

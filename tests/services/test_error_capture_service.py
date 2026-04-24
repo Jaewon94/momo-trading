@@ -82,6 +82,37 @@ async def test_error_capture_service_accumulates_same_fingerprint(override_error
 
 
 @pytest.mark.asyncio
+async def test_error_capture_service_dedupes_llm_cooldown_remaining_seconds(override_error_capture_session):
+    async with TestAsyncSessionLocal() as session:
+        await session.execute(delete(ErrorEvent))
+        await session.execute(delete(ErrorIncident))
+        await session.commit()
+
+    service = ErrorCaptureService()
+    await service.capture_exception(
+        component="llm_factory",
+        operation="generate",
+        exc=RuntimeError("CODEX 최근 호출 실패로 비활성화 (297s 남음): Codex CLI timeout (90s)"),
+        provider="CODEX",
+    )
+    await service.capture_exception(
+        component="llm_factory",
+        operation="generate",
+        exc=RuntimeError("CODEX 최근 호출 실패로 비활성화 (121s 남음): Codex CLI timeout (90s)"),
+        provider="CODEX",
+    )
+
+    async with TestAsyncSessionLocal() as session:
+        events = await ErrorEventRepository(session).list_recent(limit=5)
+        incidents = await ErrorIncidentRepository(session).list_recent(limit=5)
+
+    assert len(events) == 2
+    assert len(incidents) == 1
+    assert incidents[0].occurrence_count == 2
+    assert "(121s 남음)" in incidents[0].last_message
+
+
+@pytest.mark.asyncio
 async def test_error_capture_service_reopens_resolved_incident_on_recurrence(override_error_capture_session):
     async with TestAsyncSessionLocal() as session:
         await session.execute(delete(ErrorEvent))

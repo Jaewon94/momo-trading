@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import traceback
 from typing import Any
 
@@ -23,6 +24,14 @@ def _truncate(value: str | None, limit: int) -> str | None:
     if not text:
         return None
     return text[:limit]
+
+
+_VOLATILE_MESSAGE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(r"\(\d+s\s*남음\)"),
+        "(Ns 남음)",
+    ),
+)
 
 
 class ErrorCaptureService:
@@ -126,9 +135,16 @@ class ErrorCaptureService:
             component.strip().lower(),
             operation.strip().lower(),
             exception_type.strip().lower(),
-            exception_message.strip().lower()[:160],
+            ErrorCaptureService._normalize_fingerprint_message(exception_message).strip().lower()[:160],
         ])
         return hashlib.sha1(seed.encode("utf-8")).hexdigest()[:32]
+
+    @staticmethod
+    def _normalize_fingerprint_message(exception_message: str) -> str:
+        normalized = exception_message
+        for pattern, replacement in _VOLATILE_MESSAGE_PATTERNS:
+            normalized = pattern.sub(replacement, normalized)
+        return normalized
 
 
 error_capture_service = ErrorCaptureService()
