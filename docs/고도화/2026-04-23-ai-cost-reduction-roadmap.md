@@ -307,6 +307,7 @@ TDD 후보:
 - 현재 기록 지점은 `PRE_ANALYSIS_GATE`, `TIER1_CACHE`, `DETERMINISTIC_FINAL_GATE`, `TIER1_COST_GATE`, `HOLDINGS_PRECHECK`, `HOLDINGS_REVIEW_CACHE`다.
 - metric detail에는 `stage`, `reason_code`, `skipped_tier`와 각 gate의 세부 값이 들어간다.
 - 뉴스 번역 Ollama 4b 다운그레이드는 observability 추천으로 확인됐다. `qwen3:4b` 설치는 완료됐지만 샘플 검증에서 응답 지연과 JSON 형식 안정성 문제가 확인되어 운영은 `qwen3:14b`를 유지한다.
+- 해외 뉴스 번역이 꺼진 상태에서는 뉴스 번역 모델 변경 추천을 `KEEP`으로 표시해 불필요한 운영 액션을 줄인다.
 
 다음 확장:
 

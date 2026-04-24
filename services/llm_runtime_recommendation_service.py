@@ -5,6 +5,7 @@ import re
 from typing import Any
 
 from analysis.llm.selection_policy import resolve_manual_selection, resolve_news_selection
+from core.config import settings
 from trading.enums import LLMTier
 
 _MODEL_SIZE_RE = re.compile(r":([0-9]+(?:\.[0-9]+)?)b$", re.IGNORECASE)
@@ -133,6 +134,22 @@ class LLMRuntimeRecommendationService:
         news_p95 = float(news_poll_summary.get("p95_elapsed_ms") or 0.0)
         pressure_severity = str(pressure.get("severity") or "LOW")
         reasons: list[str] = []
+
+        if not bool(settings.NEWS_LLM_ENABLED):
+            return {
+                "current": {"provider": provider, "model": model},
+                "recommended": {"provider": provider, "model": model},
+                "action": "KEEP",
+                "reasons": ["뉴스 LLM이 비활성화되어 모델 변경 불필요"],
+            }
+
+        if not bool(settings.NEWS_TRANSLATE_FOREIGN_ENABLED):
+            return {
+                "current": {"provider": provider, "model": model},
+                "recommended": {"provider": provider, "model": model},
+                "action": "KEEP",
+                "reasons": ["해외 뉴스 번역이 비활성화되어 모델 변경 불필요"],
+            }
 
         if provider != "OLLAMA":
             return {

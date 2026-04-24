@@ -131,6 +131,7 @@
 - 2026-04-24 14시 기준 운영 observability에서 `AI_SKIPPED/HOLDINGS_PRECHECK` 표본은 0건이다. 명확 HOLD skip 플래그는 근거 부족으로 계속 OFF 유지한다.
 - observability 추천은 뉴스 번역 Ollama 모델을 `qwen3:4b`로 낮추라고 표시했다. `qwen3:4b` 설치는 완료됐지만 샘플 검증에서 응답 지연과 JSON 형식 안정성 문제가 확인되어 운영 `NEWS_LLM_MODEL`은 `qwen3:14b`를 유지한다.
 - 뉴스 번역 추천 서비스는 이미 목표 모델을 쓰고 있을 때도 `DOWNGRADE`로 표시하던 상태 판정을 보정했다. 추천 모델과 현재 모델이 같으면 `KEEP`으로 표시한다.
+- 해외 뉴스 번역이 비활성화된 상태에서는 observability가 뉴스 번역 모델 다운그레이드를 운영 액션으로 추천하지 않도록 보정했다.
 
 ## 아직 미구현 또는 추가 검증이 필요한 핵심 항목
 
