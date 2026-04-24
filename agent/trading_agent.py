@@ -132,6 +132,8 @@ class TradingAgent:
         final_action: str,
         reference_price: float | None,
         reason: str,
+        tier1_decision: str = "SKIP",
+        confidence: float | None = None,
         metadata: dict | None = None,
     ) -> None:
         """AI skip gate도 후보별 forward return 라벨링 대상으로 남긴다."""
@@ -146,10 +148,10 @@ class TradingAgent:
                 source=source,
                 strategy_type=str(stock_info.get("strategy_type") or ""),
                 scanner_score=stock_info.get("scanner_score") or stock_info.get("score"),
-                tier1_decision="SKIP",
+                tier1_decision=tier1_decision,
                 risk_gate_result=reason_code,
                 final_action=final_action,
-                confidence=stock_info.get("confidence"),
+                confidence=confidence if confidence is not None else stock_info.get("confidence"),
                 reference_price=reference_price,
                 provider="DETERMINISTIC",
                 model=source.upper(),
@@ -956,6 +958,27 @@ class TradingAgent:
                 symbol=symbol,
                 detail=final_gate.detail,
             )
+            await self._record_ai_skip_decision_event(
+                stock_info=stock_info,
+                cycle_id=cycle_id,
+                decision_stage="DETERMINISTIC_FINAL_GATE",
+                source="deterministic_final_gate",
+                reason_code=final_gate.code,
+                final_action="SKIP",
+                reference_price=current_price,
+                reason=message,
+                tier1_decision=str(analysis.get("recommendation") or "UNKNOWN").upper(),
+                confidence=analysis.get("confidence"),
+                metadata={
+                    **final_gate.detail,
+                    "tier1_analysis": {
+                        "recommendation": analysis.get("recommendation"),
+                        "confidence": analysis.get("confidence"),
+                        "target_price": analysis.get("target_price"),
+                        "stop_loss_price": analysis.get("stop_loss_price"),
+                    },
+                },
+            )
             return result
 
         if analysis.get("recommendation") == "BUY":
@@ -985,6 +1008,27 @@ class TradingAgent:
                     cycle_id=cycle_id,
                     symbol=symbol,
                     detail=tier1_cost_gate,
+                )
+                await self._record_ai_skip_decision_event(
+                    stock_info=stock_info,
+                    cycle_id=cycle_id,
+                    decision_stage="TIER1_COST_GATE",
+                    source="tier1_cost_gate",
+                    reason_code="LOW_EDGE_AFTER_COST",
+                    final_action="SKIP",
+                    reference_price=current_price,
+                    reason=str(tier1_cost_gate.get("reason") or ""),
+                    tier1_decision=str(analysis.get("recommendation") or "UNKNOWN").upper(),
+                    confidence=analysis.get("confidence"),
+                    metadata={
+                        **tier1_cost_gate,
+                        "tier1_analysis": {
+                            "recommendation": analysis.get("recommendation"),
+                            "confidence": analysis.get("confidence"),
+                            "target_price": analysis.get("target_price"),
+                            "stop_loss_price": analysis.get("stop_loss_price"),
+                        },
+                    },
                 )
                 return result
 

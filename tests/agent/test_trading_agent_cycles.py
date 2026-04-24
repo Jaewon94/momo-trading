@@ -731,6 +731,7 @@ async def test_analyze_and_trade_skips_tier2_when_deterministic_final_gate_block
     agent = TradingAgent(broker_adapter=StubBrokerAdapter())
     logs = []
     skipped_metrics = []
+    decision_events = []
     agent._active_trading_rules = {"param_overrides": {"ALL": {"min_confidence": 0.7}}}
     agent._market_regime = "SIDEWAYS"
 
@@ -739,6 +740,10 @@ async def test_analyze_and_trade_skips_tier2_when_deterministic_final_gate_block
 
     async def fake_record_ai_skip(**kwargs) -> None:
         skipped_metrics.append(kwargs)
+
+    async def fake_record_event(**kwargs):
+        decision_events.append(kwargs)
+        return SimpleNamespace(id="final-gate-event-1")
 
     async def fake_fetch_symbol_market_data(_symbol: str):
         price_resp = SimpleNamespace(success=True, data={"price": 70_000}, error=None)
@@ -765,6 +770,7 @@ async def test_analyze_and_trade_skips_tier2_when_deterministic_final_gate_block
 
     monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
     monkeypatch.setattr("agent.trading_agent.ai_skip_metric_service.record", fake_record_ai_skip)
+    monkeypatch.setattr("agent.trading_agent.decision_event_service.record_event", fake_record_event)
     monkeypatch.setattr(agent, "_fetch_symbol_market_data", fake_fetch_symbol_market_data)
     monkeypatch.setattr(agent, "_tier1_analysis", fake_tier1_analysis)
     monkeypatch.setattr(agent, "_tier2_review", fail_tier2_review)
@@ -782,15 +788,30 @@ async def test_analyze_and_trade_skips_tier2_when_deterministic_final_gate_block
     assert skipped_metrics[0]["stage"] == "DETERMINISTIC_FINAL_GATE"
     assert skipped_metrics[0]["reason_code"] == "CONFIDENCE_GATE"
     assert skipped_metrics[0]["skipped_tier"] == "TIER2"
+    assert decision_events[0]["decision_stage"] == "DETERMINISTIC_FINAL_GATE"
+    assert decision_events[0]["source"] == "deterministic_final_gate"
+    assert decision_events[0]["risk_gate_result"] == "CONFIDENCE_GATE"
+    assert decision_events[0]["tier1_decision"] == "BUY"
+    assert decision_events[0]["final_action"] == "SKIP"
+    assert decision_events[0]["confidence"] == 0.6
 
 
 @pytest.mark.asyncio
 async def test_analyze_and_trade_skips_tier2_when_tier1_cost_gate_blocks_low_edge(monkeypatch) -> None:
     agent = TradingAgent(broker_adapter=StubBrokerAdapter())
     logs = []
+    skipped_metrics = []
+    decision_events = []
 
     async def fake_log(*args, **kwargs) -> None:
         logs.append((args, kwargs))
+
+    async def fake_record_ai_skip(**kwargs) -> None:
+        skipped_metrics.append(kwargs)
+
+    async def fake_record_event(**kwargs):
+        decision_events.append(kwargs)
+        return SimpleNamespace(id="cost-gate-event-1")
 
     async def fake_fetch_symbol_market_data(_symbol: str):
         price_resp = SimpleNamespace(success=True, data={"price": 100.0, "change_rate": 0.0}, error=None)
@@ -821,6 +842,8 @@ async def test_analyze_and_trade_skips_tier2_when_tier1_cost_gate_blocks_low_edg
     monkeypatch.setattr("agent.trading_agent.settings.ESTIMATED_SLIPPAGE_BPS_SHORT", 12)
     monkeypatch.setattr("agent.trading_agent.settings.MIN_EDGE_TO_COST_RATIO_SHORT", 1.5)
     monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.trading_agent.ai_skip_metric_service.record", fake_record_ai_skip)
+    monkeypatch.setattr("agent.trading_agent.decision_event_service.record_event", fake_record_event)
     monkeypatch.setattr(agent, "_fetch_symbol_market_data", fake_fetch_symbol_market_data)
     monkeypatch.setattr(agent, "_tier1_analysis", fake_tier1_analysis)
     monkeypatch.setattr(agent, "_tier2_review", fail_tier2_review)
@@ -834,6 +857,11 @@ async def test_analyze_and_trade_skips_tier2_when_tier1_cost_gate_blocks_low_edg
 
     assert result == {"symbol": "005930", "signal": False, "executed": False}
     assert any("비용 게이트 사전 차단" in args[2] for args, _kwargs in logs)
+    assert skipped_metrics[0]["stage"] == "TIER1_COST_GATE"
+    assert decision_events[0]["decision_stage"] == "TIER1_COST_GATE"
+    assert decision_events[0]["source"] == "tier1_cost_gate"
+    assert decision_events[0]["risk_gate_result"] == "LOW_EDGE_AFTER_COST"
+    assert decision_events[0]["tier1_decision"] == "BUY"
 
 
 @pytest.mark.asyncio

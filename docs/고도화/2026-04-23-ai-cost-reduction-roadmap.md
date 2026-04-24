@@ -207,6 +207,7 @@ TDD 후보:
 - 장중 보유 재평가에서 precheck/cache로 LLM을 건너뛴 HOLD/SELL 판단도 `decision_events`에 기록한다. 이 경로는 forward return labeling 대상이므로 이후 benchmark에서 성과를 볼 수 있다.
 - 스마트 청산에서 precheck로 LLM을 건너뛴 HOLD/SELL 판단도 `decision_events`에 `SMART_LIQUIDATION` stage로 기록한다.
 - 일반 BUY 분석 파이프라인의 `PRE_ANALYSIS_GATE` 차단도 `decision_events`에 `PRE_ANALYSIS_GATE` stage로 기록한다.
+- 일반 BUY 분석 파이프라인의 `DETERMINISTIC_FINAL_GATE`, `TIER1_COST_GATE` 차단도 `decision_events`에 기록한다.
 
 문제:
 
@@ -223,7 +224,7 @@ TDD 후보:
 
 - 명확한 HOLD skip 플래그를 실제로 켤지는 `AI_SKIPPED/HOLDINGS_PRECHECK` 표본과 운영 로그를 보고 결정한다.
 - review cache TTL과 key 조건을 운영 데이터로 조정한다.
-- Tier2 전 final/cost gate의 직접 수익률 attribution은 별도 decision event 연결이 필요하다.
+- Tier2 전 final/cost gate도 `decision_events`에 연결 완료. 이후 forward return labeling 결과를 보고 gate 기준을 조정한다.
 
 TDD 후보:
 
