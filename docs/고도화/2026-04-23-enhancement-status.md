@@ -115,9 +115,11 @@
 - Tier1/Tier2 deterministic prompt context 구현. 프롬프트에 `Deterministic 사전 판단` 섹션을 추가해 차트 신호, 현금/최소수량, RR 비율, 손절 필수 여부, 매수가능수량을 구조화해 전달한다.
 - `HoldingsPrecheckService` 구현. 장중 보유 재평가와 스마트 청산에서 `holding_policy`가 명확한 SELL 사유를 내는 종목은 LLM 전에 걸러 즉시 코드 판단을 사용한다.
 - 현재 precheck가 바로 차단하는 사유는 `TradeResult 없음`, `매입가 정보 없음`, `손실 과대`, `보유일 초과`, `AI 신뢰도 저하`, `목표가 도달` 계열이다.
+- `HOLDINGS_PRECHECK_SKIP_CLEAR_HOLD_ENABLED=false` 기본값으로 명확한 HOLD skip 경로를 추가했다. 기본값은 보수적으로 꺼두며, 활성화 시 수익권, 신뢰도 0.65 이상, 목표가까지 1% 이상 여유, 최대 보유일 임박 아님 조건을 모두 만족해야 HOLD를 LLM 없이 통과시킨다.
 - precheck 평가 자체가 불가능하면 예외를 삼키고 기존 LLM 경로를 그대로 유지해 회귀를 막는다.
 - `HoldingsReviewCacheService` 구현. 장중 보유 재평가에서 동일 종목/가격/손익/보유일/활성 임계값/시장 국면/남은 시간 조건이면 짧은 TTL 동안 이전 LLM 결정을 재사용한다.
 - 캐시 hit 종목은 `AI_SKIPPED`에 `HOLDINGS_REVIEW_CACHE/CACHE_HIT/TIER1`로 기록한다.
+- 보유종목 precheck skip도 `AI_SKIPPED`에 `HOLDINGS_PRECHECK/{SELL|HOLD}/TIER1`로 기록한다.
 
 ## 아직 미구현 또는 추가 검증이 필요한 핵심 항목
 
@@ -127,10 +129,10 @@
 
 ### AI 비용/지연 절감 후속
 
-- 보유종목 장중 재평가에서 명확한 HOLD 케이스까지 deterministic skip으로 확장할지 shadow 데이터로 검토.
+- 보유종목 명확 HOLD skip은 플래그 기반 코드 경로까지 구현 완료. 운영 기본값은 OFF이므로, `AI_SKIPPED/HOLDINGS_PRECHECK` 표본을 본 뒤 활성화 여부를 결정한다.
 - 스마트 청산에도 review cache가 필요한지 분리 검토.
 - review cache TTL/key 조건 운영 데이터 기준 조정.
-- `AI_SKIPPED`와 benchmark/report에 보유종목 precheck/cache 결과를 더 직접 연결.
+- `AI_SKIPPED`와 benchmark/report의 보유종목 precheck/cache 결과 집계 화면 또는 API 확장.
 
 ### Admin UX 후속
 
@@ -155,7 +157,7 @@
 
 ## 권장 실행 순서
 
-1. 보유종목 장중 재평가에서 명확한 HOLD 케이스까지 deterministic skip으로 확장할지 shadow 데이터로 검토한다.
+1. `AI_SKIPPED/HOLDINGS_PRECHECK` 표본을 확인한 뒤 `HOLDINGS_PRECHECK_SKIP_CLEAR_HOLD_ENABLED` 활성화 여부를 결정한다.
 2. 스마트 청산에도 review cache가 필요한지 분리 검토한다.
 3. 뉴스 gate의 Tier2 전 차단 이동은 shadow/rollout 표본을 더 확인한 뒤 재검토한다.
 

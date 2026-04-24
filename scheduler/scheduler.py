@@ -1294,6 +1294,7 @@ class TradingScheduler:
         """
         import time
 
+        from services.ai_skip_metric_service import ai_skip_metric_service
         from services.activity_logger import activity_logger
         from services.holdings_precheck_service import holdings_precheck_service
         from strategy.holding_policy import evaluate_overnight_hold
@@ -1353,6 +1354,16 @@ class TradingScheduler:
                         "reason": precheck.reason,
                         "confidence": 0.0,
                     }
+                    await ai_skip_metric_service.record(
+                        stage="HOLDINGS_PRECHECK",
+                        reason_code=precheck.action,
+                        skipped_tier="TIER1",
+                        symbol=symbol,
+                        detail={
+                            "source": precheck.source,
+                            "reason": precheck.reason,
+                        },
+                    )
                 else:
                     llm_candidates.append(data)
 
@@ -1556,6 +1567,16 @@ class TradingScheduler:
                             "adjusted_stop_loss_price": None,
                             "adjusted_take_profit_price": None,
                         }
+                        await ai_skip_metric_service.record(
+                            stage="HOLDINGS_PRECHECK",
+                            reason_code=precheck.action,
+                            skipped_tier="TIER1",
+                            symbol=symbol,
+                            detail={
+                                "source": precheck.source,
+                                "reason": precheck.reason,
+                            },
+                        )
                     else:
                         cache_key = holdings_review_cache_service.build_key(
                             holding_data=data,

@@ -48,3 +48,58 @@ def test_holdings_precheck_service_keeps_llm_for_non_clear_hold_reason() -> None
 
     assert decision.should_skip_llm is False
     assert decision.action == "HOLD"
+
+
+def test_holdings_precheck_service_skips_llm_for_clear_hold_when_enabled() -> None:
+    service = HoldingsPrecheckService()
+    holding = SimpleNamespace(symbol="005930", avg_buy_price=100_000)
+    trade_result = SimpleNamespace(
+        strategy_type="STABLE_SHORT",
+        ai_confidence=0.72,
+        ai_target_price=110_000,
+        entry_at=None,
+        created_at=None,
+    )
+    settings = SimpleNamespace(
+        MAX_HOLD_DAYS_STABLE=5,
+        MAX_HOLD_DAYS_AGGRESSIVE=3,
+        HOLDINGS_PRECHECK_SKIP_CLEAR_HOLD_ENABLED=True,
+    )
+
+    decision = service.evaluate(
+        holding=holding,
+        trade_result=trade_result,
+        current_price=102_000,
+        settings=settings,
+    )
+
+    assert decision.should_skip_llm is True
+    assert decision.action == "HOLD"
+    assert "명확한 HOLD" in decision.reason
+
+
+def test_holdings_precheck_service_keeps_llm_for_hold_near_target() -> None:
+    service = HoldingsPrecheckService()
+    holding = SimpleNamespace(symbol="005930", avg_buy_price=100_000)
+    trade_result = SimpleNamespace(
+        strategy_type="STABLE_SHORT",
+        ai_confidence=0.72,
+        ai_target_price=102_500,
+        entry_at=None,
+        created_at=None,
+    )
+    settings = SimpleNamespace(
+        MAX_HOLD_DAYS_STABLE=5,
+        MAX_HOLD_DAYS_AGGRESSIVE=3,
+        HOLDINGS_PRECHECK_SKIP_CLEAR_HOLD_ENABLED=True,
+    )
+
+    decision = service.evaluate(
+        holding=holding,
+        trade_result=trade_result,
+        current_price=102_000,
+        settings=settings,
+    )
+
+    assert decision.should_skip_llm is False
+    assert decision.action == "HOLD"

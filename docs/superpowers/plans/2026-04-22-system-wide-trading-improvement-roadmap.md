@@ -1,12 +1,12 @@
-# MOMO Trading System-Wide Trading Improvement Implementation Plan
+# MOMO Trading 전사 매매 개선 구현 계획
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **작업자 안내:** 이 계획은 작업 단위로 체크박스(`- [ ]`)를 갱신하며 진행한다. 구현은 작은 단위의 테스트, 코드, 문서, 커밋 순서로 남긴다.
 
-**Goal:** 감사 Findings F-001~F-036을 안전한 순서로 해결해 주문 안전성, PnL 신뢰도, 리스크 제어, 전략 검증 기반을 먼저 만들고 그 다음 매매 성능 개선 실험을 가능하게 한다.
+**목표:** 감사 Findings F-001~F-036을 안전한 순서로 해결해 주문 안전성, PnL 신뢰도, 리스크 제어, 전략 검증 기반을 먼저 만들고 그 다음 매매 성능 개선 실험을 가능하게 한다.
 
-**Architecture:** 먼저 live trading의 안전장치와 source of truth를 안정화하고, 이후 성과 측정/forward return dataset을 쌓는다. LLM, 뉴스, 전략 파라미터 변경은 측정 기반이 생긴 뒤 shadow/report-only 단계로만 rollout한다.
+**구조:** 먼저 live trading의 안전장치와 source of truth를 안정화하고, 이후 성과 측정/forward return dataset을 쌓는다. LLM, 뉴스, 전략 파라미터 변경은 측정 기반이 생긴 뒤 shadow/report-only 단계로만 rollout한다.
 
-**Tech Stack:** Python 3.13, FastAPI, SQLAlchemy async, SQLite local runtime DB, pytest/pytest-asyncio, Vitest, APScheduler, Kiwoom broker adapter.
+**기술 스택:** Python 3.13, FastAPI, SQLAlchemy async, SQLite local runtime DB, pytest/pytest-asyncio, Vitest, APScheduler, Kiwoom broker adapter.
 
 ---
 
@@ -38,6 +38,7 @@
 - Track 1, Track 2, Track 3.1, Track 3.1a는 코드와 테스트 기준 완료 상태다.
 - Track 5.1은 observability rollup key의 provider/model `NULL` 정규화와 maintenance failure preflight WARN 노출까지 구현됐다.
 - Track 8 관련으로 LLM 지연 경고(`LLM_SLOW_CALL_WARN_SEC`)와 cooldown incident dedupe가 구현됐다. cooldown dedupe는 provider cooldown 오류의 잔여 초를 fingerprint 계산에서 정규화해 같은 장애를 하나의 incident로 누적한다.
+- 보유종목 사전판단은 `HOLDINGS_PRECHECK_SKIP_CLEAR_HOLD_ENABLED=false` 기본값으로 명확한 HOLD skip 경로를 추가했다. 기본값은 보수적으로 꺼두며, SELL/HOLD precheck skip은 `AI_SKIPPED/HOLDINGS_PRECHECK` metric으로 기록된다.
 - 뉴스 deterministic enrichment/backfill은 별도 커밋으로 구현됐고, 운영 서버에서 dry-run/apply까지 확인됐다. 2026-04-23 16:09 KST 기준 변경 후보 1건을 적용했고 재확인 dry-run은 `changed_count=0`이었다.
 - DB 초기화 이후 `stocks=0` 상태를 보완하기 위해 broker-observed symbol 기반 `stocks` universe bootstrap 서비스/API를 추가했다. 2026-04-24 10:09 KST 기준 운영 DB에서 dry-run/apply를 확인했고, 보유/거래량/등락 랭킹 기반 최소 universe를 생성했다.
 - Track 6.1 canonical decision event table/service, Track 6.2 forward return labeling job, decision benchmark read-only API는 구현됐다. 현재 benchmark는 `event.source`, `strategy_type`, `tier1_decision`, `tier2_decision`, `news_top_contributors.source_code`와 read-only control group(`random_same_count`, `scanner_top_same_count`, `tier1_buy_only`, `tier2_buy_only`)까지 집계한다. 다만 full attribution과 causal 비교는 후속 구현이 필요하다.
