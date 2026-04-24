@@ -382,11 +382,14 @@ class MarketScanner:
         lines = []
         for index, item in enumerate(candidates, 1):
             reasons = ", ".join(item.get("reasons", [])[:3])
+            reason_codes = ",".join(item.get("reason_codes", [])[:5])
             lines.append(
                 f"{index}. {item.get('name')}({item.get('symbol')}) "
                 f"score={item.get('score')} price={item.get('price')} "
                 f"chg={item.get('change_rate')}% buyable={item.get('buyable')} "
+                f"strategy={item.get('strategy_type_hint', '')} "
                 f"sources={','.join(item.get('sources', []))} "
+                f"codes={reason_codes} "
                 f"reasons={reasons}"
             )
         return "\n".join(lines)
@@ -416,6 +419,7 @@ class MarketScanner:
                     risk_gate_result="PASS" if buyable else "NOT_BUYABLE",
                     final_action="CANDIDATE" if buyable else "SKIP",
                     reference_price=item.get("price"),
+                    strategy_type=item.get("strategy_type_hint"),
                     provider="DETERMINISTIC",
                     model="candidate_scoring_v1",
                     reason=", ".join(str(reason) for reason in item.get("reasons", [])[:4]),
@@ -425,6 +429,8 @@ class MarketScanner:
                         "sources": item.get("sources", []),
                         "buyable": buyable,
                         "hold_candidate": bool(item.get("hold_candidate")),
+                        "strategy_type_hint": item.get("strategy_type_hint"),
+                        "reason_codes": item.get("reason_codes", []),
                         "news_negative_pressure": item.get("news_negative_pressure"),
                         "change_rate": item.get("change_rate"),
                         "volume": item.get("volume"),

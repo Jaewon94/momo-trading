@@ -149,6 +149,7 @@
 - 시장 스캔 deterministic 후보 점수 top-N은 `CANDIDATE_SCORING` decision event로 기록한다. scanner score, buyable 여부, source/reason metadata를 남겨 scanner-only 후보의 사후 수익률을 비교할 수 있다.
 - 시장 스캔 후보 점수에 최근 6시간 후보/분석 decision event cooldown 감점을 반영했다. 비보유 반복 후보만 감점하고 보유종목은 매도 검토 후보로 유지한다.
 - 시장 스캔 후보 top-N에 뉴스 게이트의 부정 뉴스 압력을 반영했다. 비보유 후보만 감점하고 `news_negative_pressure`를 후보/decision event metadata에 남긴다.
+- 시장 스캔 deterministic 후보에 `strategy_type_hint`와 `reason_codes`를 추가했다. 프롬프트와 `CANDIDATE_SCORING` decision event metadata에 같은 값을 남겨 전략별/사유별 scanner-only 성과 비교가 가능하다.
 - 기능별 LLM 호출 집계는 overview API와 Admin 관측 화면 노출까지 구현 완료.
 - 뉴스 번역 `qwen3:4b` 다운그레이드는 설치 완료 후 샘플 검증까지 진행했으나 보류한다. 파싱 보강/프롬프트 조정/지연 시간 재측정 후 운영 전환 여부를 다시 판단한다.
 

@@ -14,6 +14,7 @@ class _Candidate:
     volume: int
     score: float = 0.0
     reasons: list[str] = field(default_factory=list)
+    reason_codes: set[str] = field(default_factory=set)
     sources: set[str] = field(default_factory=set)
     hold_candidate: bool = False
     buyable: bool = True
@@ -49,15 +50,19 @@ class CandidateScoringService:
             if candidate.hold_candidate:
                 candidate.score += 30.0
                 candidate.reasons.append("보유 종목")
+                candidate.reason_codes.add("HOLDING_REVIEW")
             if "volume_rank" in candidate.sources:
                 candidate.score += 25.0
                 candidate.reasons.append("거래량 상위")
+                candidate.reason_codes.add("VOLUME_RANK")
             if "surge_data" in candidate.sources:
                 candidate.score += 20.0
                 candidate.reasons.append("급등 상위")
+                candidate.reason_codes.add("SURGE_RANK")
             if "drop_data" in candidate.sources:
                 candidate.score -= 10.0
                 candidate.reasons.append("급락 감시")
+                candidate.reason_codes.add("DROP_WATCH")
 
             candidate.score += min(max(candidate.change_rate, -30.0), 30.0)
             candidate.score += min(candidate.volume / 1_000_000, 20.0)
@@ -66,14 +71,17 @@ class CandidateScoringService:
                 candidate.buyable = False
                 candidate.score -= 100.0
                 candidate.reasons.append("1주 매수 불가")
+                candidate.reason_codes.add("NOT_BUYABLE")
             if candidate.symbol in cooldown_set and not candidate.hold_candidate:
                 candidate.score -= 35.0
                 candidate.reasons.append("최근 분석/후보 감점")
+                candidate.reason_codes.add("RECENT_CANDIDATE_COOLDOWN")
             pressure = max(float(news_pressure.get(candidate.symbol) or 0.0), 0.0)
             if pressure >= 0.25 and not candidate.hold_candidate:
                 penalty = min(max(pressure * 40.0, 10.0), 45.0)
                 candidate.score -= penalty
                 candidate.reasons.append(f"뉴스 부정압력 {pressure:.2f}")
+                candidate.reason_codes.add("NEGATIVE_NEWS_PRESSURE")
 
         ranked = sorted(
             candidates.values(),
@@ -84,22 +92,37 @@ class CandidateScoringService:
             ),
         )
         selected = ranked[:max(int(max_candidates or 0), 0)]
-        return [
-            {
-                "symbol": item.symbol,
-                "name": item.name,
-                "price": item.price,
-                "change_rate": round(item.change_rate, 2),
-                "volume": item.volume,
-                "score": round(item.score, 2),
-                "sources": sorted(item.sources),
-                "buyable": item.buyable,
-                "hold_candidate": item.hold_candidate,
-                "news_negative_pressure": round(max(float(news_pressure.get(item.symbol) or 0.0), 0.0), 4),
-                "reasons": item.reasons[:4],
-            }
-            for item in selected
-        ]
+        results: list[dict[str, Any]] = []
+        for item in selected:
+            pressure = round(max(float(news_pressure.get(item.symbol) or 0.0), 0.0), 4)
+            results.append(
+                {
+                    "symbol": item.symbol,
+                    "name": item.name,
+                    "price": item.price,
+                    "change_rate": round(item.change_rate, 2),
+                    "volume": item.volume,
+                    "score": round(item.score, 2),
+                    "sources": sorted(item.sources),
+                    "buyable": item.buyable,
+                    "hold_candidate": item.hold_candidate,
+                    "strategy_type_hint": self._strategy_type_hint(item, pressure),
+                    "reason_codes": sorted(item.reason_codes),
+                    "news_negative_pressure": pressure,
+                    "reasons": item.reasons[:4],
+                }
+            )
+        return results
+
+    @staticmethod
+    def _strategy_type_hint(candidate: _Candidate, news_pressure: float) -> str:
+        if candidate.hold_candidate or not candidate.buyable:
+            return "STABLE_SHORT"
+        if news_pressure >= 0.5:
+            return "STABLE_SHORT"
+        if "surge_data" in candidate.sources or candidate.change_rate >= 5.0:
+            return "AGGRESSIVE_SHORT"
+        return "STABLE_SHORT"
 
     @staticmethod
     def _merge_rows(candidates: dict[str, _Candidate], rows: list[dict], *, source: str) -> None:

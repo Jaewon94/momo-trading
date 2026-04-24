@@ -93,12 +93,11 @@ TDD 후보:
 
 - `CandidateScoringService`를 추가했다.
 - 현재 입력은 거래량 랭킹, 급등/급락, 보유종목, 현금이다.
-- 출력은 후보 점수, source, 1주 매수 가능 여부, 보유 후보 여부, 근거 문구다.
+- 출력은 후보 점수, source, 1주 매수 가능 여부, 보유 후보 여부, 전략 타입 힌트, 사유 코드, 근거 문구다.
 - 시장 스캔 프롬프트에 deterministic 후보 top-N 요약을 함께 넣어 AI가 더 정제된 입력으로 시장 국면과 최종 종목을 판단하게 했다.
 
 다음 확장:
 
-- 전략 타입 추천과 제외 사유 코드 정교화.
 - deterministic 후보 점수 top-N은 `CANDIDATE_SCORING` decision event로 기록해 scanner-only 후보의 사후 수익률을 benchmark할 수 있게 했다.
 - 최근 후보/분석 decision event가 있는 비보유 종목은 deterministic 후보 점수에서 cooldown 감점을 적용한다. 보유종목은 매도 검토 필요성이 있어 감점하지 않는다.
 - 후보 top-N에 대해 뉴스 게이트의 부정 뉴스 압력을 계산하고, 비보유 후보에만 뉴스 압력 감점을 적용한다. 보유종목은 매도 검토 후보로 유지한다.

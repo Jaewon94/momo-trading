@@ -117,15 +117,20 @@ async def test_market_scanner_uses_broker_adapter_for_scan(monkeypatch) -> None:
     assert result["scored_candidates"][0]["symbol"] == "005930"
     assert "Deterministic 후보 점수" in captured_prompt["prompt"]
     assert "삼성전자(005930)" in captured_prompt["prompt"]
+    assert "strategy=STABLE_SHORT" in captured_prompt["prompt"]
+    assert "codes=HOLDING_REVIEW,VOLUME_RANK" in captured_prompt["prompt"]
     assert decision_events
     assert decision_events[0]["cycle_id"] == "cycle-1"
     assert decision_events[0]["decision_stage"] == "CANDIDATE_SCORING"
     assert decision_events[0]["source"] == "candidate_scoring"
     assert decision_events[0]["symbol"] == "005930"
     assert decision_events[0]["scanner_score"] == result["scored_candidates"][0]["score"]
+    assert decision_events[0]["strategy_type"] == result["scored_candidates"][0]["strategy_type_hint"]
     assert decision_events[0]["final_action"] == "CANDIDATE"
     assert decision_events[0]["risk_gate_result"] == "PASS"
     assert decision_events[0]["metadata"]["rank"] == 1
+    assert decision_events[0]["metadata"]["strategy_type_hint"] == "STABLE_SHORT"
+    assert decision_events[0]["metadata"]["reason_codes"] == ["HOLDING_REVIEW", "VOLUME_RANK"]
     assert decision_events[0]["metadata"]["news_negative_pressure"] == 0.1
     assert logs
     assert scanner._broker_adapter.calls == [

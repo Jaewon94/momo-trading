@@ -24,10 +24,15 @@ def test_candidate_scoring_service_ranks_buyable_candidates_and_marks_holdings()
 
     assert [item["symbol"] for item in result] == ["042700", "005930", "000660", "091990"]
     assert result[0]["buyable"] is True
+    assert result[0]["strategy_type_hint"] == "AGGRESSIVE_SHORT"
+    assert "SURGE_RANK" in result[0]["reason_codes"]
     assert "급등 상위" in result[0]["reasons"]
     assert result[2]["hold_candidate"] is True
+    assert result[2]["strategy_type_hint"] == "STABLE_SHORT"
+    assert "HOLDING_REVIEW" in result[2]["reason_codes"]
     assert "보유 종목" in result[2]["reasons"]
     assert result[3]["buyable"] is False
+    assert "NOT_BUYABLE" in result[3]["reason_codes"]
     assert "1주 매수 불가" in result[3]["reasons"]
 
 
@@ -50,7 +55,9 @@ def test_candidate_scoring_service_penalizes_recent_non_holding_candidates() -> 
     samsung = next(item for item in result if item["symbol"] == "005930")
     holding = next(item for item in result if item["symbol"] == "042700")
     assert "최근 분석/후보 감점" in samsung["reasons"]
+    assert "RECENT_CANDIDATE_COOLDOWN" in samsung["reason_codes"]
     assert "최근 분석/후보 감점" not in holding["reasons"]
+    assert "RECENT_CANDIDATE_COOLDOWN" not in holding["reason_codes"]
     assert result[0]["symbol"] == "042700"
 
 
@@ -73,6 +80,9 @@ def test_candidate_scoring_service_penalizes_negative_news_pressure_for_buy_cand
     samsung = next(item for item in result if item["symbol"] == "005930")
     holding = next(item for item in result if item["symbol"] == "042700")
     assert "뉴스 부정압력 0.70" in samsung["reasons"]
+    assert "NEGATIVE_NEWS_PRESSURE" in samsung["reason_codes"]
+    assert samsung["strategy_type_hint"] == "STABLE_SHORT"
     assert not any(reason.startswith("뉴스 부정압력") for reason in holding["reasons"])
+    assert "NEGATIVE_NEWS_PRESSURE" not in holding["reason_codes"]
     assert samsung["news_negative_pressure"] == 0.7
     assert holding["news_negative_pressure"] == 0.9
