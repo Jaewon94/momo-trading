@@ -95,10 +95,14 @@ async def test_market_scanner_uses_broker_adapter_for_scan(monkeypatch) -> None:
     async def fake_performance_summary() -> str:
         return "총 3거래, 승률 66.7%"
 
+    async def fake_cooldown_symbols() -> set[str]:
+        return set()
+
     monkeypatch.setattr("agent.market_scanner.activity_logger.log", fake_log)
     monkeypatch.setattr("agent.market_scanner.llm_factory.generate_tier1", fake_generate_tier1)
     monkeypatch.setattr("agent.market_scanner.decision_event_service.record_event", fake_record_event)
     monkeypatch.setattr(scanner, "_get_performance_summary", fake_performance_summary)
+    monkeypatch.setattr(scanner, "_get_recent_candidate_cooldown_symbols", fake_cooldown_symbols)
 
     result = await scanner.scan(cycle_id="cycle-1")
 

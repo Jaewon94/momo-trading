@@ -147,6 +147,7 @@
 - review cache key의 잔여시간 조건은 15분 버킷으로 조정 완료. TTL 자체는 30분 기본값을 유지한다.
 - 장중 보유 재평가 precheck/cache, 스마트 청산 precheck, 일반 분석 `PRE_ANALYSIS_GATE`, `DETERMINISTIC_FINAL_GATE`, `TIER1_COST_GATE` 판단은 `decision_events`에 연결 완료.
 - 시장 스캔 deterministic 후보 점수 top-N은 `CANDIDATE_SCORING` decision event로 기록한다. scanner score, buyable 여부, source/reason metadata를 남겨 scanner-only 후보의 사후 수익률을 비교할 수 있다.
+- 시장 스캔 후보 점수에 최근 6시간 후보/분석 decision event cooldown 감점을 반영했다. 비보유 반복 후보만 감점하고 보유종목은 매도 검토 후보로 유지한다.
 - 기능별 LLM 호출 집계는 overview API와 Admin 관측 화면 노출까지 구현 완료.
 - 뉴스 번역 `qwen3:4b` 다운그레이드는 설치 완료 후 샘플 검증까지 진행했으나 보류한다. 파싱 보강/프롬프트 조정/지연 시간 재측정 후 운영 전환 여부를 다시 판단한다.
 

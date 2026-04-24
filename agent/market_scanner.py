@@ -1,12 +1,15 @@
 """시장 스캔 + 종목 선별 통합 — MCP 데이터 병렬 수집 → AI 한 번에 분석+선별"""
 import asyncio
+from datetime import timedelta
 
 from loguru import logger
+from sqlalchemy import and_, select
 
 from analysis.feedback.performance_tracker import PerformanceTracker
 from analysis.llm.llm_factory import llm_factory
 from analysis.llm.prompts.market_scan import MARKET_SCAN_PROMPT, MARKET_SCAN_SYSTEM
 from core.database import AsyncSessionLocal
+from models.decision_event import DecisionEvent
 from services.activity_logger import activity_logger
 from services.candidate_scoring_service import candidate_scoring_service
 from services.decision_event_service import decision_event_service
@@ -98,6 +101,7 @@ class MarketScanner:
         if dynamic_limits:
             max_pos_pct = dynamic_limits.get("max_position_pct", 20.0) / 100
         max_per_stock = available_cash * max_pos_pct
+        cooldown_symbols = await self._get_recent_candidate_cooldown_symbols()
 
         # 현금 비율 매우 낮으면 보유종목 매도 검토 힌트
         rotation_hint = ""
@@ -114,6 +118,7 @@ class MarketScanner:
             holdings=holdings,
             available_cash=available_cash,
             max_candidates=8,
+            cooldown_symbols=cooldown_symbols,
         )
         await self._record_scored_candidate_events(
             cycle_id=cycle_id,
@@ -201,6 +206,7 @@ class MarketScanner:
                     "selected_count": len(selected),
                     "selected": selected,
                     "scored_candidates": scored_candidates,
+                    "cooldown_symbols": sorted(cooldown_symbols),
                     "market_regime": parsed.get("market_regime", ""),
                     "market_analysis": market_analysis,
                     "available_cash": available_cash,
@@ -264,6 +270,38 @@ class MarketScanner:
         except Exception as e:
             logger.warning("성과 요약 조회 실패: {}", str(e))
             return "매매 이력 없음"
+
+    async def _get_recent_candidate_cooldown_symbols(self) -> set[str]:
+        """최근 후보/분석 종목을 감점 대상으로 조회한다."""
+        try:
+            from util.time_util import now_kst
+
+            start_at = now_kst() - timedelta(hours=6)
+            stages = {
+                "CANDIDATE_SCORING",
+                "PRE_ANALYSIS_GATE",
+                "DETERMINISTIC_FINAL_GATE",
+                "TIER1_COST_GATE",
+                "ORDER_GATE",
+            }
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(DecisionEvent.symbol)
+                    .where(and_(
+                        DecisionEvent.created_at >= start_at,
+                        DecisionEvent.decision_stage.in_(stages),
+                    ))
+                    .order_by(DecisionEvent.created_at.desc())
+                    .limit(200)
+                )
+                return {
+                    str(symbol).strip()
+                    for symbol in result.scalars().all()
+                    if str(symbol or "").strip()
+                }
+        except Exception as exc:
+            logger.debug("최근 후보 cooldown 조회 실패: {}", str(exc))
+            return set()
 
     async def _get_volume_rank(self) -> list[dict]:
         stocks = await self._broker_adapter.get_volume_rank()

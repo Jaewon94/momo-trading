@@ -29,8 +29,10 @@ class CandidateScoringService:
         holdings: list[Any] | None,
         available_cash: float,
         max_candidates: int = 8,
+        cooldown_symbols: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         candidates: dict[str, _Candidate] = {}
+        cooldown_set = {str(symbol).strip() for symbol in (cooldown_symbols or set()) if str(symbol).strip()}
 
         self._merge_rows(candidates, volume_rank or [], source="volume_rank")
         self._merge_rows(candidates, surge_data or [], source="surge_data")
@@ -58,6 +60,9 @@ class CandidateScoringService:
                 candidate.buyable = False
                 candidate.score -= 100.0
                 candidate.reasons.append("1주 매수 불가")
+            if candidate.symbol in cooldown_set and not candidate.hold_candidate:
+                candidate.score -= 35.0
+                candidate.reasons.append("최근 분석/후보 감점")
 
         ranked = sorted(
             candidates.values(),
@@ -147,4 +152,3 @@ class CandidateScoringService:
 
 
 candidate_scoring_service = CandidateScoringService()
-

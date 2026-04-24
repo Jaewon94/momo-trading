@@ -30,3 +30,25 @@ def test_candidate_scoring_service_ranks_buyable_candidates_and_marks_holdings()
     assert result[3]["buyable"] is False
     assert "1주 매수 불가" in result[3]["reasons"]
 
+
+def test_candidate_scoring_service_penalizes_recent_non_holding_candidates() -> None:
+    service = CandidateScoringService()
+
+    result = service.score_candidates(
+        volume_rank=[
+            {"symbol": "005930", "name": "삼성전자", "price": 71000, "change_rate": 1.2, "volume": 5000000},
+            {"symbol": "042700", "name": "한미반도체", "price": 110000, "change_rate": 2.0, "volume": 4000000},
+        ],
+        surge_data=[],
+        drop_data=[],
+        holdings=[SimpleNamespace(symbol="042700", name="한미반도체", current_price=110000, pnl_rate=1.1)],
+        available_cash=300000,
+        max_candidates=2,
+        cooldown_symbols={"005930", "042700"},
+    )
+
+    samsung = next(item for item in result if item["symbol"] == "005930")
+    holding = next(item for item in result if item["symbol"] == "042700")
+    assert "최근 분석/후보 감점" in samsung["reasons"]
+    assert "최근 분석/후보 감점" not in holding["reasons"]
+    assert result[0]["symbol"] == "042700"
