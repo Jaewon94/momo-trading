@@ -107,6 +107,8 @@
 - `HoldingsPrecheckService` 구현. 장중 보유 재평가와 스마트 청산에서 `holding_policy`가 명확한 SELL 사유를 내는 종목은 LLM 전에 걸러 즉시 코드 판단을 사용한다.
 - 현재 precheck가 바로 차단하는 사유는 `TradeResult 없음`, `매입가 정보 없음`, `손실 과대`, `보유일 초과`, `AI 신뢰도 저하`, `목표가 도달` 계열이다.
 - precheck 평가 자체가 불가능하면 예외를 삼키고 기존 LLM 경로를 그대로 유지해 회귀를 막는다.
+- `HoldingsReviewCacheService` 구현. 장중 보유 재평가에서 동일 종목/가격/손익/보유일/활성 임계값/시장 국면/남은 시간 조건이면 짧은 TTL 동안 이전 LLM 결정을 재사용한다.
+- 캐시 hit 종목은 `AI_SKIPPED`에 `HOLDINGS_REVIEW_CACHE/CACHE_HIT/TIER1`로 기록한다.
 - LLM cooldown incident dedupe.
 
 ### Admin UX 후속
@@ -133,8 +135,9 @@
 ## 권장 실행 순서
 
 1. `POST /api/v1/admin/stocks/bootstrap-universe?rank_limit=50&apply=false` dry-run 후 `apply=true`로 최소 국내 종목 universe를 채운다. 현재 로컬 DB 기준 `stocks=0`이라 먼저 운영 적용 확인이 필요하다.
-2. 보유종목 장중 재평가/스마트 청산에서 명확한 HOLD 케이스까지 deterministic skip으로 확장할지 검토한다.
-3. 뉴스 gate의 Tier2 전 차단 이동은 shadow/rollout 표본을 더 확인한 뒤 재검토한다.
+2. 보유종목 장중 재평가에서 명확한 HOLD 케이스까지 deterministic skip으로 확장할지 shadow 데이터로 검토한다.
+3. 스마트 청산에도 review cache가 필요한지 분리 검토한다.
+4. 뉴스 gate의 Tier2 전 차단 이동은 shadow/rollout 표본을 더 확인한 뒤 재검토한다.
 
 ## 당장 바꾸지 말 것
 

@@ -196,6 +196,9 @@ TDD 후보:
 - 장중 보유 재평가와 스마트 청산에서 `holding_policy`가 명확한 SELL 사유를 내는 종목은 LLM 전에 걸러 코드 판단을 바로 사용한다.
 - 현재 precheck 사유는 `TradeResult 없음`, `매입가 정보 없음`, `손실 과대`, `보유일 초과`, `AI 신뢰도 저하`, `목표가 도달` 계열이다.
 - precheck 평가 자체가 실패하면 예외를 삼키고 기존 LLM 경로를 그대로 유지한다.
+- 2026-04-24 추가 구현으로 `HoldingsReviewCacheService`를 붙였다.
+- 장중 보유 재평가는 동일 종목/가격/손익/보유일/활성 임계값/시장 국면/남은 시간 조건이면 이전 Tier1 결정을 재사용한다.
+- 캐시 hit는 `AI_SKIPPED` metric에 `HOLDINGS_REVIEW_CACHE/CACHE_HIT/TIER1`로 기록한다.
 
 문제:
 
@@ -211,7 +214,7 @@ TDD 후보:
 다음 확장:
 
 - 명확한 HOLD 정상 상태까지 deterministic skip을 넓힐지 shadow 데이터로 검토.
-- 보유종목 review cache를 붙여 30분 내 동일 조건 재호출을 줄인다.
+- review cache TTL과 key 조건을 운영 데이터로 조정한다.
 - precheck reason code를 `AI_SKIPPED` metric과 리포트에 더 직접 연결한다.
 
 TDD 후보:
@@ -332,14 +335,16 @@ TDD 후보:
 ### Phase 2: Tier1/Tier2 입력 품질과 호출 전 gate 강화
 
 1. 뉴스 source별 blocked candidate forward return attribution 고도화. 1차 read-only 비교는 완료.
-2. 보유종목 재평가 비용 절감 설계.
+2. 보유종목 재평가 cache/precheck 운영 표본 확인과 TTL/key 조정.
 3. 뉴스 gate의 Tier2 전 차단 이동은 shadow/rollout 표본을 더 확인한 뒤 재검토.
 
 ### Phase 3: 보유종목 재평가 비용 절감
 
-1. `holding_policy` primary 전환.
-2. 예외 조건에서만 LLM 호출.
-3. 보유종목 review cooldown/cache.
+1. `holding_policy` 기반 deterministic precheck. 구현 완료.
+2. 보유종목 review cache. 구현 완료.
+3. HOLD 정상 상태 deterministic skip shadow 검증.
+4. 스마트 청산 precheck/cache 확장 여부 검토.
+5. review cache hit율/오판율 리포트.
 
 ### Phase 4: 장마감 리뷰 구조화
 

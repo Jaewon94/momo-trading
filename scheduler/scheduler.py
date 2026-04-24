@@ -1463,8 +1463,10 @@ class TradingScheduler:
         import asyncio
         import time
 
+        from services.ai_skip_metric_service import ai_skip_metric_service
         from services.activity_logger import activity_logger
         from services.holdings_precheck_service import holdings_precheck_service
+        from services.holdings_review_cache_service import holdings_review_cache_service
         from util.time_util import now_kst
         from scheduler.market_calendar import market_calendar
 
@@ -1519,6 +1521,7 @@ class TradingScheduler:
 
             # ── 2) LLM Tier1 호출 ──
             llm_decisions = {}
+            cached_decisions = {}
             prechecked_decisions = {}
             llm_provider = ""
             llm_elapsed_ms = 0
@@ -1554,7 +1557,27 @@ class TradingScheduler:
                             "adjusted_take_profit_price": None,
                         }
                     else:
-                        llm_candidates.append(data)
+                        cache_key = holdings_review_cache_service.build_key(
+                            holding_data=data,
+                            market_regime=market_regime,
+                            market_context=market_context,
+                            minutes_left=minutes_left,
+                        )
+                        cached = holdings_review_cache_service.get(cache_key)
+                        if cached:
+                            cached_decisions[symbol] = dict(cached)
+                            await ai_skip_metric_service.record(
+                                stage="HOLDINGS_REVIEW_CACHE",
+                                reason_code="CACHE_HIT",
+                                skipped_tier="TIER1",
+                                symbol=symbol,
+                                detail={
+                                    "action": cached.get("action"),
+                                    "confidence": cached.get("confidence") or 0,
+                                },
+                            )
+                        else:
+                            llm_candidates.append(data)
 
                 if llm_candidates:
                     prompt = build_holdings_review_prompt(
@@ -1579,10 +1602,17 @@ class TradingScheduler:
                                     "adjusted_stop_loss_price": d.get("adjusted_stop_loss_price"),
                                     "adjusted_take_profit_price": d.get("adjusted_take_profit_price"),
                                 }
+                                cache_key = holdings_review_cache_service.build_key(
+                                    holding_data=next(item for item in holdings_data if item["symbol"] == symbol),
+                                    market_regime=market_regime,
+                                    market_context=market_context,
+                                    minutes_left=minutes_left,
+                                )
+                                holdings_review_cache_service.put(cache_key, llm_decisions[symbol])
 
                 logger.info(
-                    "장중 보유 재평가 완료: LLM {}건 / 정책 사전판단 {}건 / {} ({}ms)",
-                    len(llm_decisions), len(prechecked_decisions), llm_provider, llm_elapsed_ms,
+                    "장중 보유 재평가 완료: LLM {}건 / 캐시 {}건 / 정책 사전판단 {}건 / {} ({}ms)",
+                    len(llm_decisions), len(cached_decisions), len(prechecked_decisions), llm_provider, llm_elapsed_ms,
                 )
             except Exception as e:
                 logger.warning("장중 보유 재평가 LLM 실패 → 폴백: {}", str(e))
@@ -1604,6 +1634,11 @@ class TradingScheduler:
                     decision = prechecked_decisions[symbol]
                     action = decision["action"]
                     reason = decision["reason"]
+                    conf = decision["confidence"]
+                elif symbol in cached_decisions:
+                    decision = cached_decisions[symbol]
+                    action = decision["action"]
+                    reason = f"{decision['reason']} (캐시)"
                     conf = decision["confidence"]
                 elif symbol in llm_decisions:
                     decision = llm_decisions[symbol]
@@ -1720,7 +1755,12 @@ class TradingScheduler:
 
             # ── 4) 활동 로그 ──
             if log_lines:
-                provider_text = f"\nLLM: {llm_provider} ({llm_elapsed_ms}ms)" if llm_provider else "\n(코드 룰 폴백)"
+                if llm_provider:
+                    provider_text = f"\nLLM: {llm_provider} ({llm_elapsed_ms}ms)"
+                elif cached_decisions:
+                    provider_text = "\n(보유 재평가 캐시 재사용)"
+                else:
+                    provider_text = "\n(코드 룰 폴백)"
                 await activity_logger.log(
                     ActivityType.HOLDINGS_CHECK, ActivityPhase.PROGRESS,
                     f"🔄 장중 보유 재평가 (잔여 {minutes_left}분):\n"

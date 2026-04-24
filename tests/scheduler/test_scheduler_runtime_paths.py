@@ -2221,6 +2221,117 @@ async def test_intraday_holdings_review_queues_add_buy_followup(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
+async def test_intraday_holdings_review_uses_cache_without_llm(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    logs: list[str] = []
+    thresholds: list[tuple[str, dict]] = []
+    skipped_metrics: list[dict] = []
+    trade_result = SimpleNamespace(ai_stop_loss_price=None, ai_target_price=None, stock_name="삼성전자", strategy_type="STABLE_SHORT")
+    holding = SimpleNamespace(symbol="005930", name="삼성전자", quantity=2)
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.flushed = 0
+            self.committed = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def flush(self) -> None:
+            self.flushed += 1
+
+        async def commit(self) -> None:
+            self.committed += 1
+
+    session = FakeSession()
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_open_buy(self, _symbol: str):
+            return trade_result
+
+    async def fake_get_holdings() -> list:
+        return [holding]
+
+    async def fake_collect_holdings_data(_sellable):
+        return (
+            [{
+                "symbol": "005930",
+                "stock_name": "삼성전자",
+                "strategy_type": "STABLE_SHORT",
+                "avg_price": 70_000,
+                "current_price": 72_000,
+                "pnl_rate": 2.857,
+                "quantity": 2,
+                "hold_days": 1,
+                "max_hold_days": 5,
+                "confidence": 0.71,
+                "target_price": 74_500,
+                "stop_loss_price": 69_000,
+                "active_stop_loss": 69_000,
+                "active_take_profit": 74_500,
+            }],
+            {"005930": (holding, trade_result, 72_000)},
+            [],
+        )
+
+    async def fail_generate_tier1(prompt, system_prompt=None):
+        raise AssertionError("LLM should not be called when holdings review cache hits")
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append(args[2])
+
+    async def fake_skip_metric(**kwargs) -> None:
+        skipped_metrics.append(kwargs)
+
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_automated_trading_session", lambda: True)
+    monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
+    monkeypatch.setattr(scheduler, "_collect_holdings_data", fake_collect_holdings_data)
+    monkeypatch.setattr("util.time_util.now_kst", lambda: __import__("datetime").datetime(2026, 4, 2, 13, 30))
+    monkeypatch.setattr(
+        "services.holdings_precheck_service.holdings_precheck_service.evaluate",
+        lambda **kwargs: SimpleNamespace(should_skip_llm=False, action="HOLD", reason="", source="TEST"),
+    )
+    monkeypatch.setattr(
+        "services.holdings_review_cache_service.holdings_review_cache_service.build_key",
+        lambda **kwargs: "cache-key",
+    )
+    monkeypatch.setattr(
+        "services.holdings_review_cache_service.holdings_review_cache_service.get",
+        lambda key: {
+            "action": "HOLD",
+            "reason": "상승 추세 유지",
+            "confidence": 0.88,
+            "adjusted_stop_loss_price": 69_000,
+            "adjusted_take_profit_price": 74_500,
+        },
+    )
+    monkeypatch.setattr("analysis.llm.prompts.holdings_review.build_holdings_review_prompt", lambda *args: "prompt")
+    monkeypatch.setattr("analysis.llm.llm_factory.llm_factory.generate_tier1", fail_generate_tier1)
+    monkeypatch.setattr("realtime.event_detector.event_detector.set_thresholds", lambda symbol, **kwargs: thresholds.append((symbol, kwargs)))
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: session)
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
+    monkeypatch.setattr("services.ai_skip_metric_service.ai_skip_metric_service.record", fake_skip_metric)
+    monkeypatch.setattr("agent.trading_agent.trading_agent._market_regime", "BULLISH")
+    monkeypatch.setattr("agent.trading_agent.trading_agent._market_context", "강세 유지")
+
+    await scheduler._intraday_holdings_review()
+
+    assert thresholds == [("005930", {"stop_loss": 69_000.0, "take_profit": 74_500.0})]
+    assert session.flushed == 1
+    assert session.committed == 1
+    assert any("캐시" in message for message in logs)
+    assert any(item["stage"] == "HOLDINGS_REVIEW_CACHE" and item["reason_code"] == "CACHE_HIT" for item in skipped_metrics)
+
+
+@pytest.mark.asyncio
 async def test_check_overnight_positions_restores_thresholds_and_warns_on_max_hold(monkeypatch) -> None:
     scheduler = TradingScheduler()
     logs: list[str] = []
