@@ -98,11 +98,16 @@ async def test_market_scanner_uses_broker_adapter_for_scan(monkeypatch) -> None:
     async def fake_cooldown_symbols() -> set[str]:
         return set()
 
+    async def fake_news_pressures(candidates) -> dict[str, float]:
+        assert candidates
+        return {"005930": 0.1}
+
     monkeypatch.setattr("agent.market_scanner.activity_logger.log", fake_log)
     monkeypatch.setattr("agent.market_scanner.llm_factory.generate_tier1", fake_generate_tier1)
     monkeypatch.setattr("agent.market_scanner.decision_event_service.record_event", fake_record_event)
     monkeypatch.setattr(scanner, "_get_performance_summary", fake_performance_summary)
     monkeypatch.setattr(scanner, "_get_recent_candidate_cooldown_symbols", fake_cooldown_symbols)
+    monkeypatch.setattr(scanner, "_get_candidate_news_pressures", fake_news_pressures)
 
     result = await scanner.scan(cycle_id="cycle-1")
 
@@ -121,6 +126,7 @@ async def test_market_scanner_uses_broker_adapter_for_scan(monkeypatch) -> None:
     assert decision_events[0]["final_action"] == "CANDIDATE"
     assert decision_events[0]["risk_gate_result"] == "PASS"
     assert decision_events[0]["metadata"]["rank"] == 1
+    assert decision_events[0]["metadata"]["news_negative_pressure"] == 0.1
     assert logs
     assert scanner._broker_adapter.calls == [
         ("balance", ""),

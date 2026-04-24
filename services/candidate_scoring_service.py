@@ -30,9 +30,15 @@ class CandidateScoringService:
         available_cash: float,
         max_candidates: int = 8,
         cooldown_symbols: set[str] | None = None,
+        news_pressure_by_symbol: dict[str, float] | None = None,
     ) -> list[dict[str, Any]]:
         candidates: dict[str, _Candidate] = {}
         cooldown_set = {str(symbol).strip() for symbol in (cooldown_symbols or set()) if str(symbol).strip()}
+        news_pressure = {
+            str(symbol).strip(): float(value or 0.0)
+            for symbol, value in (news_pressure_by_symbol or {}).items()
+            if str(symbol).strip()
+        }
 
         self._merge_rows(candidates, volume_rank or [], source="volume_rank")
         self._merge_rows(candidates, surge_data or [], source="surge_data")
@@ -63,6 +69,11 @@ class CandidateScoringService:
             if candidate.symbol in cooldown_set and not candidate.hold_candidate:
                 candidate.score -= 35.0
                 candidate.reasons.append("최근 분석/후보 감점")
+            pressure = max(float(news_pressure.get(candidate.symbol) or 0.0), 0.0)
+            if pressure >= 0.25 and not candidate.hold_candidate:
+                penalty = min(max(pressure * 40.0, 10.0), 45.0)
+                candidate.score -= penalty
+                candidate.reasons.append(f"뉴스 부정압력 {pressure:.2f}")
 
         ranked = sorted(
             candidates.values(),
@@ -84,6 +95,7 @@ class CandidateScoringService:
                 "sources": sorted(item.sources),
                 "buyable": item.buyable,
                 "hold_candidate": item.hold_candidate,
+                "news_negative_pressure": round(max(float(news_pressure.get(item.symbol) or 0.0), 0.0), 4),
                 "reasons": item.reasons[:4],
             }
             for item in selected

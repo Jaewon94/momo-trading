@@ -52,3 +52,27 @@ def test_candidate_scoring_service_penalizes_recent_non_holding_candidates() -> 
     assert "최근 분석/후보 감점" in samsung["reasons"]
     assert "최근 분석/후보 감점" not in holding["reasons"]
     assert result[0]["symbol"] == "042700"
+
+
+def test_candidate_scoring_service_penalizes_negative_news_pressure_for_buy_candidates() -> None:
+    service = CandidateScoringService()
+
+    result = service.score_candidates(
+        volume_rank=[
+            {"symbol": "005930", "name": "삼성전자", "price": 71000, "change_rate": 1.2, "volume": 5000000},
+            {"symbol": "042700", "name": "한미반도체", "price": 110000, "change_rate": 2.0, "volume": 4000000},
+        ],
+        surge_data=[],
+        drop_data=[],
+        holdings=[SimpleNamespace(symbol="042700", name="한미반도체", current_price=110000, pnl_rate=1.1)],
+        available_cash=300000,
+        max_candidates=2,
+        news_pressure_by_symbol={"005930": 0.7, "042700": 0.9},
+    )
+
+    samsung = next(item for item in result if item["symbol"] == "005930")
+    holding = next(item for item in result if item["symbol"] == "042700")
+    assert "뉴스 부정압력 0.70" in samsung["reasons"]
+    assert not any(reason.startswith("뉴스 부정압력") for reason in holding["reasons"])
+    assert samsung["news_negative_pressure"] == 0.7
+    assert holding["news_negative_pressure"] == 0.9

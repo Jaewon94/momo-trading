@@ -13,6 +13,7 @@ from models.decision_event import DecisionEvent
 from services.activity_logger import activity_logger
 from services.candidate_scoring_service import candidate_scoring_service
 from services.decision_event_service import decision_event_service
+from services.news_signal_service import news_signal_service
 from trading.adapters.base import BrokerAdapter
 from trading.broker_factory import get_broker_adapter
 from trading.enums import ActivityPhase, ActivityType
@@ -120,6 +121,18 @@ class MarketScanner:
             max_candidates=8,
             cooldown_symbols=cooldown_symbols,
         )
+        news_pressure_by_symbol = await self._get_candidate_news_pressures(scored_candidates)
+        if news_pressure_by_symbol:
+            scored_candidates = candidate_scoring_service.score_candidates(
+                volume_rank=volume_rank,
+                surge_data=surge_data,
+                drop_data=drop_data,
+                holdings=holdings,
+                available_cash=available_cash,
+                max_candidates=8,
+                cooldown_symbols=cooldown_symbols,
+                news_pressure_by_symbol=news_pressure_by_symbol,
+            )
         await self._record_scored_candidate_events(
             cycle_id=cycle_id,
             scored_candidates=scored_candidates,
@@ -207,6 +220,7 @@ class MarketScanner:
                     "selected": selected,
                     "scored_candidates": scored_candidates,
                     "cooldown_symbols": sorted(cooldown_symbols),
+                    "news_pressure_by_symbol": news_pressure_by_symbol,
                     "market_regime": parsed.get("market_regime", ""),
                     "market_analysis": market_analysis,
                     "available_cash": available_cash,
@@ -303,6 +317,33 @@ class MarketScanner:
             logger.debug("최근 후보 cooldown 조회 실패: {}", str(exc))
             return set()
 
+    async def _get_candidate_news_pressures(self, scored_candidates: list[dict]) -> dict[str, float]:
+        """후보 top-N에 대해서만 뉴스 부정 압력을 계산한다."""
+        symbols = [
+            str(item.get("symbol") or "").strip()
+            for item in scored_candidates[:8]
+            if str(item.get("symbol") or "").strip()
+        ]
+        if not symbols:
+            return {}
+
+        pressures: dict[str, float] = {}
+        try:
+            async with AsyncSessionLocal() as session:
+                for symbol in symbols:
+                    result = await news_signal_service.evaluate_gate(
+                        session,
+                        symbol=symbol,
+                        horizon="SHORT",
+                    )
+                    pressure = float(result.get("negative_pressure") or 0.0)
+                    if pressure > 0:
+                        pressures[symbol] = round(pressure, 4)
+        except Exception as exc:
+            logger.debug("후보 뉴스 압력 조회 실패: {}", str(exc))
+            return {}
+        return pressures
+
     async def _get_volume_rank(self) -> list[dict]:
         stocks = await self._broker_adapter.get_volume_rank()
         return self._filter_untradeable(stocks)
@@ -384,6 +425,7 @@ class MarketScanner:
                         "sources": item.get("sources", []),
                         "buyable": buyable,
                         "hold_candidate": bool(item.get("hold_candidate")),
+                        "news_negative_pressure": item.get("news_negative_pressure"),
                         "change_rate": item.get("change_rate"),
                         "volume": item.get("volume"),
                     },
