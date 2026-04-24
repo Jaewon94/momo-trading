@@ -23,6 +23,7 @@ from realtime.event_detector import event_detector
 from scheduler.market_calendar import market_calendar
 from services.activity_logger import activity_logger
 from services.ai_skip_metric_service import ai_skip_metric_service
+from services.decision_event_service import decision_event_service
 from services.deterministic_final_gate_service import deterministic_final_gate_service
 from services.deterministic_prompt_context_service import deterministic_prompt_context_service
 from services.news_gate_rollout_service import news_gate_rollout_service
@@ -119,6 +120,54 @@ class TradingAgent:
         """종목코드 → 종목명 반환 (캐시에 없으면 코드 그대로)"""
         normalized = normalize_krx_symbol(symbol)
         return self._symbol_names.get(symbol) or self._symbol_names.get(normalized) or normalized
+
+    async def _record_ai_skip_decision_event(
+        self,
+        *,
+        stock_info: dict,
+        cycle_id: str | None,
+        decision_stage: str,
+        source: str,
+        reason_code: str,
+        final_action: str,
+        reference_price: float | None,
+        reason: str,
+        metadata: dict | None = None,
+    ) -> None:
+        """AI skip gate도 후보별 forward return 라벨링 대상으로 남긴다."""
+        try:
+            symbol = normalize_krx_symbol(str(stock_info.get("symbol", "")))
+            await decision_event_service.record_event(
+                cycle_id=cycle_id,
+                symbol=symbol,
+                stock_name=str(stock_info.get("name") or symbol),
+                market=str(stock_info.get("market") or "KRX"),
+                decision_stage=decision_stage,
+                source=source,
+                strategy_type=str(stock_info.get("strategy_type") or ""),
+                scanner_score=stock_info.get("scanner_score") or stock_info.get("score"),
+                tier1_decision="SKIP",
+                risk_gate_result=reason_code,
+                final_action=final_action,
+                confidence=stock_info.get("confidence"),
+                reference_price=reference_price,
+                provider="DETERMINISTIC",
+                model=source.upper(),
+                status="RECORDED",
+                reason=reason,
+                metadata={
+                    "ai_skipped": True,
+                    "reason_code": reason_code,
+                    "source": source,
+                    "stock_info": {
+                        "trigger": stock_info.get("trigger"),
+                        "strategy_type": stock_info.get("strategy_type"),
+                    },
+                    **(metadata or {}),
+                },
+            )
+        except Exception as exc:
+            logger.debug("AI skip decision event 기록 실패 (무시): {}", str(exc))
 
     async def run_cycle(
         self,
@@ -666,6 +715,17 @@ class TradingAgent:
                 cycle_id=cycle_id,
                 symbol=symbol,
                 detail=pre_gate.detail,
+            )
+            await self._record_ai_skip_decision_event(
+                stock_info=stock_info,
+                cycle_id=cycle_id,
+                decision_stage="PRE_ANALYSIS_GATE",
+                source="pre_analysis_gate",
+                reason_code=pre_gate.code,
+                final_action="SKIP",
+                reference_price=current_price,
+                reason=message,
+                metadata=pre_gate.detail,
             )
             return result
 

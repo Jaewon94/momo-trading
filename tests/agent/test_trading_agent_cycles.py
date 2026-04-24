@@ -664,12 +664,17 @@ async def test_analyze_and_trade_skips_tier1_when_pre_analysis_gate_blocks_beari
     agent = TradingAgent(broker_adapter=StubBrokerAdapter())
     logs = []
     skipped_metrics = []
+    decision_events = []
 
     async def fake_log(*args, **kwargs) -> None:
         logs.append((args, kwargs))
 
     async def fake_record_ai_skip(**kwargs) -> None:
         skipped_metrics.append(kwargs)
+
+    async def fake_record_event(**kwargs):
+        decision_events.append(kwargs)
+        return SimpleNamespace(id="pre-analysis-event-1")
 
     async def fake_fetch_symbol_market_data(_symbol: str):
         price_resp = SimpleNamespace(success=True, data={"price": 70_000}, error=None)
@@ -689,6 +694,7 @@ async def test_analyze_and_trade_skips_tier1_when_pre_analysis_gate_blocks_beari
 
     monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
     monkeypatch.setattr("agent.trading_agent.ai_skip_metric_service.record", fake_record_ai_skip)
+    monkeypatch.setattr("agent.trading_agent.decision_event_service.record_event", fake_record_event)
     monkeypatch.setattr(agent, "_fetch_symbol_market_data", fake_fetch_symbol_market_data)
     monkeypatch.setattr("agent.trading_agent.chart_analyzer.analyze", fake_chart_analyze)
     monkeypatch.setattr(agent, "_tier1_analysis", fail_tier1_analysis)
@@ -712,6 +718,12 @@ async def test_analyze_and_trade_skips_tier1_when_pre_analysis_gate_blocks_beari
             "detail": {"direction": "BEARISH", "confidence": 0.8},
         }
     ]
+    assert decision_events[0]["decision_stage"] == "PRE_ANALYSIS_GATE"
+    assert decision_events[0]["source"] == "pre_analysis_gate"
+    assert decision_events[0]["risk_gate_result"] == "BEARISH_PRE_GATE"
+    assert decision_events[0]["final_action"] == "SKIP"
+    assert decision_events[0]["reference_price"] == 70_000
+    assert decision_events[0]["metadata"]["ai_skipped"] is True
 
 
 @pytest.mark.asyncio
