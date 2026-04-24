@@ -198,6 +198,7 @@ TDD 후보:
 - precheck 평가 자체가 실패하면 예외를 삼키고 기존 LLM 경로를 그대로 유지한다.
 - 2026-04-24 추가 구현으로 `HoldingsReviewCacheService`를 붙였다.
 - 장중 보유 재평가는 동일 종목/가격/손익/보유일/활성 임계값/시장 국면/남은 시간 조건이면 이전 Tier1 결정을 재사용한다.
+- 잔여 거래 시간은 15분 버킷으로 정규화해 몇 분 차이만으로 cache hit가 깨지지 않게 조정했다.
 - 캐시 hit는 `AI_SKIPPED` metric에 `HOLDINGS_REVIEW_CACHE/CACHE_HIT/TIER1`로 기록한다.
 - 2026-04-24 추가 구현으로 `HOLDINGS_PRECHECK_SKIP_CLEAR_HOLD_ENABLED=false` 플래그를 추가했다. 활성화 시 명확한 HOLD 조건은 LLM 전에 통과시킬 수 있지만, 기본값은 보수적으로 OFF다.
 - 보유종목 precheck skip은 `AI_SKIPPED` metric에 `HOLDINGS_PRECHECK/{SELL|HOLD}/TIER1`로 기록한다.
@@ -224,7 +225,7 @@ TDD 후보:
 다음 확장:
 
 - 명확한 HOLD skip 플래그는 `AI_SKIPPED/HOLDINGS_PRECHECK` 표본이 쌓인 뒤 다시 판단한다. 현재는 0건이라 OFF 유지.
-- review cache TTL과 key 조건을 운영 데이터로 조정한다.
+- review cache key의 잔여시간 조건은 15분 버킷으로 조정 완료. 다음은 hit율/오판율 운영 표본 확인이다.
 - Tier2 전 final/cost gate도 `decision_events`에 연결 완료. 이후 forward return labeling 결과를 보고 gate 기준을 조정한다.
 
 TDD 후보:

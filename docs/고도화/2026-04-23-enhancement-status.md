@@ -118,6 +118,7 @@
 - `HOLDINGS_PRECHECK_SKIP_CLEAR_HOLD_ENABLED=false` 기본값으로 명확한 HOLD skip 경로를 추가했다. 기본값은 보수적으로 꺼두며, 활성화 시 수익권, 신뢰도 0.65 이상, 목표가까지 1% 이상 여유, 최대 보유일 임박 아님 조건을 모두 만족해야 HOLD를 LLM 없이 통과시킨다.
 - precheck 평가 자체가 불가능하면 예외를 삼키고 기존 LLM 경로를 그대로 유지해 회귀를 막는다.
 - `HoldingsReviewCacheService` 구현. 장중 보유 재평가에서 동일 종목/가격/손익/보유일/활성 임계값/시장 국면/남은 시간 조건이면 짧은 TTL 동안 이전 LLM 결정을 재사용한다.
+- review cache key의 `minutes_left`는 15분 버킷으로 정규화한다. 몇 분 차이만으로 cache hit가 깨지는 문제를 줄이되, 가격/손익/임계값/시장 문맥이 바뀌면 기존처럼 miss가 난다.
 - 캐시 hit 종목은 `AI_SKIPPED`에 `HOLDINGS_REVIEW_CACHE/CACHE_HIT/TIER1`로 기록한다.
 - 보유종목 precheck skip도 `AI_SKIPPED`에 `HOLDINGS_PRECHECK/{SELL|HOLD}/TIER1`로 기록한다.
 - Admin observability overview에 `ai_skipped` 요약을 추가했다. stage/reason/tier/symbol/recent 표본을 API에서 확인할 수 있어 HOLD skip 플래그 활성화 전 운영 표본을 볼 수 있다.
@@ -141,7 +142,7 @@
 
 - 보유종목 명확 HOLD skip은 플래그 기반 코드 경로까지 구현 완료. 운영 기본값은 OFF이며, 최근 표본이 0건이라 아직 활성화하지 않는다.
 - 스마트 청산 review cache는 현재 보류한다. `_force_liquidation()`에서 청산 시각에 단발 호출되는 경로라 반복 호출 절감 효과가 작고, 캐시가 청산 직전 최신 판단을 흐릴 수 있다.
-- review cache TTL/key 조건 운영 데이터 기준 조정.
+- review cache key의 잔여시간 조건은 15분 버킷으로 조정 완료. TTL 자체는 30분 기본값을 유지한다.
 - 장중 보유 재평가 precheck/cache, 스마트 청산 precheck, 일반 분석 `PRE_ANALYSIS_GATE`, `DETERMINISTIC_FINAL_GATE`, `TIER1_COST_GATE` 판단은 `decision_events`에 연결 완료.
 - 뉴스 번역 `qwen3:4b` 다운그레이드는 모델 설치 완료 후 적용한다. 설치 전 설정만 변경하면 번역 실패 위험이 있어 현재는 `qwen3:14b` 유지.
 
@@ -170,7 +171,7 @@
 
 1. 진행 중인 `qwen3:4b` 설치가 완료되면 뉴스 번역 모델을 `qwen3:4b`로 전환하고 observability 추천 상태를 재확인한다.
 2. `AI_SKIPPED/HOLDINGS_PRECHECK` 표본이 쌓이면 `HOLDINGS_PRECHECK_SKIP_CLEAR_HOLD_ENABLED` 활성화 여부를 결정한다.
-3. 장중 보유 재평가 review cache TTL/key 조건을 운영 데이터 기준으로 조정한다.
+3. 장중 보유 재평가 review cache hit율/오판율을 운영 표본으로 확인한다.
 4. 뉴스 gate의 Tier2 전 차단 이동은 shadow/rollout 표본을 더 확인한 뒤 재검토한다.
 
 ## 당장 바꾸지 말 것

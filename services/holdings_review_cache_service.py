@@ -47,7 +47,7 @@ class HoldingsReviewCacheService:
             "active_take_profit": self._optional_round(holding_data.get("active_take_profit"), 2),
             "market_regime": str(market_regime or "").upper(),
             "market_context_hash": self._hash_text(market_context),
-            "minutes_left": int(minutes_left or 0),
+            "minutes_left_bucket": self._minutes_left_bucket(minutes_left),
         }
         raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
@@ -81,6 +81,15 @@ class HoldingsReviewCacheService:
     @staticmethod
     def _hash_text(text: str) -> str:
         return hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()[:16]
+
+    @staticmethod
+    def _minutes_left_bucket(minutes_left: int) -> int:
+        bucket_min = max(
+            int(getattr(settings, "HOLDINGS_REVIEW_CACHE_MINUTES_LEFT_BUCKET_MIN", 15) or 15),
+            1,
+        )
+        value = max(int(minutes_left or 0), 0)
+        return (value // bucket_min) * bucket_min
 
     @staticmethod
     def _optional_round(value, digits: int) -> float | None:
