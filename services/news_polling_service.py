@@ -14,7 +14,6 @@ from services.cnbc_news_service import cnbc_news_service
 from services.investing_news_service import investing_news_service
 from services.nasdaq_news_service import nasdaq_news_service
 from services.news_ingest_service import news_ingest_service
-from services.observability_service import observability_service
 from services.error_capture_service import error_capture_service
 from services.krx_kind_disclosure_service import krx_kind_disclosure_service
 from services.news_translation_service import news_translation_service
@@ -67,7 +66,7 @@ class NewsPollingService:
                 "🛰 뉴스 자동 수집 스킵 · NEWS_POLL_ENABLED 비활성",
                 detail={"mode": runtime_mode, "reason": summary["reason"]},
             )
-            await observability_service.record_news_poll(
+            summary["metric_payload"] = self._build_metric_payload(
                 status="SKIPPED",
                 elapsed_ms=int((time.time() - started_at) * 1000),
                 item_count=0,
@@ -152,7 +151,7 @@ class NewsPollingService:
             mode=runtime_mode,
             message=self._build_overall_runtime_message(summary, source_error_count=source_error_count),
         )
-        await observability_service.record_news_poll(
+        metric_payload = self._build_metric_payload(
             status="PARTIAL_ERROR" if source_error_count else "SUCCESS",
             elapsed_ms=int((time.time() - started_at) * 1000),
             item_count=int(summary.get("received") or 0),
@@ -172,6 +171,7 @@ class NewsPollingService:
             **summary,
             "published_events": published_events,
             "market_hours": market_hours,
+            "metric_payload": metric_payload,
         }
 
     async def _log_news_activity(self, summary: str, *, detail: dict[str, Any] | None = None) -> None:
@@ -185,6 +185,25 @@ class NewsPollingService:
         except Exception:
             # 뉴스 수집 자체를 로그 실패로 막지 않는다.
             return
+
+    @staticmethod
+    def _build_metric_payload(
+        *,
+        status: str,
+        elapsed_ms: int,
+        item_count: int,
+        success_count: int,
+        error_count: int,
+        detail: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "status": status,
+            "elapsed_ms": elapsed_ms,
+            "item_count": item_count,
+            "success_count": success_count,
+            "error_count": error_count,
+            "detail": detail,
+        }
 
     def _build_source_specs(self, session, *, page_count: int) -> list[NewsSourcePollSpec]:
         return [

@@ -1037,14 +1037,9 @@ async def test_news_polling_service_respects_fetch_concurrency_limit(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_news_polling_service_records_observability_metric(monkeypatch):
+async def test_news_polling_service_returns_observability_metric_payload_without_writing(monkeypatch):
     from services.news_polling_service import NewsPollingService
-
-    observed = {}
-
-    async def fake_record_news_poll(**kwargs):
-        observed.update(kwargs)
-        return None
+    import services.news_polling_service as news_polling_service_module
 
     async def fake_fetch_recent_krx_disclosures(*, page_count):
         assert page_count == 25
@@ -1068,16 +1063,13 @@ async def test_news_polling_service_records_observability_metric(monkeypatch):
         "services.news_polling_service.news_ingest_service.ingest_items_detailed",
         fake_ingest_items_detailed,
     )
-    monkeypatch.setattr(
-        "services.news_polling_service.observability_service.record_news_poll",
-        fake_record_news_poll,
-    )
-
     summary = await NewsPollingService().poll_sources(object(), market_hours=False)
 
     assert summary["received"] == 0
-    assert observed["status"] == "SUCCESS"
-    assert observed["item_count"] == 0
+    assert not hasattr(news_polling_service_module, "observability_service")
+    assert summary["metric_payload"]["status"] == "SUCCESS"
+    assert summary["metric_payload"]["item_count"] == 0
+    assert summary["metric_payload"]["detail"]["mode"] == "AUTO_OFF_HOURS"
 
 
 @pytest.mark.asyncio

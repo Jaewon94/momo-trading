@@ -357,11 +357,28 @@ async def test_scheduler_news_poll_calls_service_with_market_hours(monkeypatch) 
     scheduler = TradingScheduler()
     observed = {}
     committed = False
+    metric_recorded_after_commit = False
 
     async def fake_poll_sources(_session, *, market_hours: bool, mode: str | None = None):
         observed["market_hours"] = market_hours
         observed["mode"] = mode
-        return {"created": 1}
+        return {
+            "created": 1,
+            "metric_payload": {
+                "status": "SUCCESS",
+                "elapsed_ms": 123,
+                "item_count": 2,
+                "success_count": 1,
+                "error_count": 0,
+                "detail": {"mode": mode},
+            },
+        }
+
+    async def fake_record_news_poll(**kwargs):
+        nonlocal metric_recorded_after_commit
+        assert committed is True
+        metric_recorded_after_commit = True
+        observed["metric"] = kwargs
 
     class FakeSession:
         async def __aenter__(self):
@@ -380,12 +397,15 @@ async def test_scheduler_news_poll_calls_service_with_market_hours(monkeypatch) 
     monkeypatch.setattr("scheduler.scheduler.settings.NEWS_POLL_ENABLED", True)
     monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: fake_session)
     monkeypatch.setattr("services.news_polling_service.news_polling_service.poll_sources", fake_poll_sources)
+    monkeypatch.setattr("scheduler.scheduler.observability_service.record_news_poll", fake_record_news_poll)
 
     await scheduler._news_poll()
 
     assert observed["market_hours"] is True
     assert observed["mode"] == "AUTO_TRADING"
     assert committed is True
+    assert metric_recorded_after_commit is True
+    assert observed["metric"]["item_count"] == 2
 
 
 @pytest.mark.asyncio

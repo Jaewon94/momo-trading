@@ -745,6 +745,9 @@ class TradingScheduler:
                         mode=runtime_mode,
                     )
                     await session.commit()
+                metric_payload = summary.get("metric_payload")
+                if isinstance(metric_payload, dict):
+                    await observability_service.record_news_poll(**metric_payload)
             if summary.get("skipped"):
                 logger.debug("뉴스 폴링 스킵: {}", summary.get("reason", "unknown"))
             if summary.get("created"):
