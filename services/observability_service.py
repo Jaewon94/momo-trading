@@ -221,30 +221,40 @@ class ObservabilityService:
         fallback_used: bool = False,
         detail: dict[str, Any] | None = None,
     ) -> ExecutionMetric | None:
-        entry = ExecutionMetric(
-            metric_type=metric_type,
-            metric_name=metric_name,
-            status=status,
-            cycle_id=cycle_id,
-            symbol=symbol,
-            provider=provider,
-            model=model,
-            elapsed_ms=elapsed_ms,
-            item_count=item_count,
-            success_count=success_count,
-            error_count=error_count,
-            retry_count=retry_count,
-            fallback_used=fallback_used,
-            detail=self._serialize_detail(detail),
-        )
+        def _build_entry() -> ExecutionMetric:
+            return ExecutionMetric(
+                metric_type=metric_type,
+                metric_name=metric_name,
+                status=status,
+                cycle_id=cycle_id,
+                symbol=symbol,
+                provider=provider,
+                model=model,
+                elapsed_ms=elapsed_ms,
+                item_count=item_count,
+                success_count=success_count,
+                error_count=error_count,
+                retry_count=retry_count,
+                fallback_used=fallback_used,
+                detail=self._serialize_detail(detail),
+            )
+
+        persisted_entry: ExecutionMetric | None = None
         try:
             async def _persist() -> None:
+                nonlocal persisted_entry
+                entry = _build_entry()
                 async with AsyncSessionLocal() as session:
                     async with session.begin():
                         await ExecutionMetricRepository(session).create(entry)
+                persisted_entry = entry
 
-            await run_sqlite_write_with_retry(_persist)
-            return entry
+            await run_sqlite_write_with_retry(
+                _persist,
+                retry_count=max(int(settings.SQLITE_WRITE_RETRY_COUNT), 5),
+                retry_delay_ms=max(int(settings.SQLITE_WRITE_RETRY_DELAY_MS), 250),
+            )
+            return persisted_entry
         except Exception as exc:
             logger.debug("실행 메트릭 저장 실패: {}", str(exc))
             return None
@@ -313,47 +323,57 @@ class ObservabilityService:
     ) -> ResourceSnapshot | None:
         payload = snapshot or self._collector.collect_snapshot()
         detail = payload.get("detail")
-        entry = ResourceSnapshot(
-            scope=str(payload.get("scope") or "LOCAL_RUNTIME"),
-            host=str(payload.get("host") or socket.gethostname()),
-            app_name=str(payload.get("app_name") or settings.APP_NAME),
-            environment=str(payload.get("environment") or settings.ENVIRONMENT),
-            python_version=str(payload.get("python_version") or "") or None,
-            platform_system=str(payload.get("platform_system") or "") or None,
-            platform_release=str(payload.get("platform_release") or "") or None,
-            platform_machine=str(payload.get("platform_machine") or "") or None,
-            cpu_count=self._optional_int(payload.get("cpu_count")),
-            app_pid=self._optional_int(payload.get("app_pid")),
-            cpu_load_1m=self._optional_float(payload.get("cpu_load_1m")),
-            cpu_load_5m=self._optional_float(payload.get("cpu_load_5m")),
-            cpu_load_15m=self._optional_float(payload.get("cpu_load_15m")),
-            cpu_load_ratio_1m=self._optional_float(payload.get("cpu_load_ratio_1m")),
-            cpu_load_ratio_5m=self._optional_float(payload.get("cpu_load_ratio_5m")),
-            cpu_load_ratio_15m=self._optional_float(payload.get("cpu_load_ratio_15m")),
-            process_cpu_time_sec=self._optional_float(payload.get("process_cpu_time_sec")),
-            total_memory_mb=self._optional_float(payload.get("total_memory_mb")),
-            memory_used_mb=self._optional_float(payload.get("memory_used_mb")),
-            memory_available_mb=self._optional_float(payload.get("memory_available_mb")),
-            memory_percent=self._optional_float(payload.get("memory_percent")),
-            swap_used_mb=self._optional_float(payload.get("swap_used_mb")),
-            disk_total_gb=self._optional_float(payload.get("disk_total_gb")),
-            disk_used_gb=self._optional_float(payload.get("disk_used_gb")),
-            disk_available_gb=self._optional_float(payload.get("disk_available_gb")),
-            disk_used_percent=self._optional_float(payload.get("disk_used_percent")),
-            app_rss_mb=self._optional_float(payload.get("app_rss_mb")),
-            ollama_rss_mb=self._optional_float(payload.get("ollama_rss_mb")),
-            ollama_pid_count=self._optional_int(payload.get("ollama_pid_count")),
-            ollama_running=bool(payload.get("ollama_running")),
-            detail=self._serialize_detail(detail),
-        )
+        def _build_entry() -> ResourceSnapshot:
+            return ResourceSnapshot(
+                scope=str(payload.get("scope") or "LOCAL_RUNTIME"),
+                host=str(payload.get("host") or socket.gethostname()),
+                app_name=str(payload.get("app_name") or settings.APP_NAME),
+                environment=str(payload.get("environment") or settings.ENVIRONMENT),
+                python_version=str(payload.get("python_version") or "") or None,
+                platform_system=str(payload.get("platform_system") or "") or None,
+                platform_release=str(payload.get("platform_release") or "") or None,
+                platform_machine=str(payload.get("platform_machine") or "") or None,
+                cpu_count=self._optional_int(payload.get("cpu_count")),
+                app_pid=self._optional_int(payload.get("app_pid")),
+                cpu_load_1m=self._optional_float(payload.get("cpu_load_1m")),
+                cpu_load_5m=self._optional_float(payload.get("cpu_load_5m")),
+                cpu_load_15m=self._optional_float(payload.get("cpu_load_15m")),
+                cpu_load_ratio_1m=self._optional_float(payload.get("cpu_load_ratio_1m")),
+                cpu_load_ratio_5m=self._optional_float(payload.get("cpu_load_ratio_5m")),
+                cpu_load_ratio_15m=self._optional_float(payload.get("cpu_load_ratio_15m")),
+                process_cpu_time_sec=self._optional_float(payload.get("process_cpu_time_sec")),
+                total_memory_mb=self._optional_float(payload.get("total_memory_mb")),
+                memory_used_mb=self._optional_float(payload.get("memory_used_mb")),
+                memory_available_mb=self._optional_float(payload.get("memory_available_mb")),
+                memory_percent=self._optional_float(payload.get("memory_percent")),
+                swap_used_mb=self._optional_float(payload.get("swap_used_mb")),
+                disk_total_gb=self._optional_float(payload.get("disk_total_gb")),
+                disk_used_gb=self._optional_float(payload.get("disk_used_gb")),
+                disk_available_gb=self._optional_float(payload.get("disk_available_gb")),
+                disk_used_percent=self._optional_float(payload.get("disk_used_percent")),
+                app_rss_mb=self._optional_float(payload.get("app_rss_mb")),
+                ollama_rss_mb=self._optional_float(payload.get("ollama_rss_mb")),
+                ollama_pid_count=self._optional_int(payload.get("ollama_pid_count")),
+                ollama_running=bool(payload.get("ollama_running")),
+                detail=self._serialize_detail(detail),
+            )
+
+        persisted_entry: ResourceSnapshot | None = None
         try:
             async def _persist() -> None:
+                nonlocal persisted_entry
+                entry = _build_entry()
                 async with AsyncSessionLocal() as session:
                     async with session.begin():
                         await ResourceSnapshotRepository(session).create(entry)
+                persisted_entry = entry
 
-            await run_sqlite_write_with_retry(_persist)
-            return entry
+            await run_sqlite_write_with_retry(
+                _persist,
+                retry_count=max(int(settings.SQLITE_WRITE_RETRY_COUNT), 5),
+                retry_delay_ms=max(int(settings.SQLITE_WRITE_RETRY_DELAY_MS), 250),
+            )
+            return persisted_entry
         except Exception as exc:
             logger.debug("리소스 스냅샷 저장 실패: {}", str(exc))
             return None
