@@ -18,6 +18,7 @@ from util.time_util import now_kst
 
 @dataclass(frozen=True)
 class DecisionBenchmarkPoint:
+    cycle_id: str
     symbol: str
     final_action: str
     decision_stage: str
@@ -88,6 +89,7 @@ class DecisionBenchmarkService:
 
         points = [
             DecisionBenchmarkPoint(
+                cycle_id=str(event.cycle_id or ""),
                 symbol=str(event.symbol or ""),
                 final_action=str(event.final_action or "UNKNOWN").upper(),
                 decision_stage=str(event.decision_stage or "UNKNOWN").upper(),
@@ -127,6 +129,7 @@ class DecisionBenchmarkService:
             "by_news_source_blocked": self._group_news_source_blocked(points),
             "by_news_source_blocked_comparison": self._group_news_source_blocked_comparison(points),
             "controls": self._control_groups(points),
+            "candidate_path_comparison": self._candidate_path_comparison(points),
             "ai_skipped_observation": self._ai_skipped_observation(list(ai_skipped_rows)),
         }
 
@@ -193,6 +196,73 @@ class DecisionBenchmarkService:
             "tier1_buy_only": self._metrics([item for item in points if item.tier1_decision == "BUY"]),
             "tier2_buy_only": self._metrics([item for item in points if item.tier2_decision == "BUY"]),
         }
+
+    def _candidate_path_comparison(self, points: list[DecisionBenchmarkPoint]) -> dict:
+        scanner_candidates = [
+            item
+            for item in points
+            if item.decision_stage == "CANDIDATE_SCORING" and item.final_action == "CANDIDATE"
+        ]
+        downstream_keys = {
+            self._candidate_key(item)
+            for item in points
+            if item.decision_stage != "CANDIDATE_SCORING"
+            and (
+                item.tier1_decision != "UNKNOWN"
+                or item.tier2_decision != "UNKNOWN"
+                or item.final_action == "BUY"
+            )
+        }
+        scanner_only = [
+            item
+            for item in scanner_candidates
+            if self._candidate_key(item) not in downstream_keys
+        ]
+        tier1_reached = [
+            item
+            for item in points
+            if item.decision_stage != "CANDIDATE_SCORING" and item.tier1_decision != "UNKNOWN"
+        ]
+        tier1_buy_only = [
+            item
+            for item in tier1_reached
+            if item.tier1_decision == "BUY" and item.tier2_decision != "BUY" and item.final_action != "BUY"
+        ]
+        tier2_buy = [
+            item
+            for item in points
+            if item.decision_stage != "CANDIDATE_SCORING" and item.tier2_decision == "BUY"
+        ]
+        actual_buy = [item for item in points if item.final_action == "BUY"]
+        random_same_count = self._random_same_count(points, len(scanner_candidates))
+        actual_buy_metrics = self._metrics(actual_buy)
+
+        return {
+            "note": (
+                "동일 cycle_id+symbol 기준으로 scanner 후보가 이후 Tier/BUY 경로로 이어졌는지 분리한다. "
+                "cycle_id가 없는 과거 표본은 symbol 기준으로 fallback한다."
+            ),
+            "scanner_candidates": self._comparison_metrics(scanner_candidates, actual_buy_metrics),
+            "scanner_only": self._comparison_metrics(scanner_only, actual_buy_metrics),
+            "tier1_reached": self._comparison_metrics(tier1_reached, actual_buy_metrics),
+            "tier1_buy_only": self._comparison_metrics(tier1_buy_only, actual_buy_metrics),
+            "tier2_buy": self._comparison_metrics(tier2_buy, actual_buy_metrics),
+            "actual_buy": actual_buy_metrics,
+            "random_same_count_as_scanner": self._comparison_metrics(random_same_count, actual_buy_metrics),
+        }
+
+    def _comparison_metrics(
+        self,
+        points: list[DecisionBenchmarkPoint],
+        baseline_metrics: dict,
+    ) -> dict:
+        metrics = self._metrics(points)
+        metrics["delta_vs_actual_buy_avg_return_pct"] = round(
+            float(metrics.get("avg_return_pct") or 0.0)
+            - float(baseline_metrics.get("avg_return_pct") or 0.0),
+            4,
+        )
+        return metrics
 
     def _group(self, points: list[DecisionBenchmarkPoint], key_fn) -> dict:
         grouped: dict[str, list[DecisionBenchmarkPoint]] = defaultdict(list)
@@ -292,6 +362,7 @@ class DecisionBenchmarkService:
     @staticmethod
     def _stable_rank_key(item: DecisionBenchmarkPoint) -> str:
         payload = "|".join([
+            item.cycle_id,
             item.symbol,
             item.final_action,
             item.decision_stage,
@@ -301,6 +372,10 @@ class DecisionBenchmarkService:
             item.risk_gate_result,
         ])
         return hashlib.md5(payload.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _candidate_key(item: DecisionBenchmarkPoint) -> tuple[str, str]:
+        return (item.cycle_id or item.symbol, item.symbol)
 
     @staticmethod
     def _is_blocked_candidate(item: DecisionBenchmarkPoint) -> bool:

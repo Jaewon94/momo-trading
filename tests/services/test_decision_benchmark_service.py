@@ -25,10 +25,11 @@ async def _add_labeled_decision(
     tier2_decision: str | None = None,
     metadata: dict | None = None,
     created_at: datetime,
+    cycle_id: str | None = None,
 ) -> None:
     async with TestAsyncSessionLocal() as session:
         event = DecisionEvent(
-            cycle_id=f"cycle-{symbol}-{final_action}",
+            cycle_id=cycle_id or f"cycle-{symbol}-{final_action}",
             symbol=symbol,
             stock_name=symbol,
             market="KRX",
@@ -77,6 +78,7 @@ async def test_decision_benchmark_service_groups_labeled_returns() -> None:
         strategy_type="STABLE_SHORT",
         tier1_decision="BUY",
         tier2_decision="BUY",
+        cycle_id="cycle-buy-005930",
         metadata={
             "signal_metadata": {
                 "news_top_contributors": [
@@ -86,6 +88,32 @@ async def test_decision_benchmark_service_groups_labeled_returns() -> None:
             }
         },
         created_at=created_at,
+    )
+    await _add_labeled_decision(
+        symbol="005930",
+        final_action="CANDIDATE",
+        return_pct=1.8,
+        provider="DETERMINISTIC",
+        stage="CANDIDATE_SCORING",
+        risk_gate="PASS",
+        event_source="candidate_scoring",
+        scanner_score=0.5,
+        strategy_type="STABLE_SHORT",
+        created_at=created_at,
+        cycle_id="cycle-buy-005930",
+    )
+    await _add_labeled_decision(
+        symbol="123456",
+        final_action="CANDIDATE",
+        return_pct=-0.5,
+        provider="DETERMINISTIC",
+        stage="CANDIDATE_SCORING",
+        risk_gate="PASS",
+        event_source="candidate_scoring",
+        scanner_score=0.4,
+        strategy_type="STABLE_SHORT",
+        created_at=created_at,
+        cycle_id="cycle-scanner-only",
     )
     await _add_labeled_decision(
         symbol="000660",
@@ -170,18 +198,19 @@ async def test_decision_benchmark_service_groups_labeled_returns() -> None:
     )
 
     assert report["sample_status"] == "READY"
-    assert report["overall"]["event_count"] == 3
-    assert report["overall"]["avg_return_pct"] == 0.5
-    assert report["overall"]["positive_rate"] == 0.6667
+    assert report["overall"]["event_count"] == 5
+    assert report["overall"]["avg_return_pct"] == 0.56
+    assert report["overall"]["positive_rate"] == 0.6
     assert report["by_final_action"]["BUY"]["event_count"] == 2
     assert report["by_final_action"]["BUY"]["avg_return_pct"] == 1.25
     assert report["by_final_action"]["SKIP"]["avg_return_pct"] == -1.0
     assert report["by_provider"]["CODEX"]["event_count"] == 2
+    assert report["by_provider"]["DETERMINISTIC"]["event_count"] == 2
     assert report["by_provider"]["OLLAMA"]["avg_return_pct"] == 0.5
     assert report["by_risk_gate"]["BLOCKED"]["avg_return_pct"] == -1.0
     assert report["by_event_source"]["DECISION_MAKER"]["event_count"] == 2
     assert report["by_event_source"]["RISK_GATE"]["event_count"] == 1
-    assert report["by_strategy_type"]["STABLE_SHORT"]["avg_return_pct"] == 2.0
+    assert report["by_strategy_type"]["STABLE_SHORT"]["avg_return_pct"] == 1.1
     assert report["by_tier1_decision"]["BUY"]["event_count"] == 3
     assert report["by_tier2_decision"]["BUY"]["event_count"] == 1
     assert report["by_tier2_decision"]["HOLD"]["event_count"] == 1
@@ -193,13 +222,24 @@ async def test_decision_benchmark_service_groups_labeled_returns() -> None:
     assert report["by_news_source_blocked_comparison"]["DART"]["actual_buy"]["event_count"] == 1
     assert report["by_news_source_blocked_comparison"]["DART"]["delta_avg_return_pct"] == -3.0
     assert report["controls"]["actual_buy"]["event_count"] == 2
-    assert report["controls"]["non_buy_candidates"]["event_count"] == 1
+    assert report["controls"]["non_buy_candidates"]["event_count"] == 3
     assert report["controls"]["blocked_or_skipped"]["event_count"] == 1
     assert report["controls"]["random_same_count"]["event_count"] == 2
     assert report["controls"]["scanner_top_same_count"]["event_count"] == 2
     assert report["controls"]["scanner_top_same_count"]["avg_return_pct"] == 0.5
     assert report["controls"]["tier1_buy_only"]["event_count"] == 3
     assert report["controls"]["tier2_buy_only"]["event_count"] == 1
+    assert report["candidate_path_comparison"]["scanner_candidates"]["event_count"] == 2
+    assert report["candidate_path_comparison"]["scanner_candidates"]["avg_return_pct"] == 0.65
+    assert report["candidate_path_comparison"]["scanner_only"]["event_count"] == 1
+    assert report["candidate_path_comparison"]["scanner_only"]["avg_return_pct"] == -0.5
+    assert report["candidate_path_comparison"]["scanner_only"]["delta_vs_actual_buy_avg_return_pct"] == -1.75
+    assert report["candidate_path_comparison"]["tier1_reached"]["event_count"] == 3
+    assert report["candidate_path_comparison"]["tier1_buy_only"]["event_count"] == 1
+    assert report["candidate_path_comparison"]["tier2_buy"]["avg_return_pct"] == 2.0
+    assert report["candidate_path_comparison"]["actual_buy"]["avg_return_pct"] == 1.25
+    assert report["candidate_path_comparison"]["random_same_count_as_scanner"]["event_count"] == 2
+    assert "cycle_id+symbol" in report["candidate_path_comparison"]["note"]
     assert report["ai_skipped_observation"]["total_skipped"] == 2
     assert {
         "stage": "HOLDINGS_PRECHECK",

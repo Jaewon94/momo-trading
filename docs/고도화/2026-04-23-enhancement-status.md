@@ -75,6 +75,7 @@
 - decision event 기준 action/provider/stage/risk gate별 forward return benchmark API는 추가됐다.
 - 현재 benchmark는 `event.source`, `strategy_type`, `tier1_decision`, `tier2_decision`, `metadata_json`의 `news_top_contributors.source_code`까지 read-only 집계한다.
 - 동일 표본 수 기준 `random_same_count`, `scanner_top_same_count`, `tier1_buy_only`, `tier2_buy_only` control group도 read-only로 추가됐다.
+- `candidate_path_comparison`을 추가해 scanner 후보, scanner-only, Tier1 도달, Tier1-only BUY, Tier2 BUY, 실제 BUY, random baseline을 같은 forward return 표본에서 비교한다.
 - 이번 확장으로 source별 blocked candidate forward return과 actual buy 대비 평균 수익률 차이를 read-only로 볼 수 있게 됐다.
 - 현재 `by_news_source_blocked`, `by_news_source_blocked_comparison`가 추가되어 source별 blocked 후보군과 source별 실제 BUY 후보군을 비교할 수 있다.
 - 다만 gate contribution의 인과 추정과 동일 후보군 full attribution은 아직 없음.
@@ -168,7 +169,7 @@
 
 - candidate scanner/Tier/risk 단계별 decision event 세부 연결.
 - source별 뉴스 attribution benchmark.
-- 동일 후보군 random/scanner-only/Tier-only benchmark.
+- 동일 후보군 random/scanner-only/Tier-only benchmark는 `candidate_path_comparison` read-only 응답까지 구현 완료. 다음은 운영 표본 누적 후 UI 노출/임계값 조정.
 - source별 뉴스 성과와 차단 후보 사후 수익률.
 - backtest same-bar execution 제거.
 - fee/fill/report metadata 분리.

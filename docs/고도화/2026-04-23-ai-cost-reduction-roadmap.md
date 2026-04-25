@@ -329,6 +329,7 @@ TDD 후보:
 - `POST /api/v1/admin/news/backfill-enrichment`는 운영 서버에서 정상 동작한다.
 - `LLM_SLOW_CALL_WARN_SEC` 기반 지연 경고도 코드/테스트/커밋 및 운영 서버 재시작 반영이 완료됐다.
 - canonical decision event, forward return labeling job, decision benchmark read-only API는 구현 완료됐다.
+- decision benchmark의 `candidate_path_comparison`은 scanner 후보, scanner-only, Tier1/Tier2 경로, 실제 BUY, random baseline을 같은 forward return 표본에서 비교한다.
 - 장마감 청산 이후 자동 BUY 차단과 청산 후 자동 재스캔 비활성화도 구현 및 운영 설정 확인이 완료됐다.
 - `POST /api/v1/admin/stocks/bootstrap-universe` 기반 최소 종목 universe bootstrap도 구현됐다. 보유/미체결/거래량·등락률 랭킹에서 관측된 국내 종목을 `stocks`에 dry-run/apply 할 수 있다.
 - `CandidateScoringService`는 구현 완료됐다.
