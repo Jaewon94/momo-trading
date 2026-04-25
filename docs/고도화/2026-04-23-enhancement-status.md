@@ -164,6 +164,7 @@
 - 청산 시각 이후 자동 BUY는 `POST_LIQUIDATION_BUY_BLOCK_ENABLED=true` 기본값으로 주문 직전 차단한다.
 - 스마트/강제 청산 완료 후 자동 재스캔은 실행하지 않는다.
 - 청산 이후 좋아 보이는 신호는 분석/로그/decision event로 남길 수 있지만, 실제 자동 BUY 주문은 다음 거래일 전까지 막는다.
+- Daily report의 `strategy_stats`에 `metric_contract`를 추가해 `total_orders`, `buy_count`, `sell_count`, 승패, 보유 종목 수의 source/filter/formula를 분리 기록한다.
 
 ### 실험/성과 검증
 

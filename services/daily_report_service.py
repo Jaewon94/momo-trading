@@ -219,7 +219,18 @@ class DailyReportService:
                         report.next_day_plan = "LLM 요약 복구 후 다음 거래일 전략/관심 종목을 다시 생성해 확인하세요."
                         report.top_picks = json.dumps([], ensure_ascii=False)
 
-                    report.strategy_stats = json.dumps(activity_counts, ensure_ascii=False)
+                    report.strategy_stats = json.dumps(
+                        self._build_strategy_stats_payload(
+                            activity_counts=activity_counts,
+                            buy_count=buy_count,
+                            sell_order_count=sell_count,
+                            completed_position_count=len(completed_trades),
+                            win_count=win_count,
+                            loss_count=loss_count,
+                            open_position_count=open_position_count,
+                        ),
+                        ensure_ascii=False,
+                    )
                     if not existing:
                         session.add(report)
 
@@ -280,6 +291,69 @@ class DailyReportService:
             f"활동 {activity_count}건, 매수 {buy_count}건, 매도 {sell_count}건이 기록됐고 "
             f"현재 보유는 {open_position_count}종목입니다."
         )
+
+    def _build_strategy_stats_payload(
+        self,
+        *,
+        activity_counts: dict[str, int],
+        buy_count: int,
+        sell_order_count: int,
+        completed_position_count: int,
+        win_count: int,
+        loss_count: int,
+        open_position_count: int,
+    ) -> dict:
+        return {
+            **activity_counts,
+            "activity_counts": dict(activity_counts),
+            "metric_contract": self._build_metric_contract(
+                buy_count=buy_count,
+                sell_order_count=sell_order_count,
+                completed_position_count=completed_position_count,
+                win_count=win_count,
+                loss_count=loss_count,
+                open_position_count=open_position_count,
+            ),
+        }
+
+    @staticmethod
+    def _build_metric_contract(
+        *,
+        buy_count: int,
+        sell_order_count: int,
+        completed_position_count: int,
+        win_count: int,
+        loss_count: int,
+        open_position_count: int,
+    ) -> dict:
+        return {
+            "total_orders": {
+                "value": int(buy_count) + int(sell_order_count),
+                "formula": "buy_count + sell_order_count",
+                "source": "trade_results BUY entry rows plus SELL execution rows",
+            },
+            "buy_count": {
+                "value": int(buy_count),
+                "source": "trade_results BUY rows by entry_at",
+                "filter": "side=BUY, status=CONFIRMED, entry_at within report date",
+            },
+            "sell_count": {
+                "value": int(sell_order_count),
+                "source": "trade_results SELL rows by exit_at",
+                "filter": "side=SELL, status=CONFIRMED, exit_at within report date",
+            },
+            "win_loss": {
+                "win_count": int(win_count),
+                "loss_count": int(loss_count),
+                "completed_position_count": int(completed_position_count),
+                "source": "closed BUY position rows",
+                "filter": "side=BUY, status=CONFIRMED, exit_at within report date",
+            },
+            "open_position_count": {
+                "value": int(open_position_count),
+                "source": "broker holdings, fallback open BUY symbols",
+            },
+        }
 
 
 daily_report_service = DailyReportService()
