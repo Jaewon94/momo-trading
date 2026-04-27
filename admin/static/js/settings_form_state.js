@@ -175,6 +175,11 @@ const SETTINGS_CONTROL_BINDINGS = [
     elementId: 'set-ollama-model',
     getValue: (settings) => settings.OLLAMA_MODEL || '',
   },
+  {
+    elementId: 'set-admin-danger-confirmation-required',
+    getValue: (settings) => Boolean(settings.ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED),
+    type: 'checked',
+  },
 ];
 
 export function applySettingsToForm(settings, root = document) {

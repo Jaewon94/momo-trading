@@ -11,7 +11,8 @@ AI를 없애는 것이 목표가 아니다. 현재 쓰는 Tier1/Tier2 AI는 유�
 - deterministic 단계는 AI를 대체하기 위한 장치가 아니라 AI에 넣을 후보/맥락을 정제하는 장치다.
 - 실거래 차단 로직은 TDD와 shadow 검증 후 승급한다.
 - 관심사 분리: 수집, 분류, 스코어링, 게이트, 리포트, 주문 실행을 섞지 않는다.
-- 기존 provider fallback은 유지하되, 호출 전 deterministic skip/caching을 먼저 적용한다.
+- 자동/수동 분석 provider는 운영 런타임 정책을 존중한다. 2026-04-27 기준 Tier1/Tier2/Manual은 `CODEX/gpt-5.4` 단독이며 fallback은 임의로 추가하지 않는다.
+- provider 비용/지연 절감은 fallback 추가보다 호출 전 deterministic skip/caching과 입력 품질 개선을 먼저 적용한다.
 
 ## 현재 AI 사용 지도
 
@@ -47,6 +48,7 @@ AI를 없애는 것이 목표가 아니다. 현재 쓰는 Tier1/Tier2 AI는 유�
 - 번역을 끄면 감성도 대부분 중립으로 남아 뉴스 게이트 효과가 낮았다.
 - 2026-04-23 1차 구현으로 `news_risk_classifier`, `news_topic_mapper`를 추가했다.
 - 2026-04-23 2차 구현으로 기존 `news_items`에 deterministic enrichment를 재적용하는 backfill 서비스를 추가했다.
+- 2026-04-27 구현으로 `NewsContextService`를 추가했다. 최근 뉴스의 종목코드/종목명/source 매칭 결과를 Tier1/Tier2 prompt에 넣고, `news_context_*` metadata를 trade note/report/benchmark에 남긴다.
 
 권장:
 
@@ -54,6 +56,7 @@ AI를 없애는 것이 목표가 아니다. 현재 쓰는 Tier1/Tier2 AI는 유�
 - 공시/시장공지 리스크는 deterministic classifier로 처리한다.
 - 해외 뉴스는 번역 없이 영문 키워드로 국내 섹터를 매핑한다.
 - 번역은 사람이 화면에서 읽을 필요가 있거나, 중요도가 높은 기사만 수동/오프피크 backfill로 처리한다.
+- 뉴스 context는 BUY hard gate가 아니라 약한 보조 맥락으로 사용한다. "도움이 되는 느낌"은 prompt와 attribution에 반영하되, 실제 차단/승급은 shadow/forward return 표본이 쌓인 뒤에만 한다.
 
 운영 반영:
 
@@ -68,6 +71,7 @@ AI를 없애는 것이 목표가 아니다. 현재 쓰는 Tier1/Tier2 AI는 유�
 - KRX/YONHAP 국내 일반 뉴스의 리스크 키워드 확장.
 - 정책/매크로 이벤트 source/type 추가.
 - source별 precision/recall 대시보드: 몇 건이 실제 후보 종목과 연결됐는지, 차단 후보 수익률이 어땠는지.
+- `news_context_*`가 붙은 거래와 미부착 거래의 forward return, 손실 회피율, source별 품질 비교.
 
 TDD 후보:
 
@@ -205,6 +209,7 @@ TDD 후보:
 - Admin observability overview에 `ai_skipped` 요약을 추가했다. stage/reason/tier/symbol/recent 표본으로 precheck/cache 절감 효과를 확인할 수 있다.
 - Admin 관측 화면에도 `AI Skip` 섹션을 추가했다. 사유별 집계와 최근 표본을 운영자가 바로 확인할 수 있다.
 - Decision benchmark 응답에 `ai_skipped_observation`을 추가했다. `AI_SKIPPED`는 forward return이 직접 붙은 표본이 아니므로 수익률 benchmark와 분리된 관측 섹션으로 둔다.
+- 2026-04-27 구현으로 confirmed BUY 직후와 account equity snapshot 직후 broker holdings delta를 DB open BUY lot으로 백필한다. 이 경로는 `TradeResult 없음` 때문에 precheck/cache가 표본을 만들지 못하는 문제를 줄인다.
 - 장중 보유 재평가에서 precheck/cache로 LLM을 건너뛴 HOLD/SELL 판단도 `decision_events`에 기록한다. 이 경로는 forward return labeling 대상이므로 이후 benchmark에서 성과를 볼 수 있다.
 - 스마트 청산에서 precheck로 LLM을 건너뛴 HOLD/SELL 판단도 `decision_events`에 `SMART_LIQUIDATION` stage로 기록한다.
 - 일반 BUY 분석 파이프라인의 `PRE_ANALYSIS_GATE` 차단도 `decision_events`에 `PRE_ANALYSIS_GATE` stage로 기록한다.
@@ -306,8 +311,10 @@ TDD 후보:
 - `AI_SKIPPED` execution metric을 추가했다.
 - 현재 기록 지점은 `PRE_ANALYSIS_GATE`, `TIER1_CACHE`, `DETERMINISTIC_FINAL_GATE`, `TIER1_COST_GATE`, `HOLDINGS_PRECHECK`, `HOLDINGS_REVIEW_CACHE`다.
 - metric detail에는 `stage`, `reason_code`, `skipped_tier`와 각 gate의 세부 값이 들어간다.
-- 뉴스 번역 Ollama 4b 다운그레이드는 observability 추천으로 확인됐다. `qwen3:4b` 설치는 완료됐지만 샘플 검증에서 응답 지연과 JSON 형식 안정성 문제가 확인되어 운영은 `qwen3:14b`를 유지한다.
+- 뉴스 번역 Ollama 4b 다운그레이드는 운영 후보에서 제외한다. `qwen3:4b` 설치와 샘플 검증은 완료됐지만 응답 지연, 프롬프트 echo, JSON 형식 안정성 문제가 반복 확인되어 운영은 `qwen3:14b`를 유지한다. 추천 서비스도 뉴스 번역 모델을 8b 미만으로 낮추지 않는다.
 - 해외 뉴스 번역이 꺼진 상태에서는 뉴스 번역 모델 변경 추천을 `KEEP`으로 표시해 불필요한 운영 액션을 줄인다.
+- Tier1/Tier2/Manual은 Codex-only 운영 정책을 따른다. timeout/cooldown 로그가 있더라도 fallback provider를 묵시적으로 추가하지 않고, 호출 수 절감과 prompt 품질 개선으로 먼저 대응한다.
+- `news_context_*` metadata를 performance report와 decision benchmark의 뉴스 enriched 판정에 포함한다. prompt에 제공된 뉴스 보조 맥락이 성과 집계에서 빠지지 않게 하기 위함이다.
 
 다음 확장:
 
@@ -339,6 +346,8 @@ TDD 후보:
 - `AI_SKIPPED` metric은 구현 완료됐다.
 - Tier1/Tier2 deterministic prompt context는 구현 완료됐다.
 - Tier1 비용 pre-gate는 구현 완료됐다. 뉴스 gate는 rollout/shadow 의미 보존을 위해 아직 Tier2 전 차단으로 옮기지 않았다.
+- `NewsContextService` 기반 prompt 보조 맥락과 `news_context_*` 성과 attribution은 구현 완료됐다. 단, BUY 차단으로 승급하지 않았다.
+- broker holdings delta 기반 `HOLDING_SYNC` 백필은 구현 완료됐다. 보유 재평가 precheck/cache 표본을 막던 DB open BUY 누락을 줄이는 운영 안전 보강이다.
 - `HoldingsPrecheckService`와 `HoldingsReviewCacheService`도 구현 완료됐다.
 - 세부 진행 현황은 `docs/고도화/2026-04-23-enhancement-status.md`를 기준 문서로 둔다.
 
@@ -352,8 +361,9 @@ TDD 후보:
 ### Phase 2: Tier1/Tier2 입력 품질과 호출 전 gate 강화
 
 1. 뉴스 source별 blocked candidate forward return attribution 고도화. 1차 read-only 비교는 완료.
-2. 보유종목 재평가 cache/precheck 운영 표본 확인과 TTL/key 조정.
-3. 뉴스 gate의 Tier2 전 차단 이동은 shadow/rollout 표본을 더 확인한 뒤 재검토.
+2. 뉴스 context prompt 보조 효과를 실제 거래 표본으로 확인한다. 우선은 `news_context_*`가 붙은 거래의 forward return/read-only attribution만 본다.
+3. 보유종목 재평가 cache/precheck 운영 표본 확인과 TTL/key 조정.
+4. 뉴스 gate의 Tier2 전 차단 이동은 shadow/rollout 표본을 더 확인한 뒤 재검토.
 
 ### Phase 3: 보유종목 재평가 비용 절감
 
@@ -374,6 +384,8 @@ TDD 후보:
 - Tier1/Tier2를 완전히 제거.
 - AI가 잘하는 복합 판단을 단순 점수식으로 대체.
 - 뉴스 게이트를 검증 없이 강하게 조정.
+- Codex-only Tier runtime에 fallback provider를 묵시적으로 추가.
+- `qwen3:4b`를 뉴스 번역 운영 모델로 재추천.
 - LLM 실패 시 주문을 더 공격적으로 실행.
 - 한 번에 시장 스캔, 종목 분석, 보유 재평가를 모두 리팩터링.
 

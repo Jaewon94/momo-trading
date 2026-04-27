@@ -99,9 +99,10 @@ describe("trade_state", () => {
       pnlTone: "negative",
       rows: [
         { label: "현금", value: "181,724,859원", meta: "34.5%" },
-        { label: "주식 평가액", value: "341,909,010원", meta: "64.9%" },
+        { label: "주식 평가액", value: "341,909,010원", meta: "64.9% · 노출 64.9%" },
         { label: "평가손익", value: "-2,704,805원", meta: "-1.32%", tone: "negative" },
         { label: "당일 실현손익", value: "+35,000원", meta: "2026-04-22 09:00 ~ 13:04", tone: "positive" },
+        { label: "현금/스냅샷 차이" },
       ],
     });
     expect(buildAccountOverviewModel(stats).rows.map((row) => row.label)).not.toContain("보유");
@@ -122,7 +123,14 @@ describe("trade_state", () => {
             asset_delta: 20000,
             asset_delta_rate: 2.04,
             realized_today_pnl: 25000,
+            broker_unrealized_pnl: 120000,
             daily_unrealized_delta: -5000,
+            cash_or_snapshot_delta: -125000,
+            current_exposure_krw: 770000,
+            current_exposure_pct: 77,
+            market_exposure: true,
+            risk_label: "EXPOSED_PROFIT",
+            risk_message: "보유 평가이익이 있으나 가격 변동 리스크는 열려 있습니다.",
             intraday_high_asset: 1015000,
             intraday_low_asset: 972000,
           },
@@ -140,9 +148,53 @@ describe("trade_state", () => {
       assetDeltaAvailable: true,
       dailyUnrealizedDelta: -5000,
       dailyUnrealizedAvailable: true,
+      brokerUnrealizedPnl: 120000,
+      cashOrSnapshotDelta: -125000,
+      currentExposureKrw: 770000,
+      currentExposurePct: 77,
+      marketExposure: true,
+      riskLabel: "EXPOSED_PROFIT",
       realizedTodayPnl: 25000,
       intradayHighAsset: 1015000,
       intradayLowAsset: 972000,
+    });
+  });
+
+  test("separates cash snapshot variance from market exposure when no holdings exist", () => {
+    const stats = buildPortfolioQuickStatsModel(
+      {
+        total_asset: 995000,
+        total_pnl: 0,
+        total_pnl_rate: 0,
+        cash: 995000,
+        stock_value: 0,
+        session_metrics: {
+          available: true,
+          asset_delta: -5000,
+          asset_delta_rate: -0.5,
+          realized_today_pnl: 0,
+          broker_unrealized_pnl: 0,
+          daily_unrealized_delta: -5000,
+          cash_or_snapshot_delta: -5000,
+          current_exposure_krw: 0,
+          current_exposure_pct: 0,
+          market_exposure: false,
+          risk_label: "CASH_OR_SNAPSHOT_VARIANCE",
+          risk_message: "현재 보유 노출은 없고, 장시작 대비 차이는 현금/정산/스냅샷성 변동으로 분리됩니다.",
+        },
+      },
+      [],
+      [],
+      {},
+    );
+
+    const overview = buildAccountOverviewModel(stats);
+    expect(overview.exposureTone).toBe("neutral");
+    expect(overview.rows[1]).toMatchObject({ label: "주식 평가액", value: "0원", tone: "neutral" });
+    expect(overview.rows[4]).toMatchObject({
+      label: "현금/스냅샷 차이",
+      value: "-5,000원",
+      tone: "negative",
     });
   });
 

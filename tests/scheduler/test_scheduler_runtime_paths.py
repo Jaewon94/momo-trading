@@ -622,20 +622,31 @@ async def test_scheduler_forward_return_label_records_error_metric(monkeypatch) 
 async def test_scheduler_account_equity_snapshot_delegates_to_service(monkeypatch) -> None:
     scheduler = TradingScheduler()
     observed = {}
+    backfill_called = False
 
     async def fake_capture_and_record_current(**kwargs):
         observed.update(kwargs)
         return {"ok": True}
 
+    async def fake_backfill_missing_open_buys_from_holdings():
+        nonlocal backfill_called
+        backfill_called = True
+        return {"provider": "KIWOOM", "backfilled": 0, "skipped": 0}
+
     monkeypatch.setattr(
         "scheduler.scheduler.account_equity_service.capture_and_record_current",
         fake_capture_and_record_current,
+    )
+    monkeypatch.setattr(
+        "scheduler.jobs.portfolio_sync_job._backfill_missing_open_buys_from_holdings",
+        fake_backfill_missing_open_buys_from_holdings,
     )
 
     await scheduler._account_equity_snapshot()
 
     assert observed["session_phase"] == "INTRADAY"
     assert observed["detail"]["reason"] == "scheduler_interval"
+    assert backfill_called is True
 
 
 @pytest.mark.asyncio
@@ -1812,7 +1823,8 @@ async def test_force_liquidation_subtracts_pending_sell_quantity(monkeypatch) ->
 @pytest.mark.asyncio
 async def test_collect_holdings_data_marks_symbol_for_review_when_trade_result_is_missing(monkeypatch) -> None:
     scheduler = TradingScheduler()
-    holding = SimpleNamespace(symbol="005930", name="삼성전자", quantity=2, avg_buy_price=70_000)
+    holding = SimpleNamespace(symbol="A005930", name="삼성전자", quantity=2, avg_buy_price=70_000)
+    metrics: list[dict] = []
 
     class FakeSession:
         async def __aenter__(self):
@@ -1836,12 +1848,26 @@ async def test_collect_holdings_data_marks_symbol_for_review_when_trade_result_i
     monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
     monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
 
+    async def fake_record_execution_metric(**kwargs):
+        metrics.append(kwargs)
+
+    monkeypatch.setattr(
+        "scheduler.scheduler.observability_service.record_execution_metric",
+        fake_record_execution_metric,
+    )
+
     holdings_data, holdings_map, review_required = await scheduler._collect_holdings_data([holding])
 
     assert holdings_data == []
     assert holdings_map == {}
     assert review_required[0]["holding"] == holding
     assert review_required[0]["reason_code"] == "TRADE_RESULT_MISSING"
+    assert metrics[0]["metric_type"] == "HOLDINGS_REVIEW"
+    assert metrics[0]["metric_name"] == "REVIEW_REQUIRED"
+    assert metrics[0]["status"] == "REVIEW_REQUIRED"
+    assert metrics[0]["symbol"] == "005930"
+    assert metrics[0]["detail"]["source_symbol"] == "A005930"
+    assert metrics[0]["detail"]["reason_code"] == "TRADE_RESULT_MISSING"
 
 
 @pytest.mark.asyncio

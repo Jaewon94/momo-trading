@@ -33,6 +33,12 @@ export function buildPortfolioQuickStatsModel(
   const realizedTodayPnl = sessionAvailable
     ? Number(sessionMetrics?.realized_today_pnl || 0)
     : fallbackRealizedTodayPnl;
+  const currentExposureKrw = sessionAvailable
+    ? Number(sessionMetrics?.current_exposure_krw || stockValue)
+    : stockValue;
+  const currentExposurePct = sessionAvailable
+    ? Number(sessionMetrics?.current_exposure_pct || (totalAsset > 0 ? (currentExposureKrw / totalAsset) * 100 : 0))
+    : (totalAsset > 0 ? (stockValue / totalAsset) * 100 : 0);
   const tradeCounts = buildTradeSummaryCounts(trades);
 
   return {
@@ -44,6 +50,13 @@ export function buildPortfolioQuickStatsModel(
     assetDeltaAvailable: sessionAvailable,
     dailyUnrealizedDelta: sessionAvailable ? Number(sessionMetrics?.daily_unrealized_delta || 0) : 0,
     dailyUnrealizedAvailable: sessionAvailable,
+    brokerUnrealizedPnl: sessionAvailable ? Number(sessionMetrics?.broker_unrealized_pnl || unrealizedPnl) : unrealizedPnl,
+    cashOrSnapshotDelta: sessionAvailable ? Number(sessionMetrics?.cash_or_snapshot_delta || 0) : 0,
+    currentExposureKrw,
+    currentExposurePct,
+    marketExposure: sessionAvailable ? sessionMetrics?.market_exposure === true : stockValue > 0,
+    riskLabel: sessionAvailable ? String(sessionMetrics?.risk_label || "") : "",
+    riskMessage: sessionAvailable ? String(sessionMetrics?.risk_message || "") : "",
     intradayHighAsset: sessionAvailable
       ? Number(sessionMetrics?.intraday_high_asset || totalAsset)
       : totalAsset,
@@ -117,11 +130,18 @@ export function buildAccountOverviewModel(stats = {}) {
   const totalAssetMeta = stats?.assetDeltaAvailable
     ? `장시작 대비 ${formatWon(stats.assetDelta, { signed: true })} / ${formatPercent(stats.assetDeltaRate, { signed: true, digits: 2 })}`
     : "장시작 기준선 대기";
+  const exposureMeta = stats?.riskMessage
+    || (stats?.marketExposure ? "보유 노출 있음" : "현재 시장 노출 없음");
 
   return {
     totalAssetLabel: formatWon(totalAsset),
     totalAssetMeta,
     assetDeltaTone: stats?.assetDeltaAvailable ? toneFromNumber(stats?.assetDelta) : "neutral",
+    exposureLabel: formatWon(stats?.currentExposureKrw),
+    exposureMeta,
+    exposureTone: stats?.marketExposure ? "negative" : "neutral",
+    cashOrSnapshotDeltaLabel: formatWon(stats?.cashOrSnapshotDelta, { signed: true }),
+    cashOrSnapshotDeltaTone: toneFromNumber(stats?.cashOrSnapshotDelta),
     cashRatio,
     stockRatio,
     pnlLabel: formatWon(stats?.unrealizedPnl, { signed: true }),
@@ -136,8 +156,8 @@ export function buildAccountOverviewModel(stats = {}) {
       {
         label: "주식 평가액",
         value: formatWon(stockValue),
-        meta: formatPercent(stockRatio),
-        tone: "neutral",
+        meta: `${formatPercent(stockRatio)} · 노출 ${formatPercent(stats?.currentExposurePct || 0)}`,
+        tone: stats?.marketExposure ? "negative" : "neutral",
       },
       {
         label: "평가손익",
@@ -150,6 +170,12 @@ export function buildAccountOverviewModel(stats = {}) {
         value: formatWon(stats?.realizedTodayPnl, { signed: true }),
         meta: formatRealizedPeriod(stats),
         tone: realizedTodayTone,
+      },
+      {
+        label: "현금/스냅샷 차이",
+        value: formatWon(stats?.cashOrSnapshotDelta, { signed: true }),
+        meta: exposureMeta,
+        tone: toneFromNumber(stats?.cashOrSnapshotDelta),
       },
     ],
   };

@@ -70,6 +70,7 @@ export function buildObservabilityDashboardState(payload = {}) {
   const series = Array.isArray(payload?.resource_series) ? payload.resource_series : [];
   const llm = payload?.llm || {};
   const aiSkipped = payload?.ai_skipped || {};
+  const holdingsReview = payload?.holdings_review || {};
   const newsPoll = payload?.jobs?.news_poll || {};
   const maintenance = payload?.jobs?.maintenance || {};
   const storage = payload?.storage || {};
@@ -127,6 +128,11 @@ export function buildObservabilityDashboardState(payload = {}) {
         label: "AI 스킵",
         value: `${Number(aiSkipped.total_skipped || 0)}회`,
         help: `최근 ${String((aiSkipped.by_stage || [])[0]?.stage || "-")} ${Number((aiSkipped.by_stage || [])[0]?.count || 0)}회`,
+      },
+      {
+        label: "보유 확인 필요",
+        value: `${Number(holdingsReview.review_required_total || 0)}회`,
+        help: `최근 ${String((holdingsReview.by_reason || [])[0]?.reason_code || "-")} ${Number((holdingsReview.by_reason || [])[0]?.count || 0)}회`,
       },
       {
         label: "뉴스 폴링",
@@ -253,6 +259,20 @@ export function buildObservabilityDashboardState(payload = {}) {
         createdAt: formatDateTimeLabel(row.created_at),
       }))
       : [],
+    holdingsReviewRows: Array.isArray(holdingsReview.by_reason)
+      ? holdingsReview.by_reason.map((row) => ({
+        reasonCode: String(row.reason_code || "UNKNOWN"),
+        count: `${Number(row.count || 0)}회`,
+      }))
+      : [],
+    holdingsReviewRecentRows: Array.isArray(holdingsReview.recent)
+      ? holdingsReview.recent.map((row) => ({
+        title: [row.reason_code, row.symbol || row.source_symbol].filter(Boolean).join(" · ") || "-",
+        meta: [row.stock_name, row.source_symbol].filter(Boolean).join(" · "),
+        reason: String(row.reason || "-"),
+        createdAt: formatDateTimeLabel(row.created_at),
+      }))
+      : [],
     statusRows: Array.isArray(newsPoll.status_breakdown)
       ? newsPoll.status_breakdown.map((row) => ({
         status: String(row.status || "UNKNOWN"),
@@ -290,8 +310,18 @@ export function buildObservabilityDashboardState(payload = {}) {
     incidentRows: incidents.map((row) => ({
       fingerprint: String(row.fingerprint || ""),
       title: String(row.title || "-"),
-      meta: [row.severity, row.status, `${Number(row.occurrence_count || 0)}회`].filter(Boolean).join(" · "),
+      meta: [
+        row.severity,
+        row.display_status || row.status,
+        row.active_in_window === true ? "최근 활성" : "과거 이력",
+        `${Number(row.occurrence_count || 0)}회`,
+      ].filter(Boolean).join(" · "),
       status: String(row.status || "OPEN").toUpperCase(),
+      displayStatus: String(row.display_status || row.status || "OPEN").toUpperCase(),
+      activeInWindow: row.active_in_window === true,
+      activeRecently: row.active_recently === true,
+      staleOpen: row.stale_open === true,
+      autoResolutionCandidate: row.auto_resolution_candidate === true,
       detail: String(row.last_message || "-"),
       lastSeenAt: formatDateTimeLabel(row.last_seen_at),
       ownerNote: String(row.owner_note || "").trim(),

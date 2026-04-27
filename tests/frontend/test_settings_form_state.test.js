@@ -46,6 +46,7 @@ describe("settings_form_state", () => {
       "set-news-claude-share-session",
       "set-ollama-base-url",
       "set-ollama-model",
+      "set-admin-danger-confirmation-required",
     ]);
 
     applySettingsToForm(
@@ -78,6 +79,7 @@ describe("settings_form_state", () => {
         NEWS_CLAUDE_SHARE_SESSION: false,
         OLLAMA_BASE_URL: "http://127.0.0.1:11434",
         OLLAMA_MODEL: "llama3.1:8b",
+        ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED: true,
       },
       root,
     );
@@ -111,6 +113,7 @@ describe("settings_form_state", () => {
     expect(root.elements["set-news-claude-share-session"].checked).toBe(false);
     expect(root.elements["set-ollama-base-url"].value).toBe("http://127.0.0.1:11434");
     expect(root.elements["set-ollama-model"].value).toBe("llama3.1:8b");
+    expect(root.elements["set-admin-danger-confirmation-required"].checked).toBe(true);
   });
 
   test("keeps optional values untouched when source value is empty", () => {

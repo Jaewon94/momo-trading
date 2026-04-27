@@ -695,6 +695,13 @@ async def test_decision_maker_record_trade_result_creates_buy_entry(monkeypatch)
             "news_source_count": 2,
             "news_threshold": 0.75,
             "news_top_contributors": [{"headline": "한글 번역 제목", "pressure": 0.11}],
+            "news_context_available": True,
+            "news_context_tone": "POSITIVE_SUPPORT",
+            "news_context_negative_pressure": 0.0,
+            "news_context_confidence_hint": 0.03,
+            "news_context_item_count": 1,
+            "news_context_source_codes": ["DART"],
+            "news_context_items": [{"source_code": "DART", "title": "신규 공급계약"}],
         },
         cycle_id="cycle-buy",
     )
@@ -707,6 +714,7 @@ async def test_decision_maker_record_trade_result_creates_buy_entry(monkeypatch)
     assert added.quantity == 2
     assert added.entry_pattern == "상승 추세 지속"
     assert "news_top_contributors" in (added.notes or "")
+    assert "news_context_items" in (added.notes or "")
     assert "edge_to_cost_ratio" in (added.notes or "")
 
 
@@ -722,6 +730,12 @@ def test_decision_maker_build_trade_notes_includes_news_metrics():
         "news_source_count": 3,
         "news_threshold": 0.75,
         "news_top_contributors": [{"headline": "공급 차질 우려", "pressure": 0.12}],
+        "news_context_available": True,
+        "news_context_tone": "MILD_NEGATIVE",
+        "news_context_negative_pressure": 0.12,
+        "news_context_item_count": 1,
+        "news_context_source_codes": ["KRX"],
+        "news_context_items": [{"source_code": "KRX", "title": "거래소 공시"}],
         "chart_signal_direction": "BULLISH",
         "chart_signal_confidence": 0.81,
         "entry_pattern": "상승 추세 지속",
@@ -729,10 +743,33 @@ def test_decision_maker_build_trade_notes_includes_news_metrics():
 
     assert "news_negative_pressure" in notes
     assert "news_negative_count" in notes
+    assert "news_context_tone" in notes
+    assert "news_context_items" in notes
     assert "edge_to_cost_ratio" in notes
     assert "news_top_contributors" in notes
     assert "chart_signal_direction" in notes
     assert "entry_pattern" in notes
+
+
+@pytest.mark.asyncio
+async def test_decision_maker_backfills_broker_holding_delta_after_buy(monkeypatch) -> None:
+    decision_maker = DecisionMaker(
+        broker_adapter=FakeBrokerAdapter(OrderResult(success=True, order_id="ORD-BUY", message="ok"))
+    )
+    calls = []
+
+    async def fake_backfill():
+        calls.append(True)
+        return {"provider": "KIWOOM", "backfilled": 1, "skipped": 0}
+
+    monkeypatch.setattr(
+        "scheduler.jobs.portfolio_sync_job._backfill_missing_open_buys_from_holdings",
+        fake_backfill,
+    )
+
+    await decision_maker._backfill_broker_holding_delta("005930")
+
+    assert calls == [True]
 
 
 @pytest.mark.asyncio

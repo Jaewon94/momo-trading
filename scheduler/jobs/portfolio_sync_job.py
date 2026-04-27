@@ -18,6 +18,9 @@ async def portfolio_sync_job() -> None:
     # 1-2. 과거 0원 체결가 복구: 현재 보유 평균단가와 정합할 때만 보정
     await _repair_confirmed_zero_entry_prices()
 
+    # 1-3. 계좌에 없는 DB 미청산 BUY는 경고만 기록 (자동 변경 없음)
+    await _close_open_buys_missing_from_holdings(dry_run=True)
+
     # 2. 정산 현황 로깅 (계좌 vs DB 비교, 강제 변경 없음)
     await _check_account_db_consistency()
 
@@ -326,6 +329,7 @@ async def _backfill_missing_open_buys_from_holdings() -> dict[str, int | str]:
                     if getattr(tr, "side", "") == "BUY"
                 }
 
+                backfill_rows: list[TradeResult] = []
                 for holding in holdings:
                     symbol = normalize_krx_symbol(getattr(holding, "symbol", ""))
                     holding_qty = int(getattr(holding, "quantity", 0) or 0)
@@ -348,7 +352,7 @@ async def _backfill_missing_open_buys_from_holdings() -> dict[str, int | str]:
                         summary["skipped"] = int(summary["skipped"]) + 1
                         continue
 
-                    session.add(TradeResult(
+                    backfill_rows.append(TradeResult(
                         order_id=None,
                         stock_symbol=symbol,
                         stock_name=getattr(holding, "name", symbol) or symbol,
@@ -375,11 +379,127 @@ async def _backfill_missing_open_buys_from_holdings() -> dict[str, int | str]:
                         "보유 백필 생성: {} {}주 @{:.2f}원 (계좌 {}주 / DB {}주)",
                         symbol, missing_qty, avg_buy_price, holding_qty, open_qty,
                     )
-                    summary["backfilled"] = int(summary["backfilled"]) + 1
+                if backfill_rows:
+                    for row in backfill_rows:
+                        session.add(row)
+                    summary["backfilled"] = len(backfill_rows)
     except Exception as e:
         logger.error("보유 백필 오류: {}", str(e))
         summary["error"] = str(e)[:200]
     return summary
+
+
+async def _close_open_buys_missing_from_holdings(*, dry_run: bool = True) -> dict[str, object]:
+    """브로커 계좌에 없는 DB 미청산 BUY를 수동 정리 후보로 산출/종료.
+
+    apply 모드에서도 실제 주문은 내지 않는다. 포지션 상태 오염을 막기 위한 DB 정합성 정리이며,
+    성과 리포트 왜곡을 피하려고 진입가로 중립 종료 처리한다.
+    """
+    summary: dict[str, object] = {
+        "mode": "dry_run" if dry_run else "apply",
+        "provider": "UNKNOWN",
+        "holding_symbol_count": 0,
+        "open_symbol_count": 0,
+        "candidate_count": 0,
+        "closed_count": 0,
+        "skipped_count": 0,
+    }
+    candidates: list[dict[str, object]] = []
+    skipped: list[dict[str, object]] = []
+
+    try:
+        from core.database import AsyncSessionLocal
+        from repositories.trade_result_repository import TradeResultRepository
+        from trading.broker_factory import get_broker_adapter
+
+        adapter = get_broker_adapter()
+        summary["provider"] = adapter.provider.value
+        holdings = await adapter.get_holdings()
+        pending_orders = await adapter.get_pending_orders()
+        holding_symbols = {
+            normalize_krx_symbol(getattr(holding, "symbol", ""))
+            for holding in holdings
+            if int(getattr(holding, "quantity", 0) or 0) > 0
+        }
+        broker_pending_symbols = {
+            normalize_krx_symbol(getattr(order, "symbol", ""))
+            for order in pending_orders
+            if int(getattr(order, "remaining_qty", 0) or 0) > 0
+        }
+        summary["holding_symbol_count"] = len(holding_symbols)
+
+        now = now_kst()
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                repo = TradeResultRepository(session)
+                open_buys = await repo.get_all_open()
+                pending_symbols = {
+                    normalize_krx_symbol(getattr(tr, "stock_symbol", ""))
+                    for tr in await repo.get_pending_confirms()
+                }
+                open_symbols = {
+                    normalize_krx_symbol(getattr(tr, "stock_symbol", ""))
+                    for tr in open_buys
+                }
+                summary["open_symbol_count"] = len(open_symbols)
+
+                for trade in open_buys:
+                    symbol = normalize_krx_symbol(getattr(trade, "stock_symbol", ""))
+                    if not symbol or symbol in holding_symbols:
+                        continue
+
+                    item = {
+                        "trade_id": getattr(trade, "id", None),
+                        "stock_symbol": symbol,
+                        "stock_name": getattr(trade, "stock_name", symbol),
+                        "quantity": int(getattr(trade, "quantity", 0) or 0),
+                        "entry_price": float(getattr(trade, "entry_price", 0.0) or 0.0),
+                        "entry_at": getattr(trade, "entry_at", None).isoformat()
+                        if getattr(trade, "entry_at", None) else None,
+                    }
+
+                    if symbol in pending_symbols:
+                        skipped.append({**item, "reason": "db_pending_confirm_exists"})
+                        continue
+                    if symbol in broker_pending_symbols:
+                        skipped.append({**item, "reason": "broker_pending_order_exists"})
+                        continue
+
+                    candidates.append(item)
+                    if dry_run:
+                        continue
+
+                    entry_price = float(getattr(trade, "entry_price", 0.0) or 0.0)
+                    trade.exit_price = entry_price
+                    trade.pnl = 0.0
+                    trade.return_pct = 0.0
+                    trade.is_win = False
+                    entry_at = getattr(trade, "entry_at", None)
+                    if entry_at:
+                        comparable_now = now
+                        if getattr(entry_at, "tzinfo", None) is None and getattr(now, "tzinfo", None) is not None:
+                            comparable_now = now.replace(tzinfo=None)
+                        trade.hold_days = max((comparable_now - entry_at).days, 0)
+                    else:
+                        trade.hold_days = 0
+                    trade.exit_reason = "BROKER_HOLDING_MISSING"
+                    trade.exit_at = now
+                    previous_notes = str(getattr(trade, "notes", "") or "").strip()
+                    note = "HOLDING_RECONCILIATION_CLOSE: broker holding missing; neutral close"
+                    trade.notes = f"{note} | previous={previous_notes[:160]}" if previous_notes else note
+                    summary["closed_count"] = int(summary["closed_count"]) + 1
+
+                summary["candidate_count"] = len(candidates)
+                summary["skipped_count"] = len(skipped)
+    except Exception as e:
+        logger.error("브로커 미보유 DB BUY 정리 오류: {}", str(e))
+        summary["error"] = str(e)[:200]
+
+    return {
+        "summary": summary,
+        "candidates": candidates,
+        "skipped": skipped,
+    }
 
 
 async def _cancel_unfilled_order(order_id: str, symbol: str) -> None:

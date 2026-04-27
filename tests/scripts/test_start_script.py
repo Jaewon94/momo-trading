@@ -155,7 +155,7 @@ def test_start_script_stops_kis_mcp_when_broker_provider_is_not_kis(tmp_path: Pa
 def test_start_script_stop_with_backup_runs_backup_before_stop(tmp_path: Path) -> None:
     env, _, python_log = _build_test_env(tmp_path, "KIWOOM")
     pid_file = Path(env["MOMO_PID_FILE"])
-    pid_file.write_text("99999\n", encoding="utf-8")
+    pid_file.write_text("99999999\n", encoding="utf-8")
 
     result = subprocess.run(
         ["bash", str(START_SCRIPT), "stop", "--backup"],
@@ -176,7 +176,7 @@ def test_start_script_stop_respects_auto_backup_env(tmp_path: Path) -> None:
     env, _, python_log = _build_test_env(tmp_path, "KIWOOM")
     env["MOMO_AUTO_BACKUP_ON_STOP"] = "1"
     pid_file = Path(env["MOMO_PID_FILE"])
-    pid_file.write_text("99999\n", encoding="utf-8")
+    pid_file.write_text("99999999\n", encoding="utf-8")
 
     result = subprocess.run(
         ["bash", str(START_SCRIPT), "stop"],
@@ -323,7 +323,7 @@ exit 0
 def test_start_script_status_recovers_stale_pid_file_from_listening_port(tmp_path: Path) -> None:
     env, _, _ = _build_test_env(tmp_path, "KIWOOM")
     pid_file = Path(env["MOMO_PID_FILE"])
-    pid_file.write_text("99999\n", encoding="utf-8")
+    pid_file.write_text("99999999\n", encoding="utf-8")
 
     lsof_bin = Path(env["MOMO_LSOF_BIN"])
     _write_executable(

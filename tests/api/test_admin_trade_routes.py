@@ -219,6 +219,18 @@ async def test_admin_reconcile_holdings_trades_route_returns_summary(client, mon
             "skipped": 1,
         }
 
+    async def fake_close_missing(*, dry_run: bool = True):
+        captured["close_missing_dry_run"] = dry_run
+        return {
+            "summary": {
+                "mode": "dry_run" if dry_run else "apply",
+                "candidate_count": 3,
+                "closed_count": 0 if dry_run else 3,
+            },
+            "candidates": [],
+            "skipped": [],
+        }
+
     monkeypatch.setattr(
         "scheduler.jobs.portfolio_sync_job._backfill_missing_open_buys_from_holdings",
         fake_backfill,
@@ -227,6 +239,10 @@ async def test_admin_reconcile_holdings_trades_route_returns_summary(client, mon
         "scheduler.jobs.portfolio_sync_job._repair_confirmed_zero_entry_prices",
         fake_repair,
     )
+    monkeypatch.setattr(
+        "scheduler.jobs.portfolio_sync_job._close_open_buys_missing_from_holdings",
+        fake_close_missing,
+    )
 
     response = await client.post("/api/v1/admin/trades/reconcile-holdings")
 
@@ -234,7 +250,43 @@ async def test_admin_reconcile_holdings_trades_route_returns_summary(client, mon
     payload = response.json()
     assert payload["data"]["backfill"]["backfilled"] == 2
     assert payload["data"]["repair"]["repaired"] == 1
-    assert captured == {"backfill": True, "repair": True}
+    assert payload["data"]["missing_closes"]["summary"]["mode"] == "dry_run"
+    assert captured == {"backfill": True, "repair": True, "close_missing_dry_run": True}
+
+
+@pytest.mark.asyncio
+async def test_admin_reconcile_holdings_trades_apply_missing_requires_confirmation_when_enabled(client, monkeypatch):
+    called = False
+
+    async def fake_backfill():
+        return {"provider": "KIWOOM", "backfilled": 0, "skipped": 0}
+
+    async def fake_repair():
+        return {"provider": "KIWOOM", "candidates": 0, "repaired": 0, "skipped": 0}
+
+    async def fake_close_missing(*, dry_run: bool = True):
+        nonlocal called
+        called = True
+        return {"summary": {"mode": "apply", "closed_count": 0}, "candidates": [], "skipped": []}
+
+    monkeypatch.setattr("api.routes.admin.settings.ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED", True, raising=False)
+    monkeypatch.setattr(
+        "scheduler.jobs.portfolio_sync_job._backfill_missing_open_buys_from_holdings",
+        fake_backfill,
+    )
+    monkeypatch.setattr(
+        "scheduler.jobs.portfolio_sync_job._repair_confirmed_zero_entry_prices",
+        fake_repair,
+    )
+    monkeypatch.setattr(
+        "scheduler.jobs.portfolio_sync_job._close_open_buys_missing_from_holdings",
+        fake_close_missing,
+    )
+
+    response = await client.post("/api/v1/admin/trades/reconcile-holdings?apply_missing_closes=true")
+
+    assert response.status_code == 428
+    assert called is False
 
 
 @pytest.mark.asyncio

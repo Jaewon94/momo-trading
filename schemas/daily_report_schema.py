@@ -1,6 +1,6 @@
 """일일 리포트 스키마"""
 from datetime import date, datetime
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel
 
@@ -49,6 +49,7 @@ class DailyReportResponse(BaseModel):
     next_day_plan: Optional[str] = None
     top_picks: Optional[str] = None
     strategy_stats: Optional[str] = None
+    metric_contract: Optional[dict[str, Any]] = None
     trade_comparison: Optional[ReportTradeComparisonResponse] = None
     created_at: datetime
 

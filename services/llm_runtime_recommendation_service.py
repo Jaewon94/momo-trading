@@ -9,6 +9,7 @@ from core.config import settings
 from trading.enums import LLMTier
 
 _MODEL_SIZE_RE = re.compile(r":([0-9]+(?:\.[0-9]+)?)b$", re.IGNORECASE)
+MIN_NEWS_OLLAMA_MODEL_SIZE_B = 8.0
 
 
 def _parse_model_size_b(model: str | None) -> float | None:
@@ -34,6 +35,11 @@ def _ollama_family(model: str | None) -> str | None:
 def _recommended_ollama_model(current_model: str | None, *, target_size: str) -> str:
     family = _ollama_family(current_model) or "qwen3"
     return f"{family}:{target_size}"
+
+
+def _is_news_ollama_model_below_floor(model: str | None) -> bool:
+    size_b = _parse_model_size_b(model)
+    return size_b is not None and size_b < MIN_NEWS_OLLAMA_MODEL_SIZE_B
 
 
 class LLMRuntimeRecommendationService:
@@ -161,18 +167,18 @@ class LLMRuntimeRecommendationService:
 
         target_model = model
         action = "KEEP"
-        if pressure_severity == "HIGH" or p95_latency >= 30_000 or news_p95 >= 45_000:
-            target_model = _recommended_ollama_model(model, target_size="4b")
-            action = "DOWNGRADE"
-            reasons.append("지연 또는 리소스 압박이 높아 경량 모델 권장")
+        if _is_news_ollama_model_below_floor(model):
+            target_model = _recommended_ollama_model(model, target_size="8b")
+            action = "UPGRADE"
+            reasons.append("4b급 뉴스 번역 모델은 운영 검증에서 지연/JSON 안정성 문제로 제외")
+        elif pressure_severity == "HIGH" or p95_latency >= 30_000 or news_p95 >= 45_000:
+            target_model = _recommended_ollama_model(model, target_size="8b")
+            action = "DOWNGRADE" if (size_b or 0.0) > 8.0 else "KEEP"
+            reasons.append("지연 또는 리소스 압박이 높아도 뉴스 번역은 8b 미만으로 낮추지 않음")
         elif pressure_severity == "MEDIUM" or p95_latency >= 15_000 or news_p95 >= 25_000:
             target_model = _recommended_ollama_model(model, target_size="8b")
             action = "DOWNGRADE" if (size_b or 0.0) > 8.0 else "KEEP"
             reasons.append("장중 안정성을 위해 8b 이하 권장")
-        elif size_b is not None and size_b <= 4.0 and avg_latency <= 8_000 and float(llm_summary.get("success_rate") or 0.0) >= 95.0:
-            target_model = _recommended_ollama_model(model, target_size="8b")
-            action = "UPGRADE"
-            reasons.append("여유가 있어 품질 보강용 8b 권장")
 
         if not reasons:
             reasons.append("현재 뉴스 번역 설정 유지 권장")

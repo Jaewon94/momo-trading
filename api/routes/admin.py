@@ -223,7 +223,17 @@ def _build_balance_payload_fallback(balance) -> dict[str, object]:
             "asset_delta": 0.0,
             "asset_delta_rate": 0.0,
             "realized_today_pnl": 0.0,
+            "broker_unrealized_pnl": float(getattr(balance, "total_pnl", 0.0) or 0.0),
             "daily_unrealized_delta": 0.0,
+            "cash_or_snapshot_delta": 0.0,
+            "current_exposure_krw": float(getattr(balance, "stock_value", 0.0) or 0.0),
+            "current_exposure_pct": (
+                (float(getattr(balance, "stock_value", 0.0) or 0.0) / float(getattr(balance, "total_asset", 0.0) or 0.0) * 100.0)
+                if float(getattr(balance, "total_asset", 0.0) or 0.0) > 0 else 0.0
+            ),
+            "market_exposure": float(getattr(balance, "stock_value", 0.0) or 0.0) > 0,
+            "risk_label": "EXPOSED" if float(getattr(balance, "stock_value", 0.0) or 0.0) > 0 else "NO_EXPOSURE",
+            "risk_message": "세션 메트릭 계산 실패로 노출 요약만 제공합니다.",
             "intraday_high_asset": float(getattr(balance, "total_asset", 0.0) or 0.0),
             "intraday_low_asset": float(getattr(balance, "total_asset", 0.0) or 0.0),
             "latest_snapshot_at": None,
@@ -504,9 +514,24 @@ async def _load_live_report_snapshot(report_date: date) -> dict[str, float | int
     }
 
 
+def _extract_report_metric_contract(report) -> dict | None:
+    raw_stats = getattr(report, "strategy_stats", None)
+    if not raw_stats:
+        return None
+    try:
+        stats = _json.loads(raw_stats) if isinstance(raw_stats, str) else raw_stats
+    except (TypeError, _json.JSONDecodeError):
+        return None
+    if not isinstance(stats, dict):
+        return None
+    contract = stats.get("metric_contract")
+    return contract if isinstance(contract, dict) else None
+
+
 async def _build_report_response(report, trade_repo: TradeResultRepository, open_symbols_cache: set[str] | None = None):
     payload = DailyReportResponse.model_validate(report)
     report_date = getattr(report, "report_date", None)
+    metric_contract = _extract_report_metric_contract(report)
     completed = []
     if report_date:
         completed = await trade_repo.get_completed_by_date(report_date)
@@ -517,12 +542,14 @@ async def _build_report_response(report, trade_repo: TradeResultRepository, open
 
     if not _report_looks_empty(report):
         return payload.model_copy(update={
+            "metric_contract": metric_contract,
             "trade_comparison": trade_comparison,
             **live_snapshot,
         })
 
     if not report_date:
         return payload.model_copy(update={
+            "metric_contract": metric_contract,
             "trade_comparison": trade_comparison,
             **live_snapshot,
         })
@@ -531,6 +558,7 @@ async def _build_report_response(report, trade_repo: TradeResultRepository, open
     trade_has_data = bool(opened or completed)
     if not trade_has_data:
         return payload.model_copy(update={
+            "metric_contract": metric_contract,
             "trade_comparison": trade_comparison,
             **live_snapshot,
         })
@@ -558,6 +586,7 @@ async def _build_report_response(report, trade_repo: TradeResultRepository, open
         "total_pnl": total_pnl,
         "open_position_count": open_position_count,
         "total_orders": max(int(getattr(report, "total_orders", 0) or 0), buy_count + sell_count),
+        "metric_contract": metric_contract,
         "trade_comparison": trade_comparison,
         **live_snapshot,
     })
@@ -916,13 +945,27 @@ async def cleanup_stale_pending_trades(
 
 
 @router.post("/trades/reconcile-holdings")
-async def reconcile_holdings_trades():
-    """계좌 보유수량 기준으로 누락 BUY lot/0원 체결가를 복구 시도"""
+async def reconcile_holdings_trades(
+    apply_missing_closes: bool = Query(False, description="true일 때 브로커 미보유 DB open BUY를 중립 종료"),
+    confirmation: AdminActionConfirmationVerifyRequest | None = None,
+):
+    """계좌 보유수량 기준으로 누락 BUY lot/0원 체결가 복구 및 stale open BUY 정리"""
+    if apply_missing_closes:
+        _require_admin_action_confirmation(
+            confirmation,
+            action="RECONCILE_HOLDINGS_MISSING_CLOSES",
+            resource_id="TRADE_RECONCILIATION",
+            quantity="ALL",
+        )
     backfill = await portfolio_sync_job._backfill_missing_open_buys_from_holdings()
     repaired = await portfolio_sync_job._repair_confirmed_zero_entry_prices()
+    missing_closes = await portfolio_sync_job._close_open_buys_missing_from_holdings(
+        dry_run=not apply_missing_closes,
+    )
     summary = {
         "backfill": backfill,
         "repair": repaired,
+        "missing_closes": missing_closes,
     }
     await activity_logger.log(
         ActivityType.EVENT,
@@ -932,7 +975,8 @@ async def reconcile_holdings_trades():
     )
     message = (
         f"정합성 복구 완료 · 백필 {backfill.get('backfilled', 0)}건 / "
-        f"체결가 복구 {repaired.get('repaired', 0)}건"
+        f"체결가 복구 {repaired.get('repaired', 0)}건 / "
+        f"미보유 정리 {missing_closes['summary'].get('closed_count', 0)}건"
     )
     return SuccessResponse(data=summary, message=message)
 
@@ -1850,6 +1894,18 @@ async def get_system_status(db: AsyncSession = Depends(get_async_db)):
         }
 
     news_last_status = str(news_overall.get("last_status") or "IDLE").upper()
+    news_source_successes = [
+        code for code, state in news_sources.items()
+        if str((state or {}).get("status") or "").upper() in {"SUCCESS", "EMPTY"}
+    ]
+    news_source_last_run_at = max(
+        (
+            str((state or {}).get("updated_at") or (state or {}).get("last_success_at") or "")
+            for state in news_sources.values()
+            if (state or {}).get("updated_at") or (state or {}).get("last_success_at")
+        ),
+        default=None,
+    )
     news_sources_limited = not settings.NEWS_INCLUDE_FOREIGN and not settings.NEWS_DOMESTIC_MEDIA_ENABLED
     if news_error_sources:
         news_ops = {
@@ -1892,6 +1948,13 @@ async def get_system_status(db: AsyncSession = Depends(get_async_db)):
             "label": "뉴스 폴링 정상",
             "message": str(news_overall.get("last_message") or "최근 폴링 기록이 있습니다."),
             "last_run_at": news_overall.get("last_run_at"),
+        }
+    elif news_source_successes and news_source_last_run_at:
+        news_ops = {
+            "status": "OK",
+            "label": "뉴스 폴링 정상",
+            "message": f"최근 성공 소스 {len(news_source_successes)}개: {', '.join(news_source_successes[:3])}",
+            "last_run_at": news_source_last_run_at,
         }
     else:
         news_ops = {

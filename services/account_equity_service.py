@@ -209,9 +209,14 @@ class AccountEquityService:
             )
 
         current_asset = float(getattr(balance, "total_asset", 0.0) or 0.0)
+        current_exposure_krw = float(getattr(balance, "stock_value", 0.0) or 0.0)
+        current_exposure_pct = (current_exposure_krw / current_asset * 100.0) if current_asset > 0 else 0.0
+        broker_unrealized_pnl = float(getattr(balance, "total_pnl", 0.0) or 0.0)
         baseline_asset = float(getattr(baseline, "baseline_total_asset", 0.0) or 0.0)
         asset_delta = current_asset - baseline_asset
         asset_delta_rate = (asset_delta / baseline_asset * 100.0) if baseline_asset > 0 else 0.0
+        daily_unrealized_delta = asset_delta - realized_today_pnl
+        cash_or_snapshot_delta = asset_delta - realized_today_pnl - broker_unrealized_pnl
         intraday_high_asset = max(
             value for value in [current_asset, self._optional_float(high_asset), baseline_asset] if value is not None
         )
@@ -229,7 +234,17 @@ class AccountEquityService:
             "asset_delta": asset_delta,
             "asset_delta_rate": asset_delta_rate,
             "realized_today_pnl": realized_today_pnl,
-            "daily_unrealized_delta": asset_delta - realized_today_pnl,
+            "broker_unrealized_pnl": broker_unrealized_pnl,
+            "daily_unrealized_delta": daily_unrealized_delta,
+            "cash_or_snapshot_delta": cash_or_snapshot_delta,
+            "current_exposure_krw": current_exposure_krw,
+            "current_exposure_pct": current_exposure_pct,
+            "market_exposure": current_exposure_krw > 0,
+            **self._build_session_risk_summary(
+                current_exposure_krw=current_exposure_krw,
+                broker_unrealized_pnl=broker_unrealized_pnl,
+                cash_or_snapshot_delta=cash_or_snapshot_delta,
+            ),
             "intraday_high_asset": intraday_high_asset,
             "intraday_low_asset": intraday_low_asset,
             "latest_snapshot_at": latest_captured_at.isoformat() if latest_captured_at is not None else None,
@@ -247,6 +262,8 @@ class AccountEquityService:
         realized_today_pnl: float = 0.0,
     ) -> dict[str, Any]:
         current_asset = float(getattr(balance, "total_asset", 0.0) or 0.0)
+        current_exposure_krw = float(getattr(balance, "stock_value", 0.0) or 0.0)
+        broker_unrealized_pnl = float(getattr(balance, "total_pnl", 0.0) or 0.0)
         timestamp = ensure_kst(captured_at)
         return {
             "available": False,
@@ -257,11 +274,54 @@ class AccountEquityService:
             "asset_delta": 0.0,
             "asset_delta_rate": 0.0,
             "realized_today_pnl": realized_today_pnl,
+            "broker_unrealized_pnl": broker_unrealized_pnl,
             "daily_unrealized_delta": 0.0,
+            "cash_or_snapshot_delta": 0.0,
+            "current_exposure_krw": current_exposure_krw,
+            "current_exposure_pct": (current_exposure_krw / current_asset * 100.0) if current_asset > 0 else 0.0,
+            "market_exposure": current_exposure_krw > 0,
+            **self._build_session_risk_summary(
+                current_exposure_krw=current_exposure_krw,
+                broker_unrealized_pnl=broker_unrealized_pnl,
+                cash_or_snapshot_delta=0.0,
+            ),
             "intraday_high_asset": current_asset,
             "intraday_low_asset": current_asset,
             "latest_snapshot_at": None,
             "is_stale": False,
+        }
+
+    @staticmethod
+    def _build_session_risk_summary(
+        *,
+        current_exposure_krw: float,
+        broker_unrealized_pnl: float,
+        cash_or_snapshot_delta: float,
+    ) -> dict[str, str]:
+        tolerance = 1.0
+        if current_exposure_krw <= tolerance:
+            if abs(cash_or_snapshot_delta) > tolerance:
+                return {
+                    "risk_label": "CASH_OR_SNAPSHOT_VARIANCE",
+                    "risk_message": "현재 보유 노출은 없고, 장시작 대비 차이는 현금/정산/스냅샷성 변동으로 분리됩니다.",
+                }
+            return {
+                "risk_label": "NO_EXPOSURE",
+                "risk_message": "현재 보유 노출이 없어 시장 가격 변동 리스크는 낮습니다.",
+            }
+        if broker_unrealized_pnl < -tolerance:
+            return {
+                "risk_label": "EXPOSED_LOSS",
+                "risk_message": "보유 평가손실이 있어 가격 변동 리스크가 열려 있습니다.",
+            }
+        if broker_unrealized_pnl > tolerance:
+            return {
+                "risk_label": "EXPOSED_PROFIT",
+                "risk_message": "보유 평가이익이 있으나 가격 변동 리스크는 열려 있습니다.",
+            }
+        return {
+            "risk_label": "EXPOSED_FLAT",
+            "risk_message": "보유 노출은 있으나 평가손익은 중립권입니다.",
         }
 
     @staticmethod

@@ -2,6 +2,8 @@
 
 > 상태: Phase 0 기준선 문서입니다. 이 문서는 읽기 전용 감사 증거를 누적합니다. 코드, 설정, 전략 파라미터, live trading 동작 변경은 별도 승인과 findings/roadmap 반영 전에는 하지 않습니다.
 
+> 최신 보정(2026-04-27): 이 문서의 Phase별 수치와 관찰은 2026-04-22 감사 당시 스냅샷으로 보존합니다. 이후 구현/운영 확인으로 stale `PENDING_CONFIRM` cleanup, broker holdings delta 기반 `HOLDING_SYNC` 백필, `BROKER_HOLDING_MISSING` dry-run/apply 정합성 경로, `NewsContextService`, Codex-only Tier runtime, Admin confirmation UI, backtest `NEXT_OPEN` 기본 체결 정책이 추가됐습니다. 최신 상태 판단은 `docs/audits/2026-04-22-system-wide-trading-audit-findings.md`, `docs/superpowers/plans/2026-04-22-system-wide-trading-improvement-roadmap.md`, `docs/고도화/2026-04-23-enhancement-status.md`를 우선합니다.
+
 ## Phase 0: 감사 안전선
 
 ### 감사 운영 기준

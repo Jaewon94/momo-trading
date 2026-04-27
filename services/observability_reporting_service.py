@@ -82,6 +82,11 @@ class ObservabilityReportingService:
             start_at=start_at,
             metric_type="AI_SKIPPED",
         )
+        holdings_review_rows = await self._fetch_execution_metrics(
+            session,
+            start_at=start_at,
+            metric_type="HOLDINGS_REVIEW",
+        )
 
         news_poll_rows = [row for row in job_rows if str(row.metric_name or "").upper() == "NEWS_POLL"]
         maintenance_rows = [row for row in job_rows if str(row.metric_name or "").upper() == "OBSERVABILITY_MAINTENANCE"]
@@ -117,6 +122,7 @@ class ObservabilityReportingService:
             "resource_series": resource_series_payload,
             "llm": llm_summary,
             "ai_skipped": self._build_ai_skipped_summary(ai_skipped_rows),
+            "holdings_review": self._build_holdings_review_summary(holdings_review_rows),
             "jobs": {
                 "news_poll": news_poll_summary,
                 "maintenance": self._build_maintenance_summary(maintenance_rows),
@@ -127,7 +133,12 @@ class ObservabilityReportingService:
             },
             "errors": {
                 "recent": await self._build_recent_errors(session, start_at=start_at, limit=8),
-                "incidents": await self._build_error_incidents(session, limit=8),
+                "incidents": await self._build_error_incidents(
+                    session,
+                    limit=8,
+                    active_since=start_at,
+                    now=end_at,
+                ),
             },
             "storage": await observability_maintenance_service.summarize_storage(
                 session,
@@ -298,6 +309,8 @@ class ObservabilityReportingService:
         session: AsyncSession,
         *,
         limit: int,
+        active_since,
+        now,
     ) -> list[dict[str, Any]]:
         stmt = (
             select(ErrorIncident)
@@ -305,8 +318,17 @@ class ObservabilityReportingService:
             .limit(limit)
         )
         rows = list((await session.execute(stmt)).scalars().all())
-        return [
-            {
+        serialized = []
+        for row in rows:
+            last_seen_at = ensure_kst(row.last_seen_at) if row.last_seen_at else None
+            last_seen_age_sec = (
+                max(int((ensure_kst(now) - last_seen_at).total_seconds()), 0)
+                if last_seen_at is not None else None
+            )
+            active_in_window = bool(last_seen_at is not None and last_seen_at >= active_since)
+            status = str(row.status or "OPEN").upper()
+            stale_open = bool(status == "OPEN" and not active_in_window)
+            serialized.append({
                 "fingerprint": row.fingerprint,
                 "title": row.title,
                 "component": row.component,
@@ -314,13 +336,18 @@ class ObservabilityReportingService:
                 "severity": row.severity,
                 "status": row.status,
                 "occurrence_count": int(row.occurrence_count or 0),
-                "last_seen_at": ensure_kst(row.last_seen_at).isoformat() if row.last_seen_at else None,
+                "last_seen_at": last_seen_at.isoformat() if last_seen_at else None,
+                "last_seen_age_sec": last_seen_age_sec,
+                "active_in_window": active_in_window,
+                "active_recently": bool(last_seen_age_sec is not None and last_seen_age_sec <= 3600),
+                "stale_open": stale_open,
+                "auto_resolution_candidate": stale_open,
+                "display_status": "STALE_OPEN" if stale_open else status,
                 "exception_type": row.exception_type,
                 "last_message": _truncate_text(row.last_message, 160),
                 "owner_note": _truncate_text(row.owner_note, 200),
-            }
-            for row in rows
-        ]
+            })
+        return serialized
 
     def _build_resource_summary(self, rows: list[ResourceSnapshot]) -> dict[str, Any]:
         latest = rows[-1] if rows else None
@@ -509,6 +536,49 @@ class ObservabilityReportingService:
                 self._serialize_ai_skipped_row(row)
                 for row in recent_rows
             ],
+        }
+
+    def _build_holdings_review_summary(self, rows: list[ExecutionMetric]) -> dict[str, Any]:
+        review_required_rows = [
+            row for row in rows
+            if str(row.metric_name or "").upper() == "REVIEW_REQUIRED"
+        ]
+        reason_counter: Counter[str] = Counter()
+        symbol_counter: Counter[str] = Counter()
+
+        for row in review_required_rows:
+            detail = _safe_json_loads(row.detail)
+            reason_code = str(detail.get("reason_code") or "UNKNOWN").upper()
+            reason_counter[reason_code] += 1
+            if row.symbol:
+                symbol_counter[str(row.symbol)] += 1
+
+        recent_rows = sorted(review_required_rows, key=lambda item: item.created_at or now_kst(), reverse=True)[:10]
+        return {
+            "review_required_total": len(review_required_rows),
+            "by_reason": [
+                {"reason_code": reason, "count": count}
+                for reason, count in sorted(reason_counter.items(), key=lambda item: (-item[1], item[0]))
+            ],
+            "top_symbols": [
+                {"symbol": symbol, "count": count}
+                for symbol, count in sorted(symbol_counter.items(), key=lambda item: (-item[1], item[0]))[:10]
+            ],
+            "recent": [
+                self._serialize_holdings_review_required_row(row)
+                for row in recent_rows
+            ],
+        }
+
+    def _serialize_holdings_review_required_row(self, row: ExecutionMetric) -> dict[str, Any]:
+        detail = _safe_json_loads(row.detail)
+        return {
+            "created_at": ensure_kst(row.created_at).isoformat(),
+            "symbol": row.symbol,
+            "source_symbol": detail.get("source_symbol"),
+            "stock_name": detail.get("stock_name"),
+            "reason_code": str(detail.get("reason_code") or "UNKNOWN").upper(),
+            "reason": _truncate_text(detail.get("reason"), 160),
         }
 
     def _serialize_ai_skipped_row(self, row: ExecutionMetric) -> dict[str, Any]:

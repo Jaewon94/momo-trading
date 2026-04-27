@@ -139,6 +139,17 @@ async def test_observability_reporting_service_builds_overview_from_recent_metri
                     detail='{"stage": "HOLDINGS_REVIEW_CACHE", "reason_code": "CACHE_HIT", "skipped_tier": "TIER1", "action": "HOLD"}',
                     created_at=now - timedelta(minutes=1),
                 ),
+                ExecutionMetric(
+                    metric_type="HOLDINGS_REVIEW",
+                    metric_name="REVIEW_REQUIRED",
+                    status="REVIEW_REQUIRED",
+                    symbol="010140",
+                    item_count=1,
+                    success_count=0,
+                    error_count=1,
+                    detail='{"stage": "HOLDINGS_DATA_COLLECTION", "reason_code": "TRADE_RESULT_MISSING", "reason": "open BUY TradeResult 없음", "source_symbol": "A010140", "stock_name": "삼성중공업"}',
+                    created_at=now - timedelta(minutes=1),
+                ),
                 ErrorEvent(
                     fingerprint="abc123",
                     severity="ERROR",
@@ -189,6 +200,9 @@ async def test_observability_reporting_service_builds_overview_from_recent_metri
     assert {"stage": "HOLDINGS_REVIEW_CACHE", "reason_code": "CACHE_HIT", "count": 1} in payload["ai_skipped"]["by_reason"]
     assert payload["ai_skipped"]["top_symbols"] == [{"symbol": "005930", "count": 2}]
     assert payload["ai_skipped"]["recent"][0]["stage"] == "HOLDINGS_REVIEW_CACHE"
+    assert payload["holdings_review"]["review_required_total"] == 1
+    assert payload["holdings_review"]["by_reason"] == [{"reason_code": "TRADE_RESULT_MISSING", "count": 1}]
+    assert payload["holdings_review"]["recent"][0]["source_symbol"] == "A010140"
     assert payload["jobs"]["news_poll"]["runs"] == 2
     assert payload["jobs"]["news_poll"]["created_total"] == 8
     assert payload["jobs"]["news_poll"]["source_error_total"] == 2
@@ -198,10 +212,48 @@ async def test_observability_reporting_service_builds_overview_from_recent_metri
     assert payload["errors"]["recent"][0]["component"] == "scheduler"
     assert payload["errors"]["incidents"][0]["occurrence_count"] == 2
     assert payload["errors"]["incidents"][0]["last_seen_at"].startswith("2026-")
+    assert payload["errors"]["incidents"][0]["active_in_window"] is True
+    assert payload["errors"]["incidents"][0]["display_status"] == "OPEN"
+    assert payload["errors"]["incidents"][0]["auto_resolution_candidate"] is False
     assert len(payload["trends"]["llm"]) == 1
     assert payload["trends"]["llm"][0]["calls"] == 2
     assert sum(point["created_total"] for point in payload["trends"]["news_poll"]) == 8
     assert payload["storage"]["raw_retention_days"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_observability_reporting_service_marks_old_open_incidents_as_stale():
+    async with TestAsyncSessionLocal() as session:
+        await session.execute(delete(ErrorIncident))
+        await session.commit()
+
+    async with TestAsyncSessionLocal() as session:
+        async with session.begin():
+            now = now_kst()
+            session.add(
+                ErrorIncident(
+                    fingerprint="old-incident",
+                    title="old · incident",
+                    component="old",
+                    operation="incident",
+                    severity="ERROR",
+                    status="OPEN",
+                    first_seen_at=now - timedelta(days=3),
+                    last_seen_at=now - timedelta(days=2),
+                    occurrence_count=4,
+                    exception_type="RuntimeError",
+                    last_message="old failure",
+                )
+            )
+
+        payload = await ObservabilityReportingService().build_overview(session, hours=1, points=30)
+
+    incident = payload["errors"]["incidents"][0]
+    assert incident["active_in_window"] is False
+    assert incident["active_recently"] is False
+    assert incident["stale_open"] is True
+    assert incident["auto_resolution_candidate"] is True
+    assert incident["display_status"] == "STALE_OPEN"
 
 
 @pytest.mark.asyncio

@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from loguru import logger
 
+from core.config import settings
 from admin.sse_manager import sse_manager
 from core.database import AsyncSessionLocal, run_sqlite_write_with_retry
 from models.agent_activity import AgentActivityLog
@@ -38,32 +39,42 @@ class ActivityLogger:
         detail_json = json.dumps(detail, ensure_ascii=False, default=str) if detail else None
         ts = now_kst()
 
-        entry = AgentActivityLog(
-            created_at=ts,
-            cycle_id=cycle_id,
-            activity_type=activity_type,
-            phase=phase,
-            stock_id=stock_id,
-            symbol=symbol,
-            summary=summary,
-            detail=detail_json,
-            llm_provider=llm_provider,
-            llm_tier=llm_tier,
-            execution_time_ms=execution_time_ms,
-            confidence=confidence,
-            error_message=error_message,
-        )
+        def _build_entry() -> AgentActivityLog:
+            return AgentActivityLog(
+                created_at=ts,
+                cycle_id=cycle_id,
+                activity_type=activity_type,
+                phase=phase,
+                stock_id=stock_id,
+                symbol=symbol,
+                summary=summary,
+                detail=detail_json,
+                llm_provider=llm_provider,
+                llm_tier=llm_tier,
+                execution_time_ms=execution_time_ms,
+                confidence=confidence,
+                error_message=error_message,
+            )
 
         # DB 저장 (자체 세션)
+        entry: AgentActivityLog | None = None
         try:
             async def _persist() -> None:
+                nonlocal entry
+                new_entry = _build_entry()
                 async with AsyncSessionLocal() as session:
                     async with session.begin():
-                        session.add(entry)
+                        session.add(new_entry)
+                entry = new_entry
 
-            await run_sqlite_write_with_retry(_persist)
+            await run_sqlite_write_with_retry(
+                _persist,
+                retry_count=max(int(settings.SQLITE_WRITE_RETRY_COUNT), 5),
+                retry_delay_ms=max(int(settings.SQLITE_WRITE_RETRY_DELAY_MS), 250),
+            )
         except Exception as e:
             logger.error("활동 로그 DB 저장 실패: {}", str(e))
+            entry = _build_entry()
 
         # SSE 브로드캐스트
         try:

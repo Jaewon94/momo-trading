@@ -385,7 +385,7 @@ if [ -f "$VENV_DIR/bin/activate" ]; then
     source "$VENV_DIR/bin/activate"
 else
     echo "❌ venv 없음: $VENV_DIR"
-    echo "   python -m venv venv && pip install -r requirements.txt"
+    echo "   python3 -m venv \"$VENV_DIR\" && \"$VENV_DIR/bin/python\" -m pip install -r requirements.txt"
     exit 1
 fi
 
@@ -419,10 +419,12 @@ case "${1:-}" in
             if kill -0 "$PID" 2>/dev/null; then
                 print_running_status "$PID"
             else
-                echo "❌ 프로세스 종료됨 (stale PID: $PID)"
                 rm -f "$PID_FILE"
                 if write_pid_file_from_port; then
+                    echo "⚠️  stale PID 복구: $PID → $(cat "$PID_FILE")"
                     print_running_status "$(cat "$PID_FILE")"
+                else
+                    echo "❌ 프로세스 종료됨 (stale PID: $PID)"
                 fi
             fi
         elif write_pid_file_from_port; then

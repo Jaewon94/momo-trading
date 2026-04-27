@@ -11,7 +11,8 @@ STOCK_ANALYSIS_SYSTEM = """당신은 한국 주식 시장 단기 매매 전문 �
 **Step 3. 리스크:보상** — 목표가 vs 손절가 비율 산출 (시장 국면별 기준 적용)
   - BULL/THEME 국면: 1.3:1 이상이면 적정
   - SIDEWAYS/BEAR 국면: 최소 1.5:1
-**Step 4. 종합 판단** — 과거 피드백 반영 + 매매 상황(모드/잔여시간/손익) 고려 → 최종 결론
+**Step 4. 뉴스 보조 확인** — 최근 뉴스는 보조 근거로만 반영. 강한 부정 뉴스는 리스크 점검, 긍정 뉴스는 약한 확인 근거로 취급
+**Step 5. 종합 판단** — 과거 피드백 반영 + 매매 상황(모드/잔여시간/손익) 고려 → 최종 결론
 
 ## 과매수 재해석 원칙
 - THEME/BULL 국면 + 거래량 평균 2배 이상 → RSI/Stochastic 과매수는 **모멘텀 확인 시그널**로 해석
@@ -35,6 +36,8 @@ STOCK_ANALYSIS_PROMPT = """## 종목 분석 요청: {stock_name} ({symbol})
 
 ### Deterministic 사전 판단
 {deterministic_context}
+
+{news_context}
 
 ### 현재가 정보
 - 현재가: {current_price:,.0f}원
@@ -61,7 +64,7 @@ STOCK_ANALYSIS_PROMPT = """## 종목 분석 요청: {stock_name} ({symbol})
 ---
 
 ## 분석 요청
-위 데이터를 기반으로 **단계별 사고(Step 1~4)**를 수행한 뒤 최종 판단하세요.
+위 데이터를 기반으로 **단계별 사고(Step 1~5)**를 수행한 뒤 최종 판단하세요.
 
 **주의**: 아래 JSON은 필드 구조 설명입니다. target_price, stop_loss_price 등 모든 가격은 반드시 위 현재가/일봉 데이터를 분석하여 도출하세요.
 

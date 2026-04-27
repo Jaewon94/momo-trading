@@ -10,6 +10,27 @@ from services.decision_benchmark_service import DecisionBenchmarkService
 from tests.conftest import TestAsyncSessionLocal
 
 
+def test_decision_benchmark_extracts_news_context_source_codes() -> None:
+    metadata = {
+        "analysis_context": {
+            "news_context_source_codes": ["DART"],
+            "news_context_items": [
+                {"source_code": "KRX", "title": "공시"},
+                {"source_code": "DART", "title": "중복 공시"},
+            ],
+            "news_top_contributors": [
+                {"source_code": "BLOOMBERG", "headline": "해외 뉴스"},
+            ],
+        }
+    }
+
+    codes = DecisionBenchmarkService._extract_news_source_codes(
+        json.dumps(metadata, ensure_ascii=False)
+    )
+
+    assert codes == ("DART", "BLOOMBERG", "KRX")
+
+
 async def _add_labeled_decision(
     *,
     symbol: str,

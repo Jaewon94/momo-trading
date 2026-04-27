@@ -24,11 +24,12 @@ def test_llm_runtime_recommendation_service_recommends_smaller_news_model_under_
 
     assert payload["machine_pressure"]["severity"] == "HIGH"
     assert payload["news_translation"]["action"] == "DOWNGRADE"
-    assert payload["news_translation"]["recommended"]["model"] == "qwen3:4b"
+    assert payload["news_translation"]["recommended"]["model"] == "qwen3:8b"
+    assert "8b 미만" in payload["news_translation"]["reasons"][0]
     assert payload["ollama_concurrency"]["recommended_parallel_jobs"] == 1
 
 
-def test_llm_runtime_recommendation_service_keeps_news_model_when_already_at_target(monkeypatch):
+def test_llm_runtime_recommendation_service_rejects_news_model_below_operational_floor(monkeypatch):
     monkeypatch.setattr("services.llm_runtime_recommendation_service.settings.NEWS_LLM_ENABLED", True)
     monkeypatch.setattr("services.llm_runtime_recommendation_service.settings.NEWS_TRANSLATE_FOREIGN_ENABLED", True)
     monkeypatch.setattr("analysis.llm.selection_policy.settings.NEWS_LLM_PROVIDER", "OLLAMA")
@@ -50,8 +51,9 @@ def test_llm_runtime_recommendation_service_keeps_news_model_when_already_at_tar
     )
 
     assert payload["news_translation"]["current"]["model"] == "qwen3:4b"
-    assert payload["news_translation"]["recommended"]["model"] == "qwen3:4b"
-    assert payload["news_translation"]["action"] == "KEEP"
+    assert payload["news_translation"]["recommended"]["model"] == "qwen3:8b"
+    assert payload["news_translation"]["action"] == "UPGRADE"
+    assert "4b급" in payload["news_translation"]["reasons"][0]
 
 
 def test_llm_runtime_recommendation_service_can_upgrade_manual_quality_when_stable(monkeypatch):

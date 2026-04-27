@@ -39,6 +39,10 @@ describe("settings_action_state", () => {
       id: "set-news-translate-foreign-enabled",
       checked: false,
     });
+    const dangerousActionChange = resolveDirectSettingChange({
+      id: "set-admin-danger-confirmation-required",
+      checked: true,
+    });
 
     expect(fetchChange).toEqual({
       key: "NEWS_FETCH_CONCURRENCY",
@@ -59,6 +63,10 @@ describe("settings_action_state", () => {
     expect(translateForeignChange).toEqual({
       key: "NEWS_TRANSLATE_FOREIGN_ENABLED",
       value: false,
+    });
+    expect(dangerousActionChange).toEqual({
+      key: "ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED",
+      value: true,
     });
   });
 

@@ -37,6 +37,7 @@ async def run_backtest(req: BacktestRunRequest):
         stop_loss_pct=req.stop_loss_pct,
         take_profit_pct=req.take_profit_pct,
         max_hold_days=req.max_hold_days,
+        execution_timing=req.execution_timing,
     )
 
     engine = BacktestEngine(config)
@@ -57,6 +58,8 @@ async def run_backtest(req: BacktestRunRequest):
             "max_hold_days": config.max_hold_days,
             "commission_rate": config.commission_rate,
             "slippage_rate": config.slippage_rate,
+            "execution_timing": config.execution_timing,
+            "model_family": "RULE_BASED_TECHNICAL_PROXY",
         },
     )
 

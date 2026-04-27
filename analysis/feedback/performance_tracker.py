@@ -2,7 +2,7 @@
 from dataclasses import dataclass, field
 
 from loguru import logger
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.trade_result import TradeResult
@@ -32,11 +32,19 @@ class PerformanceTracker:
     def __init__(self, session: AsyncSession):
         self.session = session
 
+    _PERFORMANCE_EXCLUDED_EXIT_REASONS = (
+        "BROKER_HOLDING_MISSING",
+    )
+
     # ── 공통 필터: 청산 완료된 BUY 포지션만 (pnl/is_win이 정확한 레코드) ──
     _CLOSED_POSITION_FILTER = and_(
         TradeResult.side == "BUY",
         TradeResult.exit_at.isnot(None),
         TradeResult.status == "CONFIRMED",
+        or_(
+            TradeResult.exit_reason.is_(None),
+            TradeResult.exit_reason.notin_(_PERFORMANCE_EXCLUDED_EXIT_REASONS),
+        ),
     )
 
     async def get_strategy_stats(self, strategy_type: str, limit: int = 100) -> PerformanceStat:

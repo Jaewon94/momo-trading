@@ -36,10 +36,14 @@
 ## 2026-04-23 현재 구현 검증 요약
 
 - Track 1, Track 2, Track 3.1, Track 3.1a는 코드와 테스트 기준 완료 상태다.
+- 2026-04-27 운영 확인에서 `010170`의 stale DB-only `PENDING_CONFIRM` 주문은 수동 cleanup으로 `CONFIRM_FAILED` 처리했다. 브로커 pending에 없는 오래된 DB pending은 자동 주문을 만들지 않고 DB 정합성 작업으로만 다룬다.
+- 브로커 보유와 DB open BUY lot 불일치 보강을 추가했다. confirmed BUY 직후와 account equity snapshot 직후 broker holdings delta를 `HOLDING_SYNC` lot으로 백필하며, broker 보유에서 사라진 DB-only open lot은 dry-run report 후 수동 apply에서 `BROKER_HOLDING_MISSING`으로 중립 종결할 수 있다.
 - Track 5.1은 observability rollup key의 provider/model `NULL` 정규화와 maintenance failure preflight WARN 노출까지 구현됐다.
 - Track 8 관련으로 LLM 지연 경고(`LLM_SLOW_CALL_WARN_SEC`)와 cooldown incident dedupe가 구현됐다. cooldown dedupe는 provider cooldown 오류의 잔여 초를 fingerprint 계산에서 정규화해 같은 장애를 하나의 incident로 누적한다.
 - 보유종목 사전판단은 `HOLDINGS_PRECHECK_SKIP_CLEAR_HOLD_ENABLED=false` 기본값으로 명확한 HOLD skip 경로를 추가했다. 기본값은 보수적으로 꺼두며, SELL/HOLD precheck skip은 `AI_SKIPPED/HOLDINGS_PRECHECK` metric으로 기록된다.
 - 뉴스 deterministic enrichment/backfill은 별도 커밋으로 구현됐고, 운영 서버에서 dry-run/apply까지 확인됐다. 2026-04-23 16:09 KST 기준 변경 후보 1건을 적용했고 재확인 dry-run은 `changed_count=0`이었다.
+- `NewsContextService`를 추가해 최근 뉴스의 종목/종목명/source 매칭 결과를 Tier1/Tier2 프롬프트와 trade note에 넣는다. 이는 BUY 차단 gate가 아니라 "도움이 되는 정도"의 약한 보조 맥락이며, `news_context_*` metadata로 report/benchmark에서 사후 성과를 볼 수 있게 한다.
+- 런타임 LLM 정책은 운영 의도에 맞춰 Tier1/Tier2/Manual 모두 Codex-only로 둔다. 2026-04-27 현재 `CODEX/gpt-5.4`, fallback 없음이 기준이며, 뉴스 번역만 `OLLAMA/qwen3:14b`를 유지한다. `qwen3:4b`는 지연과 JSON 안정성 문제로 운영 추천 후보에서 제외한다.
 - DB 초기화 이후 `stocks=0` 상태를 보완하기 위해 broker-observed symbol 기반 `stocks` universe bootstrap 서비스/API를 추가했다. 2026-04-24 10:09 KST 기준 운영 DB에서 dry-run/apply를 확인했고, 보유/거래량/등락 랭킹 기반 최소 universe를 생성했다.
 - Track 6.1 canonical decision event table/service, Track 6.2 forward return labeling job, decision benchmark read-only API는 구현됐다. 현재 benchmark는 `event.source`, `strategy_type`, `tier1_decision`, `tier2_decision`, `news_top_contributors.source_code`와 read-only control group(`random_same_count`, `scanner_top_same_count`, `tier1_buy_only`, `tier2_buy_only`)까지 집계한다. 다만 full attribution과 causal 비교는 후속 구현이 필요하다.
 - Track 8 후보 품질 보강의 첫 단계로 `CandidateScoringService`를 추가했다. 시장 스캔 프롬프트에 거래량/급등/급락/보유/현금 기반 deterministic 후보 top-N 요약을 함께 넣는다.
@@ -309,6 +313,38 @@
   - Commit: `fix: record successful liquidation retries`
   - Result: F-032 갱신 완료. 커밋은 이 작업 검증 후 생성.
 
+### Task 2.4: broker holdings / DB open lot reconciliation hardening
+
+**Files:**
+- Modify: `agent/decision_maker.py`
+- Modify: `scheduler/jobs/portfolio_sync_job.py`
+- Modify: `scheduler/scheduler.py`
+- Test: `tests/agent/test_decision_maker.py`
+- Test: `tests/scheduler/test_portfolio_sync_job.py`
+- Test: `tests/scheduler/test_scheduler_runtime_paths.py`
+
+- [x] **Step 1: 실패 테스트 작성**
+  - BUY 주문이 broker에서 체결/보유 반영됐지만 DB open BUY lot이 부족한 fixture를 만든다.
+  - broker 보유에서 사라진 DB-only open BUY lot은 pending 주문이 없을 때만 cleanup 후보가 되는지 테스트한다.
+  - Result: post-BUY holdings backfill, account snapshot backfill, missing broker holding cleanup 경로를 검증하는 테스트를 추가했다.
+
+- [x] **Step 2: 실패 확인**
+  - Expected: 기존에는 broker/DB 보유수량 mismatch가 `open BUY TradeResult 없음` 또는 stale open lot으로 남는다.
+  - Result: DB open lot 누락과 broker missing DB lot 후보 분류 부재를 확인했다.
+
+- [x] **Step 3: 최소 구현**
+  - confirmed BUY 직후 broker holdings delta를 읽어 DB open BUY 부족분을 `HOLDING_SYNC` source로 백필한다.
+  - account equity snapshot 이후에도 같은 백필을 수행해 장중 보유 재평가가 DB open BUY 누락으로 멈추는 일을 줄인다.
+  - `portfolio_sync_job`은 broker holdings에 없는 DB-only open BUY lot을 기본 dry-run으로 보고하고, 수동 apply 시 `BROKER_HOLDING_MISSING`으로 중립 종결한다.
+  - Result: pending broker/DB 주문이 남아 있으면 cleanup하지 않고 보류한다. 이 작업은 DB hygiene이며 broker 주문을 내지 않는다.
+
+- [x] **Step 4: 운영 확인**
+  - 2026-04-27 KST 운영 확인에서 `452190` broker 보유 3,800주와 DB open qty 3,800주가 일치했고 pending 주문은 0건이었다.
+  - `010170` stale `PENDING_CONFIRM`은 수동 cleanup으로 `CONFIRM_FAILED` 처리했다.
+
+- [ ] **Step 5: 후속 보강**
+  - broker execution history를 신뢰할 수 있게 조회할 수 있으면 `BROKER_HOLDING_MISSING` 중립 종결 대신 실제 체결가/수수료 기반 realized PnL reconcile로 승격한다.
+
 ## Track 3: PnL Truth and Kill Switch
 
 ### Task 3.1: canonical account PnL summary 서비스
@@ -547,7 +583,8 @@
 
 - [x] **Step 4: 호환성 확인**
   - 기본값 `ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED=false`에서는 기존 Admin UI 호출이 그대로 동작한다.
-  - UI confirmation flow는 플래그를 true로 전환하기 전 별도 후속 작업으로 둔다.
+  - Admin UI confirmation flow도 1차 구현했다. 설정 화면에서 `ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED`를 켤 수 있고, DB 초기화/즉시 매도/미체결 취소/취소 후 재매도는 실행 직전에 서버 확인 토큰을 발급받아 요청 본문에 붙인다.
+  - 기본값 true 전환 여부는 운영 표본 확인 후 결정한다.
 
 - [x] **Step 5: 전체 통과/커밋**
   - Run: `./.venv/bin/python -m pytest tests/api/test_admin_account_routes.py tests/api/test_admin_trade_routes.py tests/services/test_admin_action_confirmation_service.py -q`
@@ -668,20 +705,24 @@
 - Modify: `backtesting/report.py`
 - Test: `tests/backtesting/test_engine_execution_model.py`
 
-- [ ] **Step 1: 실패 테스트 작성**
+- [x] **Step 1: 실패 테스트 작성**
   - i봉 close로 생긴 신호가 i봉 close에 즉시 체결되지 않고 i+1 open 또는 설정된 execution policy로 체결되는지 테스트한다.
+  - Result: `tests/backtesting/test_engine_execution_model.py`에 기본 `NEXT_OPEN`과 명시적 `LEGACY_SAME_CLOSE` 회귀 테스트를 추가했다.
 
-- [ ] **Step 2: 실패 확인**
+- [x] **Step 2: 실패 확인**
   - Run: `./.venv313/bin/python -m pytest tests/backtesting/test_engine_execution_model.py -q`
   - Expected: 현재 same-close 체결로 실패.
+  - Result: 기본 경로가 같은 봉 종가로 체결되고 `execution_timing` 옵션이 없어 실패하는 것을 확인했다.
 
-- [ ] **Step 3: 최소 구현**
+- [x] **Step 3: 최소 구현**
   - `execution_timing=NEXT_OPEN|NEXT_CLOSE|LEGACY_SAME_CLOSE`를 추가한다.
   - 기본값은 `NEXT_OPEN`으로 두고 legacy는 명시 옵션으로만 사용한다.
+  - Result: `BacktestConfig.execution_timing`을 추가하고 기본 시그널 체결을 다음 봉으로 미뤘다. API 요청/리포트 config에도 execution policy와 `RULE_BASED_TECHNICAL_PROXY` model family를 표시한다.
 
-- [ ] **Step 4: 통과 확인**
+- [x] **Step 4: 통과 확인**
   - Run: `./.venv313/bin/python -m pytest tests/backtesting/test_engine_execution_model.py tests/backtesting/test_data_loader.py -q`
   - Expected: PASS.
+  - Result: 관련 backtesting/data loader 테스트 통과.
 
 - [ ] **Step 5: 커밋**
   - Commit: `fix: remove default same-bar backtest execution`
@@ -781,6 +822,35 @@
 - [ ] **Step 5: 문서/커밋**
   - Update: F-028/F-029/F-030.
   - Commit: `feat: constrain news rollout modes`
+
+### Task 8.3: 뉴스 context를 약한 보조 신호로 Tier prompt와 report에 연결
+
+**Files:**
+- Create: `services/news_context_service.py`
+- Modify: `agent/trading_agent.py`
+- Modify: `agent/decision_maker.py`
+- Modify: `services/performance_reporting_service.py`
+- Modify: `services/decision_benchmark_service.py`
+- Test: `tests/services/test_news_context_service.py`
+- Test: `tests/agent/test_decision_maker.py`
+- Test: `tests/services/test_performance_reporting_service.py`
+- Test: `tests/services/test_decision_benchmark_service.py`
+
+- [x] **Step 1: 실패 테스트 작성**
+  - 최근 뉴스가 종목코드/종목명/source로 매칭되면 prompt context와 trade note에 남는지 테스트한다.
+  - `news_context_*` metadata가 performance report와 decision benchmark의 뉴스 enriched count에 포함되는지 테스트한다.
+
+- [x] **Step 2: 최소 구현**
+  - `NewsContextService`가 최근 뉴스 후보를 매칭하고, negative pressure/tone/confidence hint/source code/items를 구조화한다.
+  - Tier1/Tier2 prompt에 context를 넣되 hard BUY block으로 쓰지 않는다.
+  - trade note와 decision/report metadata에 `news_context_available`, `news_context_tone`, `news_context_negative_pressure`, `news_context_source_codes`, `news_context_items`를 남긴다.
+
+- [x] **Step 3: rollout 원칙**
+  - 뉴스는 매수 판단에 도움이 되는 약한 보조 맥락으로만 사용한다.
+  - 차단/승급은 기존 shadow/rollout 표본과 forward return benchmark가 쌓인 뒤 결정한다.
+
+- [ ] **Step 4: 후속 검증**
+  - 실제 BUY/HOLD/SELL 표본이 누적된 뒤 `news_context_*`가 붙은 거래와 미부착 거래의 forward return, 손실 회피율, source별 품질을 비교한다.
 
 ## Track 9: Strategy Taxonomy and Cleanup
 

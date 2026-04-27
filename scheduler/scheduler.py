@@ -33,6 +33,7 @@ from services.observability_service import observability_service
 from services.account_equity_service import account_equity_service
 from services.error_capture_service import error_capture_service
 from services.news_translation_backfill_service import news_translation_backfill_service
+from trading.symbols import normalize_krx_symbol
 from trading.broker_factory import get_broker_adapter
 from trading.enums import ActivityPhase, ActivityType, Market, OrderSide, OrderType
 from trading.models import OrderRequest
@@ -238,6 +239,14 @@ class TradingScheduler:
             session_phase="INTRADAY",
             detail={"reason": "scheduler_interval"},
         )
+        try:
+            from scheduler.jobs.portfolio_sync_job import _backfill_missing_open_buys_from_holdings
+
+            summary = await _backfill_missing_open_buys_from_holdings()
+            if int((summary or {}).get("backfilled") or 0) > 0:
+                logger.warning("계좌 스냅샷 후 보유수량 백필 실행: {}", summary)
+        except Exception as exc:
+            logger.warning("계좌 스냅샷 후 보유수량 백필 실패: {}", str(exc))
 
     async def _observability_maintenance(self) -> None:
         started_at = _time.perf_counter()
@@ -1276,6 +1285,9 @@ class TradingScheduler:
                     ))
                     logger.warning("보유종목 데이터 수집 오류 {} → REVIEW_REQUIRED: {}", h.symbol, str(e))
 
+        if review_required:
+            await self._record_holdings_review_required_metrics(review_required)
+
         return holdings_data, holdings_map, review_required
 
     @staticmethod
@@ -1285,6 +1297,32 @@ class TradingScheduler:
             "reason_code": reason_code,
             "reason": reason,
         }
+
+    async def _record_holdings_review_required_metrics(self, review_required: list[dict]) -> None:
+        for item in review_required:
+            holding = item.get("holding")
+            symbol = normalize_krx_symbol(getattr(holding, "symbol", ""))
+            reason_code = str(item.get("reason_code") or "UNKNOWN").upper()
+            reason = str(item.get("reason") or "")
+            try:
+                await observability_service.record_execution_metric(
+                    metric_type="HOLDINGS_REVIEW",
+                    metric_name="REVIEW_REQUIRED",
+                    status="REVIEW_REQUIRED",
+                    symbol=symbol or None,
+                    item_count=1,
+                    success_count=0,
+                    error_count=1,
+                    detail={
+                        "stage": "HOLDINGS_DATA_COLLECTION",
+                        "reason_code": reason_code,
+                        "reason": reason,
+                        "source_symbol": str(getattr(holding, "symbol", "") or ""),
+                        "stock_name": str(getattr(holding, "name", "") or ""),
+                    },
+                )
+            except Exception as exc:
+                logger.debug("보유 재평가 REVIEW_REQUIRED metric 기록 실패 (무시): {}", str(exc))
 
     async def _record_holdings_review_decision_event(
         self,

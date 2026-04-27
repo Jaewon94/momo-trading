@@ -15,6 +15,7 @@ async_engine = create_async_engine(
     else {},
 )
 AsyncSessionLocal = async_sessionmaker(async_engine, expire_on_commit=False)
+_sqlite_write_lock = asyncio.Lock()
 
 
 if settings.async_database_url.startswith("sqlite+aiosqlite:///"):
@@ -40,15 +41,23 @@ async def run_sqlite_write_with_retry(operation, *, retry_count: int | None = No
     delay_ms = max(int(retry_delay_ms if retry_delay_ms is not None else settings.SQLITE_WRITE_RETRY_DELAY_MS), 0)
     last_exc: Exception | None = None
 
-    for attempt in range(1, attempts + 1):
-        try:
-            return await operation()
-        except Exception as exc:
-            last_exc = exc
-            if not is_sqlite_database_locked(exc) or attempt >= attempts:
-                raise
-            if delay_ms > 0:
-                await asyncio.sleep((delay_ms * attempt) / 1000.0)
+    async def _run_with_retry():
+        nonlocal last_exc
+        for attempt in range(1, attempts + 1):
+            try:
+                return await operation()
+            except Exception as exc:
+                last_exc = exc
+                if not is_sqlite_database_locked(exc) or attempt >= attempts:
+                    raise
+                if delay_ms > 0:
+                    await asyncio.sleep((delay_ms * attempt) / 1000.0)
+
+    if settings.async_database_url.startswith("sqlite+aiosqlite:///"):
+        async with _sqlite_write_lock:
+            return await _run_with_retry()
+
+    return await _run_with_retry()
 
     if last_exc is not None:
         raise last_exc

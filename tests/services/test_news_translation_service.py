@@ -271,6 +271,103 @@ async def test_news_translation_service_parses_repaired_llm_json(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_news_translation_service_normalizes_qwen_thinking_and_percent_score(monkeypatch):
+    service = NewsTranslationService()
+
+    async def fake_generate_news(*args, **kwargs):
+        return (
+            """
+            <think>사용자는 JSON만 원한다.</think>
+            {"translated_title":"엔비디아 강세","translated_summary":"AI 수요 기대가 반도체주를 지지했다.","sentiment_label":"bullish","sentiment_score":"72%"}
+            """,
+            "OLLAMA",
+        )
+
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_ENABLED", True)
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_PROVIDER", "OLLAMA")
+    monkeypatch.setattr(
+        "services.news_translation_service.llm_factory.generate_news",
+        fake_generate_news,
+    )
+
+    items = await service.translate_items([
+        {
+            "source_code": "CNBC",
+            "language": "en",
+            "title": "Nvidia rises as AI demand improves",
+            "summary": "Chip demand improved.",
+        },
+    ])
+
+    assert items[0]["metadata"]["translation_status"] == "SUCCESS"
+    assert items[0]["sentiment_label"] == "POSITIVE"
+    assert items[0]["sentiment_score"] == pytest.approx(0.72)
+
+
+@pytest.mark.asyncio
+async def test_news_translation_service_parses_qwen_prompt_echo_before_json(monkeypatch):
+    service = NewsTranslationService()
+
+    async def fake_generate_news(*args, **kwargs):
+        return (
+            """
+            Return exactly one minified JSON object with these keys:
+            {"translated_title":"...","translated_summary":"...","sentiment_label":"POSITIVE|NEUTRAL|NEGATIVE","sentiment_score":0.72}
+
+            {"translated_title":"유가 하락","translated_summary":"재고 증가와 공급 신호가 유가에 부담을 줬다.","sentiment_label":"NEGATIVE","sentiment_score":0.31}
+            """,
+            "OLLAMA",
+        )
+
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_ENABLED", True)
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_PROVIDER", "OLLAMA")
+    monkeypatch.setattr(
+        "services.news_translation_service.llm_factory.generate_news",
+        fake_generate_news,
+    )
+
+    items = await service.translate_items([
+        {
+            "source_code": "INVESTING",
+            "language": "en",
+            "title": "Oil slips as inventories build",
+            "summary": "Crude prices moved lower.",
+        },
+    ])
+
+    assert items[0]["metadata"]["translation_status"] == "SUCCESS"
+    assert items[0]["metadata"]["translated_title"] == "유가 하락"
+    assert items[0]["sentiment_label"] == "NEGATIVE"
+
+
+@pytest.mark.asyncio
+async def test_news_translation_service_fails_payload_without_translated_fields(monkeypatch):
+    service = NewsTranslationService()
+
+    async def fake_generate_news(*args, **kwargs):
+        return ('{"sentiment_label":"NEUTRAL","sentiment_score":0.5}', "OLLAMA")
+
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_ENABLED", True)
+    monkeypatch.setattr("services.news_translation_service.settings.NEWS_LLM_PROVIDER", "OLLAMA")
+    monkeypatch.setattr(
+        "services.news_translation_service.llm_factory.generate_news",
+        fake_generate_news,
+    )
+
+    items = await service.translate_items([
+        {
+            "source_code": "CNBC",
+            "language": "en",
+            "title": "Nvidia rises as AI demand improves",
+            "summary": "Chip demand improved.",
+        },
+    ])
+
+    assert items[0]["metadata"]["translation_status"] == "FAILED"
+    assert items[0]["metadata"]["translation_error"] == "translation payload missing translated fields"
+
+
+@pytest.mark.asyncio
 async def test_news_translation_service_captures_translation_failures(monkeypatch):
     service = NewsTranslationService()
     captured = {}

@@ -119,6 +119,21 @@ def test_extract_news_negative_pressure_from_notes_json():
     assert service._extract_news_negative_pressure(trade) == 0.42
 
 
+def test_extract_news_negative_pressure_falls_back_to_news_context_json():
+    service = PerformanceReportingService()
+    trade = SimpleNamespace(
+        notes=json.dumps({
+            "news_context_available": True,
+            "news_context_negative_pressure": 0.18,
+            "news_context_item_count": 1,
+        }, ensure_ascii=False),
+        strategy_type="STABLE_SHORT",
+    )
+
+    assert service._extract_news_negative_pressure(trade) == 0.18
+    assert service._extract_news_enriched(trade) is True
+
+
 def test_calc_news_context_returns_average_pressure():
     service = PerformanceReportingService()
     trades = [
@@ -130,6 +145,26 @@ def test_calc_news_context_returns_average_pressure():
 
     assert metrics["trade_count"] == 2
     assert metrics["avg_negative_pressure"] == 0.3
+
+
+def test_calc_news_context_counts_enriched_trade_even_without_negative_pressure():
+    service = PerformanceReportingService()
+    trades = [
+        _TradePoint(
+            strategy_type="A",
+            horizon="MID",
+            pnl=50,
+            return_pct=0.5,
+            exit_at=__import__("datetime").datetime.now(),
+            news_negative_pressure=None,
+            news_enriched=True,
+        ),
+    ]
+
+    metrics = service._calc_news_context(trades)
+
+    assert metrics["trade_count"] == 1
+    assert metrics["avg_negative_pressure"] == 0.0
 
 
 def test_calc_shadow_context_counts_news_policy_candidates():
@@ -198,6 +233,7 @@ def test_calc_trade_comparisons_splits_news_enriched_and_plain():
             return_pct=0.9,
             exit_at=__import__("datetime").datetime.now(),
             news_negative_pressure=None,
+            news_enriched=True,
             entry_price=20_000,
             quantity=3,
             estimated_cost_bps=10,
@@ -206,11 +242,11 @@ def test_calc_trade_comparisons_splits_news_enriched_and_plain():
 
     comparison = service._calc_trade_comparisons(trades)
 
-    assert comparison["news_enriched"]["trade_count"] == 2
-    assert comparison["plain"]["trade_count"] == 1
-    assert comparison["news_enriched"]["expectancy"] == 600.0
-    assert comparison["plain"]["expectancy"] == 800.0
-    assert comparison["delta"]["expectancy"] == -200.0
+    assert comparison["news_enriched"]["trade_count"] == 3
+    assert comparison["plain"]["trade_count"] == 0
+    assert comparison["news_enriched"]["expectancy"] == 666.67
+    assert comparison["plain"]["expectancy"] == 0.0
+    assert comparison["delta"]["expectancy"] == 666.67
 
 
 def test_build_rollout_status_promotes_when_samples_and_metrics_are_good():

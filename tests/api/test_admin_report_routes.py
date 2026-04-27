@@ -30,6 +30,42 @@ def _build_report(report_date: date) -> SimpleNamespace:
 
 
 @pytest.mark.asyncio
+async def test_admin_report_by_date_lifts_metric_contract_from_strategy_stats(client, monkeypatch):
+    report = _build_report(date(2026, 4, 3))
+    report.strategy_stats = (
+        '{"metric_contract":{"total_orders":{"value":3,"formula":"buy_count + sell_order_count"},'
+        '"buy_count":{"value":2,"source":"trade_results BUY rows by entry_at"}}}'
+    )
+    report.buy_count = 2
+    report.sell_count = 1
+    report.total_orders = 3
+
+    class FakeDailyReportRepo:
+        def __init__(self, _db) -> None:
+            pass
+
+        async def get_by_date(self, d):
+            assert d == date(2026, 4, 3)
+            return report
+
+    class FakeTradeRepo:
+        def __init__(self, _db) -> None:
+            pass
+
+        async def get_completed_by_date(self, _d):
+            return []
+
+    monkeypatch.setattr("api.routes.admin.DailyReportRepository", FakeDailyReportRepo, raising=False)
+    monkeypatch.setattr("api.routes.admin.TradeResultRepository", FakeTradeRepo, raising=False)
+
+    response = await client.get("/api/v1/admin/reports/2026-04-03")
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["metric_contract"]["total_orders"]["value"] == 3
+    assert payload["metric_contract"]["buy_count"]["source"] == "trade_results BUY rows by entry_at"
+
+
+@pytest.mark.asyncio
 async def test_admin_report_by_date_applies_trade_metrics_fallback(client, monkeypatch):
     report = _build_report(date(2026, 4, 3))
     opened = [SimpleNamespace(stock_symbol="011930"), SimpleNamespace(stock_symbol="003280")]

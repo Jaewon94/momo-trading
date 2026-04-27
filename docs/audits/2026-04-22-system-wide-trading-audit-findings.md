@@ -2,6 +2,8 @@
 
 > 상태: Phase 9 기준 감사 Findings와 구현 로드맵 입력 자료입니다. F-001~F-036은 Phase 1~8 evidence 기반으로 분류했습니다.
 
+> 최신 보정(2026-04-27): 감사 당시 발견은 유지하되, 이후 구현/운영 확인이 끝난 항목은 `조치`와 `후속 조치`에 최신 상태를 덧붙입니다. Codex Tier runtime은 현재 `CODEX/gpt-5.4` 단독, fallback 없음이 운영 기준이며, 뉴스 번역 `qwen3:4b`는 운영 후보에서 제외합니다.
+
 ## 심각도 기준
 
 - `P0 Blocking`: 통제되지 않은 노출, 중복 주문, 거짓 손익, 위험한 운영 상태를 만들 수 있음
@@ -76,7 +78,7 @@
 ### F-003: `PENDING_CONFIRM` BUY가 20건 존재하고 반복 종목이 있음
 
 - 심각도: `P1`
-- 상태: `검증 중`
+- 상태: `완화됨`
 - 영역: `주문 | 리스크`
 - 현상: Phase 1에서 `trade_results`에 `PENDING_CONFIRM BUY`가 20건 있었고, Phase 2 확인 시점에는 21건으로 늘었습니다. `KEC`, `GS글로벌`, `이브이첨단소재` 등 같은 종목 반복 pending이 보입니다.
 - 영향: pending 상태가 실제 미체결인지, 체결 확인 누락인지, 중복 주문인지 판단되지 않으면 노출 계산과 신규 주문 차단이 틀릴 수 있습니다.
@@ -89,6 +91,7 @@
 - 분류: `유지하되 harden`
 - 조치: Track 2 Task 2.1에서 `broker_only`, `db_only_stale`, `quantity_mismatch`, `partial_fill_pending` 분류를 가진 read-only reconciliation report를 추가했습니다. 자동 수정은 하지 않습니다.
 - 후속 조치: Track 2 Task 2.1a에서 `POST /api/v1/admin/trades/reconciliation/cleanup`을 추가했습니다. 기본은 `DRY_RUN`이고, `?apply=true`를 명시할 때만 브로커 pending에 없는 오래된 DB-only `BUY PENDING_CONFIRM`을 `CONFIRM_FAILED`로 변경합니다. SELL pending은 보유수량 대사가 필요하므로 자동 변경하지 않습니다.
+- 운영 확인: 2026-04-27에 `010170` stale DB-only `PENDING_CONFIRM`은 수동 cleanup으로 `CONFIRM_FAILED` 처리했습니다. 브로커 pending에 없는 오래된 DB pending은 자동 주문으로 보정하지 않고 DB 정합성 작업으로만 처리합니다.
 
 ### F-004: confirmed trade PnL이 0으로 유지되어 실현손익 신뢰도가 낮음
 
@@ -138,11 +141,13 @@
 - 분류: `유지하되 harden`
 - 조치: Track 2 Task 2.1에서 `OrderReconciliationService`와 Admin read-only endpoint를 추가했습니다. 브로커 pending 수, DB pending 수, broker-only, stale DB-only, 수량 불일치, partial fill pending을 분리해 표시합니다.
 - 후속 조치: Track 2 Task 2.1a에서 stale DB-only pending cleanup을 수동 액션으로 추가했습니다. 자동 정리는 여전히 켜지지 않았고, 운영 적용은 `/trades/reconciliation/cleanup` 결과를 `DRY_RUN`으로 확인한 뒤 `?apply=true`로 별도 실행해야 합니다.
+- 추가 조치: confirmed BUY 직후와 account equity snapshot 직후 broker holdings delta를 DB open BUY lot으로 백필합니다. broker 보유가 있는데 DB open lot이 부족한 경우 `HOLDING_SYNC` source로 부족분을 채우고, broker 보유에서 사라진 DB-only open BUY는 pending 여부 확인 뒤 dry-run/apply로 `BROKER_HOLDING_MISSING` 중립 종결할 수 있습니다. 이 중립 종결은 realized PnL truth가 아니며, broker execution history reconcile은 후속 과제입니다.
+- 운영 확인: 2026-04-27에 `452190` broker 보유 3,800주와 DB open qty 3,800주가 일치했고 pending 주문은 0건이었습니다.
 
 ### F-007: LLM Codex timeout incident가 계속 누적되어 장중 판단 품질과 운영 안정성이 흔들림
 
 - 심각도: `P1`
-- 상태: `검증 중`
+- 상태: `완화됨`
 - 영역: `LLM | 운영`
 - 현상: 최신 `error_incidents`에 `llm_factory/generate` Codex timeout과 temporary disable 메시지가 계속 누적됩니다.
 - 영향: 장중 분석이 지연/실패하면서 fallback rule이나 불완전한 판단으로 넘어갈 수 있습니다. 매매 성능 분석 시 “전략 실패”와 “LLM runtime 실패”를 분리하지 않으면 원인 분석이 틀립니다.
@@ -153,6 +158,8 @@
 - Rollout: 관측성/리포트 분리부터 시작.
 - Rollback: report-only 변경은 제거 가능.
 - 분류: `유지하되 harden`
+- 조치: Codex 호출은 provider 단위 semaphore로 직렬화하고, `LLM_SLOW_CALL_WARN_SEC` 기반 진행 로그/경고와 provider/model/latency/status metric을 남깁니다. cooldown 오류 fingerprint에서 잔여 초처럼 계속 바뀌는 값을 정규화해 동일 cooldown 장애가 incident로 과대 증폭되는 문제를 줄였습니다.
+- 운영 정책: Tier1/Tier2/Manual은 2026-04-27 기준 `CODEX/gpt-5.4` 단독, fallback 없음으로 유지합니다. timeout/cooldown 로그가 있더라도 fallback provider를 묵시적으로 추가하지 않고, 호출 전 deterministic skip/cache와 prompt 품질 개선으로 먼저 대응합니다.
 
 ### F-008: AI risk tuner가 상한 없이 주문/포지션 한도를 완화할 수 있음
 
@@ -454,7 +461,7 @@
 ### F-027: Codex timeout cooldown이 후보별 오류로 증폭되어 incident 수가 과대 집계될 수 있음
 
 - 심각도: `P1`
-- 상태: `확정`
+- 상태: `해결됨`
 - 영역: `LLM | 운영`
 - 현상: `CodexProvider`는 timeout 후 300초 cooldown을 적용하지만, cooldown 중인 provider를 여러 후보가 다시 확인하면서 `llm_factory/generate` error event와 incident가 반복 생성됩니다.
 - 영향: 실제 root cause는 1개의 Codex timeout이어도 운영 UI에는 다수 LLM 장애처럼 보일 수 있습니다. 장중에는 후보 분석 실패가 연쇄적으로 발생해 decision coverage가 떨어집니다.
@@ -465,11 +472,12 @@
 - Rollout: observability 집계 변경부터 적용하고 LLM 라우팅은 유지합니다.
 - Rollback: 기존 error_capture 호출 방식으로 되돌릴 수 있습니다.
 - 분류: `유지하되 harden`
+- 조치: cooldown incident fingerprint에서 `(N초 남음)`처럼 매 호출마다 달라지는 잔여시간을 제거해 같은 provider/model/root cause 장애를 하나로 누적합니다. LLM slow/error 활동 로그와 observability metric은 유지해 장애 자체는 숨기지 않습니다.
 
 ### F-028: 뉴스 기능은 현재 꺼져 있고 저장 표본도 stale/neutral이라 매매 가치가 검증되지 않음
 
 - 심각도: `P1`
-- 상태: `확정`
+- 상태: `완화됨`
 - 영역: `뉴스 | 전략 | 성과 측정`
 - 현상: runtime 기준 `NEWS_POLL_ENABLED=false`, `NEWS_GATE_ENABLED=false`, `NEWS_LLM_ENABLED=false`, `NEWS_SHADOW_ENABLED=false`입니다. 저장된 `news_items`는 65건이며 최신 published_at은 2026-04-21이고 negative_count는 0입니다.
 - 영향: 지금 뉴스는 매매 판단에 영향이 없으므로 안전하지만, 다시 켜도 돈을 더 벌게 하는지 판단할 데이터가 없습니다.
@@ -480,11 +488,14 @@
 - Rollout: `POLL_ONLY -> SHADOW_ONLY -> SEMI_AUTO_GATE_RECOMMENDATION -> BUY_BLOCK_GATE` 순서.
 - Rollback: runtime settings에서 `NEWS_POLL_ENABLED=false`, `NEWS_GATE_ENABLED=false`, `NEWS_LLM_ENABLED=false`로 즉시 비활성화.
 - 분류: `기본 비활성화`
+- 조치: 뉴스 deterministic enrichment/backfill, source별 report, decision benchmark의 뉴스 source 집계를 추가했습니다. 2026-04-27에는 `NewsContextService`를 추가해 최근 뉴스의 종목/종목명/source 매칭 결과를 Tier1/Tier2 prompt에 넣고 `news_context_*` metadata를 trade note/report/benchmark에 남깁니다.
+- 운영 원칙: 뉴스 context는 BUY hard gate가 아니라 약한 보조 맥락입니다. 실제 차단/승급은 forward return 표본과 source별 성과가 쌓인 뒤에만 검토합니다.
+- 모델 정책: 뉴스 번역 `qwen3:4b`는 응답 지연, prompt echo, JSON 안정성 문제로 운영 후보에서 제외합니다. 뉴스 번역이 필요하면 8b 이상 후보를 별도 검증하고, 현재 운영 기준은 `OLLAMA/qwen3:14b`입니다.
 
 ### F-029: 뉴스 fetch 병렬도와 번역 병렬도가 다른 개념인데 Admin/운영 문서에서 혼동될 수 있음
 
 - 심각도: `P2`
-- 상태: `확정`
+- 상태: `완화됨`
 - 영역: `뉴스 | 운영`
 - 현상: `NEWS_FETCH_CONCURRENCY`는 여러 뉴스 소스 HTTP fetch 병렬도이고, `NEWS_TRANSLATION_CONCURRENCY`는 LLM 번역 병렬도입니다. 코드상 `CODEX`/`OLLAMA` 번역은 항상 1로 강제됩니다.
 - 영향: fetch 병렬도를 Codex 병렬도처럼 이해하면 불필요하게 낮추거나, 반대로 번역 병렬도를 높이면 Codex timeout을 악화시킬 수 있습니다.
@@ -495,6 +506,7 @@
 - Rollout: UI/문서 변경부터 적용.
 - Rollback: 설명 문구 제거 가능.
 - 분류: `유지하되 harden`
+- 조치: 뉴스 번역 추천 서비스는 8b 미만 모델을 추천하지 않도록 보정했고, 해외 뉴스 번역이 꺼진 상태에서는 번역 모델 다운그레이드를 운영 액션으로 추천하지 않습니다. 기능별 LLM 호출 breakdown과 뉴스 관련 metric은 Admin observability에서 분리해서 볼 수 있게 했습니다.
 
 ### F-030: 뉴스 source별 성과 기여도와 중복/stale/실패율이 rollout gate와 연결되지 않음
 
@@ -510,6 +522,8 @@
 - Rollout: report-only 후 source disable/enable 결정.
 - Rollback: source별 runtime flag를 기존 값으로 복구.
 - 분류: `실험`
+- 조치: decision benchmark는 `news_top_contributors.source_code`뿐 아니라 `news_context_source_codes`와 `news_context_items`도 뉴스 enriched 판정에 포함합니다. `by_news_source_blocked`, `by_news_source_blocked_comparison`, `candidate_path_comparison`으로 source별 blocked 후보와 실제 BUY 후보를 read-only로 비교할 수 있습니다.
+- 남은 검증: `news_context_*`가 붙은 거래와 없는 거래의 forward return, 손실 회피율, source별 품질 비교는 실제 운영 표본이 더 필요합니다.
 
 ### F-031: 주문 생성 경로의 세션 가드가 자동매매 지원 세션보다 넓음
 
@@ -570,10 +584,11 @@
 - 재현/검증: 기존 API 테스트는 해당 endpoint가 바로 service에 delegate되는 것을 확인하지만 별도 confirmation/auth 단계는 검증하지 않습니다.
 - 권고: OWASP Transaction Authorization 기준에 맞춰 고위험 endpoint에 서버 생성 confirmation challenge, 짧은 TTL, idempotency key, request audit hash, 필요 시 re-auth를 추가합니다.
 - 구현 전 테스트: `tests/services/test_admin_action_confirmation_service.py`, `tests/api/test_admin_account_routes.py`, `tests/api/test_admin_trade_routes.py`에 confirmation token 없이는 428을 반환하는 실패 테스트 추가.
-- Rollout: `ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED=false` compatibility flag로 도입했습니다. 서버 측 token 생성/검증은 구현됐고, UI confirmation flow를 붙인 뒤 기본 true 전환을 검토합니다.
+- Rollout: `ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED=false` compatibility flag로 도입했습니다. 서버 측 token 생성/검증과 Admin UI confirmation flow는 구현됐고, 기본 true 전환은 운영 표본 확인 후 검토합니다.
 - Rollback: runtime flag로 confirmation requirement를 임시 비활성화.
 - 분류: `부분 완료`
-- 조치: Track 5 Task 5.2에서 `POST /api/v1/admin/actions/confirmations`와 HMAC 기반 confirmation token을 추가했습니다. token은 action/resource/quantity/TTL/nonce에 묶이고 1회 사용 후 재사용이 차단됩니다. reset, manual sell, cancel-buy, cancel-and-sell, stale pending cleanup apply에 적용했습니다. 남은 작업은 Admin UI의 2-step confirmation flow와 기본 true 전환입니다.
+- 조치: Track 5 Task 5.2에서 `POST /api/v1/admin/actions/confirmations`와 HMAC 기반 confirmation token을 추가했습니다. token은 action/resource/quantity/TTL/nonce에 묶이고 1회 사용 후 재사용이 차단됩니다. reset, manual sell, cancel-buy, cancel-and-sell, stale pending cleanup apply에 적용했습니다.
+- 추가 조치: Admin UI의 2-step confirmation flow도 1차 구현했습니다. 설정 화면에서 `ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED`를 켤 수 있고, DB 초기화/즉시 매도/미체결 취소/취소 후 재매도는 실행 직전에 서버 확인 토큰을 발급받아 요청 본문에 붙입니다. 남은 작업은 기본값 true 전환 여부 결정입니다.
 
 ### F-035: Observability maintenance job이 provider/model NULL 때문에 반복 실패함
 
@@ -617,6 +632,6 @@
 - 후보별 forward return을 기존 `analysis_results`/`recommendations`에 넣을지, 신규 canonical table로 분리할지 결정해야 합니다.
 - 백테스트 기본 체결 정책을 `next_open`, `next_close`, `limit_guard` 중 무엇으로 둘지 결정해야 합니다.
 - 뉴스 재개 시 첫 단계는 `POLL_ONLY`로 할지 `SHADOW_ONLY`까지 같이 켤지 결정해야 합니다.
-- Tier1 LLM을 계속 Codex `gpt-5.4`로 둘지, latency-sensitive 모델/Claude/Ollama 후보를 실험할지 결정해야 합니다.
+- Tier1/Tier2/Manual은 현재 Codex-only 정책을 유지합니다. latency-sensitive 모델/Claude/Ollama 후보는 실험할 수 있지만 운영 fallback으로 묵시 추가하지 않습니다.
 - `.env`와 shell history까지 시크릿 스캔 범위를 확장할지는 tracked files + runtime logs 점검 후 결정합니다.
-- Admin 고위험 endpoint의 confirmation token을 로컬 단일 사용자 환경에서도 기본 적용할지 결정해야 합니다.
+- Admin 고위험 endpoint의 confirmation token을 로컬 단일 사용자 환경에서도 기본 true로 전환할지 결정해야 합니다.

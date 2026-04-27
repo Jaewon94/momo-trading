@@ -24,6 +24,7 @@ class BacktestConfig:
     stop_loss_pct: float = -3.0           # 손절 (%)
     take_profit_pct: float = 5.0          # 익절 (%)
     max_hold_days: int = 5                # 최대 보유 일수
+    execution_timing: str = "NEXT_OPEN"   # NEXT_OPEN / NEXT_CLOSE / LEGACY_SAME_CLOSE
 
 
 @dataclass
@@ -91,38 +92,51 @@ class BacktestEngine:
                      df.iloc[0].get("date", ""), df.iloc[-1].get("date", ""), len(df))
 
         # 지표 계산을 위해 최소 lookback 필요 (30봉부터 시작)
+        pending_signal: tuple[SignalAction, str] | None = None
         for i in range(30, len(df)):
             current_bar = df.iloc[i]
             lookback_df = df.iloc[:i + 1].copy()
 
             current_date = str(current_bar.get("date", i))
+            open_price = float(current_bar["open"])
             current_price = float(current_bar["close"])
             high = float(current_bar["high"])
             low = float(current_bar["low"])
 
-            # 1. 기존 포지션 체크 (손절/익절/최대 보유일)
+            # 1. 이전 봉 시그널을 현재 봉 시가에 체결한다.
+            if pending_signal and self.config.execution_timing == "NEXT_OPEN":
+                self._execute_signal(symbol, pending_signal[0], current_date, open_price, pending_signal[1])
+                pending_signal = None
+
+            # 2. 기존 포지션 체크 (손절/익절/최대 보유일)
             self._check_positions(current_date, current_price, high, low)
 
-            # 2. 기술 지표 계산
+            # 3. 이전 봉 시그널을 현재 봉 종가에 체결한다.
+            if pending_signal and self.config.execution_timing == "NEXT_CLOSE":
+                self._execute_signal(symbol, pending_signal[0], current_date, current_price, pending_signal[1])
+                pending_signal = None
+
+            # 4. 기술 지표 계산
             indicators = TechnicalIndicators.calculate_all(lookback_df)
 
-            # 3. 간이 분석 결과 생성 (AI 대신 기술지표 기반 규칙)
+            # 5. 간이 분석 결과 생성 (AI 대신 기술지표 기반 규칙)
             analysis = self._build_rule_based_analysis(indicators, current_price)
 
-            # 4. 전략 평가
+            # 6. 전략 평가
             analysis["symbol"] = symbol
             analysis["stock_id"] = ""
             analysis["current_price"] = current_price
 
             signal = await self.strategy.evaluate(analysis)
 
-            # 5. 시그널에 따라 매매
-            if signal and signal.action == SignalAction.BUY and not self._has_position(symbol):
-                self._buy(symbol, current_date, current_price)
-            elif signal and signal.action == SignalAction.SELL and self._has_position(symbol):
-                self._sell(symbol, current_date, current_price, "SIGNAL")
+            # 7. 시그널에 따라 매매. 기본 정책은 다음 봉 체결이며, legacy만 같은 봉 종가 체결을 허용한다.
+            if signal and signal.action in {SignalAction.BUY, SignalAction.SELL}:
+                if self.config.execution_timing == "LEGACY_SAME_CLOSE":
+                    self._execute_signal(symbol, signal.action, current_date, current_price, "SIGNAL")
+                else:
+                    pending_signal = (signal.action, "SIGNAL")
 
-            # 6. 자산 곡선 기록
+            # 8. 자산 곡선 기록
             total_equity = self._calculate_equity(current_price)
             self.equity_curve.append(total_equity)
 
@@ -255,6 +269,12 @@ class BacktestEngine:
             if pos.symbol == symbol:
                 self._close_position(pos, date, price, reason)
                 break
+
+    def _execute_signal(self, symbol: str, action: SignalAction, date: str, price: float, reason: str) -> None:
+        if action == SignalAction.BUY and not self._has_position(symbol):
+            self._buy(symbol, date, price)
+        elif action == SignalAction.SELL and self._has_position(symbol):
+            self._sell(symbol, date, price, reason)
 
     def _close_position(self, pos: Position, date: str, price: float, reason: str) -> None:
         """포지션 청산"""

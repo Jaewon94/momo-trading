@@ -173,3 +173,53 @@ async def test_system_status_warns_when_news_sources_are_effectively_limited(cli
     operations = response.json()["data"]["operations"]
     assert operations["news_polling"]["status"] == "WARN"
     assert operations["news_polling"]["label"] == "뉴스 소스 제한됨"
+
+
+@pytest.mark.asyncio
+async def test_system_status_uses_source_runtime_when_news_overall_is_idle(client, monkeypatch):
+    monkeypatch.setattr("api.routes.admin.settings.BROKER_PROVIDER", "KIWOOM")
+    monkeypatch.setattr("api.routes.admin.settings.NEWS_POLL_ENABLED", True)
+    monkeypatch.setattr("api.routes.admin.settings.NEWS_INCLUDE_FOREIGN", True)
+    monkeypatch.setattr("api.routes.admin.settings.NEWS_DOMESTIC_MEDIA_ENABLED", True)
+    monkeypatch.setattr(
+        "services.broker_runtime_service.BrokerRuntimeService.mcp_required",
+        property(lambda self: False),
+    )
+    monkeypatch.setattr(
+        "services.broker_runtime_service.BrokerRuntimeService.mcp_connected",
+        property(lambda self: False),
+    )
+    monkeypatch.setattr("api.routes.admin.trading_scheduler._running", True)
+    monkeypatch.setattr("agent.trading_agent.trading_agent._running", True, raising=False)
+    monkeypatch.setattr(
+        "api.routes.admin.news_runtime_service.get_snapshot",
+        lambda *, include_foreign: {
+            "overall": {
+                "last_status": "IDLE",
+                "last_message": "아직 수집 이력이 없습니다.",
+                "last_run_at": None,
+            },
+            "sources": {
+                "DART": {
+                    "status": "SUCCESS",
+                    "message": "신규 없음 · 기존 기사 중복 25건",
+                    "updated_at": "2026-04-27T10:57:53+09:00",
+                    "last_success_at": "2026-04-27T10:57:53+09:00",
+                },
+                "KRX": {
+                    "status": "SUCCESS",
+                    "message": "신규 없음 · 기존 기사 중복 25건",
+                    "updated_at": "2026-04-27T10:57:54+09:00",
+                    "last_success_at": "2026-04-27T10:57:54+09:00",
+                },
+            },
+        },
+    )
+
+    response = await client.get("/api/v1/admin/system/status")
+
+    assert response.status_code == 200
+    news_ops = response.json()["data"]["operations"]["news_polling"]
+    assert news_ops["status"] == "OK"
+    assert news_ops["label"] == "뉴스 폴링 정상"
+    assert news_ops["last_run_at"] == "2026-04-27T10:57:54+09:00"

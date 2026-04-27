@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.trade_result import TradeResult
 from repositories.async_base_repository import AsyncBaseRepository
+from trading.symbols import normalize_krx_symbol
 from util.time_util import KST
 
 
@@ -15,9 +16,10 @@ class TradeResultRepository(AsyncBaseRepository[TradeResult]):
         super().__init__(TradeResult, session)
 
     async def get_by_symbol(self, symbol: str, limit: int = 50) -> list[TradeResult]:
+        normalized_symbol = normalize_krx_symbol(symbol)
         stmt = (
             select(TradeResult)
-            .where(TradeResult.stock_symbol == symbol)
+            .where(TradeResult.stock_symbol == normalized_symbol)
             .order_by(TradeResult.created_at.desc())
             .limit(limit)
         )
@@ -45,10 +47,11 @@ class TradeResultRepository(AsyncBaseRepository[TradeResult]):
 
     async def get_open_buy(self, symbol: str) -> TradeResult | None:
         """미청산 매수 기록 조회 (exit_at IS NULL, side=BUY, status=CONFIRMED)"""
+        normalized_symbol = normalize_krx_symbol(symbol)
         stmt = (
             select(TradeResult)
             .where(and_(
-                TradeResult.stock_symbol == symbol,
+                TradeResult.stock_symbol == normalized_symbol,
                 TradeResult.side == "BUY",
                 TradeResult.exit_at.is_(None),
                 TradeResult.status == "CONFIRMED",
@@ -61,10 +64,11 @@ class TradeResultRepository(AsyncBaseRepository[TradeResult]):
 
     async def get_all_open_buys(self, symbol: str) -> list[TradeResult]:
         """특정 종목의 미청산 BUY 전체 조회 (SELL 시 일괄 청산용)"""
+        normalized_symbol = normalize_krx_symbol(symbol)
         stmt = (
             select(TradeResult)
             .where(and_(
-                TradeResult.stock_symbol == symbol,
+                TradeResult.stock_symbol == normalized_symbol,
                 TradeResult.side == "BUY",
                 TradeResult.exit_at.is_(None),
                 TradeResult.status == "CONFIRMED",

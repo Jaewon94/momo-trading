@@ -42,6 +42,7 @@ const DIRECT_SETTING_BINDINGS = [
   bindValue('set-manual-llm-model', 'MANUAL_LLM_MODEL'),
   bindValue('set-manual-llm-fallback-provider', 'MANUAL_LLM_FALLBACK_PROVIDER'),
   bindValue('set-manual-llm-fallback-model', 'MANUAL_LLM_FALLBACK_MODEL'),
+  bindChecked('set-admin-danger-confirmation-required', 'ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED'),
 ];
 
 const DIRECT_SETTING_BINDINGS_BY_ID = new Map(

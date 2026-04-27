@@ -397,16 +397,24 @@ class DecisionBenchmarkService:
             root = payload.get(root_key)
             if not isinstance(root, dict):
                 continue
+            source_codes = root.get("news_context_source_codes")
+            if isinstance(source_codes, list):
+                for source_code in source_codes:
+                    code = str(source_code or "").upper().strip()
+                    if code:
+                        codes.append(code)
             contributors = root.get("news_top_contributors")
-            if not isinstance(contributors, list):
-                continue
-            for contributor in contributors:
+            context_items = root.get("news_context_items")
+            for contributor in [
+                *(contributors if isinstance(contributors, list) else []),
+                *(context_items if isinstance(context_items, list) else []),
+            ]:
                 if not isinstance(contributor, dict):
                     continue
                 code = str(contributor.get("source_code") or "").upper().strip()
                 if code:
                     codes.append(code)
-        return tuple(codes)
+        return tuple(dict.fromkeys(codes))
 
     @staticmethod
     def _safe_json(value: str | None) -> dict:

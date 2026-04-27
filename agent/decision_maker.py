@@ -424,11 +424,26 @@ class DecisionMaker:
             "news_source_count": ctx.get("news_source_count"),
             "news_threshold": ctx.get("news_threshold"),
             "news_top_contributors": ctx.get("news_top_contributors"),
+            "news_context_available": ctx.get("news_context_available"),
+            "news_context_match_source": ctx.get("news_context_match_source"),
+            "news_context_tone": ctx.get("news_context_tone"),
+            "news_context_negative_pressure": ctx.get("news_context_negative_pressure"),
+            "news_context_negative_count": ctx.get("news_context_negative_count"),
+            "news_context_positive_count": ctx.get("news_context_positive_count"),
+            "news_context_neutral_count": ctx.get("news_context_neutral_count"),
+            "news_context_confidence_hint": ctx.get("news_context_confidence_hint"),
+            "news_context_item_count": ctx.get("news_context_item_count"),
+            "news_context_source_codes": ctx.get("news_context_source_codes"),
+            "news_context_items": ctx.get("news_context_items"),
             "chart_signal_direction": ctx.get("chart_signal_direction"),
             "chart_signal_confidence": ctx.get("chart_signal_confidence"),
             "entry_pattern": ctx.get("entry_pattern"),
         }
-        payload = {k: v for k, v in payload.items() if v is not None and v != ""}
+        payload = {
+            k: v
+            for k, v in payload.items()
+            if v is not None and v is not False and v != "" and v != [] and v != {}
+        }
         if not payload:
             return "PENDING_CONFIRM: 체결 확인 대기 중" if pending else None
         if pending:
@@ -677,6 +692,9 @@ class DecisionMaker:
 
             self._broker_adapter.invalidate_cache()
 
+            if side == "BUY":
+                await self._backfill_broker_holding_delta(symbol)
+
             # 체결 성공 콜백 → 예약 금액 해제
             if on_settled:
                 await on_settled(order_id, True)
@@ -687,6 +705,21 @@ class DecisionMaker:
             # 체결 실패 콜백 → 예약 환불
             if on_settled:
                 await on_settled(order_id, False)
+
+    async def _backfill_broker_holding_delta(self, symbol: str) -> None:
+        """BUY 체결 후 브로커 보유수량이 DB open 수량보다 큰 경우 즉시 보정."""
+        try:
+            from scheduler.jobs.portfolio_sync_job import _backfill_missing_open_buys_from_holdings
+
+            summary = await _backfill_missing_open_buys_from_holdings()
+            if int((summary or {}).get("backfilled") or 0) > 0:
+                logger.warning(
+                    "[{}] BUY 체결 후 보유수량 백필 실행: {}",
+                    symbol,
+                    summary,
+                )
+        except Exception as exc:
+            logger.warning("[{}] BUY 체결 후 보유수량 백필 실패: {}", symbol, str(exc))
 
     async def _cancel_unfilled_order(self, order_id: str, symbol: str) -> None:
         """미체결 주문 취소 시도"""

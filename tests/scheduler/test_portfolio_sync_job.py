@@ -5,6 +5,7 @@ import pytest
 from scheduler.jobs.portfolio_sync_job import (
     _backfill_missing_open_buys_from_holdings,
     _check_account_db_consistency,
+    _close_open_buys_missing_from_holdings,
     _recover_pending_confirms,
     _repair_confirmed_zero_entry_prices,
 )
@@ -71,6 +72,190 @@ async def test_recover_pending_confirms_uses_kiwoom_holdings_for_filled_buy(monk
     assert pending_trade.quantity == 7800
     assert pending_trade.entry_price == 1895.0
     assert pending_trade.notes is None
+
+
+@pytest.mark.asyncio
+async def test_close_open_buys_missing_from_holdings_dry_run_does_not_mutate(monkeypatch) -> None:
+    open_trade = SimpleNamespace(
+        id="open-1",
+        stock_symbol="010140",
+        stock_name="삼성중공업",
+        quantity=10,
+        entry_price=12000.0,
+        entry_at=__import__("datetime").datetime(2026, 4, 23, 9, 10),
+        exit_price=0.0,
+        pnl=0.0,
+        return_pct=0.0,
+        is_win=False,
+        hold_days=0,
+        exit_reason="",
+        exit_at=None,
+        notes=None,
+    )
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def begin(self):
+            return self
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_all_open(self):
+            return [open_trade]
+
+        async def get_pending_confirms(self):
+            return []
+
+    class FakeBrokerAdapter:
+        provider = BrokerProvider.KIWOOM
+
+        async def get_holdings(self):
+            return []
+
+        async def get_pending_orders(self):
+            return []
+
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("trading.broker_factory.get_broker_adapter", lambda: FakeBrokerAdapter())
+
+    result = await _close_open_buys_missing_from_holdings(dry_run=True)
+
+    assert result["summary"]["candidate_count"] == 1
+    assert result["summary"]["closed_count"] == 0
+    assert open_trade.exit_at is None
+    assert open_trade.exit_reason == ""
+
+
+@pytest.mark.asyncio
+async def test_close_open_buys_missing_from_holdings_apply_neutral_closes(monkeypatch) -> None:
+    open_trade = SimpleNamespace(
+        id="open-1",
+        stock_symbol="010140",
+        stock_name="삼성중공업",
+        quantity=10,
+        entry_price=12000.0,
+        entry_at=__import__("datetime").datetime(2026, 4, 23, 9, 10),
+        exit_price=0.0,
+        pnl=0.0,
+        return_pct=0.0,
+        is_win=False,
+        hold_days=0,
+        exit_reason="",
+        exit_at=None,
+        notes="old",
+    )
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def begin(self):
+            return self
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_all_open(self):
+            return [open_trade]
+
+        async def get_pending_confirms(self):
+            return []
+
+    class FakeBrokerAdapter:
+        provider = BrokerProvider.KIWOOM
+
+        async def get_holdings(self):
+            return []
+
+        async def get_pending_orders(self):
+            return []
+
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("trading.broker_factory.get_broker_adapter", lambda: FakeBrokerAdapter())
+    monkeypatch.setattr(
+        "scheduler.jobs.portfolio_sync_job.now_kst",
+        lambda: __import__("datetime").datetime(2026, 4, 27, 10, 0),
+    )
+
+    result = await _close_open_buys_missing_from_holdings(dry_run=False)
+
+    assert result["summary"]["candidate_count"] == 1
+    assert result["summary"]["closed_count"] == 1
+    assert open_trade.exit_price == 12000.0
+    assert open_trade.pnl == 0.0
+    assert open_trade.return_pct == 0.0
+    assert open_trade.exit_reason == "BROKER_HOLDING_MISSING"
+    assert open_trade.exit_at == __import__("datetime").datetime(2026, 4, 27, 10, 0)
+    assert open_trade.hold_days == 4
+    assert "HOLDING_RECONCILIATION_CLOSE" in open_trade.notes
+
+
+@pytest.mark.asyncio
+async def test_close_open_buys_missing_from_holdings_skips_pending_symbols(monkeypatch) -> None:
+    open_trade = SimpleNamespace(
+        id="open-1",
+        stock_symbol="010140",
+        stock_name="삼성중공업",
+        quantity=10,
+        entry_price=12000.0,
+        entry_at=__import__("datetime").datetime(2026, 4, 23, 9, 10),
+        exit_at=None,
+    )
+    pending_trade = SimpleNamespace(stock_symbol="010140")
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def begin(self):
+            return self
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_all_open(self):
+            return [open_trade]
+
+        async def get_pending_confirms(self):
+            return [pending_trade]
+
+    class FakeBrokerAdapter:
+        provider = BrokerProvider.KIWOOM
+
+        async def get_holdings(self):
+            return []
+
+        async def get_pending_orders(self):
+            return []
+
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("trading.broker_factory.get_broker_adapter", lambda: FakeBrokerAdapter())
+
+    result = await _close_open_buys_missing_from_holdings(dry_run=False)
+
+    assert result["summary"]["candidate_count"] == 0
+    assert result["summary"]["closed_count"] == 0
+    assert result["summary"]["skipped_count"] == 1
+    assert result["skipped"][0]["reason"] == "db_pending_confirm_exists"
+    assert open_trade.exit_at is None
 
 
 @pytest.mark.asyncio

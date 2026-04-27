@@ -35,6 +35,7 @@ class _TradePoint:
     return_pct: float
     exit_at: datetime
     news_negative_pressure: float | None = None
+    news_enriched: bool = False
     entry_price: float = 0.0
     quantity: int = 0
     estimated_cost_bps: float | None = None
@@ -314,19 +315,20 @@ class PerformanceReportingService:
 
     @staticmethod
     def _calc_news_context(trades: list[_TradePoint]) -> dict:
+        enriched = [item for item in trades if item.news_enriched or item.news_negative_pressure is not None]
         values = [
             float(item.news_negative_pressure)
-            for item in trades
+            for item in enriched
             if item.news_negative_pressure is not None
         ]
-        if not values:
+        if not enriched:
             return {
                 "trade_count": 0,
                 "avg_negative_pressure": 0.0,
             }
         return {
-            "trade_count": len(values),
-            "avg_negative_pressure": round(sum(values) / len(values), 4),
+            "trade_count": len(enriched),
+            "avg_negative_pressure": round(sum(values) / len(values), 4) if values else 0.0,
         }
 
     @staticmethod
@@ -362,8 +364,8 @@ class PerformanceReportingService:
         }
 
     def _calc_trade_comparisons(self, trades: list[_TradePoint]) -> dict:
-        news_enriched = [item for item in trades if item.news_negative_pressure is not None]
-        plain = [item for item in trades if item.news_negative_pressure is None]
+        news_enriched = [item for item in trades if item.news_enriched or item.news_negative_pressure is not None]
+        plain = [item for item in trades if not item.news_enriched and item.news_negative_pressure is None]
 
         news_metrics = self._calc_metrics(news_enriched)
         plain_metrics = self._calc_metrics(plain)
@@ -572,11 +574,37 @@ class PerformanceReportingService:
             return None
         value = parsed.get("news_negative_pressure")
         if value is None:
+            value = parsed.get("news_context_negative_pressure")
+        if value is None:
             return None
         try:
             return float(value)
         except (TypeError, ValueError):
             return None
+
+    @staticmethod
+    def _extract_news_enriched(trade: TradeResult) -> bool:
+        notes = getattr(trade, "notes", None)
+        if not notes:
+            return False
+        try:
+            parsed = json.loads(notes)
+        except (TypeError, ValueError):
+            return False
+        if parsed.get("news_negative_pressure") is not None:
+            return True
+        if parsed.get("news_context_available") is True:
+            return True
+        try:
+            if int(parsed.get("news_context_item_count") or 0) > 0:
+                return True
+        except (TypeError, ValueError):
+            pass
+        items = parsed.get("news_context_items")
+        if isinstance(items, list) and items:
+            return True
+        source_codes = parsed.get("news_context_source_codes")
+        return isinstance(source_codes, list) and bool(source_codes)
 
     @staticmethod
     def _extract_estimated_cost_bps(trade: TradeResult) -> float | None:
@@ -603,6 +631,7 @@ class PerformanceReportingService:
             return_pct=float(getattr(row, "return_pct", 0.0) or 0.0),
             exit_at=getattr(row, "exit_at"),
             news_negative_pressure=self._extract_news_negative_pressure(row),
+            news_enriched=self._extract_news_enriched(row),
             entry_price=float(getattr(row, "entry_price", 0.0) or 0.0),
             quantity=int(getattr(row, "quantity", 0) or 0),
             estimated_cost_bps=self._extract_estimated_cost_bps(row),

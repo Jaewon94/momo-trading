@@ -181,6 +181,47 @@ async function fetchJson(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) {
   }
 }
 
+async function createAdminActionConfirmationToken({ action, resourceId, quantity = 'ALL' }) {
+  const json = await fetchJson(`${API}/actions/confirmations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action,
+      resource_id: resourceId,
+      quantity,
+    }),
+  });
+  return json?.data?.confirmation_token || '';
+}
+
+async function buildDangerousActionRequestBody({ action, resourceId, quantity = 'ALL' }) {
+  if (!runtimeSettings?.ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED) {
+    return undefined;
+  }
+  const token = await createAdminActionConfirmationToken({
+    action,
+    resourceId: normalizeConfirmationResourceId(action, resourceId),
+    quantity,
+  });
+  return JSON.stringify({ confirmation_token: token });
+}
+
+function normalizeConfirmationResourceId(action, resourceId) {
+  if (action === 'SELL_HOLDING') {
+    return String(resourceId || '').replace(/^A/i, '').trim();
+  }
+  return String(resourceId || '').trim();
+}
+
+function dangerousActionFetchOptions(body) {
+  if (!body) return { method: 'POST' };
+  return {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  };
+}
+
 function getManualTradeSymbolMap() {
   return buildManualTradeSymbolMap({
     holdings: latestAccountSnapshot?.holdings || [],
@@ -1297,19 +1338,27 @@ async function executeManualTradeAction(actionKind, { symbol = '', orderId = '' 
   let url = '';
   let pendingMessage = '';
   let confirmMessage = '';
+  let confirmationAction = '';
+  let confirmationResourceId = '';
 
   if (actionKind === 'sell-now') {
     url = `${API}/account/holdings/${encodeURIComponent(symbol)}/sell`;
     pendingMessage = `${symbol} 즉시 매도 주문 접수 중...`;
     confirmMessage = `${symbol} 보유분을 전량 시장가로 매도합니다.\n\n시장가 주문도 일부 체결 후 잔량이 잠시 대기할 수 있습니다. 계속할까요?`;
+    confirmationAction = 'SELL_HOLDING';
+    confirmationResourceId = symbol;
   } else if (actionKind === 'cancel-buy') {
     url = `${API}/account/pending-orders/${encodeURIComponent(orderId)}/cancel-buy`;
     pendingMessage = `미체결 매수 주문 ${orderId} 취소 중...`;
     confirmMessage = `미체결 매수 주문 ${orderId}를 취소할까요?`;
+    confirmationAction = 'CANCEL_PENDING_BUY';
+    confirmationResourceId = orderId;
   } else if (actionKind === 'cancel-and-sell') {
     url = `${API}/account/pending-orders/${encodeURIComponent(orderId)}/cancel-and-sell`;
     pendingMessage = `미체결 매도 주문 ${orderId} 취소 후 즉시 매도 접수 중...`;
     confirmMessage = `기존 매도 주문 ${orderId}를 취소하고 보유 수량을 시장가로 다시 매도할까요?\n\n시장가 재매도도 일부 체결 후 잔량이 잠시 대기할 수 있습니다.`;
+    confirmationAction = 'CANCEL_AND_SELL_PENDING';
+    confirmationResourceId = orderId;
   } else {
     return;
   }
@@ -1319,7 +1368,12 @@ async function executeManualTradeAction(actionKind, { symbol = '', orderId = '' 
   }
 
   setStatus('runtime', pendingMessage);
-  const json = await fetchJson(url, { method: 'POST' });
+  const body = await buildDangerousActionRequestBody({
+    action: confirmationAction,
+    resourceId: confirmationResourceId,
+    quantity: 'ALL',
+  });
+  const json = await fetchJson(url, dangerousActionFetchOptions(body));
   setStatus('runtime', json?.message || '주문 요청 완료');
   await loadAccountInfo();
   await refreshPositionDetailModalIfOpen(symbol || json?.data?.symbol || '');
@@ -3584,6 +3638,49 @@ function applyReportMetricsFallback(report, tradeSnapshot) {
   };
 }
 
+function buildReportMetricContractState(report) {
+  let contract = report?.metric_contract || null;
+  if (!contract && report?.strategy_stats) {
+    try {
+      const stats = typeof report.strategy_stats === 'string'
+        ? JSON.parse(report.strategy_stats)
+        : report.strategy_stats;
+      contract = stats?.metric_contract || null;
+    } catch (e) {
+      contract = null;
+    }
+  }
+  if (!contract || typeof contract !== 'object') {
+    return { ready: false, rows: [] };
+  }
+
+  const specs = [
+    ['total_orders', '총 주문'],
+    ['buy_count', '매수'],
+    ['sell_count', '매도'],
+    ['win_loss', '승패'],
+    ['open_position_count', '보유 종목'],
+  ];
+
+  const rows = specs
+    .map(([key, label]) => {
+      const item = contract[key];
+      if (!item || typeof item !== 'object') return null;
+      const value = key === 'win_loss'
+        ? `${toNumber(item.win_count)}승 / ${toNumber(item.loss_count)}패`
+        : String(item.value ?? '-');
+      return {
+        label,
+        value,
+        source: item.source || '',
+        filter: item.filter || item.formula || '',
+      };
+    })
+    .filter(Boolean);
+
+  return { ready: rows.length > 0, rows };
+}
+
 function createReportCard(report, context = {}) {
   const normalizedReport = normalizeReportSummaryMetrics(report);
   const div = document.createElement('div');
@@ -3604,6 +3701,7 @@ function createReportCard(report, context = {}) {
   const newsOverview = context.newsOverview || null;
   const tradeSnapshot = context.tradeSnapshot || null;
   const reportPerformance = buildReportPerformanceState(normalizedReport);
+  const metricContract = buildReportMetricContractState(normalizedReport);
   const newsPerformance = newsOverview?.performance || {};
   const newsSettings = newsOverview?.settings || {};
   const newsStorage = newsOverview?.storage || {};
@@ -3665,6 +3763,19 @@ function createReportCard(report, context = {}) {
         <div class="text-xs text-gray-500">미실현 손익</div>
       </div>
     </div>
+    ${metricContract.ready ? `
+    <details class="mb-4 rounded-2xl border border-gray-700 bg-dark-900/40 px-4 py-3">
+      <summary class="cursor-pointer text-sm font-medium text-gray-300">집계 기준</summary>
+      <div class="mt-3 space-y-2">
+        ${metricContract.rows.map((row) => `
+          <div class="grid grid-cols-[80px_80px_1fr] gap-3 rounded-lg bg-dark-950/50 px-3 py-2 text-xs">
+            <div class="text-gray-400">${escapeHtml(row.label)}</div>
+            <div class="font-medium text-gray-100">${escapeHtml(row.value)}</div>
+            <div class="min-w-0 break-words text-gray-500">${escapeHtml(row.source)}${row.filter ? ` · ${escapeHtml(row.filter)}` : ''}</div>
+          </div>
+        `).join('')}
+      </div>
+    </details>` : ''}
     <div class="mb-4 rounded-2xl border border-gray-700 bg-dark-900/40 px-4 py-4">
       <div class="flex items-start justify-between gap-3 mb-3">
         <div>
@@ -4073,6 +4184,44 @@ function createObservabilityDashboard(observabilityState) {
             <div class="text-[11px] text-gray-500 mb-2">최근 표본</div>
             <div class="space-y-2">
               ${obs.aiSkippedRecentRows.length ? obs.aiSkippedRecentRows.slice(0, 5).map((row) => `
+                <div class="rounded-xl border border-gray-700/70 bg-dark-900/45 px-3 py-2">
+                  <div class="flex items-start justify-between gap-2">
+                    <div class="text-xs text-white font-medium">${escapeHtml(row.title)}</div>
+                    <div class="text-[10px] text-gray-500">${escapeHtml(row.createdAt)}</div>
+                  </div>
+                  <div class="text-[11px] text-gray-500 mt-1">${escapeHtml(row.meta || '-')}</div>
+                  <div class="text-[11px] text-gray-300 mt-1">${escapeHtml(row.reason)}</div>
+                </div>
+              `).join('') : '<div class="text-xs text-gray-500">최근 표본이 없습니다.</div>'}
+            </div>
+          </div>
+        </div>
+      </section>
+      <section class="rounded-2xl border border-gray-700 bg-dark-950/40 px-4 py-4 mt-4">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <div class="text-xs uppercase tracking-[0.12em] text-gray-500">Holdings Review Required</div>
+            <div class="text-sm text-gray-400 mt-1">보유 재평가가 LLM/precheck 전에 멈춘 데이터 확인 필요 사유</div>
+          </div>
+        </div>
+        <div class="grid gap-4 xl:grid-cols-2 mt-3">
+          <div>
+            <div class="text-[11px] text-gray-500 mb-2">사유별 집계</div>
+            ${obs.holdingsReviewRows.length ? `
+              <div class="performance-table">
+                ${obs.holdingsReviewRows.map((row) => `
+                  <div class="performance-table-row compact">
+                    <div class="performance-table-cell metric-name">${escapeHtml(row.reasonCode)}</div>
+                    <div class="performance-table-cell">${escapeHtml(row.count)}</div>
+                  </div>
+                `).join('')}
+              </div>
+            ` : '<div class="text-xs text-gray-500">최근 확인 필요 메트릭이 없습니다.</div>'}
+          </div>
+          <div>
+            <div class="text-[11px] text-gray-500 mb-2">최근 표본</div>
+            <div class="space-y-2">
+              ${obs.holdingsReviewRecentRows.length ? obs.holdingsReviewRecentRows.slice(0, 5).map((row) => `
                 <div class="rounded-xl border border-gray-700/70 bg-dark-900/45 px-3 py-2">
                   <div class="flex items-start justify-between gap-2">
                     <div class="text-xs text-white font-medium">${escapeHtml(row.title)}</div>
@@ -5035,7 +5184,16 @@ async function resetOperationalBaseline(triggerButton = null) {
       button.disabled = true;
       button.textContent = '초기화 중...';
     }
-    const json = await fetchJson(`${API}/system/reset-operational-baseline`, { method: 'POST' }, 30000);
+    const body = await buildDangerousActionRequestBody({
+      action: 'RESET_OPERATIONAL_BASELINE',
+      resourceId: 'OPERATIONAL_BASELINE',
+      quantity: 'ALL',
+    });
+    const json = await fetchJson(
+      `${API}/system/reset-operational-baseline`,
+      dangerousActionFetchOptions(body),
+      30000,
+    );
     await Promise.all([
       loadSettings(),
       loadAccountInfo(),

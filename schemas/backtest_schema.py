@@ -1,5 +1,5 @@
 from datetime import date
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -17,6 +17,10 @@ class BacktestRunRequest(BaseModel):
     stop_loss_pct: float = Field(-3.0, description="손절 (%)")
     take_profit_pct: float = Field(5.0, description="익절 (%)")
     max_hold_days: int = Field(5, description="최대 보유 일수")
+    execution_timing: Literal["NEXT_OPEN", "NEXT_CLOSE", "LEGACY_SAME_CLOSE"] = Field(
+        "NEXT_OPEN",
+        description="체결 정책: NEXT_OPEN / NEXT_CLOSE / LEGACY_SAME_CLOSE",
+    )
 
 
 class TradeRecordResponse(BaseModel):

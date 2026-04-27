@@ -80,6 +80,22 @@ describe("observability_state", () => {
           },
         ],
       },
+      holdings_review: {
+        review_required_total: 1,
+        by_reason: [
+          { reason_code: "TRADE_RESULT_MISSING", count: 1 },
+        ],
+        recent: [
+          {
+            created_at: "2026-04-08T00:25:00+09:00",
+            symbol: "010140",
+            source_symbol: "A010140",
+            stock_name: "삼성중공업",
+            reason_code: "TRADE_RESULT_MISSING",
+            reason: "open BUY TradeResult 없음",
+          },
+        ],
+      },
       window: {
         hours: 168,
         resolution: "hourly_rollup",
@@ -161,6 +177,11 @@ describe("observability_state", () => {
             title: "scheduler · news_poll · RuntimeError",
             severity: "ERROR",
             status: "OPEN",
+            display_status: "STALE_OPEN",
+            active_in_window: false,
+            active_recently: false,
+            stale_open: true,
+            auto_resolution_candidate: true,
             occurrence_count: 3,
             last_seen_at: "2026-04-08T00:22:00+09:00",
             last_message: "poll failed",
@@ -175,8 +196,9 @@ describe("observability_state", () => {
     expect(state.summaryCards[0].value).toBe("62.4%");
     expect(state.summaryCards[4].help).toContain("호출 3회");
     expect(state.summaryCards[5]).toMatchObject({ label: "AI 스킵", value: "2회" });
-    expect(state.summaryCards[7]).toMatchObject({ label: "Raw 보존", value: "30일" });
-    expect(state.summaryCards[8]).toMatchObject({ label: "Hourly Rollup", value: "22개" });
+    expect(state.summaryCards[6]).toMatchObject({ label: "보유 확인 필요", value: "1회" });
+    expect(state.summaryCards[8]).toMatchObject({ label: "Raw 보존", value: "30일" });
+    expect(state.summaryCards[9]).toMatchObject({ label: "Hourly Rollup", value: "22개" });
     expect(state.maintenanceRows[1]).toMatchObject({ label: "최근 상태", value: "SUCCESS" });
     expect(state.maintenanceRows[4]).toMatchObject({ label: "최근 raw 정리", value: "15건" });
     expect(state.recommendationCards[0]).toMatchObject({ label: "머신 압박", value: "MEDIUM" });
@@ -186,6 +208,10 @@ describe("observability_state", () => {
       fingerprint: "incident-1",
       title: "scheduler · news_poll · RuntimeError",
       status: "OPEN",
+      displayStatus: "STALE_OPEN",
+      activeInWindow: false,
+      staleOpen: true,
+      autoResolutionCandidate: true,
       ownerNote: "watch tonight",
     });
     expect(state.resourceCharts[0].line.path.startsWith("M")).toBe(true);
@@ -201,6 +227,8 @@ describe("observability_state", () => {
     });
     expect(state.aiSkippedRows[0]).toMatchObject({ stage: "HOLDINGS_PRECHECK", reasonCode: "HOLD", count: "1회" });
     expect(state.aiSkippedRecentRows[0]).toMatchObject({ title: "HOLDINGS_PRECHECK · HOLD · 005930" });
+    expect(state.holdingsReviewRows[0]).toMatchObject({ reasonCode: "TRADE_RESULT_MISSING", count: "1회" });
+    expect(state.holdingsReviewRecentRows[0]).toMatchObject({ title: "TRADE_RESULT_MISSING · 010140" });
     expect(state.newsRows[4]).toMatchObject({ label: "생성 기사", value: "9건" });
     expect(state.statusRows[0]).toMatchObject({ status: "SUCCESS", count: "3회" });
   });

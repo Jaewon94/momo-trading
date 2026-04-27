@@ -27,6 +27,7 @@ from services.decision_event_service import decision_event_service
 from services.deterministic_final_gate_service import deterministic_final_gate_service
 from services.deterministic_prompt_context_service import deterministic_prompt_context_service
 from services.news_gate_rollout_service import news_gate_rollout_service
+from services.news_context_service import news_context_service
 from services.pre_analysis_gate_service import pre_analysis_gate_service
 from services.runtime_reconfiguration_service import runtime_reconfiguration_service
 from services.tier1_analysis_cache_service import tier1_analysis_cache_service
@@ -747,6 +748,29 @@ class TradingAgent:
         except Exception as e:
             logger.warning("피드백 컨텍스트 빌드 실패: {}", str(e))
 
+        news_context_payload: dict = {}
+        news_context_text = "### 최근 뉴스 보조 컨텍스트\n- 뉴스 컨텍스트 조회 전. 뉴스는 중립으로 간주하세요."
+        try:
+            async with AsyncSessionLocal() as session:
+                news_context_payload = await news_context_service.build_for_symbol(
+                    session,
+                    symbol=symbol,
+                    name=name,
+                )
+                news_context_text = str(news_context_payload.get("prompt") or news_context_text)
+        except Exception as e:
+            logger.warning("뉴스 보조 컨텍스트 빌드 실패 ({}): {}", symbol, str(e))
+            news_context_payload = {
+                "available": False,
+                "tone": "CONTEXT_ERROR",
+                "confidence_hint": 0.0,
+                "items": [],
+            }
+            news_context_text = (
+                "### 최근 뉴스 보조 컨텍스트\n"
+                "- 뉴스 컨텍스트 조회 실패. 뉴스는 중립으로 간주하고 차트/수급 중심으로 판단하세요."
+            )
+
         cache_key = tier1_analysis_cache_service.build_key(
             symbol=symbol,
             strategy_type=strategy_type,
@@ -755,6 +779,7 @@ class TradingAgent:
             portfolio_snapshot=portfolio_snapshot,
             market_regime=self._market_regime,
             feedback_context=feedback_context,
+            news_context=news_context_text,
         )
         cache_allowed = not manual_provider_override and not manual_model_override
         analysis = tier1_analysis_cache_service.get(cache_key) if cache_allowed else None
@@ -800,6 +825,7 @@ class TradingAgent:
             price_resp.data or {}, feedback_context,
             market_context=self._market_context,
             trading_context=self._trading_context,
+            news_context=news_context_text,
             deterministic_context=deterministic_prompt_context_service.build_tier1_context(
                 symbol=symbol,
                 strategy_type=strategy_type,
@@ -1047,6 +1073,7 @@ class TradingAgent:
             dynamic_limits=dynamic_limits,
             market_context=self._market_context,
             trading_context=self._trading_context,
+            news_context=news_context_text,
             portfolio_snapshot=portfolio_snapshot,
             deterministic_context=deterministic_prompt_context_service.build_tier2_context(
                 symbol=symbol,
@@ -1359,6 +1386,21 @@ class TradingAgent:
             "news_source_count": news_gate.get("source_count") if news_gate else None,
             "news_threshold": news_gate.get("threshold") if news_gate else None,
             "news_top_contributors": (news_gate.get("contributors") or [])[:3] if news_gate else None,
+            "news_context_available": bool(news_context_payload.get("available")),
+            "news_context_match_source": news_context_payload.get("match_source"),
+            "news_context_tone": news_context_payload.get("tone"),
+            "news_context_negative_pressure": news_context_payload.get("negative_pressure"),
+            "news_context_negative_count": news_context_payload.get("negative_count"),
+            "news_context_positive_count": news_context_payload.get("positive_count"),
+            "news_context_neutral_count": news_context_payload.get("neutral_count"),
+            "news_context_confidence_hint": news_context_payload.get("confidence_hint"),
+            "news_context_items": (news_context_payload.get("items") or [])[:3],
+            "news_context_item_count": len(news_context_payload.get("items") or []),
+            "news_context_source_codes": sorted({
+                str(item.get("source_code") or "").upper()
+                for item in (news_context_payload.get("items") or [])
+                if item.get("source_code")
+            }),
         }
 
         exec_result = await decision_maker.execute(
@@ -2332,6 +2374,7 @@ class TradingAgent:
         feedback_context: str = "",
         market_context: str = "",
         trading_context: str = "",
+        news_context: str = "",
         deterministic_context: str = "",
         cycle_id: str | None = None,
         manual_provider_override: str | None = None,
@@ -2354,6 +2397,9 @@ class TradingAgent:
             feedback_context=feedback_context or "매매 이력 없음",
             market_context=market_context or "시장 컨텍스트 없음",
             trading_context=trading_context or "매매 컨텍스트 없음",
+            news_context=news_context or (
+                "### 최근 뉴스 보조 컨텍스트\n- 최근 뉴스 정보 없음. 뉴스는 중립으로 간주하세요."
+            ),
             deterministic_context=deterministic_context or "사전 판단 데이터 없음",
         )
 
@@ -2406,6 +2452,7 @@ class TradingAgent:
         dynamic_limits: dict | None = None,
         market_context: str = "",
         trading_context: str = "",
+        news_context: str = "",
         portfolio_snapshot: dict | None = None,
         deterministic_context: str = "",
         cycle_id: str | None = None,
@@ -2457,6 +2504,9 @@ class TradingAgent:
             tuning_suggestions=tuning_suggestions,
             market_context=market_context or "시장 컨텍스트 없음",
             trading_context=trading_context or "매매 컨텍스트 없음",
+            news_context=news_context or (
+                "### 최근 뉴스 보조 컨텍스트\n- 최근 뉴스 정보 없음. 뉴스는 중립으로 간주하세요."
+            ),
             deterministic_context=deterministic_context or "사전 판단 데이터 없음",
         )
 

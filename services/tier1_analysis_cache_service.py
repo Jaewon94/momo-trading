@@ -34,6 +34,7 @@ class Tier1AnalysisCacheService:
         portfolio_snapshot: dict | None,
         market_regime: str,
         feedback_context: str,
+        news_context: str = "",
     ) -> str:
         signal_summary = chart_result.signal_summary or {}
         indicators = chart_result.indicators or {}
@@ -53,6 +54,7 @@ class Tier1AnalysisCacheService:
             "rsi_14": self._optional_round(indicators.get("rsi_14"), 2),
             "macd_histogram": self._optional_round(indicators.get("macd_histogram"), 4),
             "feedback_hash": self._hash_text(feedback_context),
+            "news_hash": self._hash_text(news_context),
         }
         raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()

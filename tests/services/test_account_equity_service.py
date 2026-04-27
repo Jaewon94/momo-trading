@@ -129,9 +129,42 @@ async def test_account_equity_service_builds_session_metrics_from_baseline_and_s
     assert payload["session_metrics"]["asset_delta"] == pytest.approx(20_000)
     assert payload["session_metrics"]["asset_delta_rate"] == pytest.approx(2.04, abs=0.01)
     assert payload["session_metrics"]["realized_today_pnl"] == pytest.approx(25_000)
+    assert payload["session_metrics"]["broker_unrealized_pnl"] == pytest.approx(120_000)
     assert payload["session_metrics"]["daily_unrealized_delta"] == pytest.approx(-5_000)
+    assert payload["session_metrics"]["cash_or_snapshot_delta"] == pytest.approx(-125_000)
+    assert payload["session_metrics"]["current_exposure_krw"] == pytest.approx(770_000)
+    assert payload["session_metrics"]["current_exposure_pct"] == pytest.approx(77.0)
+    assert payload["session_metrics"]["market_exposure"] is True
+    assert payload["session_metrics"]["risk_label"] == "EXPOSED_PROFIT"
     assert payload["session_metrics"]["intraday_high_asset"] == pytest.approx(1_015_000)
     assert payload["session_metrics"]["intraday_low_asset"] == pytest.approx(972_000)
+
+
+@pytest.mark.asyncio
+async def test_account_equity_service_classifies_cash_snapshot_delta_without_exposure():
+    from services.account_equity_service import AccountEquityService
+    from tests.conftest import TestAsyncSessionLocal
+
+    service = AccountEquityService(
+        session_factory=TestAsyncSessionLocal,
+        now_func=lambda: _dt(10, 30),
+    )
+
+    open_state = service.build_state(
+        _balance(total_asset=1_000_000, cash=1_000_000, stock_value=0, total_pnl=0, total_pnl_rate=0),
+        captured_at=_dt(9, 0),
+    )
+    await service.ensure_day_baseline(open_state, baseline_source="MARKET_OPEN")
+
+    payload = await service.build_balance_payload(
+        _balance(total_asset=995_000, cash=995_000, stock_value=0, total_pnl=0, total_pnl_rate=0),
+        captured_at=_dt(10, 30),
+    )
+
+    assert payload["session_metrics"]["market_exposure"] is False
+    assert payload["session_metrics"]["current_exposure_krw"] == pytest.approx(0)
+    assert payload["session_metrics"]["cash_or_snapshot_delta"] == pytest.approx(-5_000)
+    assert payload["session_metrics"]["risk_label"] == "CASH_OR_SNAPSHOT_VARIANCE"
 
 
 @pytest.mark.asyncio
@@ -152,6 +185,8 @@ async def test_account_equity_service_returns_unavailable_metrics_without_baseli
     assert payload["session_metrics"]["available"] is False
     assert payload["session_metrics"]["asset_delta"] == pytest.approx(0.0)
     assert payload["session_metrics"]["daily_unrealized_delta"] == pytest.approx(0.0)
+    assert payload["session_metrics"]["current_exposure_krw"] == pytest.approx(700_000)
+    assert payload["session_metrics"]["market_exposure"] is True
     assert payload["session_metrics"]["intraday_high_asset"] == pytest.approx(1_000_000)
     assert payload["session_metrics"]["intraday_low_asset"] == pytest.approx(1_000_000)
 
