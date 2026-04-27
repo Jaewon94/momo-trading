@@ -105,7 +105,13 @@ class PerformanceReportingService:
             "overall_source": "trade_results.closed_buy",
             "account_pnl_source": "pnl_truth",
             "overall_deprecated_for_account_pnl": True,
-            "sample_status": str((pnl_truth or {}).get("sample_status") or "UNKNOWN"),
+            "sample_status": str(
+                (pnl_truth or {}).get("account_pnl_sample_status")
+                or (pnl_truth or {}).get("sample_status")
+                or "UNKNOWN"
+            ),
+            "closed_trade_sample_status": str((pnl_truth or {}).get("sample_status") or "UNKNOWN"),
+            "pnl_reconciliation_status": str((pnl_truth or {}).get("pnl_reconciliation_status") or "UNKNOWN"),
         }
 
     async def build_periodic_summary(self, session: AsyncSession, *, period: str = "weekly", size: int = 8) -> dict:

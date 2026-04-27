@@ -64,6 +64,7 @@ async def test_trading_guard_reports_account_equity_drawdown_without_blocking(mo
     monkeypatch.setattr(guard, "_get_strategy_expectancy", fake_expectancy)
     monkeypatch.setattr("strategy.trading_guard.settings.MAX_DAILY_DRAWDOWN_PCT", 2.5)
     monkeypatch.setattr("strategy.trading_guard.settings.ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE", "REPORT_ONLY")
+    monkeypatch.setattr("strategy.trading_guard.settings.ACCOUNT_EQUITY_DRAWDOWN_BLOCK_BUY_PCT", 0.5)
     monkeypatch.setattr("strategy.trading_guard.settings.MAX_CONSECUTIVE_LOSSES", 4)
     monkeypatch.setattr("strategy.trading_guard.settings.MIN_STRATEGY_EXPECTANCY", 0.0)
 
@@ -103,6 +104,8 @@ async def test_trading_guard_blocks_buy_on_account_equity_drawdown(monkeypatch):
     monkeypatch.setattr("strategy.trading_guard.settings.AUTO_RISK_KILL_SWITCH_ENABLED", True)
     monkeypatch.setattr("strategy.trading_guard.settings.MAX_DAILY_DRAWDOWN_PCT", 2.5)
     monkeypatch.setattr("strategy.trading_guard.settings.ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE", "KILL_SWITCH")
+    monkeypatch.setattr("strategy.trading_guard.settings.ACCOUNT_EQUITY_DRAWDOWN_BLOCK_BUY_PCT", 0.5)
+    monkeypatch.setattr("strategy.trading_guard.settings.ACCOUNT_EQUITY_DRAWDOWN_KILL_SWITCH_PCT", 1.0)
     monkeypatch.setattr("strategy.trading_guard.settings.MAX_CONSECUTIVE_LOSSES", 4)
     monkeypatch.setattr("strategy.trading_guard.settings.MIN_STRATEGY_EXPECTANCY", 0.0)
 
@@ -112,6 +115,66 @@ async def test_trading_guard_blocks_buy_on_account_equity_drawdown(monkeypatch):
     assert result["trigger"] == "ACCOUNT_EQUITY_DRAWDOWN"
     assert result["kill_switched"] is True
     assert "계좌 총자산" in result["reason"]
+
+
+@pytest.mark.asyncio
+async def test_trading_guard_blocks_buy_before_kill_threshold(monkeypatch):
+    guard = TradingGuard()
+
+    async def fake_realized_drawdown(*, portfolio_budget: float) -> float:
+        return 0.0
+
+    async def fake_account_drawdown() -> dict:
+        return {
+            "available": True,
+            "drawdown_pct": -0.7,
+            "asset_delta": -7_000,
+            "baseline_total_asset": 1_000_000,
+        }
+
+    monkeypatch.setattr(guard, "_get_daily_realized_pnl_pct", fake_realized_drawdown)
+    monkeypatch.setattr(guard, "_get_account_equity_drawdown", fake_account_drawdown)
+    monkeypatch.setattr("strategy.trading_guard.settings.MAX_DAILY_DRAWDOWN_PCT", 2.5)
+    monkeypatch.setattr("strategy.trading_guard.settings.ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE", "KILL_SWITCH")
+    monkeypatch.setattr("strategy.trading_guard.settings.ACCOUNT_EQUITY_DRAWDOWN_BLOCK_BUY_PCT", 0.5)
+    monkeypatch.setattr("strategy.trading_guard.settings.ACCOUNT_EQUITY_DRAWDOWN_KILL_SWITCH_PCT", 1.0)
+
+    result = await guard.evaluate_buy_guard(strategy_type="STABLE_SHORT", portfolio_budget=1_000_000)
+
+    assert result["approved"] is False
+    assert result["trigger"] == "ACCOUNT_EQUITY_DRAWDOWN"
+    assert result["kill_switched"] is False
+
+
+def test_trading_guard_blocks_buy_on_selected_llm_cooldown(monkeypatch):
+    guard = TradingGuard()
+
+    monkeypatch.setattr("strategy.trading_guard.settings.BUY_GUARD_LLM_RUNTIME_BLOCK_ENABLED", True)
+
+    class FakeFactory:
+        def get_llm_status(self):
+            return {
+                "tier1": {"provider": "CODEX"},
+                "tier2": {"provider": "CODEX"},
+                "available_providers": [
+                    {
+                        "id": "CODEX",
+                        "runtime": {
+                            "cooldown_active": True,
+                            "disabled_for_sec": 121,
+                            "last_failure_reason": "Codex CLI timeout (90s)",
+                        },
+                    }
+                ],
+            }
+
+    monkeypatch.setattr("analysis.llm.llm_factory.llm_factory", FakeFactory())
+
+    result = guard._evaluate_llm_runtime_health()
+
+    assert result["action"] == "BLOCK"
+    assert "CODEX" in result["reason"]
+    assert "timeout" in result["reason"]
 
 
 @pytest.mark.asyncio

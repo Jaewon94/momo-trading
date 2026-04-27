@@ -32,6 +32,10 @@ class TradingGuard:
         if account_guard["action"] == "WARN":
             warnings.append(account_guard["warning"])
 
+        llm_guard = self._evaluate_llm_runtime_health()
+        if llm_guard["action"] == "BLOCK":
+            return await self._reject("LLM_RUNTIME_UNHEALTHY", llm_guard["reason"])
+
         consecutive_losses = await self._get_consecutive_losses()
         max_losses = int(settings.MAX_CONSECUTIVE_LOSSES or 0)
         if max_losses > 0 and consecutive_losses >= max_losses:
@@ -102,7 +106,7 @@ class TradingGuard:
 
     async def _evaluate_account_equity_drawdown(self, *, max_drawdown: float) -> dict:
         mode = str(getattr(settings, "ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE", "REPORT_ONLY") or "REPORT_ONLY").upper()
-        if mode == "OFF" or max_drawdown <= 0:
+        if mode == "OFF":
             return {"action": "ALLOW"}
 
         account_drawdown = await self._get_account_equity_drawdown()
@@ -110,12 +114,22 @@ class TradingGuard:
             return {"action": "ALLOW"}
 
         drawdown_pct = float(account_drawdown.get("drawdown_pct") or 0.0)
-        if drawdown_pct > -max_drawdown:
+        block_threshold = self._positive_threshold(
+            getattr(settings, "ACCOUNT_EQUITY_DRAWDOWN_BLOCK_BUY_PCT", 0.0),
+            fallback=max_drawdown,
+        )
+        kill_threshold = self._positive_threshold(
+            getattr(settings, "ACCOUNT_EQUITY_DRAWDOWN_KILL_SWITCH_PCT", 0.0),
+            fallback=max(block_threshold, max_drawdown),
+        )
+        report_threshold = block_threshold or max_drawdown
+
+        if report_threshold <= 0 or drawdown_pct > -report_threshold:
             return {"action": "ALLOW"}
 
         reason = (
             f"계좌 총자산 일중 손실 한도 초과 "
-            f"({drawdown_pct:.2f}% <= -{max_drawdown:.2f}%, "
+            f"({drawdown_pct:.2f}% <= -{report_threshold:.2f}%, "
             f"{float(account_drawdown.get('asset_delta') or 0.0):+,.0f}원)"
         )
         warning = {
@@ -128,9 +142,53 @@ class TradingGuard:
 
         if mode == "REPORT_ONLY":
             return {"action": "WARN", "warning": warning}
-        if mode == "BLOCK_BUY":
+        if mode == "KILL_SWITCH" and kill_threshold > 0 and drawdown_pct <= -kill_threshold:
+            return {"action": "KILL_SWITCH", "reason": reason}
+        if mode in {"BLOCK_BUY", "KILL_SWITCH"}:
             return {"action": "BLOCK", "reason": reason}
-        return {"action": "KILL_SWITCH", "reason": reason}
+        return {"action": "WARN", "warning": warning}
+
+    @staticmethod
+    def _positive_threshold(value: float | int | None, *, fallback: float) -> float:
+        threshold = abs(float(value or 0.0))
+        if threshold > 0:
+            return threshold
+        return abs(float(fallback or 0.0))
+
+    def _evaluate_llm_runtime_health(self) -> dict:
+        if not bool(getattr(settings, "BUY_GUARD_LLM_RUNTIME_BLOCK_ENABLED", True)):
+            return {"action": "ALLOW"}
+
+        try:
+            from analysis.llm.llm_factory import llm_factory
+
+            status = llm_factory.get_llm_status()
+        except Exception:
+            return {"action": "ALLOW"}
+
+        providers = {
+            str(item.get("id") or "").upper(): item
+            for item in status.get("available_providers", [])
+            if isinstance(item, dict)
+        }
+        selected = {
+            str((status.get("tier1") or {}).get("provider") or "").upper(),
+            str((status.get("tier2") or {}).get("provider") or "").upper(),
+        }
+        selected.discard("")
+
+        for provider_id in selected:
+            runtime = (providers.get(provider_id) or {}).get("runtime") or {}
+            if not isinstance(runtime, dict):
+                continue
+            if runtime.get("cooldown_active"):
+                reason = runtime.get("last_failure_reason") or "최근 LLM 호출 실패"
+                remaining = int(runtime.get("disabled_for_sec") or 0)
+                return {
+                    "action": "BLOCK",
+                    "reason": f"{provider_id} 런타임 cooldown 중 신규 매수 보류 ({remaining}s 남음): {reason}",
+                }
+        return {"action": "ALLOW"}
 
     async def _get_account_equity_drawdown(self) -> dict:
         async with AsyncSessionLocal() as session:

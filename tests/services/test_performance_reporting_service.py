@@ -38,6 +38,8 @@ async def test_build_summary_includes_canonical_pnl_truth(monkeypatch):
     async def fake_pnl_truth_summary(_session):
         return {
             "sample_status": "INSUFFICIENT_CLOSED_TRADE_SAMPLE",
+            "account_pnl_sample_status": "UNRECONCILED_ACCOUNT_PNL",
+            "pnl_reconciliation_status": "UNEXPLAINED_ASSET_DELTA",
             "realized_trade_pnl": 0.0,
             "unrealized_broker_pnl": -2704805.0,
             "total_asset_delta": 7064565.0,
@@ -57,6 +59,8 @@ async def test_build_summary_includes_canonical_pnl_truth(monkeypatch):
 
     assert summary["pnl_truth"] == {
         "sample_status": "INSUFFICIENT_CLOSED_TRADE_SAMPLE",
+        "account_pnl_sample_status": "UNRECONCILED_ACCOUNT_PNL",
+        "pnl_reconciliation_status": "UNEXPLAINED_ASSET_DELTA",
         "realized_trade_pnl": 0.0,
         "unrealized_broker_pnl": -2704805.0,
         "total_asset_delta": 7064565.0,
@@ -65,7 +69,9 @@ async def test_build_summary_includes_canonical_pnl_truth(monkeypatch):
         "overall_source": "trade_results.closed_buy",
         "account_pnl_source": "pnl_truth",
         "overall_deprecated_for_account_pnl": True,
-        "sample_status": "INSUFFICIENT_CLOSED_TRADE_SAMPLE",
+        "sample_status": "UNRECONCILED_ACCOUNT_PNL",
+        "closed_trade_sample_status": "INSUFFICIENT_CLOSED_TRADE_SAMPLE",
+        "pnl_reconciliation_status": "UNEXPLAINED_ASSET_DELTA",
     }
 
 

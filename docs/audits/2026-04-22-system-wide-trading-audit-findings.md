@@ -191,7 +191,7 @@
 - Rollout: report-only 경고 -> BUY 차단 -> TRADING_ENABLED kill switch 순서로 단계 적용.
 - Rollback: BUY 차단 gate만 feature flag로 끌 수 있게 분리.
 - 분류: `유지하되 harden`
-- 조치: Track 3 Task 3.2에서 `ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE=OFF|REPORT_ONLY|BLOCK_BUY|KILL_SWITCH`를 추가했습니다. 기본값은 `REPORT_ONLY`이며, `TradingGuard`가 `PnlTruthService`의 baseline/latest account equity summary를 읽어 계좌 총자산 drawdown을 warning 또는 BUY 차단/kill switch에 반영합니다.
+- 조치: Track 3 Task 3.2에서 `ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE=OFF|REPORT_ONLY|BLOCK_BUY|KILL_SWITCH`를 추가했습니다. 2026-04-27 보강으로 기본값을 `BLOCK_BUY`로 올리고, `ACCOUNT_EQUITY_DRAWDOWN_BLOCK_BUY_PCT=0.5`, `ACCOUNT_EQUITY_DRAWDOWN_KILL_SWITCH_PCT=1.0`를 분리했습니다. `TradingGuard`는 `PnlTruthService`의 baseline/latest account equity summary를 읽어 계좌 총자산 drawdown을 warning, BUY 차단, kill switch에 반영합니다.
 
 ### F-010: `.env`와 runtime DB의 `TRADING_ENABLED`가 충돌해 운영자가 실주문 상태를 오판할 수 있음
 

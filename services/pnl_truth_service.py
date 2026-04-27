@@ -36,24 +36,45 @@ class PnlTruthService:
             if baseline_total_asset > 0
             else 0.0
         )
+        unrealized_broker_pnl = (
+            float(getattr(snapshot, "total_unrealized_pnl", 0.0) or 0.0)
+            if snapshot
+            else 0.0
+        )
+        cash_or_snapshot_delta = total_asset_delta - float(realized_pnl) - unrealized_broker_pnl
+        reconciliation = self._reconciliation_status(
+            cash_or_snapshot_delta=cash_or_snapshot_delta,
+            snapshot_available=bool(snapshot),
+            baseline_available=bool(baseline),
+        )
+        closed_trade_sample_status = self._sample_status(closed_count)
+        account_pnl_sample_status = self._account_pnl_sample_status(
+            closed_trade_sample_status=closed_trade_sample_status,
+            reconciliation_status=reconciliation["status"],
+        )
 
         return {
             "trading_date": target_date.isoformat(),
-            "sample_status": self._sample_status(closed_count),
+            "sample_status": closed_trade_sample_status,
+            "account_pnl_sample_status": account_pnl_sample_status,
             "realized_trade_pnl": float(realized_pnl),
             "closed_trade_count": int(closed_count),
-            "unrealized_broker_pnl": float(getattr(snapshot, "total_unrealized_pnl", 0.0) or 0.0) if snapshot else 0.0,
+            "unrealized_broker_pnl": unrealized_broker_pnl,
             "unrealized_broker_pnl_rate": float(getattr(snapshot, "total_unrealized_pnl_rate", 0.0) or 0.0) if snapshot else 0.0,
             "total_asset": total_asset,
             "baseline_total_asset": baseline_total_asset,
             "total_asset_delta": float(total_asset_delta),
             "total_asset_delta_rate": total_asset_delta_rate,
+            "cash_or_snapshot_delta": float(cash_or_snapshot_delta),
+            "pnl_reconciliation_status": reconciliation["status"],
+            "pnl_reconciliation_message": reconciliation["message"],
             "holding_count": int(getattr(snapshot, "holding_count", 0) or 0) if snapshot else 0,
             "pending_order_count": int(getattr(snapshot, "pending_order_count", 0) or 0) if snapshot else 0,
             "source": {
                 "realized_trade_pnl": "trade_results.closed_buy",
                 "unrealized_broker_pnl": "account_equity_snapshots.latest",
                 "total_asset_delta": "account_day_baselines + account_equity_snapshots.latest",
+                "cash_or_snapshot_delta": "total_asset_delta - realized_trade_pnl - unrealized_broker_pnl",
             },
         }
 
@@ -94,6 +115,40 @@ class PnlTruthService:
         if closed_count < 12:
             return "LOW_CLOSED_TRADE_SAMPLE"
         return "OK"
+
+    @staticmethod
+    def _account_pnl_sample_status(
+        *,
+        closed_trade_sample_status: str,
+        reconciliation_status: str,
+    ) -> str:
+        if reconciliation_status == "UNEXPLAINED_ASSET_DELTA":
+            return "UNRECONCILED_ACCOUNT_PNL"
+        if reconciliation_status == "SOURCE_INCOMPLETE":
+            return "SOURCE_INCOMPLETE"
+        return closed_trade_sample_status
+
+    @staticmethod
+    def _reconciliation_status(
+        *,
+        cash_or_snapshot_delta: float,
+        snapshot_available: bool,
+        baseline_available: bool,
+    ) -> dict[str, str]:
+        if not baseline_available or not snapshot_available:
+            return {
+                "status": "SOURCE_INCOMPLETE",
+                "message": "baseline 또는 latest account snapshot이 없어 계좌 손익 대사가 제한됩니다.",
+            }
+        if abs(cash_or_snapshot_delta) <= 1.0:
+            return {
+                "status": "OK",
+                "message": "총자산 변화가 DB 실현손익과 브로커 평가손익으로 설명됩니다.",
+            }
+        return {
+            "status": "UNEXPLAINED_ASSET_DELTA",
+            "message": "총자산 변화 중 DB 실현손익/브로커 평가손익으로 설명되지 않는 차이가 있습니다.",
+        }
 
 
 pnl_truth_service = PnlTruthService()

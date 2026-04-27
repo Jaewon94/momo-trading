@@ -39,10 +39,11 @@
 
 ### PnL/리스크
 
-- `PnlTruthService`로 realized trade PnL, broker unrealized PnL, total asset delta를 분리.
+- `PnlTruthService`로 realized trade PnL, broker unrealized PnL, total asset delta를 분리. `cash_or_snapshot_delta`, `pnl_reconciliation_status`, `account_pnl_sample_status`를 추가해 DB 실현손익 0 착시와 설명되지 않는 총자산 변화를 운영자가 바로 구분할 수 있게 했다.
 - 성과 요약에 `pnl_truth`와 `metric_contract` 노출.
 - AI risk tuner hard cap 추가: 일일 거래 수, 단일 주문금액, 단일 포지션 비중.
-- `ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE=OFF|REPORT_ONLY|BLOCK_BUY|KILL_SWITCH` 추가. 기본값은 `REPORT_ONLY`이며, account equity baseline/latest snapshot 기준 총자산 drawdown을 BUY guard warning 또는 차단에 연결.
+- `ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE=OFF|REPORT_ONLY|BLOCK_BUY|KILL_SWITCH` 추가. 2026-04-27 보강 후 기본값은 `BLOCK_BUY`이며, `ACCOUNT_EQUITY_DRAWDOWN_BLOCK_BUY_PCT=0.5`, `ACCOUNT_EQUITY_DRAWDOWN_KILL_SWITCH_PCT=1.0` 기준으로 account equity baseline/latest snapshot 총자산 drawdown을 신규 BUY 차단 또는 kill switch에 연결한다.
+- `BUY_GUARD_LLM_RUNTIME_BLOCK_ENABLED=true`일 때 선택된 Tier1/Tier2 LLM provider가 timeout cooldown 상태이면 신규 BUY를 보류한다. Codex-only 운영에서는 timeout 중 fallback을 묵시적으로 붙이지 않고 매수만 멈춘다.
 
 ### 뉴스
 

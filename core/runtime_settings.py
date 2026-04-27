@@ -20,6 +20,9 @@ MUTABLE_SETTINGS = [
     "AUTO_RISK_KILL_SWITCH_ENABLED",
     "MAX_DAILY_DRAWDOWN_PCT",
     "ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE",
+    "ACCOUNT_EQUITY_DRAWDOWN_BLOCK_BUY_PCT",
+    "ACCOUNT_EQUITY_DRAWDOWN_KILL_SWITCH_PCT",
+    "BUY_GUARD_LLM_RUNTIME_BLOCK_ENABLED",
     "MAX_CONSECUTIVE_LOSSES",
     "MIN_STRATEGY_EXPECTANCY",
     "EXPECTANCY_SAMPLE_SIZE",
@@ -141,9 +144,17 @@ def coerce_runtime_setting_value(key: str, value: Any) -> Any:
 
     if isinstance(current, float):
         try:
-            return float(value)
+            normalized_float = float(value)
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=f"{key} must be a number") from exc
+        if key in {
+            "MAX_DAILY_DRAWDOWN_PCT",
+            "ACCOUNT_EQUITY_DRAWDOWN_BLOCK_BUY_PCT",
+            "ACCOUNT_EQUITY_DRAWDOWN_KILL_SWITCH_PCT",
+        }:
+            if normalized_float < 0 or normalized_float > 100:
+                raise HTTPException(status_code=400, detail=f"{key} must be between 0 and 100")
+        return normalized_float
 
     if key in {
         "LLM_PROVIDER_TIER1",

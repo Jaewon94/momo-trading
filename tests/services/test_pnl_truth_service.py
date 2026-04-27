@@ -57,6 +57,7 @@ async def test_pnl_truth_service_separates_trade_pnl_broker_unrealized_and_asset
     assert summary == {
         "trading_date": "2026-04-22",
         "sample_status": "INSUFFICIENT_CLOSED_TRADE_SAMPLE",
+        "account_pnl_sample_status": "UNRECONCILED_ACCOUNT_PNL",
         "realized_trade_pnl": 0.0,
         "closed_trade_count": 0,
         "unrealized_broker_pnl": -2_704_805.0,
@@ -65,11 +66,15 @@ async def test_pnl_truth_service_separates_trade_pnl_broker_unrealized_and_asset
         "baseline_total_asset": 520_000_000.0,
         "total_asset_delta": 7_064_565.0,
         "total_asset_delta_rate": 1.36,
+        "cash_or_snapshot_delta": 9_769_370.0,
+        "pnl_reconciliation_status": "UNEXPLAINED_ASSET_DELTA",
+        "pnl_reconciliation_message": "총자산 변화 중 DB 실현손익/브로커 평가손익으로 설명되지 않는 차이가 있습니다.",
         "holding_count": 6,
         "pending_order_count": 2,
         "source": {
             "realized_trade_pnl": "trade_results.closed_buy",
             "unrealized_broker_pnl": "account_equity_snapshots.latest",
             "total_asset_delta": "account_day_baselines + account_equity_snapshots.latest",
+            "cash_or_snapshot_delta": "total_asset_delta - realized_trade_pnl - unrealized_broker_pnl",
         },
     }

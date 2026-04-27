@@ -98,6 +98,33 @@ async def test_admin_settings_rejects_invalid_account_equity_drawdown_guard_mode
 
 
 @pytest.mark.asyncio
+async def test_admin_settings_accepts_account_equity_drawdown_thresholds(client):
+    response = await client.put(
+        "/api/v1/admin/settings",
+        json={
+            "ACCOUNT_EQUITY_DRAWDOWN_BLOCK_BUY_PCT": "0.5",
+            "ACCOUNT_EQUITY_DRAWDOWN_KILL_SWITCH_PCT": "1.0",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["ACCOUNT_EQUITY_DRAWDOWN_BLOCK_BUY_PCT"]["new"] == 0.5
+    assert payload["ACCOUNT_EQUITY_DRAWDOWN_KILL_SWITCH_PCT"]["new"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_admin_settings_rejects_invalid_account_equity_drawdown_threshold(client):
+    response = await client.put(
+        "/api/v1/admin/settings",
+        json={"ACCOUNT_EQUITY_DRAWDOWN_BLOCK_BUY_PCT": -0.1},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "ACCOUNT_EQUITY_DRAWDOWN_BLOCK_BUY_PCT must be between 0 and 100"
+
+
+@pytest.mark.asyncio
 async def test_admin_settings_normalizes_empty_news_model_to_default(client, monkeypatch):
     monkeypatch.setattr("api.routes.admin.settings.NEWS_LLM_MODEL", "qwen2.5:14b")
 

@@ -370,6 +370,7 @@
   - PnL truth service를 추가해 closed trade, broker/account snapshot, daily baseline을 분리 계산한다.
   - 기존 performance report에는 새 필드를 추가하고 기존 필드는 deprecated 표시만 한다.
   - Result: `PnlTruthService`를 추가하고 performance summary에 `pnl_truth`와 `metric_contract`를 연결했다.
+  - 2026-04-27 보강: `cash_or_snapshot_delta`, `pnl_reconciliation_status`, `account_pnl_sample_status`를 추가해 총자산 변화 중 DB realized PnL/브로커 unrealized PnL로 설명되지 않는 금액을 명시한다. broker execution history 원장이 확보되기 전까지는 이 값을 실제 계좌 손익 대사의 gap으로 취급하고, 성과 summary의 account PnL sample status도 `UNRECONCILED_ACCOUNT_PNL`로 내린다.
 
 - [x] **Step 4: 통과 확인**
   - Run: `./.venv313/bin/python -m pytest tests/services/test_pnl_truth_service.py tests/services/test_performance_reporting_service.py -q`
@@ -440,6 +441,7 @@
   - `TradingGuard`에 account equity drawdown input을 받는 별도 method를 추가한다.
   - `report_only|block_buy|kill_switch` mode를 runtime setting으로 둔다.
   - Result: `ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE=OFF|REPORT_ONLY|BLOCK_BUY|KILL_SWITCH`를 추가했다. `TradingGuard`는 `PnlTruthService`의 baseline/latest snapshot summary를 읽어 총자산 drawdown을 계산한다.
+  - 2026-04-27 보강: 기본 운영 모드를 `BLOCK_BUY`로 올리고, `ACCOUNT_EQUITY_DRAWDOWN_BLOCK_BUY_PCT=0.5`, `ACCOUNT_EQUITY_DRAWDOWN_KILL_SWITCH_PCT=1.0`를 별도 임계값으로 분리했다. 선택된 LLM provider가 timeout cooldown 상태이면 신규 BUY를 보류하는 `BUY_GUARD_LLM_RUNTIME_BLOCK_ENABLED`도 추가했다.
 
 - [x] **Step 4: 통과 확인**
   - Run: `./.venv313/bin/python -m pytest tests/strategy/test_trading_guard.py tests/services/test_account_equity_service.py -q`
