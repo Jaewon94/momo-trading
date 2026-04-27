@@ -12,11 +12,14 @@ from core.database import AsyncSessionLocal, run_sqlite_write_with_retry
 from repositories.account_day_baseline_repository import AccountDayBaselineRepository
 from repositories.account_equity_snapshot_repository import AccountEquitySnapshotRepository
 from repositories.trade_result_repository import TradeResultRepository
+from scheduler.market_calendar import market_calendar
 from trading.broker_factory import get_broker_adapter
 from trading.models import AccountBalance, HoldingInfo, PendingOrderInfo
 from models.account_day_baseline import AccountDayBaseline
 from models.account_equity_snapshot import AccountEquitySnapshot
 from util.time_util import ensure_kst, now_kst
+
+ACCOUNT_EQUITY_SNAPSHOT_STALE_AFTER_SEC = 600
 
 
 @dataclass(frozen=True)
@@ -31,6 +34,59 @@ class AccountEquityState:
     holding_count: int
     pending_order_count: int
     detail: dict[str, Any] | None = None
+
+
+def classify_account_snapshot_freshness(
+    *,
+    latest_captured_at: datetime | None,
+    observed_at: datetime,
+    stale_after_sec: int = ACCOUNT_EQUITY_SNAPSHOT_STALE_AFTER_SEC,
+) -> dict[str, Any]:
+    timestamp = ensure_kst(observed_at)
+    if latest_captured_at is None:
+        return {
+            "snapshot_age_sec": None,
+            "snapshot_freshness_status": "MISSING",
+            "snapshot_stale_reason": "snapshot_missing",
+            "snapshot_stale_message": "오늘 계좌 스냅샷이 아직 없습니다.",
+            "snapshot_stale_blocks_buy": True,
+            "is_stale": False,
+        }
+
+    latest = ensure_kst(latest_captured_at)
+    age_sec = max(int((timestamp - latest).total_seconds()), 0)
+    if age_sec <= stale_after_sec:
+        return {
+            "snapshot_age_sec": age_sec,
+            "snapshot_freshness_status": "FRESH",
+            "snapshot_stale_reason": "",
+            "snapshot_stale_message": "",
+            "snapshot_stale_blocks_buy": False,
+            "is_stale": False,
+        }
+
+    session = market_calendar.get_market_session_info(timestamp)
+    if not bool(session.get("supports_automated_trading")):
+        return {
+            "snapshot_age_sec": age_sec,
+            "snapshot_freshness_status": "OFF_SESSION_STALE",
+            "snapshot_stale_reason": "off_session_auto_trading_disabled",
+            "snapshot_stale_message": (
+                f"{session.get('label') or '자동매매 비지원 세션'}에서는 정규 자동매매가 비활성이라 "
+                "계좌 스냅샷이 오래될 수 있습니다."
+            ),
+            "snapshot_stale_blocks_buy": False,
+            "is_stale": True,
+        }
+
+    return {
+        "snapshot_age_sec": age_sec,
+        "snapshot_freshness_status": "STALE",
+        "snapshot_stale_reason": "regular_session_snapshot_stale",
+        "snapshot_stale_message": "자동매매 가능 세션에서 계좌 스냅샷이 오래되어 신규 매수를 보류해야 합니다.",
+        "snapshot_stale_blocks_buy": True,
+        "is_stale": True,
+    }
 
 
 class AccountEquityService:
@@ -224,6 +280,10 @@ class AccountEquityService:
             value for value in [current_asset, self._optional_float(low_asset), baseline_asset] if value is not None
         )
         latest_captured_at = ensure_kst(getattr(latest_snapshot, "captured_at", None)) if latest_snapshot else None
+        snapshot_freshness = classify_account_snapshot_freshness(
+            latest_captured_at=latest_captured_at,
+            observed_at=timestamp,
+        )
 
         return {
             "available": True,
@@ -248,9 +308,7 @@ class AccountEquityService:
             "intraday_high_asset": intraday_high_asset,
             "intraday_low_asset": intraday_low_asset,
             "latest_snapshot_at": latest_captured_at.isoformat() if latest_captured_at is not None else None,
-            "is_stale": bool(
-                latest_captured_at is not None and (timestamp - latest_captured_at).total_seconds() > 600
-            ),
+            **snapshot_freshness,
         }
 
     def _build_empty_metrics(
@@ -288,6 +346,11 @@ class AccountEquityService:
             "intraday_high_asset": current_asset,
             "intraday_low_asset": current_asset,
             "latest_snapshot_at": None,
+            "snapshot_age_sec": None,
+            "snapshot_freshness_status": "MISSING",
+            "snapshot_stale_reason": "metrics_unavailable",
+            "snapshot_stale_message": "세션 메트릭을 계산할 수 없어 계좌 스냅샷 최신성을 판단하지 못했습니다.",
+            "snapshot_stale_blocks_buy": True,
             "is_stale": False,
         }
 

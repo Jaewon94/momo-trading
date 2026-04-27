@@ -44,6 +44,7 @@
 - AI risk tuner hard cap 추가: 일일 거래 수, 단일 주문금액, 단일 포지션 비중.
 - `ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE=OFF|REPORT_ONLY|BLOCK_BUY|KILL_SWITCH` 추가. 2026-04-27 보강 후 기본값은 `BLOCK_BUY`이며, `ACCOUNT_EQUITY_DRAWDOWN_BLOCK_BUY_PCT=0.5`, `ACCOUNT_EQUITY_DRAWDOWN_KILL_SWITCH_PCT=1.0` 기준으로 account equity baseline/latest snapshot 총자산 drawdown을 신규 BUY 차단 또는 kill switch에 연결한다.
 - `BUY_GUARD_LLM_RUNTIME_BLOCK_ENABLED=true`일 때 선택된 Tier1/Tier2 LLM provider가 timeout cooldown 상태이면 신규 BUY를 보류한다. Codex-only 운영에서는 timeout 중 fallback을 묵시적으로 붙이지 않고 매수만 멈춘다.
+- 계좌 스냅샷 freshness를 `FRESH|OFF_SESSION_STALE|STALE|MISSING`으로 분리했다. NXT 애프터마켓처럼 자동매매 비지원 세션에서는 stale을 장애로 보지 않고 `OFF_SESSION_STALE`로 표시하며, 자동매매 가능 세션에서 오래된 스냅샷은 신규 BUY 차단 사유로 사용한다.
 
 ### 뉴스
 

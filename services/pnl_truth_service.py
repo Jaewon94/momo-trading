@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.account_day_baseline import AccountDayBaseline
 from models.account_equity_snapshot import AccountEquitySnapshot
 from models.trade_result import TradeResult
+from services.account_equity_service import classify_account_snapshot_freshness
 from util.time_util import now_kst
 
 
@@ -42,6 +43,11 @@ class PnlTruthService:
             else 0.0
         )
         cash_or_snapshot_delta = total_asset_delta - float(realized_pnl) - unrealized_broker_pnl
+        latest_snapshot_at = getattr(snapshot, "captured_at", None) if snapshot else None
+        snapshot_freshness = classify_account_snapshot_freshness(
+            latest_captured_at=latest_snapshot_at,
+            observed_at=now_kst(),
+        )
         reconciliation = self._reconciliation_status(
             cash_or_snapshot_delta=cash_or_snapshot_delta,
             snapshot_available=bool(snapshot),
@@ -66,6 +72,8 @@ class PnlTruthService:
             "total_asset_delta": float(total_asset_delta),
             "total_asset_delta_rate": total_asset_delta_rate,
             "cash_or_snapshot_delta": float(cash_or_snapshot_delta),
+            "latest_snapshot_at": latest_snapshot_at.isoformat() if latest_snapshot_at is not None else None,
+            **snapshot_freshness,
             "pnl_reconciliation_status": reconciliation["status"],
             "pnl_reconciliation_message": reconciliation["message"],
             "holding_count": int(getattr(snapshot, "holding_count", 0) or 0) if snapshot else 0,

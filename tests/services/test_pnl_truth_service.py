@@ -54,27 +54,22 @@ async def test_pnl_truth_service_separates_trade_pnl_broker_unrealized_and_asset
 
         summary = await PnlTruthService().build_summary(session, trading_date=trading_date)
 
-    assert summary == {
-        "trading_date": "2026-04-22",
-        "sample_status": "INSUFFICIENT_CLOSED_TRADE_SAMPLE",
-        "account_pnl_sample_status": "UNRECONCILED_ACCOUNT_PNL",
-        "realized_trade_pnl": 0.0,
-        "closed_trade_count": 0,
-        "unrealized_broker_pnl": -2_704_805.0,
-        "unrealized_broker_pnl_rate": -1.32,
-        "total_asset": 527_064_565.0,
-        "baseline_total_asset": 520_000_000.0,
-        "total_asset_delta": 7_064_565.0,
-        "total_asset_delta_rate": 1.36,
-        "cash_or_snapshot_delta": 9_769_370.0,
-        "pnl_reconciliation_status": "UNEXPLAINED_ASSET_DELTA",
-        "pnl_reconciliation_message": "총자산 변화 중 DB 실현손익/브로커 평가손익으로 설명되지 않는 차이가 있습니다.",
-        "holding_count": 6,
-        "pending_order_count": 2,
-        "source": {
-            "realized_trade_pnl": "trade_results.closed_buy",
-            "unrealized_broker_pnl": "account_equity_snapshots.latest",
-            "total_asset_delta": "account_day_baselines + account_equity_snapshots.latest",
-            "cash_or_snapshot_delta": "total_asset_delta - realized_trade_pnl - unrealized_broker_pnl",
-        },
-    }
+    assert summary["trading_date"] == "2026-04-22"
+    assert summary["sample_status"] == "INSUFFICIENT_CLOSED_TRADE_SAMPLE"
+    assert summary["account_pnl_sample_status"] == "UNRECONCILED_ACCOUNT_PNL"
+    assert summary["realized_trade_pnl"] == pytest.approx(0.0)
+    assert summary["closed_trade_count"] == 0
+    assert summary["unrealized_broker_pnl"] == pytest.approx(-2_704_805.0)
+    assert summary["unrealized_broker_pnl_rate"] == pytest.approx(-1.32)
+    assert summary["total_asset"] == pytest.approx(527_064_565.0)
+    assert summary["baseline_total_asset"] == pytest.approx(520_000_000.0)
+    assert summary["total_asset_delta"] == pytest.approx(7_064_565.0)
+    assert summary["total_asset_delta_rate"] == pytest.approx(1.36)
+    assert summary["cash_or_snapshot_delta"] == pytest.approx(9_769_370.0)
+    assert summary["latest_snapshot_at"] == "2026-04-22T13:05:00"
+    assert summary["snapshot_freshness_status"] in {"OFF_SESSION_STALE", "STALE"}
+    assert summary["pnl_reconciliation_status"] == "UNEXPLAINED_ASSET_DELTA"
+    assert summary["pnl_reconciliation_message"] == "총자산 변화 중 DB 실현손익/브로커 평가손익으로 설명되지 않는 차이가 있습니다."
+    assert summary["holding_count"] == 6
+    assert summary["pending_order_count"] == 2
+    assert summary["source"]["cash_or_snapshot_delta"] == "total_asset_delta - realized_trade_pnl - unrealized_broker_pnl"

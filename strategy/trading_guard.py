@@ -110,6 +110,17 @@ class TradingGuard:
             return {"action": "ALLOW"}
 
         account_drawdown = await self._get_account_equity_drawdown()
+        if bool(account_drawdown.get("snapshot_stale_blocks_buy")):
+            status = str(account_drawdown.get("snapshot_freshness_status") or "STALE")
+            message = str(
+                account_drawdown.get("snapshot_stale_message")
+                or "계좌 스냅샷이 최신이 아니어서 신규 매수를 보류합니다."
+            )
+            return {
+                "action": "BLOCK",
+                "reason": f"계좌 스냅샷 최신성 부족({status}): {message}",
+            }
+
         if not account_drawdown.get("available"):
             return {"action": "ALLOW"}
 
@@ -202,6 +213,9 @@ class TradingGuard:
                 "drawdown_pct": 0.0,
                 "asset_delta": 0.0,
                 "baseline_total_asset": baseline_total_asset,
+                "snapshot_freshness_status": summary.get("snapshot_freshness_status"),
+                "snapshot_stale_blocks_buy": summary.get("snapshot_stale_blocks_buy"),
+                "snapshot_stale_message": summary.get("snapshot_stale_message"),
             }
 
         asset_delta = float(summary.get("total_asset_delta") or 0.0)
@@ -210,6 +224,11 @@ class TradingGuard:
             "drawdown_pct": (asset_delta / baseline_total_asset) * 100.0,
             "asset_delta": asset_delta,
             "baseline_total_asset": baseline_total_asset,
+            "latest_snapshot_at": summary.get("latest_snapshot_at"),
+            "snapshot_age_sec": summary.get("snapshot_age_sec"),
+            "snapshot_freshness_status": summary.get("snapshot_freshness_status"),
+            "snapshot_stale_blocks_buy": summary.get("snapshot_stale_blocks_buy"),
+            "snapshot_stale_message": summary.get("snapshot_stale_message"),
         }
 
     async def _get_consecutive_losses(self) -> int:

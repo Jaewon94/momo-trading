@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from fastapi.responses import StreamingResponse
 from loguru import logger
 from pydantic import BaseModel
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import OperationalError
 
@@ -66,7 +66,7 @@ from services.error_incident_service import error_incident_service
 from services.decision_benchmark_service import decision_benchmark_service
 from services.observability_reporting_service import observability_reporting_service
 from services.performance_reporting_service import performance_reporting_service
-from services.account_equity_service import account_equity_service
+from services.account_equity_service import account_equity_service, classify_account_snapshot_freshness
 from services.admin_action_confirmation_service import admin_action_confirmation_service
 from services.runtime_settings_service import runtime_settings_service
 from services.runtime_reconfiguration_service import runtime_reconfiguration_service
@@ -237,6 +237,11 @@ def _build_balance_payload_fallback(balance) -> dict[str, object]:
             "intraday_high_asset": float(getattr(balance, "total_asset", 0.0) or 0.0),
             "intraday_low_asset": float(getattr(balance, "total_asset", 0.0) or 0.0),
             "latest_snapshot_at": None,
+            "snapshot_age_sec": None,
+            "snapshot_freshness_status": "MISSING",
+            "snapshot_stale_reason": "metrics_unavailable",
+            "snapshot_stale_message": "세션 메트릭을 계산할 수 없어 계좌 스냅샷 최신성을 판단하지 못했습니다.",
+            "snapshot_stale_blocks_buy": True,
             "is_stale": False,
         },
     }
@@ -1846,6 +1851,7 @@ async def get_system_status(db: AsyncSession = Depends(get_async_db)):
     from agent.trading_agent import trading_agent
 
     from scheduler.market_calendar import market_calendar
+    from util.time_util import now_kst
 
     broker_provider = settings.normalized_broker_provider
     broker_adapter = get_broker_adapter()
@@ -2013,6 +2019,41 @@ async def get_system_status(db: AsyncSession = Depends(get_async_db)):
         }
 
     market_session = market_calendar.get_market_session_info()
+    latest_snapshot = (
+        await db.execute(
+            select(AccountEquitySnapshot).order_by(AccountEquitySnapshot.captured_at.desc()).limit(1)
+        )
+    ).scalar_one_or_none()
+    latest_snapshot_at = getattr(latest_snapshot, "captured_at", None) if latest_snapshot else None
+    snapshot_freshness = classify_account_snapshot_freshness(
+        latest_captured_at=latest_snapshot_at,
+        observed_at=now_kst(),
+    )
+    snapshot_status = str(snapshot_freshness.get("snapshot_freshness_status") or "MISSING")
+    if snapshot_status == "FRESH":
+        account_snapshot_ops = {
+            "status": "OK",
+            "label": "계좌 스냅샷 최신",
+            "message": "계좌 스냅샷이 최신입니다.",
+        }
+    elif snapshot_status == "OFF_SESSION_STALE":
+        account_snapshot_ops = {
+            "status": "OK",
+            "label": "비자동매매 세션 스냅샷 대기",
+            "message": snapshot_freshness.get("snapshot_stale_message"),
+        }
+    else:
+        account_snapshot_ops = {
+            "status": "WARN",
+            "label": "계좌 스냅샷 갱신 필요",
+            "message": snapshot_freshness.get("snapshot_stale_message"),
+        }
+    account_snapshot_ops.update({
+        "latest_snapshot_at": latest_snapshot_at.isoformat() if latest_snapshot_at else None,
+        "snapshot_age_sec": snapshot_freshness.get("snapshot_age_sec"),
+        "snapshot_freshness_status": snapshot_status,
+        "snapshot_stale_blocks_buy": bool(snapshot_freshness.get("snapshot_stale_blocks_buy")),
+    })
 
     return SuccessResponse(data={
         "broker_provider": broker_provider,
@@ -2048,6 +2089,7 @@ async def get_system_status(db: AsyncSession = Depends(get_async_db)):
             "news_polling": news_ops,
             "ollama": ollama_ops,
             "orders": order_ops,
+            "account_snapshot": account_snapshot_ops,
         },
     })
 

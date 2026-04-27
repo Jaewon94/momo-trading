@@ -133,6 +133,11 @@ describe("trade_state", () => {
             risk_message: "보유 평가이익이 있으나 가격 변동 리스크는 열려 있습니다.",
             intraday_high_asset: 1015000,
             intraday_low_asset: 972000,
+            latest_snapshot_at: "2026-04-22T13:04:18+09:00",
+            snapshot_age_sec: 120,
+            snapshot_freshness_status: "FRESH",
+            snapshot_stale_blocks_buy: false,
+            is_stale: false,
           },
         },
         [{}],
@@ -157,6 +162,11 @@ describe("trade_state", () => {
       realizedTodayPnl: 25000,
       intradayHighAsset: 1015000,
       intradayLowAsset: 972000,
+      latestSnapshotAt: "2026-04-22T13:04:18+09:00",
+      snapshotAgeSec: 120,
+      snapshotFreshnessStatus: "FRESH",
+      snapshotStaleBlocksBuy: false,
+      snapshotIsStale: false,
     });
   });
 

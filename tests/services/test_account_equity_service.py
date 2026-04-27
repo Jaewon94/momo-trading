@@ -138,6 +138,36 @@ async def test_account_equity_service_builds_session_metrics_from_baseline_and_s
     assert payload["session_metrics"]["risk_label"] == "EXPOSED_PROFIT"
     assert payload["session_metrics"]["intraday_high_asset"] == pytest.approx(1_015_000)
     assert payload["session_metrics"]["intraday_low_asset"] == pytest.approx(972_000)
+    assert payload["session_metrics"]["snapshot_freshness_status"] == "STALE"
+    assert payload["session_metrics"]["snapshot_stale_blocks_buy"] is True
+
+
+@pytest.mark.asyncio
+async def test_account_equity_service_marks_off_session_stale_snapshot_without_buy_block():
+    from services.account_equity_service import AccountEquityService
+    from tests.conftest import TestAsyncSessionLocal
+
+    service = AccountEquityService(
+        session_factory=TestAsyncSessionLocal,
+        now_func=lambda: _dt(17, 30),
+    )
+
+    open_state = service.build_state(
+        _balance(total_asset=1_000_000, cash=1_000_000, stock_value=0),
+        captured_at=_dt(9, 0),
+    )
+    await service.ensure_day_baseline(open_state, baseline_source="MARKET_OPEN")
+    await service.record_snapshot(open_state, session_phase="OPENING")
+
+    payload = await service.build_balance_payload(
+        _balance(total_asset=1_000_000, cash=1_000_000, stock_value=0),
+        captured_at=_dt(17, 30),
+    )
+
+    assert payload["session_metrics"]["is_stale"] is True
+    assert payload["session_metrics"]["snapshot_freshness_status"] == "OFF_SESSION_STALE"
+    assert payload["session_metrics"]["snapshot_stale_reason"] == "off_session_auto_trading_disabled"
+    assert payload["session_metrics"]["snapshot_stale_blocks_buy"] is False
 
 
 @pytest.mark.asyncio

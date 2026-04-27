@@ -67,6 +67,16 @@ export function buildPortfolioQuickStatsModel(
     tradingDate: sessionAvailable ? String(sessionMetrics?.trading_date || "") : "",
     baselineAt: sessionAvailable ? String(sessionMetrics?.baseline_at || "") : "",
     latestSnapshotAt: sessionAvailable ? String(sessionMetrics?.latest_snapshot_at || "") : "",
+    snapshotAgeSec: sessionAvailable
+      && sessionMetrics?.snapshot_age_sec !== null
+      && sessionMetrics?.snapshot_age_sec !== undefined
+      ? Number(sessionMetrics?.snapshot_age_sec || 0)
+      : null,
+    snapshotFreshnessStatus: sessionAvailable ? String(sessionMetrics?.snapshot_freshness_status || "") : "",
+    snapshotStaleReason: sessionAvailable ? String(sessionMetrics?.snapshot_stale_reason || "") : "",
+    snapshotStaleMessage: sessionAvailable ? String(sessionMetrics?.snapshot_stale_message || "") : "",
+    snapshotStaleBlocksBuy: sessionAvailable ? sessionMetrics?.snapshot_stale_blocks_buy === true : false,
+    snapshotIsStale: sessionAvailable ? sessionMetrics?.is_stale === true : false,
     realizedTodayPnl,
     cash,
     stockValue,

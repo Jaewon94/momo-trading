@@ -146,6 +146,36 @@ async def test_trading_guard_blocks_buy_before_kill_threshold(monkeypatch):
     assert result["kill_switched"] is False
 
 
+@pytest.mark.asyncio
+async def test_trading_guard_blocks_buy_on_stale_account_snapshot(monkeypatch):
+    guard = TradingGuard()
+
+    async def fake_realized_drawdown(*, portfolio_budget: float) -> float:
+        return 0.0
+
+    async def fake_account_drawdown() -> dict:
+        return {
+            "available": True,
+            "drawdown_pct": 0.0,
+            "asset_delta": 0.0,
+            "baseline_total_asset": 1_000_000,
+            "snapshot_freshness_status": "STALE",
+            "snapshot_stale_message": "자동매매 가능 세션에서 계좌 스냅샷이 오래되었습니다.",
+            "snapshot_stale_blocks_buy": True,
+        }
+
+    monkeypatch.setattr(guard, "_get_daily_realized_pnl_pct", fake_realized_drawdown)
+    monkeypatch.setattr(guard, "_get_account_equity_drawdown", fake_account_drawdown)
+    monkeypatch.setattr("strategy.trading_guard.settings.ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE", "BLOCK_BUY")
+
+    result = await guard.evaluate_buy_guard(strategy_type="STABLE_SHORT", portfolio_budget=1_000_000)
+
+    assert result["approved"] is False
+    assert result["trigger"] == "ACCOUNT_EQUITY_DRAWDOWN"
+    assert result["kill_switched"] is False
+    assert "스냅샷" in result["reason"]
+
+
 def test_trading_guard_blocks_buy_on_selected_llm_cooldown(monkeypatch):
     guard = TradingGuard()
 
@@ -221,7 +251,11 @@ async def test_trading_guard_blocks_buy_on_negative_expectancy(monkeypatch):
     async def fake_expectancy(strategy_type: str) -> float | None:
         return -0.12
 
+    async def fake_account_drawdown() -> dict:
+        return {"available": False, "snapshot_stale_blocks_buy": False}
+
     monkeypatch.setattr(guard, "_get_daily_realized_pnl_pct", fake_drawdown)
+    monkeypatch.setattr(guard, "_get_account_equity_drawdown", fake_account_drawdown)
     monkeypatch.setattr(guard, "_get_consecutive_losses", fake_losses)
     monkeypatch.setattr(guard, "_get_strategy_expectancy", fake_expectancy)
     monkeypatch.setattr("strategy.trading_guard.settings.AUTO_RISK_KILL_SWITCH_ENABLED", True)
