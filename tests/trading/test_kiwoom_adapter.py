@@ -273,6 +273,42 @@ async def test_kiwoom_adapter_delegates_order_execution() -> None:
 
 
 @pytest.mark.asyncio
+async def test_kiwoom_adapter_rounds_krx_buy_limit_price_up_to_tick() -> None:
+    adapter, order_executor = build_adapter()
+
+    await adapter.place_order(
+        OrderRequest(
+            symbol="006340",
+            market=Market.KRX,
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            quantity=600,
+            price=15_865,
+        )
+    )
+
+    assert order_executor.requests[0].price == 15_870
+
+
+@pytest.mark.asyncio
+async def test_kiwoom_adapter_rounds_krx_sell_limit_price_down_to_tick() -> None:
+    adapter, order_executor = build_adapter()
+
+    await adapter.place_order(
+        OrderRequest(
+            symbol="006340",
+            market=Market.KRX,
+            side=OrderSide.SELL,
+            order_type=OrderType.LIMIT,
+            quantity=600,
+            price=15_865,
+        )
+    )
+
+    assert order_executor.requests[0].price == 15_860
+
+
+@pytest.mark.asyncio
 async def test_kiwoom_adapter_infers_filled_buy_from_holdings_when_order_leaves_pending_book() -> None:
     account_client = MutableAccountClient(
         holdings=[],

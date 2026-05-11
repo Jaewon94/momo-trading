@@ -64,6 +64,131 @@ async def test_admin_settings_rejects_invalid_news_provider_without_overwriting(
 
 
 @pytest.mark.asyncio
+async def test_admin_settings_accepts_execution_modes_case_insensitively(client):
+    response = await client.put(
+        "/api/v1/admin/settings",
+        json={
+            "LLM_EXECUTION_MODE_TIER1": "distributed",
+            "LLM_EXECUTION_MODE_TIER2": "consensus",
+            "MANUAL_LLM_EXECUTION_MODE": "single",
+            "NEWS_LLM_EXECUTION_MODE": "DISTRIBUTED",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["LLM_EXECUTION_MODE_TIER1"]["new"] == "DISTRIBUTED"
+    assert payload["LLM_EXECUTION_MODE_TIER2"]["new"] == "CONSENSUS"
+    assert payload["MANUAL_LLM_EXECUTION_MODE"]["new"] == "SINGLE"
+    assert payload["NEWS_LLM_EXECUTION_MODE"]["new"] == "DISTRIBUTED"
+
+
+@pytest.mark.asyncio
+async def test_admin_settings_rejects_invalid_execution_mode_without_overwriting(client, monkeypatch):
+    monkeypatch.setattr("api.routes.admin.settings.LLM_EXECUTION_MODE_TIER2", "SINGLE", raising=False)
+
+    response = await client.put(
+        "/api/v1/admin/settings",
+        json={"LLM_EXECUTION_MODE_TIER2": "PARALLEL"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"] == {}
+
+    settings_response = await client.get("/api/v1/admin/settings")
+
+    assert settings_response.status_code == 200
+    assert settings_response.json()["data"]["LLM_EXECUTION_MODE_TIER2"] == "SINGLE"
+
+
+@pytest.mark.asyncio
+async def test_admin_settings_accepts_deterministic_tier1_fast_gate_mode_case_insensitively(client):
+    response = await client.put(
+        "/api/v1/admin/settings",
+        json={"DETERMINISTIC_TIER1_FAST_GATE_MODE": "shadow"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["DETERMINISTIC_TIER1_FAST_GATE_MODE"]["new"] == "SHADOW"
+
+
+@pytest.mark.asyncio
+async def test_admin_settings_rejects_invalid_deterministic_tier1_fast_gate_mode(client, monkeypatch):
+    monkeypatch.setattr("api.routes.admin.settings.DETERMINISTIC_TIER1_FAST_GATE_MODE", "ENFORCE", raising=False)
+
+    response = await client.put(
+        "/api/v1/admin/settings",
+        json={"DETERMINISTIC_TIER1_FAST_GATE_MODE": "PARALLEL"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"] == {}
+
+    settings_response = await client.get("/api/v1/admin/settings")
+
+    assert settings_response.status_code == 200
+    assert settings_response.json()["data"]["DETERMINISTIC_TIER1_FAST_GATE_MODE"] == "ENFORCE"
+
+
+@pytest.mark.asyncio
+async def test_llm_api_key_registry_adds_masks_counts_and_deletes_api_workers(client, monkeypatch):
+    monkeypatch.setattr("api.routes.admin.settings.LLM_API_KEY_REGISTRY", [], raising=False)
+
+    async def fake_llm_usage_snapshot():
+        return {
+            "claude_code": {"available": True},
+            "codex": {"available": True},
+        }
+
+    monkeypatch.setattr(
+        "api.routes.admin.llm_usage_service.get_snapshot",
+        fake_llm_usage_snapshot,
+    )
+    secret = "sk-ant-test-secret-123456"
+
+    create_response = await client.post(
+        "/api/v1/admin/llm/api-keys",
+        json={
+            "provider": "CLAUDE_API",
+            "label": "claude-fast-worker",
+            "api_key": secret,
+        },
+    )
+
+    assert create_response.status_code == 200
+    created = create_response.json()["data"]
+    assert created["provider"] == "CLAUDE_API"
+    assert created["label"] == "claude-fast-worker"
+    assert created["configured"] is True
+    assert created["masked"] == "sk-a...3456"
+    assert secret not in str(create_response.json())
+
+    status_response = await client.get("/api/v1/admin/llm/api-keys")
+
+    assert status_response.status_code == 200
+    status = status_response.json()["data"]
+    assert status["CLAUDE_CODE"]["configured"] is True
+    assert status["CLAUDE_CODE"]["masked"] == "sk-a...3456"
+    assert status["worker_summary"]["cli_slots"] == 2
+    assert status["worker_summary"]["api_slots"] == 1
+    assert status["worker_summary"]["total_slots"] == 3
+    assert status["items"][0]["id"] == created["id"]
+    assert secret not in str(status_response.json())
+
+    delete_response = await client.delete(f"/api/v1/admin/llm/api-keys/{created['id']}")
+
+    assert delete_response.status_code == 200
+
+    empty_response = await client.get("/api/v1/admin/llm/api-keys")
+
+    assert empty_response.status_code == 200
+    assert empty_response.json()["data"]["CLAUDE_CODE"]["configured"] is False
+    assert empty_response.json()["data"]["worker_summary"]["api_slots"] == 0
+    assert empty_response.json()["data"]["worker_summary"]["total_slots"] == 2
+
+
+@pytest.mark.asyncio
 async def test_admin_settings_accepts_account_equity_drawdown_guard_mode(client):
     response = await client.put(
         "/api/v1/admin/settings",
@@ -264,3 +389,32 @@ async def test_admin_settings_rejects_invalid_codex_timeout_range(client, monkey
 
     assert settings_response.status_code == 200
     assert settings_response.json()["data"]["CODEX_TIMEOUT_SEC_TIER1"] == 90
+
+
+@pytest.mark.asyncio
+async def test_admin_settings_rejects_codex_max_reasoning_effort(client, monkeypatch):
+    monkeypatch.setattr("api.routes.admin.settings.CODEX_REASONING_EFFORT_TIER1", "low")
+
+    response = await client.put(
+        "/api/v1/admin/settings",
+        json={"CODEX_REASONING_EFFORT_TIER1": "max"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"] == {}
+
+    settings_response = await client.get("/api/v1/admin/settings")
+
+    assert settings_response.status_code == 200
+    assert settings_response.json()["data"]["CODEX_REASONING_EFFORT_TIER1"] == "low"
+
+
+@pytest.mark.asyncio
+async def test_admin_settings_accepts_claude_max_effort(client):
+    response = await client.put(
+        "/api/v1/admin/settings",
+        json={"CLAUDE_CODE_EFFORT_TIER2": "max"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["CLAUDE_CODE_EFFORT_TIER2"]["new"] == "max"

@@ -14,15 +14,25 @@ async def test_admin_settings_exposes_manual_llm_provider(client):
     assert "CLAUDE_CODE_MODEL" in payload["data"]
     assert "CLAUDE_CODE_MODEL_TIER1" in payload["data"]
     assert "CLAUDE_CODE_MODEL_TIER2" in payload["data"]
+    assert "CLAUDE_CODE_EFFORT_TIER1" in payload["data"]
+    assert "CLAUDE_CODE_EFFORT_TIER2" in payload["data"]
+    assert "CLAUDE_CODE_BARE_TIER1" in payload["data"]
+    assert "CLAUDE_CODE_BARE_TIER2" in payload["data"]
     assert "CODEX_MODEL" in payload["data"]
     assert "CODEX_MODEL_TIER1" in payload["data"]
     assert "CODEX_MODEL_TIER2" in payload["data"]
+    assert "CODEX_REASONING_EFFORT_TIER1" in payload["data"]
+    assert "CODEX_REASONING_EFFORT_TIER2" in payload["data"]
     assert "CODEX_TIMEOUT_SEC_TIER1" in payload["data"]
     assert "CODEX_TIMEOUT_SEC_TIER2" in payload["data"]
+    assert "LLM_EXECUTION_MODE_TIER1" in payload["data"]
+    assert "LLM_EXECUTION_MODE_TIER2" in payload["data"]
     assert "LLM_TIER1_CONCURRENCY" in payload["data"]
     assert "LLM_TIER2_CONCURRENCY" in payload["data"]
     assert "NEWS_LLM_ENABLED" in payload["data"]
+    assert "MANUAL_LLM_EXECUTION_MODE" in payload["data"]
     assert "NEWS_LLM_PROVIDER" in payload["data"]
+    assert "NEWS_LLM_EXECUTION_MODE" in payload["data"]
     assert "MANUAL_LLM_FALLBACK_PROVIDER" in payload["data"]
     assert "MANUAL_LLM_FALLBACK_MODEL" in payload["data"]
     assert "NEWS_LLM_MODEL" in payload["data"]
@@ -207,6 +217,12 @@ async def test_admin_settings_updates_llm_runtime_controls(client):
             "LLM_TIER2_CONCURRENCY": 1,
             "CODEX_TIMEOUT_SEC_TIER1": 90,
             "CODEX_TIMEOUT_SEC_TIER2": 180,
+            "CLAUDE_CODE_EFFORT_TIER1": "low",
+            "CLAUDE_CODE_EFFORT_TIER2": "xhigh",
+            "CLAUDE_CODE_BARE_TIER1": True,
+            "CLAUDE_CODE_BARE_TIER2": False,
+            "CODEX_REASONING_EFFORT_TIER1": "low",
+            "CODEX_REASONING_EFFORT_TIER2": "high",
         },
     )
 
@@ -220,6 +236,12 @@ async def test_admin_settings_updates_llm_runtime_controls(client):
     assert payload["LLM_TIER2_CONCURRENCY"] == 1
     assert payload["CODEX_TIMEOUT_SEC_TIER1"] == 90
     assert payload["CODEX_TIMEOUT_SEC_TIER2"] == 180
+    assert payload["CLAUDE_CODE_EFFORT_TIER1"] == "low"
+    assert payload["CLAUDE_CODE_EFFORT_TIER2"] == "xhigh"
+    assert payload["CLAUDE_CODE_BARE_TIER1"] is True
+    assert payload["CLAUDE_CODE_BARE_TIER2"] is False
+    assert payload["CODEX_REASONING_EFFORT_TIER1"] == "low"
+    assert payload["CODEX_REASONING_EFFORT_TIER2"] == "high"
 
 
 async def test_admin_settings_persists_across_runtime_reload(client):

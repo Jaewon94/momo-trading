@@ -8,7 +8,7 @@ from typing import Any
 from loguru import logger
 
 from core.config import settings
-from core.database import AsyncSessionLocal
+from core.database import AsyncSessionLocal, run_sqlite_write_with_retry
 from core.events import Event, EventType, event_bus
 from core.order_submission import decide_order_submission
 from core.post_liquidation_guard import POST_LIQUIDATION_BUY_BLOCK_REASON, is_post_liquidation_buy_blocked
@@ -48,6 +48,25 @@ class DecisionMaker:
     def __init__(self, broker_adapter: BrokerAdapter | None = None):
         self._pending_tasks: set[asyncio.Task] = set()
         self._broker_adapter = broker_adapter or get_broker_adapter()
+
+    def has_inflight_confirms(self) -> bool:
+        return any(not t.done() for t in self._pending_tasks)
+
+    async def wait_for_inflight_confirms(self, timeout_sec: float) -> bool:
+        """진행 중인 confirm_and_record 태스크가 끝날 때까지 비파괴적으로 대기.
+
+        타임아웃이 발생해도 태스크를 취소하지 않고 False만 반환한다 (체결 확인이
+        외부 reconfig에 의해 끊기지 않도록).
+        """
+        active = [t for t in self._pending_tasks if not t.done()]
+        if not active:
+            return True
+        done, _pending = await asyncio.wait(
+            active,
+            timeout=max(float(timeout_sec), 0.0),
+            return_when=asyncio.ALL_COMPLETED,
+        )
+        return len(done) == len(active)
 
     async def execute(
         self, signal: TradeSignal, analysis_id: str = "", cycle_id: str | None = None,
@@ -435,9 +454,15 @@ class DecisionMaker:
             "news_context_item_count": ctx.get("news_context_item_count"),
             "news_context_source_codes": ctx.get("news_context_source_codes"),
             "news_context_items": ctx.get("news_context_items"),
+            "alpha_source": ctx.get("alpha_source"),
+            "execution_profile": ctx.get("execution_profile"),
+            "risk_profile": ctx.get("risk_profile"),
             "chart_signal_direction": ctx.get("chart_signal_direction"),
             "chart_signal_confidence": ctx.get("chart_signal_confidence"),
             "entry_pattern": ctx.get("entry_pattern"),
+            "active_stop_loss": ctx.get("active_stop_loss"),
+            "active_take_profit": ctx.get("active_take_profit"),
+            "active_trailing_stop_pct": ctx.get("active_trailing_stop_pct"),
         }
         payload = {
             k: v
@@ -500,6 +525,94 @@ class DecisionMaker:
             entry_at=getattr(open_buy, "entry_at", None),
         )
 
+    @staticmethod
+    def _calculate_hold_days(closed_at, entry_at) -> int:
+        if not entry_at:
+            return 0
+        comparable_closed_at = closed_at
+        if (
+            getattr(entry_at, "tzinfo", None) is None
+            and getattr(closed_at, "tzinfo", None) is not None
+        ):
+            comparable_closed_at = closed_at.replace(tzinfo=None)
+        elif (
+            getattr(entry_at, "tzinfo", None) is not None
+            and getattr(closed_at, "tzinfo", None) is None
+        ):
+            entry_at = entry_at.replace(tzinfo=None)
+        return max((comparable_closed_at - entry_at).days, 0)
+
+    @classmethod
+    def _neutral_close_excess_open_buys(
+        cls,
+        session,
+        open_buys: list[TradeResult],
+        *,
+        symbol: str,
+        target_open_qty: int,
+        closed_at,
+        note_reason: str,
+    ) -> dict[str, int]:
+        current_open_qty = sum(
+            int(getattr(open_buy, "quantity", 0) or 0)
+            for open_buy in open_buys
+            if getattr(open_buy, "exit_at", None) is None
+        )
+        remaining_to_close = max(current_open_qty - max(int(target_open_qty or 0), 0), 0)
+        closed_count = 0
+        closed_quantity = 0
+        split_count = 0
+
+        sorted_buys = sorted(
+            open_buys,
+            key=lambda tr: (
+                getattr(tr, "entry_at", None) is None,
+                getattr(tr, "entry_at", None),
+                str(getattr(tr, "id", "")),
+            ),
+        )
+        for open_buy in sorted_buys:
+            if remaining_to_close <= 0:
+                break
+            if getattr(open_buy, "exit_at", None) is not None:
+                continue
+            lot_qty = int(getattr(open_buy, "quantity", 0) or 0)
+            close_qty = min(lot_qty, remaining_to_close)
+            if close_qty <= 0:
+                continue
+
+            target = open_buy
+            if close_qty < lot_qty:
+                target = cls._build_partial_close_clone(open_buy, close_qty=close_qty, symbol=symbol)
+                session.add(target)
+                open_buy.quantity = lot_qty - close_qty
+                split_count += 1
+
+            entry_price = float(getattr(open_buy, "entry_price", 0.0) or 0.0)
+            target.exit_price = entry_price
+            target.pnl = 0.0
+            target.return_pct = 0.0
+            target.is_win = False
+            target.hold_days = cls._calculate_hold_days(closed_at, getattr(open_buy, "entry_at", None))
+            target.exit_reason = "BROKER_HOLDING_QUANTITY_MISMATCH"
+            target.exit_at = closed_at
+            previous_notes = str(getattr(target, "notes", "") or "").strip()
+            note = (
+                "HOLDING_RECONCILIATION_CLOSE: broker holding quantity lower; "
+                f"{note_reason} | target_open_qty={target_open_qty}, db_qty={current_open_qty}, close_qty={close_qty}"
+            )
+            target.notes = f"{note} | previous={previous_notes[:160]}" if previous_notes else note
+
+            remaining_to_close -= close_qty
+            closed_quantity += close_qty
+            closed_count += 1
+
+        return {
+            "closed_count": closed_count,
+            "closed_quantity": closed_quantity,
+            "split_count": split_count,
+        }
+
     @classmethod
     def _apply_sell_fill_to_open_buys(
         cls,
@@ -521,6 +634,8 @@ class DecisionMaker:
         for open_buy in open_buys:
             if remaining_to_close <= 0:
                 break
+            if getattr(open_buy, "exit_at", None) is not None:
+                continue
             lot_qty = int(getattr(open_buy, "quantity", 0) or 0)
             if lot_qty <= 0:
                 continue
@@ -541,7 +656,7 @@ class DecisionMaker:
             target.pnl = pnl
             target.return_pct = round(return_pct, 2)
             target.is_win = pnl > 0
-            target.hold_days = (closed_at - open_buy.entry_at).days if getattr(open_buy, "entry_at", None) else 0
+            target.hold_days = cls._calculate_hold_days(closed_at, getattr(open_buy, "entry_at", None))
             target.exit_reason = exit_reason or "SIGNAL"
             target.exit_at = closed_at
 
@@ -639,8 +754,27 @@ class DecisionMaker:
 
             order_status = await self._broker_adapter.get_order_status(order_id)
             if not order_status:
+                if side == "SELL":
+                    inferred = await self._infer_and_record_sell_fill_from_holdings(
+                        symbol=symbol,
+                        order_id=order_id,
+                        requested_quantity=quantity,
+                        expected_price=expected_price,
+                        analysis_context=analysis_context,
+                        cycle_id=cycle_id,
+                        exit_reason=exit_reason,
+                    )
+                    if inferred:
+                        self._broker_adapter.invalidate_cache()
+                        if on_settled:
+                            await on_settled(order_id, True)
+                        return
+
                 logger.info("[{}] 주문 {} 미체결 (체결내역에서 미발견)", symbol, order_id)
                 await self._cancel_unfilled_order(order_id, symbol)
+                await self._mark_pending_failed(
+                    pending_record_id, "체결내역에서 미발견 (브로커 응답 없음)"
+                )
                 if on_settled:
                     await on_settled(order_id, False)
                 return
@@ -657,6 +791,9 @@ class DecisionMaker:
             if filled_qty <= 0:
                 logger.debug("[{}] 주문 {} 체결수량 0 → 미체결 → 취소 시도", symbol, order_id)
                 await self._cancel_unfilled_order(order_id, symbol)
+                await self._mark_pending_failed(
+                    pending_record_id, "체결수량 0 (주문 취소됨)"
+                )
                 if on_settled:
                     await on_settled(order_id, False)
                 return
@@ -699,12 +836,109 @@ class DecisionMaker:
             if on_settled:
                 await on_settled(order_id, True)
 
+        except asyncio.CancelledError:
+            logger.warning(
+                "[{}] 체결 확인 취소 (주문번호 {}) — PENDING_CONFIRM 유지, portfolio_sync에서 복구 예정",
+                symbol, order_id,
+            )
+            raise
         except Exception as e:
             logger.error("[{}] 체결 확인/기록 실패: {}", symbol, str(e))
             await self._mark_pending_failed(pending_record_id, str(e))
             # 체결 실패 콜백 → 예약 환불
             if on_settled:
                 await on_settled(order_id, False)
+
+    async def _infer_and_record_sell_fill_from_holdings(
+        self,
+        *,
+        symbol: str,
+        order_id: str,
+        requested_quantity: int,
+        expected_price: float,
+        analysis_context: dict | None,
+        cycle_id: str | None,
+        exit_reason: str,
+    ) -> bool:
+        """SELL status lookup can lag on Kiwoom; infer a fill only when holdings shrink."""
+        try:
+            normalized_symbol = normalize_krx_symbol(symbol)
+            holdings = await self._broker_adapter.get_holdings()
+            holding = next(
+                (
+                    item for item in holdings
+                    if normalize_krx_symbol(getattr(item, "symbol", "")) == normalized_symbol
+                ),
+                None,
+            )
+            current_qty = int(getattr(holding, "quantity", 0) or 0) if holding else 0
+
+            async with AsyncSessionLocal() as session:
+                repo = TradeResultRepository(session)
+                open_buys = await repo.get_all_open_buys(normalized_symbol)
+                db_open_qty = sum(int(getattr(tr, "quantity", 0) or 0) for tr in open_buys)
+
+            if db_open_qty <= 0 or current_qty >= db_open_qty:
+                return False
+
+            inferred_qty = db_open_qty - current_qty
+            requested_qty = int(requested_quantity or 0)
+            if requested_qty > 0:
+                inferred_qty = min(inferred_qty, requested_qty)
+            if inferred_qty <= 0:
+                return False
+
+            fill_price = float(expected_price or 0.0)
+            if fill_price <= 0:
+                fill_price = float(getattr(holding, "current_price", 0.0) or 0.0)
+            if fill_price <= 0:
+                logger.warning(
+                    "[{}] SELL 체결 추론 보류: 주문번호={} — 추정 체결가 없음",
+                    normalized_symbol,
+                    order_id,
+                )
+                return False
+
+            inferred_context = dict(analysis_context or {})
+            inferred_context["order_status_inferred_from_holdings"] = True
+            await self._record_trade_result(
+                symbol=normalized_symbol,
+                side="SELL",
+                order_id=order_id,
+                filled_qty=inferred_qty,
+                filled_price=fill_price,
+                analysis_context=inferred_context,
+                exit_reason=exit_reason or "SIGNAL",
+                cycle_id=cycle_id,
+            )
+            logger.warning(
+                "[{}] SELL 체결 상태 미조회 → 보유수량 감소로 체결 추론: {}주 @{:,.0f}원 (주문번호: {})",
+                normalized_symbol,
+                inferred_qty,
+                fill_price,
+                order_id,
+            )
+            await activity_logger.log(
+                ActivityType.TRADE_RESULT,
+                ActivityPhase.COMPLETE,
+                f"🧩 [{normalized_symbol}] SELL 체결 상태 미조회 → 보유수량 기준 청산 기록: "
+                f"{inferred_qty}주 @{fill_price:,.0f}원",
+                cycle_id=cycle_id,
+                symbol=normalized_symbol,
+                detail={
+                    "order_id": order_id,
+                    "requested_quantity": requested_qty,
+                    "db_open_quantity": db_open_qty,
+                    "broker_current_quantity": current_qty,
+                    "inferred_quantity": inferred_qty,
+                    "inferred_price": fill_price,
+                    "exit_reason": exit_reason,
+                },
+            )
+            return True
+        except Exception as exc:
+            logger.warning("[{}] SELL 체결 보유수량 추론 실패: {}", symbol, str(exc))
+            return False
 
     async def _backfill_broker_holding_delta(self, symbol: str) -> None:
         """BUY 체결 후 브로커 보유수량이 DB open 수량보다 큰 경우 즉시 보정."""
@@ -775,6 +1009,37 @@ class DecisionMaker:
                         tr.exit_at = now
                         tr.exit_reason = exit_reason or "SIGNAL"
                         open_buys = await repo.get_all_open_buys(symbol)
+                        total_open_qty = sum(
+                            int(getattr(open_buy, "quantity", 0) or 0)
+                            for open_buy in open_buys
+                            if getattr(open_buy, "exit_at", None) is None
+                        )
+                        if filled_qty > 0 and total_open_qty > filled_qty:
+                            try:
+                                holdings = await self.broker_adapter.get_holdings()
+                                current_holding_qty = 0
+                                for holding in holdings:
+                                    if normalize_krx_symbol(getattr(holding, "symbol", "")) == symbol:
+                                        current_holding_qty = int(getattr(holding, "quantity", 0) or 0)
+                                        break
+                                if total_open_qty > current_holding_qty + filled_qty:
+                                    neutral_fill = self._neutral_close_excess_open_buys(
+                                        session,
+                                        open_buys,
+                                        symbol=symbol,
+                                        target_open_qty=current_holding_qty + filled_qty,
+                                        closed_at=now,
+                                        note_reason="before sell confirmation",
+                                    )
+                                    if neutral_fill["closed_quantity"] > 0:
+                                        logger.warning(
+                                            "[{}] 매도 체결 전 DB 초과수량 중립 정리: {}주 ({}건)",
+                                            symbol,
+                                            neutral_fill["closed_quantity"],
+                                            neutral_fill["closed_count"],
+                                        )
+                            except Exception as reconcile_exc:
+                                logger.warning("[{}] 매도 전 초과수량 정리 확인 실패: {}", symbol, str(reconcile_exc))
                         sell_fill = self._apply_sell_fill_to_open_buys(
                             session,
                             open_buys,
@@ -842,124 +1107,125 @@ class DecisionMaker:
         now = now_kst()
 
         try:
-            async with AsyncSessionLocal() as session:
-                async with session.begin():
-                    repo = TradeResultRepository(session)
+            async def _write_trade_result() -> None:
+                async with AsyncSessionLocal() as session:
+                    async with session.begin():
+                        repo = TradeResultRepository(session)
 
-                    # 중복 체크 (P2-7: order_id UNIQUE)
-                    if order_id:
-                        existing = await repo.get_by_order_id(order_id)
-                        if existing:
-                            logger.debug("[{}] 주문번호 {} 이미 기록됨 → 스킵", symbol, order_id)
-                            return
+                        # 중복 체크 (P2-7: order_id UNIQUE)
+                        if order_id:
+                            existing = await repo.get_by_order_id(order_id)
+                            if existing:
+                                logger.debug("[{}] 주문번호 {} 이미 기록됨 → 스킵", symbol, order_id)
+                                return
 
-                    if side == "BUY":
-                        # 매수 체결 → 새 TradeResult 생성 (미청산 상태)
-                        tr = TradeResult(
-                            order_id=order_id,
-                            stock_symbol=symbol,
-                            stock_name=ctx.get("stock_name", symbol),
-                            side="BUY",
-                            strategy_type=ctx.get("strategy_type", ""),
-                            entry_price=filled_price,
-                            exit_price=0.0,
-                            quantity=filled_qty,
-                            pnl=0.0,
-                            return_pct=0.0,
-                            is_win=False,
-                            hold_days=0,
-                            ai_recommendation=ctx.get("ai_recommendation", ""),
-                            ai_confidence=ctx.get("ai_confidence", 0.0),
-                            ai_target_price=ctx.get("ai_target_price"),
-                            ai_stop_loss_price=ctx.get("ai_stop_loss_price"),
-                            entry_rsi=ctx.get("entry_rsi"),
-                            entry_macd_hist=ctx.get("entry_macd_hist"),
-                            entry_pattern=ctx.get("entry_pattern"),
-                            market_regime=ctx.get("market_regime", ""),
-                            entry_at=now,
-                            notes=self._build_trade_notes(ctx, pending=False),
-                        )
-                        session.add(tr)
-
-                        logger.info(
-                            "[TradeResult] 매수 기록 생성: {} {}주 @{:,.0f}원",
-                            symbol, filled_qty, filled_price,
-                        )
-                        await activity_logger.log(
-                            ActivityType.TRADE_RESULT, ActivityPhase.COMPLETE,
-                            f"\U0001f4dd [{symbol}] 매수 체결 기록: "
-                            f"{filled_qty}주 @{filled_price:,.0f}원",
-                            cycle_id=cycle_id,
-                            symbol=symbol,
-                        )
-
-                    elif side == "SELL":
-                        # 매도 체결 → 미청산 BUY 전체 일괄 청산
-                        open_buys = await repo.get_all_open_buys(symbol)
-                        if not open_buys:
-                            logger.warning(
-                                "[TradeResult] {} 미청산 매수 기록 없음 → 매도 기록만 생성",
-                                symbol,
-                            )
-                            # 매수 기록 없이 매도만 온 경우 → 독립 기록
+                        if side == "BUY":
+                            # 매수 체결 → 새 TradeResult 생성 (미청산 상태)
                             tr = TradeResult(
                                 order_id=order_id,
                                 stock_symbol=symbol,
                                 stock_name=ctx.get("stock_name", symbol),
-                                side="SELL",
+                                side="BUY",
                                 strategy_type=ctx.get("strategy_type", ""),
-                                entry_price=0.0,
-                                exit_price=filled_price,
+                                entry_price=filled_price,
+                                exit_price=0.0,
                                 quantity=filled_qty,
-                                exit_reason=exit_reason or "SIGNAL",
-                                exit_at=now,
+                                pnl=0.0,
+                                return_pct=0.0,
+                                is_win=False,
+                                hold_days=0,
+                                ai_recommendation=ctx.get("ai_recommendation", ""),
+                                ai_confidence=ctx.get("ai_confidence", 0.0),
+                                ai_target_price=ctx.get("ai_target_price"),
+                                ai_stop_loss_price=ctx.get("ai_stop_loss_price"),
+                                entry_rsi=ctx.get("entry_rsi"),
+                                entry_macd_hist=ctx.get("entry_macd_hist"),
+                                entry_pattern=ctx.get("entry_pattern"),
+                                market_regime=ctx.get("market_regime", ""),
                                 entry_at=now,
+                                notes=self._build_trade_notes(ctx, pending=False),
                             )
                             session.add(tr)
-                            return
 
-                        sell_fill = self._apply_sell_fill_to_open_buys(
-                            session,
-                            open_buys,
-                            symbol=symbol,
-                            filled_qty=filled_qty,
-                            filled_price=filled_price,
-                            exit_reason=exit_reason,
-                            closed_at=now,
-                        )
-                        applied_qty = int(sell_fill["applied_quantity"] or 0)
-                        total_pnl = float(sell_fill["total_pnl"] or 0.0)
-                        closed_lot_count = int(sell_fill["closed_lot_count"] or 0)
+                            logger.info(
+                                "[TradeResult] 매수 기록 생성: {} {}주 @{:,.0f}원",
+                                symbol, filled_qty, filled_price,
+                            )
+                            await activity_logger.log(
+                                ActivityType.TRADE_RESULT, ActivityPhase.COMPLETE,
+                                f"\U0001f4dd [{symbol}] 매수 체결 기록: "
+                                f"{filled_qty}주 @{filled_price:,.0f}원",
+                                cycle_id=cycle_id,
+                                symbol=symbol,
+                            )
 
-                        # 마지막 BUY 기준으로 로깅
-                        last_buy = open_buys[-1]
-                        pnl_sign = "+" if total_pnl >= 0 else ""
-                        avg_return = float(sell_fill["total_return_pct"] or 0.0) / max(closed_lot_count, 1)
-                        logger.info(
-                            "[TradeResult] 매도 청산: {} {}건 BUY {} 청산@{:,.0f} "
-                            "= {}{:,.0f}원 ({}{:.1f}%)",
-                            symbol, closed_lot_count, "부분" if sell_fill["partial_exit"] else "전량", filled_price,
-                            pnl_sign, total_pnl, pnl_sign, avg_return,
-                        )
-                        await activity_logger.log(
-                            ActivityType.TRADE_RESULT, ActivityPhase.COMPLETE,
-                            f"{'✅' if total_pnl > 0 else '❌'} [{symbol}] 매도 청산: "
-                            f"{closed_lot_count}건 BUY {'부분' if sell_fill['partial_exit'] else '전량'} — "
-                            f"{pnl_sign}{total_pnl:,.0f}원 ({pnl_sign}{avg_return:.1f}%) "
-                            f"| {exit_reason or 'SIGNAL'}"
-                            + (f" | 체결 {applied_qty}주 / 잔량 {int(sell_fill['remaining_open_quantity'] or 0)}주" if sell_fill["partial_exit"] else ""),
-                            cycle_id=cycle_id,
-                            symbol=symbol,
-                            detail={
-                                "closed_count": closed_lot_count,
-                                "exit_price": filled_price,
-                                "total_pnl": total_pnl,
-                                "avg_return_pct": avg_return,
-                                "filled_quantity": applied_qty,
-                                "remaining_open_quantity": int(sell_fill["remaining_open_quantity"] or 0),
-                                "partial_exit": bool(sell_fill["partial_exit"]),
-                            },
-                        )
+                        elif side == "SELL":
+                            # 매도 체결 → 미청산 BUY 전체 일괄 청산
+                            open_buys = await repo.get_all_open_buys(symbol)
+                            if not open_buys:
+                                logger.warning(
+                                    "[TradeResult] {} 미청산 매수 기록 없음 → 매도 기록만 생성",
+                                    symbol,
+                                )
+                                # 매수 기록 없이 매도만 온 경우 → 독립 기록
+                                tr = TradeResult(
+                                    order_id=order_id,
+                                    stock_symbol=symbol,
+                                    stock_name=ctx.get("stock_name", symbol),
+                                    side="SELL",
+                                    strategy_type=ctx.get("strategy_type", ""),
+                                    entry_price=0.0,
+                                    exit_price=filled_price,
+                                    quantity=filled_qty,
+                                    exit_reason=exit_reason or "SIGNAL",
+                                    exit_at=now,
+                                    entry_at=now,
+                                )
+                                session.add(tr)
+                                return
+
+                            sell_fill = self._apply_sell_fill_to_open_buys(
+                                session,
+                                open_buys,
+                                symbol=symbol,
+                                filled_qty=filled_qty,
+                                filled_price=filled_price,
+                                exit_reason=exit_reason,
+                                closed_at=now,
+                            )
+                            applied_qty = int(sell_fill["applied_quantity"] or 0)
+                            total_pnl = float(sell_fill["total_pnl"] or 0.0)
+                            closed_lot_count = int(sell_fill["closed_lot_count"] or 0)
+
+                            pnl_sign = "+" if total_pnl >= 0 else ""
+                            avg_return = float(sell_fill["total_return_pct"] or 0.0) / max(closed_lot_count, 1)
+                            logger.info(
+                                "[TradeResult] 매도 청산: {} {}건 BUY {} 청산@{:,.0f} "
+                                "= {}{:,.0f}원 ({}{:.1f}%)",
+                                symbol, closed_lot_count, "부분" if sell_fill["partial_exit"] else "전량", filled_price,
+                                pnl_sign, total_pnl, pnl_sign, avg_return,
+                            )
+                            await activity_logger.log(
+                                ActivityType.TRADE_RESULT, ActivityPhase.COMPLETE,
+                                f"{'✅' if total_pnl > 0 else '❌'} [{symbol}] 매도 청산: "
+                                f"{closed_lot_count}건 BUY {'부분' if sell_fill['partial_exit'] else '전량'} — "
+                                f"{pnl_sign}{total_pnl:,.0f}원 ({pnl_sign}{avg_return:.1f}%) "
+                                f"| {exit_reason or 'SIGNAL'}"
+                                + (f" | 체결 {applied_qty}주 / 잔량 {int(sell_fill['remaining_open_quantity'] or 0)}주" if sell_fill["partial_exit"] else ""),
+                                cycle_id=cycle_id,
+                                symbol=symbol,
+                                detail={
+                                    "closed_count": closed_lot_count,
+                                    "exit_price": filled_price,
+                                    "total_pnl": total_pnl,
+                                    "avg_return_pct": avg_return,
+                                    "filled_quantity": applied_qty,
+                                    "remaining_open_quantity": int(sell_fill["remaining_open_quantity"] or 0),
+                                    "partial_exit": bool(sell_fill["partial_exit"]),
+                                },
+                            )
+
+            await run_sqlite_write_with_retry(_write_trade_result)
 
         except Exception as e:
             logger.error("[TradeResult] 기록 실패 ({}): {}", symbol, str(e))

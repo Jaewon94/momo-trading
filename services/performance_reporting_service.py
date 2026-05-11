@@ -6,7 +6,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
@@ -34,6 +34,9 @@ class _TradePoint:
     pnl: float
     return_pct: float
     exit_at: datetime
+    execution_profile: str = ""
+    alpha_source: str = "UNKNOWN"
+    risk_profile: str = "UNKNOWN"
     news_negative_pressure: float | None = None
     news_enriched: bool = False
     entry_price: float = 0.0
@@ -61,11 +64,16 @@ class PerformanceReportingService:
         from_dt = to_dt - timedelta(days=max(int(days), 1))
 
         trades = await self._fetch_closed_trades(session, from_dt=from_dt, to_dt=to_dt)
+        data_quality = await self._fetch_closed_trade_data_quality(session, from_dt=from_dt, to_dt=to_dt)
         shadow_points = await self._fetch_shadow_points(session, from_dt=from_dt, to_dt=to_dt)
         risk_counts = await self._fetch_risk_control_counts(session, from_dt=from_dt, to_dt=to_dt)
 
         overall = self._calc_metrics(trades)
         by_strategy = self._group_metrics(trades, key_fn=lambda item: item.strategy_type or "UNKNOWN")
+        by_execution_profile = self._group_metrics(
+            trades,
+            key_fn=lambda item: item.execution_profile or item.strategy_type or "UNKNOWN",
+        )
         by_horizon = self._group_metrics(trades, key_fn=lambda item: item.horizon or "MID")
         shadow = self._calc_shadow_context(shadow_points)
         pnl_truth = await pnl_truth_service.build_summary(session)
@@ -80,18 +88,21 @@ class PerformanceReportingService:
             },
             "overall": overall,
             "by_strategy": by_strategy,
+            "by_execution_profile": by_execution_profile,
             "by_horizon": by_horizon,
             "comparisons": self._calc_trade_comparisons(trades),
             "risk_controls": risk_counts,
             "news_context": self._calc_news_context(trades),
             "current_account": await self._build_live_account_snapshot(),
             "pnl_truth": pnl_truth,
+            "data_quality": data_quality,
             "metric_contract": self._build_metric_contract(pnl_truth),
             "shadow": shadow,
             "rollout": self._build_rollout_status(
                 overall=overall,
                 shadow=shadow,
                 comparisons=self._calc_trade_comparisons(trades),
+                sample_status=str(pnl_truth.get("account_pnl_sample_status") or pnl_truth.get("sample_status") or "UNKNOWN"),
                 min_sample_size=max(int(getattr(settings, "NEWS_ROLLOUT_MIN_SAMPLE_SIZE", 12) or 12), 1),
                 min_profit_factor=float(getattr(settings, "NEWS_ROLLOUT_MIN_PROFIT_FACTOR", 1.1) or 1.1),
                 min_expectancy=float(getattr(settings, "NEWS_ROLLOUT_MIN_EXPECTANCY", 0.0) or 0.0),
@@ -196,11 +207,48 @@ class PerformanceReportingService:
                 TradeResult.exit_at.isnot(None),
                 TradeResult.exit_at >= from_dt,
                 TradeResult.exit_at <= to_dt,
+                self._is_not_neutral_reconciliation_close(),
             ))
             .order_by(TradeResult.exit_at.asc())
         )
         rows = (await session.execute(stmt)).scalars().all()
         return [self._trade_point_from_result(row) for row in rows]
+
+    async def _fetch_closed_trade_data_quality(self, session: AsyncSession, *, from_dt: datetime, to_dt: datetime) -> dict:
+        base = and_(
+            TradeResult.side == "BUY",
+            TradeResult.status == "CONFIRMED",
+            TradeResult.exit_at.isnot(None),
+            TradeResult.exit_at >= from_dt,
+            TradeResult.exit_at <= to_dt,
+        )
+        total_stmt = select(func.count(TradeResult.id)).where(base)
+        excluded_stmt = select(func.count(TradeResult.id)).where(and_(
+            base,
+            TradeResult.notes.like("%HOLDING_RECONCILIATION_CLOSE%"),
+            or_(
+                TradeResult.notes.is_(None),
+                ~TradeResult.notes.like("%CLOSE_RECONCILIATION_APPLY%"),
+            ),
+        ))
+        total = int((await session.execute(total_stmt)).scalar() or 0)
+        excluded = int((await session.execute(excluded_stmt)).scalar() or 0)
+        return {
+            "closed_trade_rows": total,
+            "excluded_reconciliation_close_rows": excluded,
+            "performance_trade_count": max(0, total - excluded),
+            "excluded_reconciliation_close_reason": (
+                "broker holding missing neutral close rows are operational reconciliation, not realized trading performance"
+            ),
+        }
+
+    @staticmethod
+    def _is_not_neutral_reconciliation_close():
+        return or_(
+            TradeResult.notes.is_(None),
+            ~TradeResult.notes.like("%HOLDING_RECONCILIATION_CLOSE%"),
+            TradeResult.notes.like("%CLOSE_RECONCILIATION_APPLY%"),
+        )
 
     async def _fetch_risk_control_counts(self, session: AsyncSession, *, from_dt: datetime, to_dt: datetime) -> dict:
         base = and_(
@@ -292,7 +340,12 @@ class PerformanceReportingService:
         avg_win = (sum(wins) / len(wins)) if wins else 0.0
         avg_loss = (sum(losses) / len(losses)) if losses else 0.0
         expectancy = (win_rate * avg_win) + ((1 - win_rate) * avg_loss)
-        profit_factor = (sum(wins) / abs(sum(losses))) if losses else float("inf")
+        if losses:
+            profit_factor = sum(wins) / abs(sum(losses))
+        elif wins:
+            profit_factor = float("inf")
+        else:
+            profit_factor = 0.0
         estimated_cost_total = sum(
             ((item.entry_price * item.quantity) * (float(item.estimated_cost_bps) / 10000.0))
             for item in trades
@@ -392,6 +445,7 @@ class PerformanceReportingService:
         overall: dict,
         shadow: dict,
         comparisons: dict | None = None,
+        sample_status: str = "UNKNOWN",
         min_sample_size: int,
         min_profit_factor: float,
         min_expectancy: float,
@@ -426,8 +480,26 @@ class PerformanceReportingService:
                 and comparison_net_pnl_delta >= 0
             )
         )
+        sample_status_key = str(sample_status or "UNKNOWN").upper()
+        zero_pnl_sample = (
+            trade_count > 0
+            and expectancy == 0.0
+            and float(overall.get("total_pnl") or 0.0) == 0.0
+            and max_drawdown == 0.0
+        )
+        metric_quality_passed = (
+            sample_status_key not in {"UNRECONCILED_ACCOUNT_PNL", "UNKNOWN"}
+            and not zero_pnl_sample
+        )
 
         checks = [
+            {
+                "key": "metric_quality",
+                "label": "성과 대사",
+                "passed": metric_quality_passed,
+                "actual": "0원 표본" if zero_pnl_sample else sample_status_key,
+                "target": "계좌 손익 대사 완료",
+            },
             {
                 "key": "sample",
                 "label": "표본",
@@ -488,6 +560,14 @@ class PerformanceReportingService:
         else:
             details.append("뉴스 반영 거래 비교는 아직 표본 부족")
 
+        if not metric_quality_passed:
+            reason = "0원 청산 표본" if zero_pnl_sample else sample_status_key
+            return {
+                "status": "HOLDOUT",
+                "reason": f"성과 대사 대기: {reason}",
+                "details": details,
+                "checks": checks,
+            }
         if not sample_passed:
             return {
                 "status": "HOLDOUT",
@@ -629,9 +709,26 @@ class PerformanceReportingService:
         except (TypeError, ValueError):
             return None
 
+    @staticmethod
+    def _extract_note_value(trade: TradeResult, key: str, *, fallback: str = "") -> str:
+        notes = getattr(trade, "notes", None)
+        if notes:
+            try:
+                parsed = json.loads(notes)
+                value = str(parsed.get(key) or "").upper().strip()
+                if value:
+                    return value
+            except (TypeError, ValueError):
+                pass
+        return str(fallback or "").upper().strip()
+
     def _trade_point_from_result(self, row: TradeResult) -> _TradePoint:
+        strategy_type = str(getattr(row, "strategy_type", "") or "")
         return _TradePoint(
-            strategy_type=str(getattr(row, "strategy_type", "") or ""),
+            strategy_type=strategy_type,
+            execution_profile=self._extract_note_value(row, "execution_profile", fallback=strategy_type),
+            alpha_source=self._extract_note_value(row, "alpha_source", fallback="UNKNOWN"),
+            risk_profile=self._extract_note_value(row, "risk_profile", fallback="UNKNOWN"),
             horizon=self._extract_horizon(row),
             pnl=float(getattr(row, "pnl", 0.0) or 0.0),
             return_pct=float(getattr(row, "return_pct", 0.0) or 0.0),

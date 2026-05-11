@@ -5,6 +5,7 @@ import pytest
 from scheduler.jobs.portfolio_sync_job import (
     _backfill_missing_open_buys_from_holdings,
     _check_account_db_consistency,
+    _close_open_buy_quantity_excess_from_holdings,
     _close_open_buys_missing_from_holdings,
     _recover_pending_confirms,
     _repair_confirmed_zero_entry_prices,
@@ -250,6 +251,284 @@ async def test_close_open_buys_missing_from_holdings_skips_pending_symbols(monke
     monkeypatch.setattr("trading.broker_factory.get_broker_adapter", lambda: FakeBrokerAdapter())
 
     result = await _close_open_buys_missing_from_holdings(dry_run=False)
+
+    assert result["summary"]["candidate_count"] == 0
+    assert result["summary"]["closed_count"] == 0
+    assert result["summary"]["skipped_count"] == 1
+    assert result["skipped"][0]["reason"] == "db_pending_confirm_exists"
+    assert open_trade.exit_at is None
+
+
+@pytest.mark.asyncio
+async def test_close_open_buy_quantity_excess_from_holdings_apply_closes_oldest_lots(monkeypatch) -> None:
+    older = SimpleNamespace(
+        id="old-1",
+        stock_symbol="024840",
+        stock_name="KBI메탈",
+        side="BUY",
+        strategy_type="MOMENTUM",
+        quantity=43,
+        entry_price=10260.0,
+        pnl=0.0,
+        return_pct=0.0,
+        is_win=False,
+        hold_days=0,
+        exit_reason="",
+        exit_at=None,
+        entry_at=__import__("datetime").datetime(2026, 5, 7, 12, 24),
+        status=OrderConfirmStatus.CONFIRMED.value,
+        notes=None,
+    )
+    backfilled = SimpleNamespace(
+        id="old-2",
+        stock_symbol="024840",
+        stock_name="KBI메탈",
+        side="BUY",
+        strategy_type="HOLDING_SYNC",
+        quantity=444,
+        entry_price=10260.0,
+        pnl=0.0,
+        return_pct=0.0,
+        is_win=False,
+        hold_days=0,
+        exit_reason="",
+        exit_at=None,
+        entry_at=__import__("datetime").datetime(2026, 5, 7, 12, 25),
+        status=OrderConfirmStatus.CONFIRMED.value,
+        notes="HOLDING_SYNC_BACKFILL",
+    )
+    latest_a = SimpleNamespace(
+        id="new-1",
+        stock_symbol="024840",
+        stock_name="KBI메탈",
+        side="BUY",
+        strategy_type="MOMENTUM",
+        quantity=150,
+        entry_price=10240.0,
+        exit_at=None,
+        entry_at=__import__("datetime").datetime(2026, 5, 7, 12, 36),
+    )
+    latest_b = SimpleNamespace(
+        id="new-2",
+        stock_symbol="024840",
+        stock_name="KBI메탈",
+        side="BUY",
+        strategy_type="MOMENTUM",
+        quantity=150,
+        entry_price=10050.0,
+        exit_at=None,
+        entry_at=__import__("datetime").datetime(2026, 5, 7, 12, 46),
+    )
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.added = []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def begin(self):
+            return self
+
+        def add(self, obj):
+            self.added.append(obj)
+
+    session = FakeSession()
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_pending_confirms(self):
+            return []
+
+        async def get_all_open_buys(self, symbol):
+            assert symbol == "024840"
+            return [latest_b, backfilled, latest_a, older]
+
+    class FakeBrokerAdapter:
+        provider = BrokerProvider.KIWOOM
+
+        async def get_holdings(self):
+            return [
+                HoldingInfo(
+                    symbol="A024840",
+                    name="KBI메탈",
+                    quantity=300,
+                    avg_buy_price=10050.0,
+                    current_price=10060.0,
+                    pnl=-24096.0,
+                    pnl_rate=-0.8,
+                )
+            ]
+
+        async def get_pending_orders(self):
+            return []
+
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: session)
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("trading.broker_factory.get_broker_adapter", lambda: FakeBrokerAdapter())
+    monkeypatch.setattr(
+        "scheduler.jobs.portfolio_sync_job.now_kst",
+        lambda: __import__("datetime").datetime(2026, 5, 7, 12, 55),
+    )
+
+    result = await _close_open_buy_quantity_excess_from_holdings(dry_run=False)
+
+    assert result["summary"]["candidate_count"] == 1
+    assert result["summary"]["closed_count"] == 2
+    assert result["summary"]["closed_quantity"] == 487
+    assert result["summary"]["split_count"] == 0
+    assert older.exit_reason == "BROKER_HOLDING_QUANTITY_MISMATCH"
+    assert backfilled.exit_reason == "BROKER_HOLDING_QUANTITY_MISMATCH"
+    assert latest_a.exit_at is None
+    assert latest_b.exit_at is None
+
+
+@pytest.mark.asyncio
+async def test_close_open_buy_quantity_excess_from_holdings_splits_partial_lot(monkeypatch) -> None:
+    old_lot = SimpleNamespace(
+        id="old-1",
+        stock_symbol="005930",
+        stock_name="삼성전자",
+        side="BUY",
+        strategy_type="MOMENTUM",
+        quantity=10,
+        entry_price=70000.0,
+        pnl=0.0,
+        return_pct=0.0,
+        is_win=False,
+        hold_days=0,
+        exit_reason="",
+        exit_at=None,
+        entry_at=__import__("datetime").datetime(2026, 5, 7, 9, 30),
+        status=OrderConfirmStatus.CONFIRMED.value,
+        notes=None,
+    )
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.added = []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def begin(self):
+            return self
+
+        def add(self, obj):
+            self.added.append(obj)
+
+    session = FakeSession()
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_pending_confirms(self):
+            return []
+
+        async def get_all_open_buys(self, symbol):
+            assert symbol == "005930"
+            return [old_lot]
+
+    class FakeBrokerAdapter:
+        provider = BrokerProvider.KIWOOM
+
+        async def get_holdings(self):
+            return [
+                HoldingInfo(
+                    symbol="005930",
+                    name="삼성전자",
+                    quantity=6,
+                    avg_buy_price=70000.0,
+                    current_price=70100.0,
+                    pnl=600.0,
+                    pnl_rate=0.14,
+                )
+            ]
+
+        async def get_pending_orders(self):
+            return []
+
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: session)
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("trading.broker_factory.get_broker_adapter", lambda: FakeBrokerAdapter())
+
+    result = await _close_open_buy_quantity_excess_from_holdings(dry_run=False)
+
+    assert result["summary"]["closed_quantity"] == 4
+    assert result["summary"]["split_count"] == 1
+    assert old_lot.quantity == 6
+    assert old_lot.exit_at is None
+    assert len(session.added) == 1
+    assert session.added[0].quantity == 4
+    assert session.added[0].exit_reason == "BROKER_HOLDING_QUANTITY_MISMATCH"
+
+
+@pytest.mark.asyncio
+async def test_close_open_buy_quantity_excess_from_holdings_skips_pending_symbol(monkeypatch) -> None:
+    open_trade = SimpleNamespace(
+        stock_symbol="005930",
+        stock_name="삼성전자",
+        quantity=10,
+        entry_price=70000.0,
+        exit_at=None,
+        entry_at=__import__("datetime").datetime(2026, 5, 7, 9, 30),
+    )
+    pending_trade = SimpleNamespace(stock_symbol="005930")
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def begin(self):
+            return self
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_pending_confirms(self):
+            return [pending_trade]
+
+        async def get_all_open_buys(self, symbol):
+            assert symbol == "005930"
+            return [open_trade]
+
+    class FakeBrokerAdapter:
+        provider = BrokerProvider.KIWOOM
+
+        async def get_holdings(self):
+            return [
+                HoldingInfo(
+                    symbol="005930",
+                    name="삼성전자",
+                    quantity=6,
+                    avg_buy_price=70000.0,
+                    current_price=70100.0,
+                    pnl=600.0,
+                    pnl_rate=0.14,
+                )
+            ]
+
+        async def get_pending_orders(self):
+            return []
+
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("trading.broker_factory.get_broker_adapter", lambda: FakeBrokerAdapter())
+
+    result = await _close_open_buy_quantity_excess_from_holdings(dry_run=False)
 
     assert result["summary"]["candidate_count"] == 0
     assert result["summary"]["closed_count"] == 0

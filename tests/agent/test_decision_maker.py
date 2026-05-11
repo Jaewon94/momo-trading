@@ -1,13 +1,15 @@
 import asyncio
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
 
 from agent.decision_maker import DecisionMaker
 from core.events import EventType
+from models.trade_result import TradeResult
 from strategy.signal import TradeSignal
 from trading.enums import Market, OrderConfirmStatus, OrderSide, OrderType, SignalAction
-from trading.models import OrderRequest, OrderResult, OrderStatusInfo, PendingOrderInfo
+from trading.models import HoldingInfo, OrderRequest, OrderResult, OrderStatusInfo, PendingOrderInfo
 
 
 class FakeBrokerAdapter:
@@ -15,6 +17,7 @@ class FakeBrokerAdapter:
         self.result = result
         self.requests: list[OrderRequest] = []
         self.pending_orders: list[PendingOrderInfo] = []
+        self.holdings: list[HoldingInfo] = []
         self.order_status: OrderStatusInfo | None = None
         self.queried_order_ids: list[str] = []
         self.cache_invalidated = False
@@ -30,6 +33,9 @@ class FakeBrokerAdapter:
 
     async def get_pending_orders(self) -> list[PendingOrderInfo]:
         return list(self.pending_orders)
+
+    async def get_holdings(self) -> list[HoldingInfo]:
+        return list(self.holdings)
 
     async def cancel_order(self, order_id: str, market=Market.KRX) -> OrderResult:
         self.cancelled_order_ids.append(order_id)
@@ -739,6 +745,9 @@ def test_decision_maker_build_trade_notes_includes_news_metrics():
         "chart_signal_direction": "BULLISH",
         "chart_signal_confidence": 0.81,
         "entry_pattern": "상승 추세 지속",
+        "active_stop_loss": 68_500,
+        "active_take_profit": 75_500,
+        "active_trailing_stop_pct": 1.5,
     })
 
     assert "news_negative_pressure" in notes
@@ -749,6 +758,9 @@ def test_decision_maker_build_trade_notes_includes_news_metrics():
     assert "news_top_contributors" in notes
     assert "chart_signal_direction" in notes
     assert "entry_pattern" in notes
+    assert "active_stop_loss" in notes
+    assert "active_take_profit" in notes
+    assert "active_trailing_stop_pct" in notes
 
 
 @pytest.mark.asyncio
@@ -770,6 +782,40 @@ async def test_decision_maker_backfills_broker_holding_delta_after_buy(monkeypat
     await decision_maker._backfill_broker_holding_delta("005930")
 
     assert calls == [True]
+
+
+def test_decision_maker_sell_fill_handles_mixed_timezone_datetimes() -> None:
+    open_buy = FakeTradeResultRecord(
+        id="buy-1",
+        stock_symbol="005930",
+        stock_name="삼성전자",
+        side="BUY",
+        strategy_type="MOMENTUM",
+        entry_price=70_000,
+        quantity=2,
+        entry_at=datetime(2026, 5, 5, 9, 30),
+        exit_price=0.0,
+        pnl=0.0,
+        return_pct=0.0,
+        is_win=False,
+        hold_days=0,
+        exit_reason="",
+        exit_at=None,
+    )
+
+    result = DecisionMaker._apply_sell_fill_to_open_buys(
+        FakeSession(),
+        [open_buy],
+        symbol="005930",
+        filled_qty=2,
+        filled_price=73_000,
+        exit_reason="STOP_LOSS",
+        closed_at=datetime(2026, 5, 7, 12, 53, tzinfo=timezone.utc),
+    )
+
+    assert result["applied_quantity"] == 2
+    assert open_buy.hold_days == 2
+    assert open_buy.exit_reason == "STOP_LOSS"
 
 
 @pytest.mark.asyncio
@@ -1204,6 +1250,79 @@ async def test_decision_maker_cancels_when_order_status_is_missing(monkeypatch) 
     assert cancelled == [("ORD-3", "005930")]
     assert settled == [("ORD-3", False)]
     assert adapter.cache_invalidated is False
+
+
+@pytest.mark.asyncio
+async def test_decision_maker_infers_sell_fill_when_status_missing_but_holding_disappeared(monkeypatch) -> None:
+    from tests.conftest import TestAsyncSessionLocal
+
+    adapter = FakeBrokerAdapter(
+        OrderResult(success=True, order_id="ORD-SELL", message="주문 접수")
+    )
+    adapter.holdings = []
+    decision_maker = DecisionMaker(broker_adapter=adapter)
+    recorded: dict = {}
+    cancelled: list[tuple[str, str]] = []
+    settled: list[tuple[str, bool]] = []
+
+    now = datetime.now()
+    async with TestAsyncSessionLocal() as session:
+        session.add(TradeResult(
+            order_id="BUY-1",
+            stock_symbol="001780",
+            stock_name="알루코",
+            side="BUY",
+            strategy_type="AGGRESSIVE_SHORT",
+            entry_price=3145,
+            exit_price=0,
+            quantity=4000,
+            pnl=0,
+            return_pct=0,
+            is_win=False,
+            hold_days=0,
+            ai_recommendation="BUY",
+            ai_confidence=0.61,
+            market_regime="THEME",
+            status=OrderConfirmStatus.CONFIRMED.value,
+            entry_at=now - timedelta(minutes=20),
+        ))
+        await session.commit()
+
+    async def fake_sleep(_: float) -> None:
+        return None
+
+    async def fake_record_trade_result(**kwargs) -> None:
+        recorded.update(kwargs)
+
+    async def fake_cancel(order_id: str, symbol: str) -> None:
+        cancelled.append((order_id, symbol))
+
+    async def fake_on_settled(order_id: str, success: bool) -> None:
+        settled.append((order_id, success))
+
+    monkeypatch.setattr("agent.decision_maker.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr(decision_maker, "_record_trade_result", fake_record_trade_result)
+    monkeypatch.setattr(decision_maker, "_cancel_unfilled_order", fake_cancel)
+
+    await decision_maker.confirm_and_record(
+        symbol="001780",
+        side="SELL",
+        order_id="ORD-SELL",
+        quantity=4000,
+        expected_price=3125,
+        exit_reason="STOP_LOSS",
+        on_settled=fake_on_settled,
+    )
+
+    assert adapter.queried_order_ids == ["ORD-SELL"]
+    assert cancelled == []
+    assert adapter.cache_invalidated is True
+    assert settled == [("ORD-SELL", True)]
+    assert recorded["symbol"] == "001780"
+    assert recorded["side"] == "SELL"
+    assert recorded["filled_qty"] == 4000
+    assert recorded["filled_price"] == 3125
+    assert recorded["analysis_context"]["order_status_inferred_from_holdings"] is True
 
 
 @pytest.mark.asyncio

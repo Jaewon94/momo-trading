@@ -5,6 +5,34 @@ from types import SimpleNamespace
 
 import pytest
 
+from api.routes.admin import _extract_latest_signal
+
+
+def test_extract_latest_signal_fills_thresholds_from_open_trade_when_activity_omits_them():
+    trade = SimpleNamespace(
+        ai_recommendation="BUY",
+        ai_confidence=0.58,
+        ai_target_price=2135.0,
+        ai_stop_loss_price=1904.08,
+        exit_reason="",
+        strategy_type="AGGRESSIVE_SHORT",
+        created_at=datetime(2026, 4, 28, 11, 7),
+    )
+    activity = SimpleNamespace(
+        detail=json.dumps({"recommendation": "HOLD", "reason": "보유 유지"}, ensure_ascii=False),
+        summary="Tier1: HOLD",
+        confidence=0.62,
+        llm_provider="CODEX",
+        llm_tier="TIER1",
+        created_at=datetime(2026, 4, 28, 11, 9),
+    )
+
+    signal = _extract_latest_signal([trade], [activity])
+
+    assert signal["recommendation"] == "HOLD"
+    assert signal["target_price"] == 2135.0
+    assert signal["stop_loss_price"] == 1904.08
+
 
 @pytest.mark.asyncio
 async def test_admin_position_detail_route_returns_summary_and_timeline(client, monkeypatch):

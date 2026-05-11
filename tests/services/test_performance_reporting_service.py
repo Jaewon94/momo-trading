@@ -2,6 +2,7 @@ import json
 import pytest
 from types import SimpleNamespace
 
+from models.trade_result import TradeResult
 from services.performance_reporting_service import PerformanceReportingService, _ShadowPoint, _TradePoint
 
 
@@ -19,6 +20,19 @@ def test_calc_metrics_returns_expectancy_and_drawdown():
     assert metrics["win_rate"] == 0.6667
     assert metrics["expectancy"] > 0
     assert metrics["max_drawdown"] <= 0
+
+
+def test_calc_metrics_does_not_report_infinite_pf_for_zero_pnl_sample():
+    service = PerformanceReportingService()
+    trades = [
+        _TradePoint(strategy_type="A", horizon="SHORT", pnl=0, return_pct=0.0, exit_at=__import__("datetime").datetime.now()),
+        _TradePoint(strategy_type="A", horizon="SHORT", pnl=0, return_pct=0.0, exit_at=__import__("datetime").datetime.now()),
+    ]
+
+    metrics = service._calc_metrics(trades)
+
+    assert metrics["trade_count"] == 2
+    assert metrics["profit_factor"] == 0.0
 
 
 def test_build_baseline_snapshot_returns_reset_notice():
@@ -73,6 +87,134 @@ async def test_build_summary_includes_canonical_pnl_truth(monkeypatch):
         "closed_trade_sample_status": "INSUFFICIENT_CLOSED_TRADE_SAMPLE",
         "pnl_reconciliation_status": "UNEXPLAINED_ASSET_DELTA",
     }
+    assert summary["data_quality"] == {
+        "closed_trade_rows": 0,
+        "excluded_reconciliation_close_rows": 0,
+        "performance_trade_count": 0,
+        "excluded_reconciliation_close_reason": (
+            "broker holding missing neutral close rows are operational reconciliation, not realized trading performance"
+        ),
+    }
+
+
+@pytest.mark.asyncio
+async def test_fetch_closed_trades_excludes_holding_reconciliation_neutral_closes():
+    from tests.conftest import TestAsyncSessionLocal
+
+    now = __import__("datetime").datetime.now()
+    async with TestAsyncSessionLocal() as session:
+        session.add(TradeResult(
+            stock_symbol="005930",
+            stock_name="삼성전자",
+            side="BUY",
+            strategy_type="STABLE_SHORT",
+            entry_price=70_000.0,
+            exit_price=71_000.0,
+            quantity=1,
+            pnl=1_000.0,
+            return_pct=1.4,
+            is_win=True,
+            hold_days=0,
+            exit_reason="TAKE_PROFIT",
+            ai_recommendation="BUY",
+            ai_confidence=0.7,
+            market="KRX",
+            market_regime="NORMAL",
+            status="CONFIRMED",
+            entry_at=now,
+            exit_at=now,
+            notes='{"trade_horizon":"MID"}',
+        ))
+        session.add(TradeResult(
+            stock_symbol="000660",
+            stock_name="SK하이닉스",
+            side="BUY",
+            strategy_type="AGGRESSIVE_SHORT",
+            entry_price=180_000.0,
+            exit_price=180_000.0,
+            quantity=1,
+            pnl=0.0,
+            return_pct=0.0,
+            is_win=False,
+            hold_days=0,
+            exit_reason="SYNC_CLOSE",
+            ai_recommendation="BUY",
+            ai_confidence=0.7,
+            market="KRX",
+            market_regime="NORMAL",
+            status="CONFIRMED",
+            entry_at=now,
+            exit_at=now,
+            notes="HOLDING_RECONCILIATION_CLOSE: broker holding missing; neutral close",
+        ))
+        session.add(TradeResult(
+            stock_symbol="010140",
+            stock_name="삼성중공업",
+            side="BUY",
+            strategy_type="AGGRESSIVE_SHORT",
+            entry_price=33_800.0,
+            exit_price=33_800.0,
+            quantity=159,
+            pnl=0.0,
+            return_pct=0.0,
+            is_win=False,
+            hold_days=0,
+            exit_reason="BROKER_HOLDING_MISSING",
+            ai_recommendation="BUY",
+            ai_confidence=0.7,
+            market="KRX",
+            market_regime="NORMAL",
+            status="CONFIRMED",
+            entry_at=now,
+            exit_at=now,
+            notes=(
+                "CLOSE_RECONCILIATION_SPLIT_REMAINING: sell_id=sell-1 | "
+                "previous=HOLDING_RECONCILIATION_CLOSE: broker holding missing; neutral close"
+            ),
+        ))
+        session.add(TradeResult(
+            stock_symbol="452430",
+            stock_name="사피엔반도체",
+            side="BUY",
+            strategy_type="STABLE_SHORT",
+            entry_price=45_750.0,
+            exit_price=50_900.0,
+            quantity=283,
+            pnl=1_457_450.0,
+            return_pct=11.2568,
+            is_win=True,
+            hold_days=0,
+            exit_reason="SELL_RECONCILIATION",
+            ai_recommendation="BUY",
+            ai_confidence=0.7,
+            market="KRX",
+            market_regime="NORMAL",
+            status="CONFIRMED",
+            entry_at=now,
+            exit_at=now,
+            notes=(
+                "CLOSE_RECONCILIATION_APPLY: sell_id=sell-2 | "
+                "previous=HOLDING_RECONCILIATION_CLOSE: broker holding missing; neutral close"
+            ),
+        ))
+        await session.commit()
+
+        service = PerformanceReportingService()
+        trades = await service._fetch_closed_trades(
+            session,
+            from_dt=now - __import__("datetime").timedelta(minutes=1),
+            to_dt=now + __import__("datetime").timedelta(minutes=1),
+        )
+        quality = await service._fetch_closed_trade_data_quality(
+            session,
+            from_dt=now - __import__("datetime").timedelta(minutes=1),
+            to_dt=now + __import__("datetime").timedelta(minutes=1),
+        )
+
+    assert [trade.strategy_type for trade in trades] == ["STABLE_SHORT", "STABLE_SHORT"]
+    assert quality["closed_trade_rows"] == 4
+    assert quality["excluded_reconciliation_close_rows"] == 2
+    assert quality["performance_trade_count"] == 2
 
 
 def test_calc_metrics_includes_cost_adjusted_net_pnl():
@@ -270,6 +412,7 @@ def test_build_rollout_status_promotes_when_samples_and_metrics_are_good():
             "blocked_by_news_count": 4,
             "actual_buy_count": 14,
         },
+        sample_status="OK",
         min_sample_size=12,
         min_profit_factor=1.15,
         min_expectancy=0.0,
@@ -279,7 +422,8 @@ def test_build_rollout_status_promotes_when_samples_and_metrics_are_good():
     assert rollout["status"] == "PROMOTE"
     assert "확대" in rollout["reason"]
     assert len(rollout["checks"]) >= 4
-    assert rollout["checks"][0]["key"] == "sample"
+    assert rollout["checks"][0]["key"] == "metric_quality"
+    assert rollout["checks"][1]["key"] == "sample"
     assert any("Shadow 후보 18건" in line for line in rollout["details"])
 
 
@@ -298,6 +442,7 @@ def test_build_rollout_status_rolls_back_when_metrics_degrade():
             "blocked_by_news_count": 6,
             "actual_buy_count": 10,
         },
+        sample_status="OK",
         min_sample_size=12,
         min_profit_factor=1.1,
         min_expectancy=0.0,
@@ -330,6 +475,7 @@ def test_build_rollout_status_keeps_when_news_enriched_underperforms_plain():
             "plain": {"trade_count": 6, "expectancy": 1400.0, "net_pnl_after_cost": 120000.0},
             "delta": {"expectancy": -500.0, "profit_factor": -0.2, "net_pnl_after_cost": -35000.0},
         },
+        sample_status="OK",
         min_sample_size=12,
         min_profit_factor=1.1,
         min_expectancy=0.0,
@@ -340,3 +486,38 @@ def test_build_rollout_status_keeps_when_news_enriched_underperforms_plain():
     assert "열위" in rollout["reason"]
     assert any(check["key"] == "comparison_expectancy" and check["passed"] is False for check in rollout["checks"])
     assert any(check["key"] == "comparison_net_pnl" and check["passed"] is False for check in rollout["checks"])
+
+
+def test_build_rollout_status_holds_out_when_account_pnl_is_unreconciled():
+    service = PerformanceReportingService()
+
+    rollout = service._build_rollout_status(
+        overall={
+            "trade_count": 72,
+            "expectancy": 0.0,
+            "profit_factor": 0.0,
+            "total_pnl": 0.0,
+            "max_drawdown": 0.0,
+        },
+        shadow={
+            "candidate_count": 101,
+            "blocked_by_news_count": 0,
+            "actual_buy_count": 101,
+            "baseline_buy_count": 101,
+        },
+        sample_status="UNRECONCILED_ACCOUNT_PNL",
+        min_sample_size=12,
+        min_profit_factor=1.1,
+        min_expectancy=0.0,
+        max_drawdown_limit=-5000.0,
+    )
+
+    assert rollout["status"] == "HOLDOUT"
+    assert "성과 대사 대기" in rollout["reason"]
+    assert rollout["checks"][0] == {
+        "key": "metric_quality",
+        "label": "성과 대사",
+        "passed": False,
+        "actual": "0원 표본",
+        "target": "계좌 손익 대사 완료",
+    }

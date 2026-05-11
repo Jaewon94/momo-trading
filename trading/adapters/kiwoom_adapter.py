@@ -1,6 +1,7 @@
 """Kiwoom 브로커 어댑터"""
 from dataclasses import dataclass
 from datetime import datetime
+import math
 
 from trading.adapters.base import (
     AccountClientProtocol,
@@ -8,7 +9,7 @@ from trading.adapters.base import (
     MarketDataClientProtocol,
     OrderExecutorProtocol,
 )
-from trading.enums import BrokerProvider, Market, OrderSession
+from trading.enums import BrokerProvider, Market, OrderSession, OrderSide, OrderType
 from trading.models import (
     AccountBalance,
     BuyingPowerInfo,
@@ -132,17 +133,54 @@ class KiwoomBrokerAdapter(BrokerAdapter):
     async def place_order(self, request: OrderRequest) -> OrderResult:
         normalized_symbol = normalize_krx_symbol(request.symbol)
         baseline_qty = await self._get_holding_quantity(normalized_symbol)
-        normalized_request = request.model_copy(update={"symbol": normalized_symbol})
+        normalized_price = self._normalize_limit_price(request)
+        normalized_request = request.model_copy(
+            update={"symbol": normalized_symbol, "price": normalized_price}
+        )
         result = await self._require_order_executor().execute(normalized_request)
         if result.success and result.order_id:
             self._submitted_orders[str(result.order_id)] = _SubmittedOrderMeta(
                 symbol=normalized_symbol,
                 side=request.side.value,
                 quantity=request.quantity,
-                order_price=float(request.price or 0.0),
+                order_price=float(normalized_price or 0.0),
                 baseline_qty=baseline_qty,
             )
         return result
+
+    @classmethod
+    def _normalize_limit_price(cls, request: OrderRequest) -> float | None:
+        if request.order_type != OrderType.LIMIT or not request.price:
+            return request.price
+        if request.market != Market.KRX:
+            return request.price
+
+        price = float(request.price)
+        tick = cls._krx_tick_size(price)
+        if tick <= 1:
+            return float(int(round(price)))
+
+        if request.side == OrderSide.BUY:
+            normalized = math.ceil(price / tick) * tick
+        else:
+            normalized = math.floor(price / tick) * tick
+        return float(max(normalized, tick))
+
+    @staticmethod
+    def _krx_tick_size(price: float) -> int:
+        if price < 2_000:
+            return 1
+        if price < 5_000:
+            return 5
+        if price < 20_000:
+            return 10
+        if price < 50_000:
+            return 50
+        if price < 200_000:
+            return 100
+        if price < 500_000:
+            return 500
+        return 1_000
 
     async def cancel_order(
         self,

@@ -129,6 +129,139 @@ async def test_admin_trade_reconciliation_route_returns_read_only_report(client,
 
 
 @pytest.mark.asyncio
+async def test_admin_trade_close_reconciliation_route_returns_dry_run_report(client, monkeypatch):
+    captured = {}
+
+    async def fake_build_dry_run(_db, *, days: int):
+        captured["days"] = days
+        return {
+            "mode": "DRY_RUN",
+            "summary": {
+                "sell_execution_count": 15,
+                "matched_sell_count": 12,
+                "estimated_pnl": -12345.0,
+            },
+            "matches": [],
+            "unmatched_sells": [],
+        }
+
+    monkeypatch.setattr(
+        "api.routes.admin.trade_close_reconciliation_service.build_dry_run",
+        fake_build_dry_run,
+    )
+
+    response = await client.get("/api/v1/admin/trades/close-reconciliation?days=7")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert captured["days"] == 7
+    assert payload["data"]["mode"] == "DRY_RUN"
+    assert payload["data"]["summary"]["sell_execution_count"] == 15
+    assert payload["message"] == "청산 대사 dry-run 리포트 조회 완료"
+
+
+@pytest.mark.asyncio
+async def test_admin_trade_lifecycle_integrity_route_returns_report(client, monkeypatch):
+    captured = {}
+
+    async def fake_build_report(_db, *, days: int, broker_position_snapshot=None):
+        captured["days"] = days
+        captured["broker_position_snapshot"] = broker_position_snapshot
+        return {
+            "status": "OK",
+            "summary": {
+                "open_buy_count": 0,
+                "pending_confirm_count": 0,
+                "unpaired_sell_count": 0,
+            },
+            "checks": [],
+        }
+
+    monkeypatch.setattr(
+        "api.routes.admin.trade_lifecycle_integrity_service.build_report",
+        fake_build_report,
+    )
+    monkeypatch.setattr(
+        "api.routes.admin.get_broker_adapter",
+        lambda: SimpleNamespace(
+            provider=SimpleNamespace(value="KIWOOM"),
+            get_holdings=lambda: __import__("asyncio").sleep(0, result=[]),
+            get_pending_orders=lambda: __import__("asyncio").sleep(0, result=[]),
+        ),
+    )
+
+    response = await client.get("/api/v1/admin/trades/lifecycle-integrity?days=3")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert captured["days"] == 3
+    assert captured["broker_position_snapshot"]["provider"] == "KIWOOM"
+    assert payload["data"]["status"] == "OK"
+    assert payload["message"] == "거래 라이프사이클 무결성 점검 완료"
+
+
+@pytest.mark.asyncio
+async def test_admin_trade_close_reconciliation_apply_always_requires_confirmation(client, monkeypatch):
+    async def fake_apply_reconciliation(_db, *, days: int):
+        return {"mode": "APPLY", "summary": {"applied_sell_count": 1, "updated_buy_lot_count": 1, "applied_pnl": 1000}}
+
+    monkeypatch.setattr(
+        "api.routes.admin.trade_close_reconciliation_service.apply_reconciliation",
+        fake_apply_reconciliation,
+    )
+    monkeypatch.setattr("api.routes.admin.settings.ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED", False, raising=False)
+
+    response = await client.post("/api/v1/admin/trades/close-reconciliation/apply?days=7")
+
+    assert response.status_code == 428
+    assert response.json()["detail"]["action"] == "APPLY_TRADE_CLOSE_RECONCILIATION"
+
+
+@pytest.mark.asyncio
+async def test_admin_trade_close_reconciliation_apply_accepts_confirmation_token(client, monkeypatch):
+    captured = {}
+
+    async def fake_apply_reconciliation(_db, *, days: int):
+        captured["days"] = days
+        return {
+            "mode": "APPLY",
+            "summary": {
+                "applied_sell_count": 2,
+                "updated_buy_lot_count": 4,
+                "applied_pnl": 12345.0,
+            },
+            "applied": [],
+            "skipped": [],
+        }
+
+    monkeypatch.setattr(
+        "api.routes.admin.trade_close_reconciliation_service.apply_reconciliation",
+        fake_apply_reconciliation,
+    )
+    challenge_response = await client.post(
+        "/api/v1/admin/actions/confirmations",
+        json={
+            "action": "APPLY_TRADE_CLOSE_RECONCILIATION",
+            "resource_id": "TRADE_CLOSE_RECONCILIATION",
+            "quantity": "7D",
+        },
+    )
+    token = challenge_response.json()["data"]["confirmation_token"]
+
+    response = await client.post(
+        "/api/v1/admin/trades/close-reconciliation/apply?days=7",
+        json={"confirmation_token": token},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert captured["days"] == 7
+    assert payload["data"]["mode"] == "APPLY"
+    assert payload["data"]["summary"]["applied_sell_count"] == 2
+    assert "청산 대사 적용 완료" in payload["message"]
+
+
+@pytest.mark.asyncio
 async def test_admin_trade_reconciliation_cleanup_defaults_to_dry_run(client, monkeypatch):
     db_pending = [
         SimpleNamespace(

@@ -3,6 +3,7 @@ import asyncio
 import json as _json
 import time as _time
 from datetime import date, datetime, time
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
@@ -33,6 +34,7 @@ from models.trade_result import TradeResult
 from repositories.agent_activity_repository import AgentActivityRepository
 from repositories.daily_report_repository import DailyReportRepository
 from repositories.news_item_repository import NewsItemRepository
+from repositories.runtime_setting_repository import RuntimeSettingRepository
 from repositories.trade_result_repository import TradeResultRepository
 from realtime.event_detector import event_detector
 from realtime.stream_manager import stream_manager
@@ -66,6 +68,8 @@ from services.error_incident_service import error_incident_service
 from services.decision_benchmark_service import decision_benchmark_service
 from services.observability_reporting_service import observability_reporting_service
 from services.performance_reporting_service import performance_reporting_service
+from services.trade_close_reconciliation_service import trade_close_reconciliation_service
+from services.trade_lifecycle_integrity_service import trade_lifecycle_integrity_service
 from services.account_equity_service import account_equity_service, classify_account_snapshot_freshness
 from services.admin_action_confirmation_service import admin_action_confirmation_service
 from services.runtime_settings_service import runtime_settings_service
@@ -79,6 +83,7 @@ from trading.account_manager import account_manager
 from trading.broker_factory import get_broker_adapter
 from trading.enums import ActivityPhase, ActivityType, LLMTier
 from trading.symbols import normalize_krx_symbol
+from util.time_util import ensure_kst
 from scheduler.scheduler import trading_scheduler
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -95,6 +100,109 @@ class AdminActionConfirmationCreateRequest(BaseModel):
 
 class AdminActionConfirmationVerifyRequest(BaseModel):
     confirmation_token: str | None = None
+
+
+class LLMApiKeyUpdateRequest(BaseModel):
+    provider: str
+    api_key: str
+    label: str | None = None
+    enabled: bool = True
+
+
+_LLM_API_KEY_SETTINGS = {
+    "CODEX": "OPENAI_API_KEY",
+    "CLAUDE_CODE": "ANTHROPIC_API_KEY",
+}
+_LLM_API_KEY_REGISTRY_SETTING = "LLM_API_KEY_REGISTRY"
+_LLM_API_PROVIDERS = {
+    "CLAUDE_API": {
+        "label": "Claude API",
+        "env_key": "ANTHROPIC_API_KEY",
+    },
+    "OPENAI_API": {
+        "label": "OpenAI API",
+        "env_key": "OPENAI_API_KEY",
+    },
+}
+
+
+def _resolve_llm_api_key_setting(provider: str) -> tuple[str, str]:
+    normalized = str(provider or "").upper().strip()
+    setting_key = _LLM_API_KEY_SETTINGS.get(normalized)
+    if not setting_key:
+        raise HTTPException(status_code=400, detail="지원하지 않는 LLM provider입니다")
+    return normalized, setting_key
+
+
+def _mask_secret(value: str | None) -> str:
+    text = str(value or "")
+    if not text:
+        return ""
+    if len(text) <= 8:
+        return "*" * len(text)
+    return f"{text[:4]}...{text[-4:]}"
+
+
+def _load_llm_api_key_registry() -> list[dict]:
+    raw = getattr(settings, _LLM_API_KEY_REGISTRY_SETTING, [])
+    if isinstance(raw, str):
+        try:
+            raw = _json.loads(raw)
+        except (TypeError, ValueError):
+            raw = []
+    if not isinstance(raw, list):
+        return []
+
+    items: list[dict] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        provider = str(item.get("provider") or "").upper().strip()
+        api_key = str(item.get("api_key") or "")
+        if provider not in _LLM_API_PROVIDERS or not api_key:
+            continue
+        items.append({
+            "id": str(item.get("id") or uuid4()),
+            "provider": provider,
+            "label": str(item.get("label") or _LLM_API_PROVIDERS[provider]["label"]),
+            "api_key": api_key,
+            "enabled": bool(item.get("enabled", True)),
+            "created_at": str(item.get("created_at") or datetime.now().isoformat()),
+        })
+    return items
+
+
+def _redact_llm_api_key_item(item: dict) -> dict:
+    provider = str(item.get("provider") or "").upper()
+    provider_meta = _LLM_API_PROVIDERS.get(provider, {})
+    api_key = str(item.get("api_key") or "")
+    return {
+        "id": item.get("id"),
+        "provider": provider,
+        "provider_label": provider_meta.get("label", provider),
+        "label": item.get("label") or provider_meta.get("label", provider),
+        "env_key": provider_meta.get("env_key", ""),
+        "configured": bool(api_key),
+        "masked": _mask_secret(api_key),
+        "enabled": bool(item.get("enabled", True)),
+        "created_at": item.get("created_at"),
+    }
+
+
+async def _persist_llm_api_key_registry(items: list[dict]) -> None:
+    setattr(settings, _LLM_API_KEY_REGISTRY_SETTING, items)
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            repository = RuntimeSettingRepository(session)
+            await repository.upsert_value(_LLM_API_KEY_REGISTRY_SETTING, _json.dumps(items))
+
+
+async def _persist_runtime_secret(setting_key: str, value: str) -> None:
+    setattr(settings, setting_key, value)
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            repository = RuntimeSettingRepository(session)
+            await repository.upsert_value(setting_key, _json.dumps(value))
 
 
 def _parse_json_detail(detail):
@@ -137,11 +245,31 @@ def _require_admin_action_confirmation(
 
 
 def _extract_latest_signal(trades, activities):
+    fallback_trade = next(
+        (
+            trade for trade in trades
+            if (
+                getattr(trade, "ai_recommendation", "")
+                or getattr(trade, "ai_target_price", None) is not None
+                or getattr(trade, "ai_stop_loss_price", None) is not None
+            )
+        ),
+        None,
+    )
     for activity in activities:
         detail = _parse_json_detail(getattr(activity, "detail", None)) or {}
         recommendation = detail.get("recommendation")
-        target_price = detail.get("target_price") or detail.get("ai_target_price")
-        stop_loss_price = detail.get("stop_loss_price") or detail.get("ai_stop_loss_price")
+        target_price = (
+            detail.get("target_price")
+            or detail.get("ai_target_price")
+            or getattr(fallback_trade, "ai_target_price", None)
+        )
+        stop_loss_price = (
+            detail.get("stop_loss_price")
+            or detail.get("stop_loss")
+            or detail.get("ai_stop_loss_price")
+            or getattr(fallback_trade, "ai_stop_loss_price", None)
+        )
         reason = detail.get("reason") or activity.summary
         if recommendation or target_price or stop_loss_price:
             return {
@@ -155,22 +283,17 @@ def _extract_latest_signal(trades, activities):
                 "created_at": getattr(activity, "created_at", None),
             }
 
-    for trade in trades:
-        if (
-            getattr(trade, "ai_recommendation", "")
-            or getattr(trade, "ai_target_price", None) is not None
-            or getattr(trade, "ai_stop_loss_price", None) is not None
-        ):
-            return {
-                "recommendation": getattr(trade, "ai_recommendation", ""),
-                "confidence": getattr(trade, "ai_confidence", None),
-                "reason": getattr(trade, "exit_reason", "") or getattr(trade, "strategy_type", ""),
-                "target_price": getattr(trade, "ai_target_price", None),
-                "stop_loss_price": getattr(trade, "ai_stop_loss_price", None),
-                "llm_provider": None,
-                "llm_tier": None,
-                "created_at": getattr(trade, "created_at", None),
-            }
+    if fallback_trade:
+        return {
+            "recommendation": getattr(fallback_trade, "ai_recommendation", ""),
+            "confidence": getattr(fallback_trade, "ai_confidence", None),
+            "reason": getattr(fallback_trade, "exit_reason", "") or getattr(fallback_trade, "strategy_type", ""),
+            "target_price": getattr(fallback_trade, "ai_target_price", None),
+            "stop_loss_price": getattr(fallback_trade, "ai_stop_loss_price", None),
+            "llm_provider": None,
+            "llm_tier": None,
+            "created_at": getattr(fallback_trade, "created_at", None),
+        }
 
     return None
 
@@ -908,6 +1031,102 @@ async def get_trade_reconciliation_report(db: AsyncSession = Depends(get_async_d
     return SuccessResponse(data=report, message="주문 대사 리포트 조회 완료")
 
 
+@router.get("/trades/close-reconciliation")
+async def get_trade_close_reconciliation_report(
+    days: int = Query(30, ge=1, le=365),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """SELL 체결과 BUY lot 청산 손익 간 read-only dry-run 대사 리포트"""
+    report = await trade_close_reconciliation_service.build_dry_run(db, days=days)
+    return SuccessResponse(data=report, message="청산 대사 dry-run 리포트 조회 완료")
+
+
+@router.get("/trades/lifecycle-integrity")
+async def get_trade_lifecycle_integrity_report(
+    days: int = Query(7, ge=1, le=365),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """초기화 이후 BUY→SELL→성과 반영 흐름의 무결성 점검"""
+    broker_position_snapshot = await _build_broker_position_snapshot_for_integrity()
+    report = await trade_lifecycle_integrity_service.build_report(
+        db,
+        days=days,
+        broker_position_snapshot=broker_position_snapshot,
+    )
+    return SuccessResponse(data=report, message="거래 라이프사이클 무결성 점검 완료")
+
+
+async def _build_broker_position_snapshot_for_integrity() -> dict:
+    try:
+        adapter = get_broker_adapter()
+        holdings = await adapter.get_holdings()
+        pending_orders = await adapter.get_pending_orders()
+        return {
+            "provider": getattr(getattr(adapter, "provider", None), "value", None) or str(getattr(adapter, "provider", "")),
+            "holding_quantities": {
+                normalize_krx_symbol(getattr(holding, "symbol", "")): int(getattr(holding, "quantity", 0) or 0)
+                for holding in holdings
+                if normalize_krx_symbol(getattr(holding, "symbol", ""))
+                and int(getattr(holding, "quantity", 0) or 0) > 0
+            },
+            "pending_symbols": [
+                normalize_krx_symbol(getattr(order, "symbol", ""))
+                for order in pending_orders
+                if normalize_krx_symbol(getattr(order, "symbol", ""))
+                and int(getattr(order, "remaining_qty", 0) or 0) > 0
+            ],
+        }
+    except Exception as exc:
+        logger.warning("라이프사이클 브로커 포지션 스냅샷 조회 실패: {}", str(exc))
+        return {"error": str(exc)[:200]}
+
+
+@router.post("/trades/close-reconciliation/apply")
+async def apply_trade_close_reconciliation(
+    days: int = Query(30, ge=1, le=365),
+    confirmation: AdminActionConfirmationVerifyRequest | None = None,
+    db: AsyncSession = Depends(get_async_db),
+):
+    """SELL→BUY 청산 손익 보정을 적용한다. 완전 매칭 SELL만 변경한다."""
+    confirmation_action = "APPLY_TRADE_CLOSE_RECONCILIATION"
+    confirmation_resource = "TRADE_CLOSE_RECONCILIATION"
+    confirmation_quantity = f"{days}D"
+    try:
+        admin_action_confirmation_service.verify_token(
+            getattr(confirmation, "confirmation_token", None),
+            action=confirmation_action,
+            resource_id=confirmation_resource,
+            quantity=confirmation_quantity,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=428,
+            detail={
+                "code": "ADMIN_ACTION_CONFIRMATION_REQUIRED",
+                "message": str(exc),
+                "action": confirmation_action,
+                "resource_id": confirmation_resource,
+            },
+        ) from exc
+    result = await trade_close_reconciliation_service.apply_reconciliation(db, days=days)
+    await db.commit()
+    await activity_logger.log(
+        ActivityType.EVENT,
+        ActivityPhase.PROGRESS,
+        "🧾 SELL→BUY 청산 대사 보정 적용",
+        detail={
+            "mode": result["mode"],
+            "summary": result["summary"],
+        },
+    )
+    message = (
+        f"청산 대사 적용 완료 · SELL {result['summary'].get('applied_sell_count', 0)}건 / "
+        f"BUY lot {result['summary'].get('updated_buy_lot_count', 0)}건 / "
+        f"손익 {result['summary'].get('applied_pnl', 0):,.0f}원"
+    )
+    return SuccessResponse(data=result, message=message)
+
+
 @router.post("/trades/reconciliation/cleanup")
 async def cleanup_stale_pending_trades(
     apply: bool = Query(False, description="true일 때만 DB PENDING_CONFIRM을 CONFIRM_FAILED로 변경"),
@@ -967,10 +1186,14 @@ async def reconcile_holdings_trades(
     missing_closes = await portfolio_sync_job._close_open_buys_missing_from_holdings(
         dry_run=not apply_missing_closes,
     )
+    quantity_closes = await portfolio_sync_job._close_open_buy_quantity_excess_from_holdings(
+        dry_run=not apply_missing_closes,
+    )
     summary = {
         "backfill": backfill,
         "repair": repaired,
         "missing_closes": missing_closes,
+        "quantity_closes": quantity_closes,
     }
     await activity_logger.log(
         ActivityType.EVENT,
@@ -981,7 +1204,8 @@ async def reconcile_holdings_trades(
     message = (
         f"정합성 복구 완료 · 백필 {backfill.get('backfilled', 0)}건 / "
         f"체결가 복구 {repaired.get('repaired', 0)}건 / "
-        f"미보유 정리 {missing_closes['summary'].get('closed_count', 0)}건"
+        f"미보유 정리 {missing_closes['summary'].get('closed_count', 0)}건 / "
+        f"수량초과 정리 {quantity_closes['summary'].get('closed_count', 0)}건"
     )
     return SuccessResponse(data=summary, message=message)
 
@@ -1141,6 +1365,44 @@ async def get_account_balance():
             detail={"route": "/admin/account/balance"},
         )
         return SuccessResponse(data=None, message=f"잔고 조회 실패: {str(e)[:100]}")
+
+
+@router.post("/account/snapshot/refresh")
+async def refresh_account_snapshot():
+    """현재 브로커 계좌 상태를 계좌 자산 스냅샷으로 즉시 기록"""
+    try:
+        snapshot = await account_equity_service.capture_and_record_current(
+            session_phase="MANUAL_REFRESH",
+            detail={"reason": "admin_manual_refresh"},
+            baseline_source="MANUAL_REFRESH",
+        )
+        data = {
+            "captured_at": ensure_kst(snapshot.captured_at).isoformat(),
+            "trading_date": snapshot.trading_date.isoformat(),
+            "total_asset": float(snapshot.total_asset or 0.0),
+            "cash": float(snapshot.cash or 0.0),
+            "stock_value": float(snapshot.stock_value or 0.0),
+            "total_unrealized_pnl": float(snapshot.total_unrealized_pnl or 0.0),
+            "total_unrealized_pnl_rate": float(snapshot.total_unrealized_pnl_rate or 0.0),
+            "holding_count": int(snapshot.holding_count or 0),
+            "pending_order_count": int(snapshot.pending_order_count or 0),
+            "session_phase": snapshot.session_phase,
+        }
+        await activity_logger.log(
+            ActivityType.EVENT,
+            ActivityPhase.COMPLETE,
+            "📸 계좌 스냅샷 수동 갱신",
+            detail=data,
+        )
+        return SuccessResponse(data=data, message="계좌 스냅샷 갱신 완료")
+    except Exception as e:
+        logger.error("계좌 스냅샷 수동 갱신 실패: {}", str(e))
+        await _capture_admin_api_error(
+            "account_snapshot_refresh",
+            e,
+            detail={"route": "/admin/account/snapshot/refresh"},
+        )
+        return SuccessResponse(data=None, message=f"계좌 스냅샷 갱신 실패: {str(e)[:100]}")
 
 
 @router.get("/account/holdings")
@@ -1801,6 +2063,168 @@ async def apply_settings(updates: dict):
     return SuccessResponse(
         data=result,
         message=f"{len(changed)}개 설정 적용 완료",
+    )
+
+
+@router.get("/llm/api-keys")
+async def get_llm_api_key_status():
+    """LLM 인증용 API 키 등록 상태 조회 — 실제 키 값은 반환하지 않는다."""
+    try:
+        usage_snapshot = await llm_usage_service.get_snapshot()
+    except Exception:
+        usage_snapshot = {}
+    detected_cli_slots = sum(
+        1
+        for key in ("claude_code", "codex")
+        if (usage_snapshot.get(key) or {}).get("available")
+    )
+    cli_env = {
+        provider: {
+            "env_key": setting_key,
+            "configured": bool(getattr(settings, setting_key, "")),
+            "masked": _mask_secret(getattr(settings, setting_key, "")),
+        }
+        for provider, setting_key in _LLM_API_KEY_SETTINGS.items()
+    }
+    api_items = [_redact_llm_api_key_item(item) for item in _load_llm_api_key_registry()]
+    api_workers = [item for item in api_items if item["configured"] and item["enabled"]]
+    return SuccessResponse(data={
+        **cli_env,
+        "providers": _LLM_API_PROVIDERS,
+        "items": api_items,
+        "worker_summary": {
+            "cli_slots": detected_cli_slots,
+            "cli_key_slots": sum(1 for item in cli_env.values() if item["configured"]),
+            "api_slots": len(api_workers),
+            "total_slots": len(api_workers) + detected_cli_slots,
+        },
+    })
+
+
+@router.post("/llm/api-keys")
+async def update_llm_api_key(payload: LLMApiKeyUpdateRequest):
+    """LLM 인증용 API 키를 저장한다."""
+    requested_provider = str(payload.provider or "").upper().strip()
+    api_key = str(payload.api_key or "").strip()
+    if not api_key:
+        raise HTTPException(status_code=400, detail="API 키를 입력하세요")
+
+    if requested_provider in _LLM_API_PROVIDERS:
+        items = _load_llm_api_key_registry()
+        provider_meta = _LLM_API_PROVIDERS[requested_provider]
+        label = str(payload.label or "").strip() or f"{provider_meta['label']} {len(items) + 1}"
+        new_item = {
+            "id": str(uuid4()),
+            "provider": requested_provider,
+            "label": label[:80],
+            "api_key": api_key,
+            "enabled": bool(payload.enabled),
+            "created_at": datetime.now().isoformat(),
+        }
+        items.append(new_item)
+        await _persist_llm_api_key_registry(items)
+        await _persist_runtime_secret(provider_meta["env_key"], api_key)
+        redacted = _redact_llm_api_key_item(new_item)
+        await activity_logger.log(
+            ActivityType.EVENT,
+            ActivityPhase.PROGRESS,
+            f"LLM API worker 키 추가: {requested_provider}",
+            detail={
+                "provider": requested_provider,
+                "key_id": redacted["id"],
+                "label": redacted["label"],
+                "configured": True,
+            },
+        )
+        logger.info("LLM API worker 키 추가: {} ({})", requested_provider, redacted["id"])
+        return SuccessResponse(data=redacted, message="LLM API 키가 추가되었습니다")
+
+    provider, setting_key = _resolve_llm_api_key_setting(requested_provider)
+
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            repository = RuntimeSettingRepository(session)
+            await repository.upsert_value(setting_key, _json.dumps(api_key))
+
+    setattr(settings, setting_key, api_key)
+    await activity_logger.log(
+        ActivityType.EVENT,
+        ActivityPhase.PROGRESS,
+        f"LLM API 키 등록: {provider}",
+        detail={"provider": provider, "env_key": setting_key, "configured": True},
+    )
+    logger.info("LLM API 키 등록: {} ({})", provider, setting_key)
+    return SuccessResponse(
+        data={
+            provider: {
+                "env_key": setting_key,
+                "configured": True,
+                "masked": _mask_secret(api_key),
+            }
+        },
+        message="LLM API 키가 등록되었습니다",
+    )
+
+
+@router.delete("/llm/api-keys/{provider}")
+async def clear_llm_api_key(provider: str):
+    """LLM API 키를 비활성화한다."""
+    requested = str(provider or "").strip()
+    normalized_requested = requested.upper()
+
+    if normalized_requested not in _LLM_API_KEY_SETTINGS:
+        items = _load_llm_api_key_registry()
+        removed_items = [item for item in items if str(item.get("id")) == requested]
+        next_items = [item for item in items if str(item.get("id")) != requested]
+        if len(next_items) == len(items):
+            raise HTTPException(status_code=404, detail="API 키를 찾을 수 없습니다")
+        await _persist_llm_api_key_registry(next_items)
+        if removed_items:
+            removed_provider = str(removed_items[0].get("provider") or "").upper()
+            provider_meta = _LLM_API_PROVIDERS.get(removed_provider)
+            if provider_meta and getattr(settings, provider_meta["env_key"], "") == removed_items[0].get("api_key"):
+                replacement = next(
+                    (
+                        item.get("api_key")
+                        for item in reversed(next_items)
+                        if item.get("provider") == removed_provider and item.get("enabled", True)
+                    ),
+                    "",
+                )
+                await _persist_runtime_secret(provider_meta["env_key"], str(replacement or ""))
+        await activity_logger.log(
+            ActivityType.EVENT,
+            ActivityPhase.PROGRESS,
+            "LLM API worker 키 삭제",
+            detail={"key_id": requested},
+        )
+        logger.info("LLM API worker 키 삭제: {}", requested)
+        return SuccessResponse(data={"id": requested, "deleted": True}, message="LLM API 키가 삭제되었습니다")
+
+    normalized_provider, setting_key = _resolve_llm_api_key_setting(normalized_requested)
+
+    async with AsyncSessionLocal() as session:
+        async with session.begin():
+            repository = RuntimeSettingRepository(session)
+            await repository.upsert_value(setting_key, _json.dumps(""))
+
+    setattr(settings, setting_key, "")
+    await activity_logger.log(
+        ActivityType.EVENT,
+        ActivityPhase.PROGRESS,
+        f"LLM API 키 해제: {normalized_provider}",
+        detail={"provider": normalized_provider, "env_key": setting_key, "configured": False},
+    )
+    logger.info("LLM API 키 해제: {} ({})", normalized_provider, setting_key)
+    return SuccessResponse(
+        data={
+            normalized_provider: {
+                "env_key": setting_key,
+                "configured": False,
+                "masked": "",
+            }
+        },
+        message="LLM API 키가 해제되었습니다",
     )
 
 

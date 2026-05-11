@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from trading.models import AccountBalance, HoldingInfo, PendingOrderInfo
 from util.time_util import KST
 
@@ -147,6 +149,72 @@ async def test_admin_balance_route_preserves_balance_when_session_metrics_fail(c
     payload = response.json()
     assert payload["data"]["total_asset"] == 1000000
     assert payload["data"]["session_metrics"]["available"] is False
+
+
+async def test_admin_refresh_account_snapshot_records_current_broker_state(client, monkeypatch):
+    captured = {}
+
+    class FakeAccountEquityService:
+        async def capture_and_record_current(self, *, session_phase, detail, baseline_source):
+            captured["session_phase"] = session_phase
+            captured["detail"] = detail
+            captured["baseline_source"] = baseline_source
+            return SimpleNamespace(
+                captured_at=_dt(10, 55),
+                trading_date=_dt(10, 55).date(),
+                total_asset=1_000_000,
+                cash=500_000,
+                stock_value=500_000,
+                total_unrealized_pnl=25_000,
+                total_unrealized_pnl_rate=2.5,
+                holding_count=1,
+                pending_order_count=1,
+                session_phase=session_phase,
+            )
+
+    class FakeActivityLogger:
+        async def log(self, activity_type, phase, summary, *, detail=None, **kwargs):
+            captured["activity_summary"] = summary
+            captured["activity_detail"] = detail
+
+    monkeypatch.setattr("api.routes.admin.account_equity_service", FakeAccountEquityService())
+    monkeypatch.setattr("api.routes.admin.activity_logger", FakeActivityLogger())
+
+    response = await client.post("/api/v1/admin/account/snapshot/refresh")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["data"]["cash"] == 500000
+    assert payload["data"]["holding_count"] == 1
+    assert payload["data"]["pending_order_count"] == 1
+    assert payload["data"]["session_phase"] == "MANUAL_REFRESH"
+    assert captured["session_phase"] == "MANUAL_REFRESH"
+    assert captured["baseline_source"] == "MANUAL_REFRESH"
+    assert captured["detail"]["reason"] == "admin_manual_refresh"
+    assert captured["activity_detail"]["cash"] == 500000
+
+
+async def test_admin_refresh_account_snapshot_captures_errors(client, monkeypatch):
+    captured = {}
+
+    class FailingAccountEquityService:
+        async def capture_and_record_current(self, **kwargs):
+            raise RuntimeError("snapshot unavailable")
+
+    async def fake_capture_admin_api_error(operation, exc, *, symbol=None, detail=None):
+        captured["operation"] = operation
+        captured["message"] = str(exc)
+        captured["detail"] = detail
+
+    monkeypatch.setattr("api.routes.admin.account_equity_service", FailingAccountEquityService())
+    monkeypatch.setattr("api.routes.admin._capture_admin_api_error", fake_capture_admin_api_error)
+
+    response = await client.post("/api/v1/admin/account/snapshot/refresh")
+
+    assert response.status_code == 200
+    assert response.json()["data"] is None
+    assert captured["operation"] == "account_snapshot_refresh"
+    assert captured["detail"]["route"] == "/admin/account/snapshot/refresh"
 
 
 async def test_admin_holdings_route_uses_broker_adapter(client, monkeypatch):
