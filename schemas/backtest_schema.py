@@ -14,6 +14,7 @@ class BacktestRunRequest(BaseModel):
     max_position_pct: float = Field(20.0, description="종목당 최대 비중 (%)")
     commission_rate: float = Field(0.015, description="수수료율 (%)")
     slippage_rate: float = Field(0.05, description="슬리피지 (%)")
+    sell_tax_rate: float = Field(0.0, description="매도 거래세율 (%)")
     stop_loss_pct: float = Field(-3.0, description="손절 (%)")
     take_profit_pct: float = Field(5.0, description="익절 (%)")
     max_hold_days: int = Field(5, description="최대 보유 일수")

@@ -20,6 +20,7 @@ class BacktestReport:
             "symbol": symbol,
             "strategy_type": strategy_type,
             "config": config or {},
+            "metadata": BacktestReport._build_metadata(config or {}),
             "summary": BacktestReport._build_summary(metrics),
             "metrics": BacktestReport._metrics_to_dict(metrics),
             "trade_summary": BacktestReport._trade_summary(trades),
@@ -35,6 +36,15 @@ class BacktestReport:
             f"총수익률 {m.total_return:+.2f}% ({verdict}), "
             f"샤프비율 {m.sharpe_ratio:.2f}, MDD {m.max_drawdown:.2f}%"
         )
+
+    @staticmethod
+    def _build_metadata(config: dict) -> dict:
+        return {
+            "model_family": config.get("model_family", "RULE_BASED_TECHNICAL_PROXY"),
+            "execution_policy": config.get("execution_timing") or config.get("execution_policy"),
+            "fee_model": config.get("fee_model", {}),
+            "fill_model": config.get("fill_model", {}),
+        }
 
     @staticmethod
     def _metrics_to_dict(m: BacktestMetrics) -> dict:

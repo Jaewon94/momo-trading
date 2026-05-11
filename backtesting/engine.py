@@ -7,6 +7,8 @@ from loguru import logger
 
 from analysis.technical.indicators import TechnicalIndicators
 from analysis.technical.patterns import ChartPatterns
+from backtesting.fee_models import KoreaStockFeeModel
+from backtesting.fill_models import LimitGuardFillModel, NextBarOHLCFillModel
 from backtesting.metrics import BacktestMetrics, TradeRecord, calculate_metrics
 from strategy.stable_short import StableShortStrategy
 from strategy.aggressive_short import AggressiveShortStrategy
@@ -21,6 +23,7 @@ class BacktestConfig:
     max_position_pct: float = 20.0        # 종목당 최대 비중 (%)
     commission_rate: float = 0.015        # 수수료율 (%)
     slippage_rate: float = 0.05           # 슬리피지 (%)
+    sell_tax_rate: float = 0.0            # 매도 거래세율 (%)
     stop_loss_pct: float = -3.0           # 손절 (%)
     take_profit_pct: float = 5.0          # 익절 (%)
     max_hold_days: int = 5                # 최대 보유 일수
@@ -35,6 +38,7 @@ class Position:
     entry_price: float
     quantity: int
     strategy: str
+    entry_fee: float = 0.0
     hold_days: int = 0
     stop_loss: float = 0.0
     take_profit: float = 0.0
@@ -54,6 +58,13 @@ class BacktestEngine:
         self.positions: list[Position] = []
         self.trades: list[TradeRecord] = []
         self.equity_curve: list[float] = []
+        self.fee_model = KoreaStockFeeModel(
+            commission_rate_pct=self.config.commission_rate,
+            sell_tax_rate_pct=self.config.sell_tax_rate,
+        )
+        self.fill_model = LimitGuardFillModel(
+            NextBarOHLCFillModel(slippage_rate_pct=self.config.slippage_rate),
+        )
 
         # 전략 초기화
         if self.config.strategy_type == "STABLE_SHORT":
@@ -105,7 +116,7 @@ class BacktestEngine:
 
             # 1. 이전 봉 시그널을 현재 봉 시가에 체결한다.
             if pending_signal and self.config.execution_timing == "NEXT_OPEN":
-                self._execute_signal(symbol, pending_signal[0], current_date, open_price, pending_signal[1])
+                self._execute_signal(symbol, pending_signal[0], current_date, open_price, pending_signal[1], current_bar)
                 pending_signal = None
 
             # 2. 기존 포지션 체크 (손절/익절/최대 보유일)
@@ -113,7 +124,7 @@ class BacktestEngine:
 
             # 3. 이전 봉 시그널을 현재 봉 종가에 체결한다.
             if pending_signal and self.config.execution_timing == "NEXT_CLOSE":
-                self._execute_signal(symbol, pending_signal[0], current_date, current_price, pending_signal[1])
+                self._execute_signal(symbol, pending_signal[0], current_date, current_price, pending_signal[1], current_bar)
                 pending_signal = None
 
             # 4. 기술 지표 계산
@@ -132,7 +143,7 @@ class BacktestEngine:
             # 7. 시그널에 따라 매매. 기본 정책은 다음 봉 체결이며, legacy만 같은 봉 종가 체결을 허용한다.
             if signal and signal.action in {SignalAction.BUY, SignalAction.SELL}:
                 if self.config.execution_timing == "LEGACY_SAME_CLOSE":
-                    self._execute_signal(symbol, signal.action, current_date, current_price, "SIGNAL")
+                    self._execute_signal(symbol, signal.action, current_date, current_price, "SIGNAL", current_bar)
                 else:
                     pending_signal = (signal.action, "SIGNAL")
 
@@ -161,6 +172,7 @@ class BacktestEngine:
             "metrics": metrics,
             "trades": self.trades,
             "equity_curve": self.equity_curve,
+            "metadata": self.metadata(),
         }
 
     def _build_rule_based_analysis(self, indicators: dict, current_price: float) -> dict:
@@ -224,29 +236,35 @@ class BacktestEngine:
             if pos.hold_days >= self.config.max_hold_days:
                 self._close_position(pos, current_date, close, "MAX_HOLD_DAYS")
 
-    def _buy(self, symbol: str, date: str, price: float) -> None:
+    def _buy(self, symbol: str, date: str, price: float, bar=None) -> None:
         """매수 실행"""
         max_amount = self.cash * (self.config.max_position_pct / 100)
         max_amount = min(max_amount, self.cash * 0.9)  # 현금 10% 유지
 
-        # 슬리피지 반영
-        actual_price = price * (1 + self.config.slippage_rate / 100)
+        fill_probe = self.fill_model.fill_market_order(
+            side="BUY",
+            requested_quantity=1,
+            reference_price=price,
+            bar=bar,
+        )
+        if not fill_probe.filled:
+            return
+
+        actual_price = fill_probe.price
         quantity = int(max_amount / actual_price)
 
         if quantity <= 0:
             return
 
-        cost = actual_price * quantity
-        commission = cost * (self.config.commission_rate / 100)
-        total_cost = cost + commission
+        fee = self.fee_model.calculate(side="BUY", price=actual_price, quantity=quantity)
+        total_cost = abs(fee.cash_delta)
 
         if total_cost > self.cash:
-            quantity = int((self.cash - commission) / actual_price)
+            quantity = int(self.cash / (actual_price * (1 + self.config.commission_rate / 100)))
             if quantity <= 0:
                 return
-            cost = actual_price * quantity
-            commission = cost * (self.config.commission_rate / 100)
-            total_cost = cost + commission
+            fee = self.fee_model.calculate(side="BUY", price=actual_price, quantity=quantity)
+            total_cost = abs(fee.cash_delta)
 
         self.cash -= total_cost
 
@@ -259,33 +277,50 @@ class BacktestEngine:
             entry_price=actual_price,
             quantity=quantity,
             strategy=self.config.strategy_type,
+            entry_fee=fee.commission + fee.tax,
             stop_loss=stop_loss,
             take_profit=take_profit,
         ))
 
-    def _sell(self, symbol: str, date: str, price: float, reason: str) -> None:
+    def _sell(self, symbol: str, date: str, price: float, reason: str, bar=None) -> None:
         """매도 실행"""
         for pos in list(self.positions):
             if pos.symbol == symbol:
-                self._close_position(pos, date, price, reason)
+                self._close_position(pos, date, price, reason, bar=bar)
                 break
 
-    def _execute_signal(self, symbol: str, action: SignalAction, date: str, price: float, reason: str) -> None:
+    def _execute_signal(
+        self,
+        symbol: str,
+        action: SignalAction,
+        date: str,
+        price: float,
+        reason: str,
+        bar=None,
+    ) -> None:
         if action == SignalAction.BUY and not self._has_position(symbol):
-            self._buy(symbol, date, price)
+            self._buy(symbol, date, price, bar=bar)
         elif action == SignalAction.SELL and self._has_position(symbol):
-            self._sell(symbol, date, price, reason)
+            self._sell(symbol, date, price, reason, bar=bar)
 
-    def _close_position(self, pos: Position, date: str, price: float, reason: str) -> None:
+    def _close_position(self, pos: Position, date: str, price: float, reason: str, bar=None) -> None:
         """포지션 청산"""
-        actual_price = price * (1 - self.config.slippage_rate / 100)
-        revenue = actual_price * pos.quantity
-        commission = revenue * (self.config.commission_rate / 100)
-        net = revenue - commission
+        fill = self.fill_model.fill_market_order(
+            side="SELL",
+            requested_quantity=pos.quantity,
+            reference_price=price,
+            bar=bar,
+        )
+        if not fill.filled:
+            return
+
+        actual_price = fill.price
+        fee = self.fee_model.calculate(side="SELL", price=actual_price, quantity=pos.quantity)
+        net = fee.cash_delta
 
         self.cash += net
 
-        pnl = net - (pos.entry_price * pos.quantity)
+        pnl = net - (pos.entry_price * pos.quantity) - pos.entry_fee
         return_pct = ((actual_price - pos.entry_price) / pos.entry_price) * 100
 
         self.trades.append(TradeRecord(
@@ -311,3 +346,11 @@ class BacktestEngine:
     def _calculate_equity(self, current_price: float) -> float:
         stock_value = sum(p.quantity * current_price for p in self.positions)
         return self.cash + stock_value
+
+    def metadata(self) -> dict:
+        return {
+            "model_family": "RULE_BASED_TECHNICAL_PROXY",
+            "execution_policy": self.config.execution_timing,
+            "fee_model": self.fee_model.metadata(),
+            "fill_model": self.fill_model.metadata(),
+        }

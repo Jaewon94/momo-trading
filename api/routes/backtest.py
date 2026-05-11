@@ -34,6 +34,7 @@ async def run_backtest(req: BacktestRunRequest):
         max_position_pct=req.max_position_pct,
         commission_rate=req.commission_rate,
         slippage_rate=req.slippage_rate,
+        sell_tax_rate=req.sell_tax_rate,
         stop_loss_pct=req.stop_loss_pct,
         take_profit_pct=req.take_profit_pct,
         max_hold_days=req.max_hold_days,
@@ -58,8 +59,11 @@ async def run_backtest(req: BacktestRunRequest):
             "max_hold_days": config.max_hold_days,
             "commission_rate": config.commission_rate,
             "slippage_rate": config.slippage_rate,
+            "sell_tax_rate": config.sell_tax_rate,
             "execution_timing": config.execution_timing,
             "model_family": "RULE_BASED_TECHNICAL_PROXY",
+            "fee_model": result.get("metadata", {}).get("fee_model"),
+            "fill_model": result.get("metadata", {}).get("fill_model"),
         },
     )
 
