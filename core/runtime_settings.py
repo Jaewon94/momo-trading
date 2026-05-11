@@ -25,6 +25,13 @@ MUTABLE_SETTINGS = [
     "ACCOUNT_EQUITY_DRAWDOWN_KILL_SWITCH_PCT",
     "BUY_GUARD_LLM_RUNTIME_BLOCK_ENABLED",
     "MAX_CONSECUTIVE_LOSSES",
+    "LOSS_STREAK_RECOVERY_MODE",
+    "LOSS_STREAK_RECOVERY_MAX_DAILY_BUYS",
+    "LOSS_STREAK_RECOVERY_MAX_ORDER_KRW",
+    "LOSS_STREAK_RECOVERY_MAX_POSITION_PCT",
+    "LOSS_STREAK_RECOVERY_SIZE_MULTIPLIER",
+    "LOSS_STREAK_RECOVERY_MIN_CHANGE_PCT",
+    "LOSS_STREAK_RECOVERY_MAX_CHANGE_PCT",
     "MIN_STRATEGY_EXPECTANCY",
     "EXPECTANCY_SAMPLE_SIZE",
     "STRATEGY_EXPECTANCY_GUARD_MODE",
@@ -185,6 +192,12 @@ def coerce_runtime_setting_value(key: str, value: Any) -> Any:
         if key == "INTRADAY_RESCAN_INTERVAL_MIN":
             if normalized_int < 1 or normalized_int > 60:
                 raise HTTPException(status_code=400, detail=f"{key} must be between 1 and 60")
+        if key == "LOSS_STREAK_RECOVERY_MAX_DAILY_BUYS":
+            if normalized_int < 0 or normalized_int > 3:
+                raise HTTPException(status_code=400, detail=f"{key} must be between 0 and 3")
+        if key == "LOSS_STREAK_RECOVERY_MAX_ORDER_KRW":
+            if normalized_int < 0 or normalized_int > 10_000_000:
+                raise HTTPException(status_code=400, detail=f"{key} must be between 0 and 10000000")
         return normalized_int
 
     if isinstance(current, float):
@@ -196,9 +209,15 @@ def coerce_runtime_setting_value(key: str, value: Any) -> Any:
             "MAX_DAILY_DRAWDOWN_PCT",
             "ACCOUNT_EQUITY_DRAWDOWN_BLOCK_BUY_PCT",
             "ACCOUNT_EQUITY_DRAWDOWN_KILL_SWITCH_PCT",
+            "LOSS_STREAK_RECOVERY_MAX_POSITION_PCT",
+            "LOSS_STREAK_RECOVERY_MIN_CHANGE_PCT",
+            "LOSS_STREAK_RECOVERY_MAX_CHANGE_PCT",
         }:
             if normalized_float < 0 or normalized_float > 100:
                 raise HTTPException(status_code=400, detail=f"{key} must be between 0 and 100")
+        if key == "LOSS_STREAK_RECOVERY_SIZE_MULTIPLIER":
+            if normalized_float <= 0 or normalized_float > 1:
+                raise HTTPException(status_code=400, detail=f"{key} must be between 0 and 1")
         return normalized_float
 
     if key in {
@@ -243,6 +262,12 @@ def coerce_runtime_setting_value(key: str, value: Any) -> Any:
     if key == "ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE":
         normalized = str(value or "").upper().strip()
         if normalized not in {"OFF", "REPORT_ONLY", "BLOCK_BUY", "KILL_SWITCH"}:
+            return _SKIP
+        return normalized
+
+    if key == "LOSS_STREAK_RECOVERY_MODE":
+        normalized = str(value or "").upper().strip()
+        if normalized not in {"OFF", "BLOCK_BUY", "SHADOW", "REDUCE_SIZE", "PROBATION"}:
             return _SKIP
         return normalized
 

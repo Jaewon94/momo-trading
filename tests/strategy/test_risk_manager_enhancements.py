@@ -6,7 +6,7 @@ from trading.enums import SignalAction
 
 
 class AllowGuard:
-    async def evaluate_buy_guard(self, strategy_type: str, portfolio_budget: float) -> dict:
+    async def evaluate_buy_guard(self, strategy_type: str, portfolio_budget: float, **kwargs) -> dict:
         return {"approved": True, "reason": "통과", "trigger": "", "warnings": []}
 
 
@@ -84,7 +84,7 @@ async def test_risk_manager_applies_short_horizon_multiplier(monkeypatch):
 @pytest.mark.asyncio
 async def test_risk_manager_blocks_buy_when_trading_guard_fails(monkeypatch):
     class FakeGuard:
-        async def evaluate_buy_guard(self, strategy_type: str, portfolio_budget: float) -> dict:
+        async def evaluate_buy_guard(self, strategy_type: str, portfolio_budget: float, **kwargs) -> dict:
             return {
                 "approved": False,
                 "reason": "자동 킬스위치: 연속 손실 4회",
@@ -123,7 +123,7 @@ async def test_risk_manager_blocks_buy_when_trading_guard_fails(monkeypatch):
 @pytest.mark.asyncio
 async def test_risk_manager_reduces_quantity_for_negative_expectancy_warning(monkeypatch):
     class FakeGuard:
-        async def evaluate_buy_guard(self, strategy_type: str, portfolio_budget: float) -> dict:
+        async def evaluate_buy_guard(self, strategy_type: str, portfolio_budget: float, **kwargs) -> dict:
             return {
                 "approved": True,
                 "reason": "트레이딩 가드 통과",
@@ -163,3 +163,51 @@ async def test_risk_manager_reduces_quantity_for_negative_expectancy_warning(mon
 
     assert result["approved"] is True
     assert signal.suggested_quantity == 250
+
+
+@pytest.mark.asyncio
+async def test_risk_manager_applies_loss_streak_recovery_caps(monkeypatch):
+    class FakeGuard:
+        async def evaluate_buy_guard(self, strategy_type: str, portfolio_budget: float, **kwargs) -> dict:
+            return {
+                "approved": True,
+                "reason": "트레이딩 가드 통과",
+                "trigger": "",
+                "warnings": [
+                    {
+                        "trigger": "CONSECUTIVE_LOSSES",
+                        "position_size_multiplier": 0.2,
+                        "max_order_krw": 1_000_000,
+                        "max_position_pct": 0.5,
+                    }
+                ],
+            }
+
+    async def fake_log(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("strategy.risk_manager.activity_logger.log", fake_log)
+    monkeypatch.setattr("strategy.risk_manager.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr("strategy.risk_manager.settings.VOLATILITY_POSITION_SIZING_ENABLED", False)
+    manager = RiskManager(trading_guard=FakeGuard())
+    signal = TradeSignal(
+        symbol="0011T0",
+        stock_id="0011T0",
+        action=SignalAction.BUY,
+        strength=0.8,
+        suggested_price=20_000.0,
+        suggested_quantity=500,
+        strategy_type="AGGRESSIVE_SHORT",
+    )
+
+    result = await manager.check(
+        signal=signal,
+        portfolio_cash=100_000_000,
+        portfolio_budget=500_000_000,
+        today_trade_count=0,
+        current_holding_count=0,
+        candidate_change_rate=5.0,
+    )
+
+    assert result["approved"] is True
+    assert signal.suggested_quantity == 50

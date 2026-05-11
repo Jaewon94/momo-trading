@@ -44,6 +44,7 @@ class RiskManager:
         cycle_id: str | None = None,
         dynamic_limits: dict | None = None,
         market_regime: str = "",
+        candidate_change_rate: float | None = None,
     ) -> dict:
         """
         리스크 검사
@@ -89,6 +90,9 @@ class RiskManager:
         guard_result = await self._trading_guard.evaluate_buy_guard(
             strategy_type=signal.strategy_type,
             portfolio_budget=portfolio_budget,
+            candidate_change_rate=candidate_change_rate,
+            today_trade_count=today_trade_count,
+            current_holding_count=current_holding_count,
         )
         if not guard_result.get("approved", False):
             result = {
@@ -103,6 +107,13 @@ class RiskManager:
             warning for warning in guard_result.get("warnings", [])
             if isinstance(warning, dict)
         ]
+        warning_position_caps = [
+            float(warning.get("max_position_pct") or 0.0)
+            for warning in guard_warnings
+            if float(warning.get("max_position_pct") or 0.0) > 0
+        ]
+        if warning_position_caps:
+            eff_max_pos_pct = min(eff_max_pos_pct, min(warning_position_caps))
 
         # 일일 매매 한도 검사 (0 = 무제한)
         if eff_max_daily > 0 and today_trade_count >= eff_max_daily:
@@ -132,8 +143,8 @@ class RiskManager:
             if adjusted_qty < eff_min_qty:
                 result = {
                     "approved": False,
-                    "reason": "기대값 가드 수량 축소 후 최소 수량 미달",
-                    "trigger": "NEGATIVE_EXPECTANCY",
+                    "reason": "트레이딩 가드 수량 축소 후 최소 수량 미달",
+                    "trigger": self._primary_warning_trigger(guard_warnings),
                     "warnings": guard_warnings,
                 }
                 await self._log_result(symbol, result, today_trade_count, cycle_id)
@@ -141,6 +152,28 @@ class RiskManager:
             quantity = adjusted_qty
             total_amount = price * quantity
             signal.suggested_quantity = quantity
+
+        warning_order_caps = [
+            int(warning.get("max_order_krw") or 0)
+            for warning in guard_warnings
+            if int(warning.get("max_order_krw") or 0) > 0
+        ]
+        if warning_order_caps:
+            warning_max_order = min(warning_order_caps)
+            if total_amount > warning_max_order:
+                adjusted_qty = int(warning_max_order / price)
+                if adjusted_qty < eff_min_qty:
+                    result = {
+                        "approved": False,
+                        "reason": "트레이딩 가드 주문 한도 내에서 최소 수량 미달",
+                        "trigger": self._primary_warning_trigger(guard_warnings),
+                        "warnings": guard_warnings,
+                    }
+                    await self._log_result(symbol, result, today_trade_count, cycle_id)
+                    return result
+                quantity = adjusted_qty
+                total_amount = price * quantity
+                signal.suggested_quantity = quantity
 
         # 리스크:보상 비율 검사 (다른 조정 전에 먼저 확인)
         entry = signal.suggested_price or 0
@@ -271,6 +304,14 @@ class RiskManager:
         if horizon == TradeHorizon.LONG:
             return float(settings.RISK_MULTIPLIER_LONG or 1.0)
         return float(settings.RISK_MULTIPLIER_MID or 1.0)
+
+    @staticmethod
+    def _primary_warning_trigger(warnings: list[dict]) -> str:
+        for warning in warnings:
+            trigger = str(warning.get("trigger") or "")
+            if trigger:
+                return trigger
+        return ""
 
     async def _log_result(
         self, symbol: str, result: dict, today_trade_count: int, cycle_id: str | None

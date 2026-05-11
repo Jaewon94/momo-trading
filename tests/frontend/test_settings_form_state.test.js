@@ -20,6 +20,13 @@ describe("settings_form_state", () => {
       "set-trading",
       "set-mode",
       "set-risk-appetite",
+      "set-loss-streak-recovery-mode",
+      "set-loss-streak-max-daily-buys",
+      "set-loss-streak-max-order",
+      "set-loss-streak-max-position",
+      "set-loss-streak-size-multiplier",
+      "set-loss-streak-min-change",
+      "set-loss-streak-max-change",
       "set-llm-tier1-provider",
       "set-llm-tier1-execution-mode",
       "set-llm-tier1-distributed-profile",
@@ -66,6 +73,13 @@ describe("settings_form_state", () => {
         TRADING_ENABLED: true,
         AUTONOMY_MODE: "AUTONOMOUS",
         RISK_APPETITE: "AGGRESSIVE",
+        LOSS_STREAK_RECOVERY_MODE: "PROBATION",
+        LOSS_STREAK_RECOVERY_MAX_DAILY_BUYS: 1,
+        LOSS_STREAK_RECOVERY_MAX_ORDER_KRW: 1_000_000,
+        LOSS_STREAK_RECOVERY_MAX_POSITION_PCT: 0.5,
+        LOSS_STREAK_RECOVERY_SIZE_MULTIPLIER: 0.2,
+        LOSS_STREAK_RECOVERY_MIN_CHANGE_PCT: 2.0,
+        LOSS_STREAK_RECOVERY_MAX_CHANGE_PCT: 10.0,
         LLM_PROVIDER: "CLAUDE_CODE",
         LLM_PROVIDER_TIER1: "CODEX",
         LLM_EXECUTION_MODE_TIER1: "DISTRIBUTED",
@@ -111,6 +125,13 @@ describe("settings_form_state", () => {
     expect(root.elements["set-trading"].checked).toBe(true);
     expect(root.elements["set-mode"].value).toBe("AUTONOMOUS");
     expect(root.elements["set-risk-appetite"].value).toBe("AGGRESSIVE");
+    expect(root.elements["set-loss-streak-recovery-mode"].value).toBe("PROBATION");
+    expect(root.elements["set-loss-streak-max-daily-buys"].value).toBe("1");
+    expect(root.elements["set-loss-streak-max-order"].value).toBe("1000000");
+    expect(root.elements["set-loss-streak-max-position"].value).toBe("0.5");
+    expect(root.elements["set-loss-streak-size-multiplier"].value).toBe("0.2");
+    expect(root.elements["set-loss-streak-min-change"].value).toBe("2");
+    expect(root.elements["set-loss-streak-max-change"].value).toBe("10");
     expect(root.elements["set-llm-tier1-provider"].value).toBe("CODEX");
     expect(root.elements["set-llm-tier1-execution-mode"].value).toBe("DISTRIBUTED");
     expect(root.elements["set-llm-tier1-distributed-profile"].value).toBe("FAST");

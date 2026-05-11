@@ -18,6 +18,34 @@ const SETTINGS_CONTROL_BINDINGS = [
     shouldApply: (value) => Boolean(value),
   },
   {
+    elementId: 'set-loss-streak-recovery-mode',
+    getValue: (settings) => settings.LOSS_STREAK_RECOVERY_MODE || 'BLOCK_BUY',
+  },
+  {
+    elementId: 'set-loss-streak-max-daily-buys',
+    getValue: (settings) => stringifyNullable(settings.LOSS_STREAK_RECOVERY_MAX_DAILY_BUYS),
+  },
+  {
+    elementId: 'set-loss-streak-max-order',
+    getValue: (settings) => stringifyNullable(settings.LOSS_STREAK_RECOVERY_MAX_ORDER_KRW),
+  },
+  {
+    elementId: 'set-loss-streak-max-position',
+    getValue: (settings) => stringifyNullable(settings.LOSS_STREAK_RECOVERY_MAX_POSITION_PCT),
+  },
+  {
+    elementId: 'set-loss-streak-size-multiplier',
+    getValue: (settings) => stringifyNullable(settings.LOSS_STREAK_RECOVERY_SIZE_MULTIPLIER),
+  },
+  {
+    elementId: 'set-loss-streak-min-change',
+    getValue: (settings) => stringifyNullable(settings.LOSS_STREAK_RECOVERY_MIN_CHANGE_PCT),
+  },
+  {
+    elementId: 'set-loss-streak-max-change',
+    getValue: (settings) => stringifyNullable(settings.LOSS_STREAK_RECOVERY_MAX_CHANGE_PCT),
+  },
+  {
     elementId: 'set-llm-tier1-provider',
     getValue: (settings) => settings.LLM_PROVIDER_TIER1 || settings.LLM_PROVIDER || 'CLAUDE_CODE',
   },

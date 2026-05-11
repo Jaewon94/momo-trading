@@ -665,27 +665,48 @@ class TradingAgent:
 
         result = {"symbol": symbol, "signal": False, "executed": False}
 
-        # 피드백 하드 룰: 연속 손실 차단 (매수만 차단, 매도/보유종목 분석은 허용)
+        # 피드백 하드 룰: 차단/관측 모드에서만 LLM 분석 전에 매수 후보를 보류한다.
         try:
             async with AsyncSessionLocal() as session:
                 from analysis.feedback.performance_tracker import PerformanceTracker
                 tracker = PerformanceTracker(session)
                 consecutive = await tracker.get_consecutive_losses()
-                if consecutive >= 5:
+                max_losses = int(getattr(settings, "MAX_CONSECUTIVE_LOSSES", 0) or 0)
+                recovery_mode = str(
+                    getattr(settings, "LOSS_STREAK_RECOVERY_MODE", "BLOCK_BUY") or "BLOCK_BUY"
+                ).upper()
+                if max_losses > 0 and consecutive >= max_losses:
                     direction = stock_info.get("direction", "BUY")
                     snap_holdings = [
                         normalize_krx_symbol(item)
                         for item in (portfolio_snapshot or {}).get("holding_symbols", [])
                     ]
                     if direction != "SELL" and symbol not in snap_holdings:
-                        logger.warning("[하드 룰] 연속 {}회 손실 → 매수 차단: {}", consecutive, symbol)
-                        await activity_logger.log(
-                            ActivityType.RISK_GATE, ActivityPhase.SKIP,
-                            f"🛑 연속 {consecutive}회 손실 → 매수 차단 (하드 룰)",
-                            cycle_id=cycle_id, symbol=symbol,
+                        if recovery_mode in {"BLOCK_BUY", "SHADOW"}:
+                            logger.warning(
+                                "[손실 복구 가드] 연속 {}회 손실 → 매수 보류({}): {}",
+                                consecutive,
+                                recovery_mode,
+                                symbol,
+                            )
+                            await activity_logger.log(
+                                ActivityType.RISK_GATE, ActivityPhase.SKIP,
+                                f"🛑 연속 {consecutive}회 손실 → 매수 보류 ({recovery_mode})",
+                                cycle_id=cycle_id, symbol=symbol,
+                            )
+                            return result
+                        logger.info(
+                            "[손실 복구 가드] 연속 {}회 손실, {} 모드로 리스크 검사까지 진행: {}",
+                            consecutive,
+                            recovery_mode,
+                            symbol,
                         )
-                        return result
-                    logger.debug("[하드 룰] 연속 {}회 손실이지만 매도/보유종목 분석 허용: {}", consecutive, symbol)
+                    else:
+                        logger.debug(
+                            "[손실 복구 가드] 연속 {}회 손실이지만 매도/보유종목 분석 허용: {}",
+                            consecutive,
+                            symbol,
+                        )
         except Exception:
             pass
 
@@ -1413,6 +1434,7 @@ class TradingAgent:
 
         # 5. 리스크 검사
         snap = portfolio_snapshot or {}
+        candidate_change_rate = self._optional_float(stock_info.get("change_rate"))
         risk_result = await risk_manager.check(
             signal=signal,
             portfolio_cash=snap.get("cash", 0),
@@ -1422,6 +1444,7 @@ class TradingAgent:
             cycle_id=cycle_id,
             dynamic_limits=dynamic_limits,
             market_regime=self._market_regime,
+            candidate_change_rate=candidate_change_rate,
         )
 
         if not risk_result.get("approved"):
@@ -2292,6 +2315,13 @@ class TradingAgent:
         except (TypeError, ValueError):
             number = default
         return max(min_value, min(max_value, number))
+
+    @staticmethod
+    def _optional_float(value) -> float | None:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
     def _apply_trade_thresholds(
         self, symbol: str, tier1: dict, tier2: dict,

@@ -55,6 +55,14 @@ describe("settings_action_state", () => {
       id: "set-admin-danger-confirmation-required",
       checked: true,
     });
+    const lossStreakModeChange = resolveDirectSettingChange({
+      id: "set-loss-streak-recovery-mode",
+      value: "PROBATION",
+    });
+    const lossStreakOrderCapChange = resolveDirectSettingChange({
+      id: "set-loss-streak-max-order",
+      value: "1000000",
+    });
 
     expect(fetchChange).toEqual({
       key: "NEWS_FETCH_CONCURRENCY",
@@ -91,6 +99,14 @@ describe("settings_action_state", () => {
     expect(dangerousActionChange).toEqual({
       key: "ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED",
       value: true,
+    });
+    expect(lossStreakModeChange).toEqual({
+      key: "LOSS_STREAK_RECOVERY_MODE",
+      value: "PROBATION",
+    });
+    expect(lossStreakOrderCapChange).toEqual({
+      key: "LOSS_STREAK_RECOVERY_MAX_ORDER_KRW",
+      value: "1000000",
     });
   });
 

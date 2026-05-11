@@ -14,7 +14,15 @@ from services.runtime_settings_service import runtime_settings_service
 class TradingGuard:
     """매수 전 계좌/전략 상태를 점검해 과도한 손실 구간을 차단한다."""
 
-    async def evaluate_buy_guard(self, strategy_type: str, portfolio_budget: float) -> dict:
+    async def evaluate_buy_guard(
+        self,
+        strategy_type: str,
+        portfolio_budget: float,
+        *,
+        candidate_change_rate: float | None = None,
+        today_trade_count: int = 0,
+        current_holding_count: int = 0,
+    ) -> dict:
         drawdown_pct = await self._get_daily_realized_pnl_pct(portfolio_budget=portfolio_budget)
         max_drawdown = abs(float(settings.MAX_DAILY_DRAWDOWN_PCT or 0))
         if max_drawdown > 0 and drawdown_pct <= -max_drawdown:
@@ -39,10 +47,20 @@ class TradingGuard:
         consecutive_losses = await self._get_consecutive_losses()
         max_losses = int(settings.MAX_CONSECUTIVE_LOSSES or 0)
         if max_losses > 0 and consecutive_losses >= max_losses:
-            return await self._block(
-                "CONSECUTIVE_LOSSES",
-                f"연속 손실 한도 도달 ({consecutive_losses}회)",
+            loss_streak_guard = self._evaluate_loss_streak_recovery(
+                consecutive_losses=consecutive_losses,
+                max_losses=max_losses,
+                candidate_change_rate=candidate_change_rate,
+                today_trade_count=today_trade_count,
+                current_holding_count=current_holding_count,
             )
+            if loss_streak_guard["action"] == "ALLOW":
+                warnings.append(loss_streak_guard["warning"])
+            else:
+                return await self._reject(
+                    loss_streak_guard["trigger"],
+                    loss_streak_guard["reason"],
+                )
 
         expectancy = await self._get_strategy_expectancy(strategy_type)
         min_expectancy = float(settings.MIN_STRATEGY_EXPECTANCY or 0.0)
@@ -97,6 +115,99 @@ class TradingGuard:
                 "expectancy": expectancy,
                 "min_expectancy": min_expectancy,
                 "position_size_multiplier": multiplier,
+            },
+        }
+
+    def _evaluate_loss_streak_recovery(
+        self,
+        *,
+        consecutive_losses: int,
+        max_losses: int,
+        candidate_change_rate: float | None,
+        today_trade_count: int,
+        current_holding_count: int,
+    ) -> dict:
+        mode = str(getattr(settings, "LOSS_STREAK_RECOVERY_MODE", "BLOCK_BUY") or "BLOCK_BUY").upper()
+        reason = f"연속 손실 한도 도달 ({consecutive_losses}회 >= {max_losses}회)"
+
+        if mode == "OFF":
+            return {
+                "action": "ALLOW",
+                "warning": {
+                    "trigger": "CONSECUTIVE_LOSSES",
+                    "reason": f"{reason}, 복구 모드 OFF",
+                    "recovery_mode": mode,
+                    "consecutive_losses": consecutive_losses,
+                },
+            }
+
+        if mode == "SHADOW":
+            return {
+                "action": "BLOCK",
+                "trigger": "CONSECUTIVE_LOSSES_SHADOW",
+                "reason": f"{reason}, shadow 관측만 수행",
+            }
+
+        if mode == "BLOCK_BUY":
+            return {
+                "action": "BLOCK",
+                "trigger": "CONSECUTIVE_LOSSES",
+                "reason": reason,
+            }
+
+        if mode == "PROBATION":
+            max_daily_buys = int(getattr(settings, "LOSS_STREAK_RECOVERY_MAX_DAILY_BUYS", 1) or 0)
+            if max_daily_buys <= 0:
+                return {
+                    "action": "BLOCK",
+                    "trigger": "CONSECUTIVE_LOSSES_PROBATION",
+                    "reason": f"{reason}, probation 일일 매수 한도 0회",
+                }
+            if today_trade_count >= max_daily_buys:
+                return {
+                    "action": "BLOCK",
+                    "trigger": "CONSECUTIVE_LOSSES_PROBATION",
+                    "reason": f"{reason}, probation 일일 매수 한도 도달 ({today_trade_count}/{max_daily_buys})",
+                }
+            if current_holding_count > 0:
+                return {
+                    "action": "BLOCK",
+                    "trigger": "CONSECUTIVE_LOSSES_PROBATION",
+                    "reason": f"{reason}, probation은 무보유 상태에서만 허용",
+                }
+
+            min_change = float(getattr(settings, "LOSS_STREAK_RECOVERY_MIN_CHANGE_PCT", 0.0) or 0.0)
+            max_change = float(getattr(settings, "LOSS_STREAK_RECOVERY_MAX_CHANGE_PCT", 0.0) or 0.0)
+            if candidate_change_rate is not None:
+                if min_change > 0 and candidate_change_rate < min_change:
+                    return {
+                        "action": "BLOCK",
+                        "trigger": "CONSECUTIVE_LOSSES_PROBATION",
+                        "reason": f"{reason}, probation 모멘텀 부족 ({candidate_change_rate:.2f}% < {min_change:.2f}%)",
+                    }
+                if max_change > 0 and candidate_change_rate > max_change:
+                    return {
+                        "action": "BLOCK",
+                        "trigger": "CONSECUTIVE_LOSSES_PROBATION",
+                        "reason": f"{reason}, probation 과열 제외 ({candidate_change_rate:.2f}% > {max_change:.2f}%)",
+                    }
+
+        multiplier = min(
+            max(float(getattr(settings, "LOSS_STREAK_RECOVERY_SIZE_MULTIPLIER", 0.2) or 0.2), 0.01),
+            1.0,
+        )
+        return {
+            "action": "ALLOW",
+            "warning": {
+                "trigger": "CONSECUTIVE_LOSSES",
+                "reason": f"{reason}, {mode} 복구 모드로 축소 진입",
+                "recovery_mode": mode,
+                "consecutive_losses": consecutive_losses,
+                "max_losses": max_losses,
+                "position_size_multiplier": multiplier,
+                "max_order_krw": int(getattr(settings, "LOSS_STREAK_RECOVERY_MAX_ORDER_KRW", 0) or 0),
+                "max_position_pct": float(getattr(settings, "LOSS_STREAK_RECOVERY_MAX_POSITION_PCT", 0.0) or 0.0),
+                "candidate_change_rate": candidate_change_rate,
             },
         }
 

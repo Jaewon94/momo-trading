@@ -1612,6 +1612,54 @@
                 <option value="AGGRESSIVE">공격적 (AGGRESSIVE)</option>
               </select>
             </div>
+            <div class="rounded-xl border border-gray-700 bg-dark-900/60 p-4">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <div class="text-sm font-medium text-white">연속 손실 복구 모드</div>
+                  <div class="mt-1 text-xs text-gray-500">손실 한도 도달 후 신규 BUY를 차단하거나 작은 재진입만 허용합니다.</div>
+                </div>
+                <select id="set-loss-streak-recovery-mode"
+                  class="w-44 bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                  <option value="BLOCK_BUY">차단 (BLOCK_BUY)</option>
+                  <option value="SHADOW">관측 (SHADOW)</option>
+                  <option value="PROBATION">소액 재진입 (PROBATION)</option>
+                  <option value="REDUCE_SIZE">수량 축소 (REDUCE_SIZE)</option>
+                  <option value="OFF">해제 (OFF)</option>
+                </select>
+              </div>
+              <div class="mt-4 grid grid-cols-2 gap-3">
+                <label class="text-xs text-gray-400">
+                  일일 재진입
+                  <input id="set-loss-streak-max-daily-buys" type="number" min="0" max="3" step="1"
+                    class="mt-1 w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100">
+                </label>
+                <label class="text-xs text-gray-400">
+                  주문 상한(원)
+                  <input id="set-loss-streak-max-order" type="number" min="0" max="10000000" step="100000"
+                    class="mt-1 w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100">
+                </label>
+                <label class="text-xs text-gray-400">
+                  포지션 상한(%)
+                  <input id="set-loss-streak-max-position" type="number" min="0" max="100" step="0.1"
+                    class="mt-1 w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100">
+                </label>
+                <label class="text-xs text-gray-400">
+                  수량 배율
+                  <input id="set-loss-streak-size-multiplier" type="number" min="0.01" max="1" step="0.01"
+                    class="mt-1 w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100">
+                </label>
+                <label class="text-xs text-gray-400">
+                  최소 등락률(%)
+                  <input id="set-loss-streak-min-change" type="number" min="0" max="100" step="0.1"
+                    class="mt-1 w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100">
+                </label>
+                <label class="text-xs text-gray-400">
+                  최대 등락률(%)
+                  <input id="set-loss-streak-max-change" type="number" min="0" max="100" step="0.1"
+                    class="mt-1 w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-100">
+                </label>
+              </div>
+            </div>
             <div id="strategy-insights-panel" class="rounded-xl border border-gray-700 bg-dark-900/60 p-4 text-sm text-gray-300">
               불러오는 중...
             </div>

@@ -250,6 +250,37 @@ async def test_admin_settings_rejects_invalid_account_equity_drawdown_threshold(
 
 
 @pytest.mark.asyncio
+async def test_admin_settings_accepts_loss_streak_recovery_mode(client):
+    response = await client.put(
+        "/api/v1/admin/settings",
+        json={
+            "LOSS_STREAK_RECOVERY_MODE": "probation",
+            "LOSS_STREAK_RECOVERY_MAX_DAILY_BUYS": "1",
+            "LOSS_STREAK_RECOVERY_MAX_ORDER_KRW": "1000000",
+            "LOSS_STREAK_RECOVERY_SIZE_MULTIPLIER": "0.2",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["LOSS_STREAK_RECOVERY_MODE"]["new"] == "PROBATION"
+    assert payload["LOSS_STREAK_RECOVERY_MAX_DAILY_BUYS"]["new"] == 1
+    assert payload["LOSS_STREAK_RECOVERY_MAX_ORDER_KRW"]["new"] == 1_000_000
+    assert payload["LOSS_STREAK_RECOVERY_SIZE_MULTIPLIER"]["new"] == 0.2
+
+
+@pytest.mark.asyncio
+async def test_admin_settings_rejects_invalid_loss_streak_recovery_multiplier(client):
+    response = await client.put(
+        "/api/v1/admin/settings",
+        json={"LOSS_STREAK_RECOVERY_SIZE_MULTIPLIER": 1.5},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "LOSS_STREAK_RECOVERY_SIZE_MULTIPLIER must be between 0 and 1"
+
+
+@pytest.mark.asyncio
 async def test_admin_settings_normalizes_empty_news_model_to_default(client, monkeypatch):
     monkeypatch.setattr("api.routes.admin.settings.NEWS_LLM_MODEL", "qwen2.5:14b")
 
