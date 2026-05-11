@@ -99,6 +99,10 @@ class RiskManager:
             }
             await self._log_result(symbol, result, today_trade_count, cycle_id)
             return result
+        guard_warnings = [
+            warning for warning in guard_result.get("warnings", [])
+            if isinstance(warning, dict)
+        ]
 
         # 일일 매매 한도 검사 (0 = 무제한)
         if eff_max_daily > 0 and today_trade_count >= eff_max_daily:
@@ -116,6 +120,27 @@ class RiskManager:
             return result
 
         total_amount = price * quantity
+
+        size_multiplier = min(
+            [
+                float(warning.get("position_size_multiplier") or 1.0)
+                for warning in guard_warnings
+            ] or [1.0]
+        )
+        if 0 < size_multiplier < 1.0:
+            adjusted_qty = int(quantity * size_multiplier)
+            if adjusted_qty < eff_min_qty:
+                result = {
+                    "approved": False,
+                    "reason": "기대값 가드 수량 축소 후 최소 수량 미달",
+                    "trigger": "NEGATIVE_EXPECTANCY",
+                    "warnings": guard_warnings,
+                }
+                await self._log_result(symbol, result, today_trade_count, cycle_id)
+                return result
+            quantity = adjusted_qty
+            total_amount = price * quantity
+            signal.suggested_quantity = quantity
 
         # 리스크:보상 비율 검사 (다른 조정 전에 먼저 확인)
         entry = signal.suggested_price or 0

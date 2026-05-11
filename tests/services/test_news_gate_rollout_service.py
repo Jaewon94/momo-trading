@@ -33,6 +33,23 @@ async def test_news_gate_rollout_service_shadow_only_evaluates_without_blocking(
 
 
 @pytest.mark.asyncio
+async def test_news_gate_rollout_service_semi_auto_recommendation_never_blocks(monkeypatch) -> None:
+    service = NewsGateRolloutService()
+    monkeypatch.setattr(
+        "services.news_gate_rollout_service.settings.NEWS_GATE_ROLLOUT_MODE",
+        "SEMI_AUTO_GATE_RECOMMENDATION",
+        raising=False,
+    )
+
+    decision = await service.resolve()
+
+    assert decision.effective_mode == "SEMI_AUTO_GATE_RECOMMENDATION"
+    assert decision.evaluate_gate is True
+    assert decision.block_buy is False
+    assert decision.record_shadow is True
+
+
+@pytest.mark.asyncio
 async def test_news_gate_rollout_service_downgrades_buy_block_when_rollout_not_promoted(monkeypatch) -> None:
     service = NewsGateRolloutService()
     monkeypatch.setattr("services.news_gate_rollout_service.settings.NEWS_GATE_ROLLOUT_MODE", "BUY_BLOCK_GATE", raising=False)

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.config import settings
 from models.news_item import NewsItem
 from services.news_ingest_service import news_ingest_service
+from services.news_gate_rollout_service import NEWS_GATE_ROLLOUT_MODES
 from services.performance_reporting_service import performance_reporting_service
 from services.news_runtime_service import news_runtime_service
 from util.time_util import ensure_kst, now_kst
@@ -122,6 +123,7 @@ class NewsReportingService:
             "translate_foreign_enabled": bool(settings.NEWS_TRANSLATE_FOREIGN_ENABLED),
             "nasdaq_enabled": bool(settings.NEWS_NASDAQ_ENABLED),
             "gate_rollout_mode": str(getattr(settings, "NEWS_GATE_ROLLOUT_MODE", "") or ""),
+            "gate_rollout_modes": sorted(NEWS_GATE_ROLLOUT_MODES),
             "gate_enabled": bool(settings.NEWS_GATE_ENABLED),
             "poll_enabled": bool(settings.NEWS_POLL_ENABLED),
             "negative_block_threshold": float(settings.NEWS_NEGATIVE_BLOCK_THRESHOLD or 0.0),
@@ -132,6 +134,18 @@ class NewsReportingService:
             "rollout_min_profit_factor": float(settings.NEWS_ROLLOUT_MIN_PROFIT_FACTOR or 0.0),
             "rollout_min_expectancy": float(settings.NEWS_ROLLOUT_MIN_EXPECTANCY or 0.0),
             "rollout_max_drawdown_krw": float(settings.NEWS_ROLLOUT_MAX_DRAWDOWN_KRW or 0.0),
+            "concurrency": {
+                "fetch": {
+                    "setting": "NEWS_FETCH_CONCURRENCY",
+                    "value": int(settings.NEWS_FETCH_CONCURRENCY or 0),
+                    "scope": "source fetch fan-out",
+                },
+                "translation": {
+                    "setting": "NEWS_TRANSLATION_CONCURRENCY",
+                    "value": int(settings.NEWS_TRANSLATION_CONCURRENCY or 0),
+                    "scope": "foreign news translation fan-out",
+                },
+            },
         }
 
     @staticmethod

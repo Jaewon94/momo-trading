@@ -25,6 +25,9 @@ class DecisionBenchmarkPoint:
     event_source: str
     scanner_score: float | None
     strategy_type: str
+    alpha_source: str
+    execution_profile: str
+    risk_profile: str
     tier1_decision: str
     tier2_decision: str
     provider: str
@@ -87,24 +90,7 @@ class DecisionBenchmarkService:
                 )
             ).scalars().all()
 
-        points = [
-            DecisionBenchmarkPoint(
-                cycle_id=str(event.cycle_id or ""),
-                symbol=str(event.symbol or ""),
-                final_action=str(event.final_action or "UNKNOWN").upper(),
-                decision_stage=str(event.decision_stage or "UNKNOWN").upper(),
-                event_source=str(event.source or "UNKNOWN").upper(),
-                scanner_score=float(event.scanner_score) if event.scanner_score is not None else None,
-                strategy_type=str(event.strategy_type or "UNKNOWN").upper(),
-                tier1_decision=str(event.tier1_decision or "UNKNOWN").upper(),
-                tier2_decision=str(event.tier2_decision or "UNKNOWN").upper(),
-                provider=str(event.provider or "UNKNOWN").upper(),
-                risk_gate_result=str(event.risk_gate_result or "UNKNOWN").upper(),
-                return_pct=float(label.return_pct or 0.0),
-                news_source_codes=self._extract_news_source_codes(getattr(event, "metadata_json", None)),
-            )
-            for event, label in rows
-        ]
+        points = [self._point_from_row(event, label) for event, label in rows]
 
         overall = self._metrics(points)
         return {
@@ -121,6 +107,9 @@ class DecisionBenchmarkService:
             "by_decision_stage": self._group(points, lambda item: item.decision_stage),
             "by_event_source": self._group(points, lambda item: item.event_source),
             "by_strategy_type": self._group(points, lambda item: item.strategy_type),
+            "by_alpha_source": self._group(points, lambda item: item.alpha_source),
+            "by_execution_profile": self._group(points, lambda item: item.execution_profile),
+            "by_risk_profile": self._group(points, lambda item: item.risk_profile),
             "by_tier1_decision": self._group(points, lambda item: item.tier1_decision),
             "by_tier2_decision": self._group(points, lambda item: item.tier2_decision),
             "by_provider": self._group(points, lambda item: item.provider),
@@ -132,6 +121,28 @@ class DecisionBenchmarkService:
             "candidate_path_comparison": self._candidate_path_comparison(points),
             "ai_skipped_observation": self._ai_skipped_observation(list(ai_skipped_rows)),
         }
+
+    def _point_from_row(self, event: DecisionEvent, label: DecisionForwardReturn) -> DecisionBenchmarkPoint:
+        metadata = self._safe_json(getattr(event, "metadata_json", None))
+        strategy_type = str(event.strategy_type or "UNKNOWN").upper()
+        return DecisionBenchmarkPoint(
+            cycle_id=str(event.cycle_id or ""),
+            symbol=str(event.symbol or ""),
+            final_action=str(event.final_action or "UNKNOWN").upper(),
+            decision_stage=str(event.decision_stage or "UNKNOWN").upper(),
+            event_source=str(event.source or "UNKNOWN").upper(),
+            scanner_score=float(event.scanner_score) if event.scanner_score is not None else None,
+            strategy_type=strategy_type,
+            alpha_source=self._extract_profile_value(metadata, "alpha_source", fallback="UNKNOWN"),
+            execution_profile=self._extract_profile_value(metadata, "execution_profile", fallback=strategy_type),
+            risk_profile=self._extract_profile_value(metadata, "risk_profile", fallback="UNKNOWN"),
+            tier1_decision=str(event.tier1_decision or "UNKNOWN").upper(),
+            tier2_decision=str(event.tier2_decision or "UNKNOWN").upper(),
+            provider=str(event.provider or "UNKNOWN").upper(),
+            risk_gate_result=str(event.risk_gate_result or "UNKNOWN").upper(),
+            return_pct=float(label.return_pct or 0.0),
+            news_source_codes=self._extract_news_source_codes(getattr(event, "metadata_json", None)),
+        )
 
     def _ai_skipped_observation(self, rows: list[ExecutionMetric]) -> dict:
         grouped: dict[tuple[str, str, str], int] = defaultdict(int)
@@ -368,6 +379,7 @@ class DecisionBenchmarkService:
             item.decision_stage,
             item.event_source,
             item.strategy_type,
+            item.execution_profile,
             item.provider,
             item.risk_gate_result,
         ])
@@ -425,6 +437,16 @@ class DecisionBenchmarkService:
         except (TypeError, ValueError):
             return {}
         return parsed if isinstance(parsed, dict) else {}
+
+    @staticmethod
+    def _extract_profile_value(metadata: dict, key: str, *, fallback: str) -> str:
+        for root_key in ("signal_metadata", "analysis_context"):
+            root = metadata.get(root_key)
+            if isinstance(root, dict):
+                value = str(root.get(key) or "").upper().strip()
+                if value:
+                    return value
+        return str(fallback or "UNKNOWN").upper().strip() or "UNKNOWN"
 
     @staticmethod
     def _metrics(points: list[DecisionBenchmarkPoint]) -> dict:

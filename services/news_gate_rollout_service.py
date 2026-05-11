@@ -12,7 +12,13 @@ from core.database import AsyncSessionLocal
 from services.performance_reporting_service import performance_reporting_service
 
 
-NEWS_GATE_ROLLOUT_MODES = {"OFF", "POLL_ONLY", "SHADOW_ONLY", "BUY_BLOCK_GATE"}
+NEWS_GATE_ROLLOUT_MODES = {
+    "OFF",
+    "POLL_ONLY",
+    "SHADOW_ONLY",
+    "SEMI_AUTO_GATE_RECOMMENDATION",
+    "BUY_BLOCK_GATE",
+}
 
 
 @dataclass
@@ -41,7 +47,7 @@ class NewsGateRolloutService:
 
     def should_record_shadow(self) -> bool:
         requested = self._requested_mode()
-        if requested in {"SHADOW_ONLY", "BUY_BLOCK_GATE"}:
+        if requested in {"SHADOW_ONLY", "SEMI_AUTO_GATE_RECOMMENDATION", "BUY_BLOCK_GATE"}:
             return True
         if requested in {"OFF", "POLL_ONLY"}:
             return False
@@ -115,6 +121,15 @@ class NewsGateRolloutService:
                 block_buy=False,
                 record_shadow=True,
                 reason="뉴스 gate shadow-only",
+            )
+        if requested == "SEMI_AUTO_GATE_RECOMMENDATION":
+            return NewsGateRolloutDecision(
+                requested_mode=requested,
+                effective_mode="SEMI_AUTO_GATE_RECOMMENDATION",
+                evaluate_gate=True,
+                block_buy=False,
+                record_shadow=True,
+                reason="뉴스 gate 추천 전용: 실주문 BUY 차단 없음",
             )
 
         rollout = await self._get_rollout_status()

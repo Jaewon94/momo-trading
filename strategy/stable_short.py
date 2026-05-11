@@ -3,6 +3,7 @@
 판단(BUY/SELL/HOLD)은 AI 분석 결과를 신뢰하고,
 전략은 실행 파라미터(손절/익절/긴급도)와 이유 텍스트를 제공한다.
 """
+from strategy.base import strategy_profile_metadata
 from strategy.signal import TradeSignal
 from trading.enums import SignalAction, SignalUrgency
 
@@ -92,6 +93,7 @@ class StableShortStrategy:
                 strategy_type=self.strategy_type,
                 reason=" + ".join(reasons),
                 confidence=confidence,
+                metadata=strategy_profile_metadata(self.strategy_type),
             )
 
         # === SELL ===
@@ -110,6 +112,7 @@ class StableShortStrategy:
                 strategy_type=self.strategy_type,
                 reason=f"AI 매도 추천 (신뢰도 {confidence:.0%})",
                 confidence=confidence,
+                metadata=strategy_profile_metadata(self.strategy_type),
             )
 
         return None

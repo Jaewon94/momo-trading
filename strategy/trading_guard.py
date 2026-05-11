@@ -47,10 +47,16 @@ class TradingGuard:
         expectancy = await self._get_strategy_expectancy(strategy_type)
         min_expectancy = float(settings.MIN_STRATEGY_EXPECTANCY or 0.0)
         if expectancy is not None and expectancy < min_expectancy:
-            return await self._block(
-                "NEGATIVE_EXPECTANCY",
-                f"전략 기대값 하회 ({expectancy:+.4f} < {min_expectancy:+.4f})",
+            expectancy_guard = await self._evaluate_negative_expectancy(
+                expectancy=expectancy,
+                min_expectancy=min_expectancy,
             )
+            if expectancy_guard["action"] == "ALLOW":
+                warnings.append(expectancy_guard["warning"])
+            elif expectancy_guard["action"] == "BLOCK":
+                return await self._reject("NEGATIVE_EXPECTANCY", expectancy_guard["reason"])
+            elif expectancy_guard["action"] == "KILL_SWITCH":
+                return await self._block("NEGATIVE_EXPECTANCY", expectancy_guard["reason"])
 
         return {
             "approved": True,
@@ -70,6 +76,28 @@ class TradingGuard:
             "trigger": trigger,
             "kill_switched": bool(settings.AUTO_RISK_KILL_SWITCH_ENABLED),
             "warnings": [],
+        }
+
+    async def _evaluate_negative_expectancy(self, *, expectancy: float, min_expectancy: float) -> dict:
+        mode = str(getattr(settings, "STRATEGY_EXPECTANCY_GUARD_MODE", "REDUCE_SIZE") or "REDUCE_SIZE").upper()
+        reason = f"전략 기대값 하회 ({expectancy:+.4f} < {min_expectancy:+.4f})"
+        if mode == "OFF":
+            return {"action": "ALLOW", "warning": {"trigger": "NEGATIVE_EXPECTANCY", "reason": reason}}
+        if mode == "KILL_SWITCH":
+            return {"action": "KILL_SWITCH", "reason": reason}
+        if mode == "BLOCK_BUY":
+            return {"action": "BLOCK", "reason": reason}
+
+        multiplier = min(max(float(getattr(settings, "NEGATIVE_EXPECTANCY_SIZE_MULTIPLIER", 0.5) or 0.5), 0.05), 1.0)
+        return {
+            "action": "ALLOW",
+            "warning": {
+                "trigger": "NEGATIVE_EXPECTANCY",
+                "reason": reason,
+                "expectancy": expectancy,
+                "min_expectancy": min_expectancy,
+                "position_size_multiplier": multiplier,
+            },
         }
 
     @staticmethod

@@ -102,6 +102,9 @@ async def test_decision_benchmark_service_groups_labeled_returns() -> None:
         cycle_id="cycle-buy-005930",
         metadata={
             "signal_metadata": {
+                "alpha_source": "LLM_DECISION_PIPELINE",
+                "execution_profile": "STABLE_SHORT",
+                "risk_profile": "STABLE",
                 "news_top_contributors": [
                     {"source_code": "DART", "headline": "공시", "pressure": 0.4},
                     {"source_code": "YONHAP", "headline": "연합뉴스", "pressure": 0.2},
@@ -232,6 +235,9 @@ async def test_decision_benchmark_service_groups_labeled_returns() -> None:
     assert report["by_event_source"]["DECISION_MAKER"]["event_count"] == 2
     assert report["by_event_source"]["RISK_GATE"]["event_count"] == 1
     assert report["by_strategy_type"]["STABLE_SHORT"]["avg_return_pct"] == 1.1
+    assert report["by_alpha_source"]["LLM_DECISION_PIPELINE"]["event_count"] == 1
+    assert report["by_execution_profile"]["STABLE_SHORT"]["event_count"] == 3
+    assert report["by_risk_profile"]["STABLE"]["event_count"] == 1
     assert report["by_tier1_decision"]["BUY"]["event_count"] == 3
     assert report["by_tier2_decision"]["BUY"]["event_count"] == 1
     assert report["by_tier2_decision"]["HOLD"]["event_count"] == 1

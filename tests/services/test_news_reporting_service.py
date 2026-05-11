@@ -79,6 +79,9 @@ async def test_news_reporting_service_returns_empty_storage_snapshot_when_table_
     assert overview["periodic"]["weekly"]["period"] == "weekly"
     assert overview["periodic"]["monthly"]["period"] == "monthly"
     assert "shadow_enabled" in overview["settings"]
+    assert "SEMI_AUTO_GATE_RECOMMENDATION" in overview["settings"]["gate_rollout_modes"]
+    assert overview["settings"]["concurrency"]["fetch"]["setting"] == "NEWS_FETCH_CONCURRENCY"
+    assert overview["settings"]["concurrency"]["translation"]["setting"] == "NEWS_TRANSLATION_CONCURRENCY"
     assert "rollout_min_sample_size" in overview["settings"]
     assert "rollout_max_drawdown_krw" in overview["settings"]
 
