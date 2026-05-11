@@ -26,12 +26,14 @@ from services.ai_skip_metric_service import ai_skip_metric_service
 from services.decision_event_service import decision_event_service
 from services.deterministic_final_gate_service import deterministic_final_gate_service
 from services.deterministic_prompt_context_service import deterministic_prompt_context_service
+from services.deterministic_tier1_fast_gate_service import deterministic_tier1_fast_gate_service
 from services.news_gate_rollout_service import news_gate_rollout_service
 from services.news_context_service import news_context_service
 from services.pre_analysis_gate_service import pre_analysis_gate_service
 from services.runtime_reconfiguration_service import runtime_reconfiguration_service
 from services.tier1_analysis_cache_service import tier1_analysis_cache_service
 from strategy.aggressive_short import AggressiveShortStrategy
+from strategy.base import strategy_profile_metadata
 from strategy.risk_manager import risk_manager
 from strategy.signal import TradeSignal
 from strategy.stable_short import StableShortStrategy
@@ -65,7 +67,7 @@ class TradingAgent:
         # 실시간 이벤트 중복 분석 방지 (종목별 쿨다운)
         self._analyzing: set[str] = set()
         self._cooldowns: dict[str, float] = {}  # symbol -> last_trigger_time
-        self.EVENT_COOLDOWN_SEC = 120  # 동일 종목 재분석 최소 간격 (초)
+        self.EVENT_COOLDOWN_SEC = 60  # 동일 종목 재분석 최소 간격 (초)
         # 사이클 내 시장 컨텍스트 캐시 (Tier1/Tier2에 전달)
         self._market_context: str = ""
         # 시장 국면 (전략/리스크에 전달)
@@ -172,6 +174,58 @@ class TradingAgent:
         except Exception as exc:
             logger.debug("AI skip decision event 기록 실패 (무시): {}", str(exc))
 
+    @staticmethod
+    def _deterministic_tier1_fast_gate_mode() -> str:
+        """Return OFF/SHADOW/ENFORCE while preserving the legacy boolean setting."""
+        configured = str(getattr(settings, "DETERMINISTIC_TIER1_FAST_GATE_MODE", "") or "").upper()
+        if configured in {"OFF", "SHADOW", "ENFORCE"}:
+            return configured
+        return "ENFORCE" if bool(getattr(settings, "DETERMINISTIC_TIER1_FAST_GATE_ENABLED", True)) else "OFF"
+
+    async def _record_tier1_fast_gate_shadow_decision(
+        self,
+        *,
+        stock_info: dict,
+        cycle_id: str | None,
+        fast_gate,
+        reference_price: float | None,
+    ) -> None:
+        """Record deterministic Tier1 gate output without changing live decisions."""
+        try:
+            symbol = normalize_krx_symbol(str(stock_info.get("symbol", "")))
+            action = str(getattr(fast_gate, "action", "") or "").upper()
+            code = str(getattr(fast_gate, "code", "") or "UNKNOWN").upper()
+            detail = dict(getattr(fast_gate, "detail", {}) or {})
+            await decision_event_service.record_event(
+                cycle_id=cycle_id,
+                symbol=symbol,
+                stock_name=str(stock_info.get("name") or symbol),
+                market=str(stock_info.get("market") or "KRX"),
+                decision_stage="DETERMINISTIC_TIER1_FAST_GATE_SHADOW",
+                source="deterministic_tier1_fast_gate",
+                strategy_type=str(stock_info.get("strategy_type") or ""),
+                scanner_score=stock_info.get("scanner_score") or stock_info.get("score"),
+                tier1_decision=action or None,
+                risk_gate_result=code,
+                final_action=f"SHADOW_{action or 'UNKNOWN'}",
+                confidence=stock_info.get("confidence"),
+                reference_price=reference_price,
+                provider="DETERMINISTIC",
+                model="deterministic_tier1_fast_gate",
+                status="RECORDED",
+                reason=str(getattr(fast_gate, "reason", "") or ""),
+                metadata={
+                    "ai_shadow": True,
+                    "shadow_policy": "TIER1_FAST_GATE",
+                    "would_skip_tier1": bool(getattr(fast_gate, "should_skip_tier1", False)),
+                    "score": getattr(fast_gate, "score", None),
+                    "reason_code": code,
+                    **detail,
+                },
+            )
+        except Exception as exc:
+            logger.debug("Tier1 fast gate shadow decision event 기록 실패 (무시): {}", str(exc))
+
     async def run_cycle(
         self,
         manual_provider_override: str | None = None,
@@ -223,9 +277,17 @@ class TradingAgent:
         interval = max(float(poll_interval_sec), 0.01)
 
         while True:
-            if not self._cycle_lock.locked() and not self._analyzing and not self._selling:
+            cycle_idle = (
+                not self._cycle_lock.locked()
+                and not self._analyzing
+                and not self._selling
+            )
+            if cycle_idle and not decision_maker.has_inflight_confirms():
                 return True
             if _time.time() >= deadline:
+                # 사이클은 끝났지만 체결확인 태스크가 남아 있으면 잔여 시간으로 한 번 더 드레인 시도
+                if cycle_idle and decision_maker.has_inflight_confirms():
+                    return await decision_maker.wait_for_inflight_confirms(timeout_sec=interval)
                 return False
             await asyncio.sleep(interval)
 
@@ -342,14 +404,13 @@ class TradingAgent:
             # 1c. 데이트레이딩 컨텍스트 빌드 (시간/손익/매매성적)
             self._trading_context = await self._build_trading_context()
 
-            # 선정 종목을 결과에 저장 (WebSocket 구독용)
-            results["selected_symbols"] = [
-                (c.get("symbol", ""), c.get("market", "KRX"))
-                for c in candidates if c.get("symbol")
-            ]
+            # 선정 종목은 분석/매매 대상으로 유지하고, 실시간 감시는 더 넓은 후보군을 사용한다.
+            monitor_candidates = self._build_monitor_candidates(scan_result, candidates)
+            results["selected_symbols"] = self._symbols_from_candidates(candidates)
+            results["monitor_symbols"] = self._symbols_from_candidates(monitor_candidates)
 
             # AI가 결정한 모니터링 임계값을 event_detector에 설정
-            self._apply_scan_thresholds(candidates)
+            self._apply_scan_thresholds(monitor_candidates)
 
             # 2. 후보 종목별 심층 분석 + 전략 평가 + 매매 (병렬)
             # 세션 일시 중지 → 각 종목 분석은 독립 호출 (병렬 가능)
@@ -733,6 +794,59 @@ class TradingAgent:
             return result
 
         indicators = chart_result.indicators
+
+        fast_gate_mode = self._deterministic_tier1_fast_gate_mode()
+        if fast_gate_mode != "OFF":
+            fast_gate = deterministic_tier1_fast_gate_service.evaluate(
+                symbol=symbol,
+                stock_info=stock_info,
+                current_price=current_price,
+                daily_df=daily_df,
+                minute_df=minute_df,
+                chart_result=chart_result,
+                portfolio_snapshot=portfolio_snapshot,
+                market_regime=self._market_regime,
+                ignore_enabled=fast_gate_mode == "SHADOW",
+            )
+            if fast_gate_mode == "SHADOW":
+                await self._record_tier1_fast_gate_shadow_decision(
+                    stock_info=stock_info,
+                    cycle_id=cycle_id,
+                    fast_gate=fast_gate,
+                    reference_price=current_price,
+                )
+            elif fast_gate.should_skip_tier1:
+                await activity_logger.log(
+                    ActivityType.TIER1_ANALYSIS,
+                    ActivityPhase.SKIP,
+                    f"⚡ [{name}] deterministic Tier1 fast gate: HOLD → LLM 스킵 "
+                    f"(score {fast_gate.score:.1f}) | {fast_gate.reason[:100]}",
+                    cycle_id=cycle_id,
+                    symbol=symbol,
+                    detail={"deterministic_tier1_fast_gate": fast_gate.code, **fast_gate.detail},
+                    llm_tier="TIER1",
+                    confidence=0,
+                )
+                await ai_skip_metric_service.record(
+                    stage="DETERMINISTIC_TIER1_FAST_GATE",
+                    reason_code=fast_gate.code,
+                    skipped_tier="TIER1",
+                    cycle_id=cycle_id,
+                    symbol=symbol,
+                    detail=fast_gate.detail,
+                )
+                await self._record_ai_skip_decision_event(
+                    stock_info=stock_info,
+                    cycle_id=cycle_id,
+                    decision_stage="DETERMINISTIC_TIER1_FAST_GATE",
+                    source="deterministic_tier1_fast_gate",
+                    reason_code=fast_gate.code,
+                    final_action="HOLD",
+                    reference_price=current_price,
+                    reason=fast_gate.reason,
+                    metadata=fast_gate.detail,
+                )
+                return result
 
         # 3c. 피드백 컨텍스트 빌드
         feedback_context = "매매 이력 없음"
@@ -1153,6 +1267,7 @@ class TradingAgent:
                 strategy_type=strategy_type,
                 reason=final.get("reason", "Tier2 승인"),
                 confidence=analysis.get("confidence", 0.7),
+                metadata=strategy_profile_metadata(strategy_type),
             )
             signal.metadata["trade_horizon"] = decide_trade_horizon(
                 strategy_type=strategy_type,
@@ -1219,7 +1334,7 @@ class TradingAgent:
                 )
 
         # AI가 결정한 손절/익절/트레일링 스탑을 event_detector에 설정
-        self._apply_trade_thresholds(
+        active_thresholds = self._apply_trade_thresholds(
             symbol, analysis, final,
             current_price=current_price,
             horizon=(signal.metadata or {}).get("trade_horizon"),
@@ -1366,13 +1481,27 @@ class TradingAgent:
         analysis_context = {
             "ai_recommendation": analysis.get("recommendation"),
             "ai_confidence": analysis.get("confidence"),
-            "ai_target_price": analysis.get("target_price"),
-            "ai_stop_loss_price": analysis.get("stop_loss_price"),
+            "ai_target_price": (
+                active_thresholds.get("take_profit")
+                or signal.target_price
+                or final.get("target_price")
+                or analysis.get("target_price")
+            ),
+            "ai_stop_loss_price": (
+                active_thresholds.get("stop_loss")
+                or signal.stop_loss_price
+                or final.get("stop_loss_price")
+                or analysis.get("stop_loss_price")
+            ),
+            "active_take_profit": active_thresholds.get("take_profit"),
+            "active_stop_loss": active_thresholds.get("stop_loss"),
+            "active_trailing_stop_pct": active_thresholds.get("trailing_stop_pct"),
             "entry_rsi": indicators.get("rsi_14"),
             "entry_macd_hist": indicators.get("macd_histogram"),
             "entry_pattern": self._extract_entry_pattern(chart_result),
             "market_regime": self._market_regime,
             "strategy_type": strategy_type,
+            **strategy_profile_metadata(strategy_type),
             "stock_name": name,
             "trade_horizon": (signal.metadata or {}).get("trade_horizon"),
             "chart_signal_direction": (chart_result.signal_summary or {}).get("direction"),
@@ -2098,38 +2227,77 @@ class TradingAgent:
             pass
         return stats
 
+    def _build_monitor_candidates(self, scan_result: dict, selected: list[dict]) -> list[dict]:
+        """WebSocket 실시간 감시용 후보를 최대 30종목까지 확장."""
+        monitor_candidates: list[dict] = []
+        seen: set[str] = set()
+
+        for source in (
+            selected,
+            scan_result.get("monitor_candidates") or [],
+            scan_result.get("scored_candidates") or [],
+        ):
+            for item in source:
+                symbol = normalize_krx_symbol(item.get("symbol", ""))
+                if not symbol or symbol in seen or len(monitor_candidates) >= 30:
+                    continue
+                candidate = dict(item)
+                candidate["symbol"] = symbol
+                candidate.setdefault("market", "KRX")
+                monitor_candidates.append(candidate)
+                seen.add(symbol)
+
+        return monitor_candidates
+
+    def _symbols_from_candidates(self, candidates: list[dict]) -> list[tuple[str, str]]:
+        return [
+            (normalize_krx_symbol(c.get("symbol", "")), c.get("market", "KRX"))
+            for c in candidates
+            if normalize_krx_symbol(c.get("symbol", ""))
+        ]
+
     def _apply_scan_thresholds(self, candidates: list[dict]) -> None:
         """시장 스캔 결과에서 AI가 결정한 모니터링 임계값을 event_detector에 적용
 
-        각 candidate의 'monitoring' 필드에서 surge_pct, drop_pct, volume_spike_ratio를 가져와 설정.
+        감시 후보는 LLM 값이 과도해도 장중 강세장에서 놓치지 않도록 보수적인 상한으로 보정한다.
         """
         applied = 0
         for c in candidates:
-            symbol = c.get("symbol", "")
-            monitoring = c.get("monitoring")
-            if not symbol or not isinstance(monitoring, dict):
+            symbol = normalize_krx_symbol(c.get("symbol", ""))
+            if not symbol:
                 continue
+            monitoring = c.get("monitoring") if isinstance(c.get("monitoring"), dict) else {}
 
-            kwargs = {}
-            if "surge_pct" in monitoring:
-                kwargs["surge_pct"] = float(monitoring["surge_pct"])
-            if "drop_pct" in monitoring:
-                kwargs["drop_pct"] = float(monitoring["drop_pct"])
-            if "volume_spike_ratio" in monitoring:
-                kwargs["volume_spike_ratio"] = float(monitoring["volume_spike_ratio"])
+            kwargs = {
+                "surge_pct": self._clamp_float(monitoring.get("surge_pct"), default=2.5, min_value=0.8, max_value=2.5),
+                "drop_pct": self._clamp_float(monitoring.get("drop_pct"), default=-2.5, min_value=-2.5, max_value=-0.8),
+                "volume_spike_ratio": self._clamp_float(
+                    monitoring.get("volume_spike_ratio"),
+                    default=1.5,
+                    min_value=1.1,
+                    max_value=1.5,
+                ),
+            }
 
-            if kwargs:
-                event_detector.set_thresholds(symbol, **kwargs)
-                applied += 1
+            event_detector.set_thresholds(symbol, **kwargs)
+            applied += 1
 
         if applied:
             logger.debug("AI 모니터링 임계값 설정: {}종목", applied)
+
+    @staticmethod
+    def _clamp_float(value, *, default: float, min_value: float, max_value: float) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            number = default
+        return max(min_value, min(max_value, number))
 
     def _apply_trade_thresholds(
         self, symbol: str, tier1: dict, tier2: dict,
         current_price: float = 0.0,
         horizon: str | None = None,
-    ) -> None:
+    ) -> dict[str, float]:
         """Tier1/Tier2 분석 결과에서 손절/익절/트레일링 스탑을 event_detector에 적용
 
         Tier2 값을 우선 사용하고, 없으면 Tier1 값 사용.
@@ -2158,12 +2326,10 @@ class TradingAgent:
 
             if stop_loss and stop_loss > 0:
                 risk_pct = ((current_price - stop_loss) / current_price) * 100
-                max_risk_map = {
-                    TradeHorizon.SHORT: 1.8,
-                    TradeHorizon.MID: 2.8,
-                    TradeHorizon.LONG: 4.5,
-                }
-                max_risk_pct = max_risk_map.get(horizon_key)
+                min_risk_pct, max_risk_pct = self._stop_loss_risk_bounds(horizon_key)
+                if min_risk_pct and risk_pct < min_risk_pct:
+                    kwargs["stop_loss"] = current_price * (1 - min_risk_pct / 100)
+                    risk_pct = min_risk_pct
                 if max_risk_pct and risk_pct > max_risk_pct:
                     kwargs["stop_loss"] = current_price * (1 - max_risk_pct / 100)
 
@@ -2194,6 +2360,29 @@ class TradingAgent:
                 symbol,
                 ", ".join(f"{k}={v}" for k, v in kwargs.items()),
             )
+        return kwargs
+
+    @staticmethod
+    def _stop_loss_risk_bounds(horizon_key: str) -> tuple[float | None, float | None]:
+        appetite = str(getattr(settings, "RISK_APPETITE", "CONSERVATIVE") or "CONSERVATIVE").upper()
+        bounds = {
+            "CONSERVATIVE": {
+                TradeHorizon.SHORT: (1.8, 2.8),
+                TradeHorizon.MID: (2.4, 4.0),
+                TradeHorizon.LONG: (3.0, 5.5),
+            },
+            "MODERATE": {
+                TradeHorizon.SHORT: (2.4, 3.5),
+                TradeHorizon.MID: (3.2, 5.0),
+                TradeHorizon.LONG: (4.0, 7.0),
+            },
+            "AGGRESSIVE": {
+                TradeHorizon.SHORT: (3.0, 5.0),
+                TradeHorizon.MID: (4.0, 6.5),
+                TradeHorizon.LONG: (5.0, 9.0),
+            },
+        }
+        return bounds.get(appetite, bounds["CONSERVATIVE"]).get(horizon_key, (None, None))
 
     @staticmethod
     def _evaluate_tier1_cost_gate(analysis: dict, current_price: float, horizon: str | None = None) -> dict:
@@ -2407,8 +2596,9 @@ class TradingAgent:
             last_result_text = ""
             last_provider = None
             for attempt in range(2):
+                timeout_sec = self._tier1_llm_timeout_sec()
                 if manual_provider_override or manual_model_override:
-                    result_text, provider = await llm_factory.generate_manual(
+                    generate_call = llm_factory.generate_manual(
                         prompt,
                         system_prompt=STOCK_ANALYSIS_SYSTEM,
                         default_tier=LLMTier.TIER1,
@@ -2418,12 +2608,13 @@ class TradingAgent:
                         manual_model_override=manual_model_override,
                     )
                 else:
-                    result_text, provider = await llm_factory.generate_tier1(
+                    generate_call = llm_factory.generate_tier1(
                         prompt,
                         system_prompt=STOCK_ANALYSIS_SYSTEM,
                         symbol=symbol,
                         cycle_id=cycle_id,
                     )
+                result_text, provider = await asyncio.wait_for(generate_call, timeout=timeout_sec)
                 last_result_text = result_text
                 last_provider = provider
                 parsed = self._parse_json(result_text)
@@ -2440,9 +2631,31 @@ class TradingAgent:
                 (last_result_text or "")[:200],
             )
             return None
+        except asyncio.TimeoutError:
+            timeout_sec = self._tier1_llm_timeout_sec()
+            logger.warning("[{}] Tier1 LLM timeout ({}s) → HOLD fallback", symbol, timeout_sec)
+            return self._tier1_timeout_fallback(symbol=symbol, timeout_sec=timeout_sec)
         except Exception as e:
             logger.error("Tier 1 분석 실패 ({}): {}", symbol, str(e))
             return None
+
+    @staticmethod
+    def _tier1_llm_timeout_sec() -> float:
+        return max(float(getattr(settings, "TIER1_LLM_TIMEOUT_SEC", 45) or 45), 0.001)
+
+    @staticmethod
+    def _tier1_timeout_fallback(*, symbol: str, timeout_sec: float) -> dict:
+        return {
+            "analysis": f"Tier1 LLM이 {timeout_sec:.0f}초 안에 응답하지 않아 보수적으로 HOLD 처리했습니다.",
+            "recommendation": "HOLD",
+            "confidence": 0.0,
+            "reason": "Tier1 LLM timeout fallback",
+            "target_price": 0,
+            "stop_loss_price": 0,
+            "trailing_stop_pct": 0.0,
+            "key_factors": ["TIER1_LLM_TIMEOUT", symbol],
+            "provider": "TIMEOUT_FALLBACK",
+        }
 
     async def _tier2_review(
         self, symbol: str, name: str, current_price: float,
@@ -2486,6 +2699,11 @@ class TradingAgent:
         total_asset = snap.get("total_asset", 0)
         max_amount = max_order if max_order > 0 else int(total_asset * max_pos_pct / 100) if total_asset > 0 else 0
         position_pct = (max_amount / total_asset * 100) if total_asset > 0 else 0
+        normalized_symbol = normalize_krx_symbol(symbol)
+        holding_symbols = [normalize_krx_symbol(item) for item in snap.get("holding_symbols", [])]
+        holding_quantities = snap.get("holding_quantities") or {}
+        is_holding = normalized_symbol in holding_symbols
+        holding_quantity = int(holding_quantities.get(normalized_symbol, 0) or 0)
 
         prompt = FINAL_REVIEW_PROMPT.format(
             tier1_analysis=json.dumps(tier1_analysis, ensure_ascii=False, indent=2),
@@ -2493,6 +2711,8 @@ class TradingAgent:
             symbol=symbol,
             current_price=current_price or 0,
             strategy_type=strategy_type,
+            is_holding=str(is_holding).lower(),
+            holding_quantity=holding_quantity,
             max_amount=max_amount or 0,
             holding_count=snap.get("holding_count") or 0,
             position_pct=position_pct or 0,
@@ -2540,6 +2760,8 @@ class TradingAgent:
     async def _on_market_event(self, event: Event) -> None:
         """실시간 시장 이벤트 → 즉시 해당 종목 분석/매매"""
         if not self._running:
+            return
+        if not settings.TRADING_ENABLED:
             return
         if runtime_reconfiguration_service.is_reconfiguring():
             return
@@ -2653,6 +2875,8 @@ class TradingAgent:
     async def _on_news_item(self, event: Event) -> None:
         """신규 뉴스 유입 → 보유/감시 종목만 증분 재검증"""
         if not self._running:
+            return
+        if not settings.TRADING_ENABLED:
             return
         if runtime_reconfiguration_service.is_reconfiguring():
             return

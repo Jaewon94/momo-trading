@@ -69,6 +69,91 @@ class MarketScanner:
                     continue
         return lookup
 
+    def _build_market_data_lookup(
+        self,
+        scored_candidates: list[dict],
+        *,
+        volume_rank: list[dict] | None = None,
+        surge_data: list[dict] | None = None,
+        drop_data: list[dict] | None = None,
+    ) -> dict[str, dict]:
+        """LLM 선정 결과에 스캔 원천 수치를 다시 붙이기 위한 매핑."""
+        lookup: dict[str, dict] = {}
+        raw_sources = (
+            ("volume_rank", volume_rank or []),
+            ("surge_data", surge_data or []),
+            ("drop_data", drop_data or []),
+        )
+        for source_name, data in raw_sources:
+            for item in data:
+                symbol = str(item.get("symbol", item.get("code", "")) or "").strip()
+                if not symbol:
+                    continue
+                entry = lookup.setdefault(symbol, {"scanner_sources": []})
+                entry.setdefault("price", item.get("price", item.get("current_price")))
+                entry.setdefault("change_rate", item.get("change_rate"))
+                entry.setdefault("volume", item.get("volume"))
+                if source_name not in entry["scanner_sources"]:
+                    entry["scanner_sources"].append(source_name)
+
+        for item in scored_candidates:
+            symbol = str(item.get("symbol", "") or "").strip()
+            if not symbol:
+                continue
+            sources = list(lookup.get(symbol, {}).get("scanner_sources") or [])
+            for source in item.get("sources") or []:
+                if source not in sources:
+                    sources.append(source)
+            lookup[symbol] = {
+                "price": item.get("price"),
+                "change_rate": item.get("change_rate"),
+                "volume": item.get("volume"),
+                "scanner_score": item.get("score"),
+                "scanner_sources": sources,
+                "scanner_reason_codes": item.get("reason_codes"),
+                "news_negative_pressure": item.get("news_negative_pressure"),
+            }
+        return lookup
+
+    def _build_realtime_monitor_candidates(
+        self,
+        selected: list[dict],
+        scored_candidates: list[dict],
+        *,
+        volume_rank: list[dict] | None = None,
+        surge_data: list[dict] | None = None,
+        max_candidates: int = 30,
+    ) -> list[dict]:
+        """분석 대상은 유지하면서 실시간 감시 범위만 넓히기 위한 후보 목록."""
+        candidates: list[dict] = []
+        seen: set[str] = set()
+
+        def add(item: dict, source: str) -> None:
+            symbol = str(item.get("symbol", item.get("code", "")) or "").strip()
+            if not symbol or symbol in seen or len(candidates) >= max_candidates:
+                return
+            seen.add(symbol)
+            candidate = dict(item)
+            candidate["symbol"] = symbol
+            candidate.setdefault("market", "KRX")
+            candidate.setdefault("name", item.get("name", symbol))
+            candidate.setdefault("price", item.get("price", item.get("current_price")))
+            candidate.setdefault("change_rate", item.get("change_rate"))
+            candidate.setdefault("volume", item.get("volume"))
+            candidate.setdefault("scanner_monitor_source", source)
+            candidates.append(candidate)
+
+        for item in selected:
+            add(item, "selected")
+        for item in scored_candidates:
+            add(item, "scored_candidates")
+        for item in (volume_rank or [])[:15]:
+            add(item, "volume_rank")
+        for item in (surge_data or [])[:15]:
+            add(item, "surge_data")
+
+        return candidates
+
     async def scan(self, cycle_id: str | None = None, dynamic_limits: dict | None = None) -> dict:
         """시장 스캔 + 종목 선별 통합 실행"""
         logger.debug("시장 스캔 시작")
@@ -188,6 +273,27 @@ class MarketScanner:
                 if len(selected) < before:
                     logger.debug("현금 필터: {}건 → {}건 (가용 {:,.0f}원)", before, len(selected), available_cash)
 
+            market_data_lookup = self._build_market_data_lookup(
+                scored_candidates,
+                volume_rank=volume_rank,
+                surge_data=surge_data,
+                drop_data=drop_data,
+            )
+            for item in selected:
+                symbol = str(item.get("symbol", "") or "").strip()
+                market_data = market_data_lookup.get(symbol)
+                if not market_data:
+                    continue
+                for key, value in market_data.items():
+                    item.setdefault(key, value)
+
+            monitor_candidates = self._build_realtime_monitor_candidates(
+                selected,
+                scored_candidates,
+                volume_rank=volume_rank,
+                surge_data=surge_data,
+            )
+
             logger.info(
                 "시장 스캔+선별 완료 ({}): {}개 선정 (데이터 {}ms + AI {}ms)",
                 provider, len(selected), data_elapsed, elapsed - data_elapsed,
@@ -218,6 +324,7 @@ class MarketScanner:
                 detail={
                     "selected_count": len(selected),
                     "selected": selected,
+                    "monitor_candidates": monitor_candidates,
                     "scored_candidates": scored_candidates,
                     "cooldown_symbols": sorted(cooldown_symbols),
                     "news_pressure_by_symbol": news_pressure_by_symbol,
@@ -232,6 +339,7 @@ class MarketScanner:
 
             return {
                 "selected": selected,
+                "monitor_candidates": monitor_candidates,
                 "market_summary": parsed.get("market_analysis", ""),
                 "market_regime": parsed.get("market_regime", ""),
                 "market_analysis": parsed.get("market_analysis", ""),

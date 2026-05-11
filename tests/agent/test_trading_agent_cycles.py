@@ -17,6 +17,15 @@ class StubBrokerAdapter:
         return BuyingPowerInfo(success=True, max_qty=10, available_cash=1_000_000)
 
 
+@pytest.fixture(autouse=True)
+def _disable_fast_gate_by_default(monkeypatch):
+    monkeypatch.setattr(
+        "services.deterministic_tier1_fast_gate_service.settings.DETERMINISTIC_TIER1_FAST_GATE_ENABLED",
+        False,
+        raising=False,
+    )
+
+
 def _kst_time(hour: int, minute: int = 0) -> datetime:
     return datetime(2026, 4, 2, hour, minute, 0)
 
@@ -24,6 +33,107 @@ def _kst_time(hour: int, minute: int = 0) -> datetime:
 def test_analyze_and_trade_accepts_manual_model_override() -> None:
     params = inspect.signature(TradingAgent._analyze_and_trade).parameters
     assert "manual_model_override" in params
+
+
+def test_apply_trade_thresholds_returns_active_risk_values(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    applied: dict[str, float] = {}
+
+    def fake_set_thresholds(_symbol: str, **kwargs) -> None:
+        applied.update(kwargs)
+
+    monkeypatch.setattr("agent.trading_agent.event_detector.set_thresholds", fake_set_thresholds)
+    monkeypatch.setattr("agent.trading_agent.settings.RISK_APPETITE", "MODERATE")
+
+    thresholds = agent._apply_trade_thresholds(
+        "005930",
+        {"target_price": 12_000, "stop_loss_price": 10_500, "trailing_stop_pct": 4.5},
+        {"target_price": 12_500, "stop_loss_price": 10_000, "trailing_stop_pct": 4.0},
+        current_price=11_000,
+        horizon="SHORT",
+    )
+
+    assert thresholds == applied
+    assert thresholds["take_profit"] == 12_500
+    assert thresholds["stop_loss"] == 10_615
+    assert thresholds["trailing_stop_pct"] == 4.0
+
+
+def test_apply_trade_thresholds_widens_too_tight_stop_loss_by_risk_appetite(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    applied: dict[str, float] = {}
+
+    def fake_set_thresholds(_symbol: str, **kwargs) -> None:
+        applied.update(kwargs)
+
+    monkeypatch.setattr("agent.trading_agent.event_detector.set_thresholds", fake_set_thresholds)
+    monkeypatch.setattr("agent.trading_agent.settings.RISK_APPETITE", "AGGRESSIVE")
+
+    thresholds = agent._apply_trade_thresholds(
+        "005930",
+        {"target_price": 12_000, "stop_loss_price": 10_970},
+        {},
+        current_price=11_000,
+        horizon="SHORT",
+    )
+
+    assert thresholds == applied
+    assert thresholds["stop_loss"] == 10_670
+
+
+def test_apply_scan_thresholds_clamps_sensitive_monitoring_values(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    applied: dict[str, dict] = {}
+
+    def fake_set_thresholds(symbol: str, **kwargs) -> None:
+        applied[symbol] = kwargs
+
+    monkeypatch.setattr("agent.trading_agent.event_detector.set_thresholds", fake_set_thresholds)
+
+    agent._apply_scan_thresholds([
+        {
+            "symbol": "005930",
+            "monitoring": {
+                "surge_pct": 5.0,
+                "drop_pct": -5.0,
+                "volume_spike_ratio": 3.0,
+            },
+        },
+        {"symbol": "000660"},
+    ])
+
+    assert applied["005930"] == {
+        "surge_pct": 2.5,
+        "drop_pct": -2.5,
+        "volume_spike_ratio": 1.5,
+    }
+    assert applied["000660"] == {
+        "surge_pct": 2.5,
+        "drop_pct": -2.5,
+        "volume_spike_ratio": 1.5,
+    }
+
+
+def test_build_monitor_candidates_prefers_selected_then_expanded_scan_pool() -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+
+    candidates = agent._build_monitor_candidates(
+        {
+            "monitor_candidates": [
+                {"symbol": "005930", "name": "삼성전자"},
+                {"symbol": "035720", "name": "카카오"},
+            ],
+            "scored_candidates": [{"symbol": "000660", "name": "SK하이닉스"}],
+        },
+        selected=[{"symbol": "005930", "name": "삼성전자", "market": "KRX"}],
+    )
+
+    assert [item["symbol"] for item in candidates] == ["005930", "035720", "000660"]
+    assert agent._symbols_from_candidates(candidates) == [
+        ("005930", "KRX"),
+        ("035720", "KRX"),
+        ("000660", "KRX"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -89,6 +199,7 @@ async def test_run_cycle_dispatches_trading_cycle_during_market_hours(monkeypatc
         raise AssertionError("after-hours cycle should not be called during market hours")
 
     monkeypatch.setattr("agent.trading_agent.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr("agent.trading_agent.settings.TRADING_ENABLED", True)
     monkeypatch.setattr("agent.trading_agent.settings.DAY_TRADING_ONLY", False)
     monkeypatch.setattr(agent, "_run_trading_cycle", fake_trading_cycle)
     monkeypatch.setattr(agent, "_run_after_hours_cycle", fake_after_hours_cycle)
@@ -459,6 +570,31 @@ async def test_tier1_analysis_uses_manual_provider_override_when_present(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_tier1_analysis_timeout_returns_hold_fallback(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+
+    async def slow_generate_tier1(*args, **kwargs):
+        await asyncio.sleep(0.05)
+        return '{"recommendation":"BUY","confidence":0.7,"reason":"late"}', "CODEX"
+
+    monkeypatch.setattr("agent.trading_agent.settings.TIER1_LLM_TIMEOUT_SEC", 0.001, raising=False)
+    monkeypatch.setattr("agent.trading_agent.llm_factory.generate_tier1", slow_generate_tier1)
+
+    result = await agent._tier1_analysis(
+        symbol="005930",
+        name="삼성전자",
+        current_price=11500.0,
+        chart_result=SimpleNamespace(indicators_text="", patterns_text="", trend_text=""),
+        price_data={},
+    )
+
+    assert result is not None
+    assert result["recommendation"] == "HOLD"
+    assert result["provider"] == "TIMEOUT_FALLBACK"
+    assert "TIER1_LLM_TIMEOUT" in result["key_factors"]
+
+
+@pytest.mark.asyncio
 async def test_tier2_review_uses_tier_provider_without_manual_override(monkeypatch) -> None:
     agent = TradingAgent(broker_adapter=StubBrokerAdapter())
     captured = {}
@@ -724,6 +860,160 @@ async def test_analyze_and_trade_skips_tier1_when_pre_analysis_gate_blocks_beari
     assert decision_events[0]["final_action"] == "SKIP"
     assert decision_events[0]["reference_price"] == 70_000
     assert decision_events[0]["metadata"]["ai_skipped"] is True
+
+
+@pytest.mark.asyncio
+async def test_analyze_and_trade_skips_tier1_when_fast_gate_holds_candidate(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    logs = []
+    skipped_metrics = []
+    decision_events = []
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append((args, kwargs))
+
+    async def fake_record_ai_skip(**kwargs) -> None:
+        skipped_metrics.append(kwargs)
+
+    async def fake_record_event(**kwargs):
+        decision_events.append(kwargs)
+        return SimpleNamespace(id="fast-gate-event-1")
+
+    async def fake_fetch_symbol_market_data(_symbol: str):
+        price_resp = SimpleNamespace(success=True, data={"price": 15_865, "change_rate": 28.0}, error=None)
+        daily_resp = SimpleNamespace(
+            success=True,
+            data={"prices": [{"open": 15_000, "high": 16_000, "low": 14_800, "close": 15_865, "volume": 1_000}] * 6},
+            error=None,
+        )
+        minute_resp = SimpleNamespace(success=False, data={}, error="no-minute")
+        return price_resp, daily_resp, minute_resp
+
+    def fake_chart_analyze(*args, **kwargs) -> ChartAnalysisResult:
+        return ChartAnalysisResult(signal_summary={"direction": "NEUTRAL", "confidence": 0.1})
+
+    def fake_fast_gate_evaluate(**kwargs):
+        return SimpleNamespace(
+            should_skip_tier1=True,
+            code="FAST_GATE_HOLD",
+            reason="late-day new buy cutoff",
+            score=42.0,
+            detail={"score": 42.0, "after_cutoff": True},
+        )
+
+    async def fail_tier1_analysis(*args, **kwargs):
+        raise AssertionError("Tier1 should not be called when fast gate skips the candidate")
+
+    monkeypatch.setattr("agent.trading_agent.settings.DETERMINISTIC_TIER1_FAST_GATE_MODE", "ENFORCE", raising=False)
+    monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.trading_agent.ai_skip_metric_service.record", fake_record_ai_skip)
+    monkeypatch.setattr("agent.trading_agent.decision_event_service.record_event", fake_record_event)
+    monkeypatch.setattr(agent, "_fetch_symbol_market_data", fake_fetch_symbol_market_data)
+    monkeypatch.setattr("agent.trading_agent.chart_analyzer.analyze", fake_chart_analyze)
+    monkeypatch.setattr(
+        "agent.trading_agent.deterministic_tier1_fast_gate_service.evaluate",
+        fake_fast_gate_evaluate,
+    )
+    monkeypatch.setattr(agent, "_tier1_analysis", fail_tier1_analysis)
+
+    result = await agent._analyze_and_trade(
+        {"symbol": "006340", "name": "대원전선", "strategy_type": "AGGRESSIVE_SHORT"},
+        "cycle-fast-gate",
+        portfolio_snapshot={"cash": 1_000_000, "holding_symbols": [], "holding_count": 0, "today_trade_count": 0},
+        dynamic_limits={"min_buy_quantity": 1},
+    )
+
+    assert result == {"symbol": "006340", "signal": False, "executed": False}
+    assert any("deterministic Tier1 fast gate" in args[2] for args, _kwargs in logs)
+    assert skipped_metrics[0]["stage"] == "DETERMINISTIC_TIER1_FAST_GATE"
+    assert skipped_metrics[0]["reason_code"] == "FAST_GATE_HOLD"
+    assert decision_events[0]["decision_stage"] == "DETERMINISTIC_TIER1_FAST_GATE"
+    assert decision_events[0]["final_action"] == "HOLD"
+
+
+@pytest.mark.asyncio
+async def test_analyze_and_trade_records_fast_gate_shadow_without_skipping_tier1(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    decision_events = []
+    tier1_called = False
+
+    async def fake_log(*args, **kwargs) -> None:
+        return None
+
+    async def fake_record_event(**kwargs):
+        decision_events.append(kwargs)
+        return SimpleNamespace(id="fast-gate-shadow-event-1")
+
+    async def fake_fetch_symbol_market_data(_symbol: str):
+        price_resp = SimpleNamespace(success=True, data={"price": 15_865, "change_rate": 28.0}, error=None)
+        daily_resp = SimpleNamespace(
+            success=True,
+            data={"prices": [{"open": 15_000, "high": 16_000, "low": 14_800, "close": 15_865, "volume": 1_000}] * 6},
+            error=None,
+        )
+        minute_resp = SimpleNamespace(success=False, data={}, error="no-minute")
+        return price_resp, daily_resp, minute_resp
+
+    def fake_chart_analyze(*args, **kwargs) -> ChartAnalysisResult:
+        return ChartAnalysisResult(signal_summary={"direction": "NEUTRAL", "confidence": 0.1})
+
+    def fake_fast_gate_evaluate(**kwargs):
+        assert kwargs["ignore_enabled"] is True
+        return SimpleNamespace(
+            action="HOLD",
+            should_skip_tier1=True,
+            code="FAST_GATE_HOLD",
+            reason="late-day new buy cutoff",
+            score=42.0,
+            detail={"score": 42.0, "after_cutoff": True},
+        )
+
+    async def fake_tier1_analysis(*args, **kwargs):
+        nonlocal tier1_called
+        tier1_called = True
+        return {
+            "recommendation": "HOLD",
+            "confidence": 0.2,
+            "reason": "Tier1 still ran in shadow mode",
+            "provider": "TEST",
+        }
+
+    monkeypatch.setattr("agent.trading_agent.settings.DETERMINISTIC_TIER1_FAST_GATE_MODE", "SHADOW", raising=False)
+    monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.trading_agent.decision_event_service.record_event", fake_record_event)
+    monkeypatch.setattr(agent, "_fetch_symbol_market_data", fake_fetch_symbol_market_data)
+    monkeypatch.setattr("agent.trading_agent.chart_analyzer.analyze", fake_chart_analyze)
+    monkeypatch.setattr(
+        "agent.trading_agent.deterministic_tier1_fast_gate_service.evaluate",
+        fake_fast_gate_evaluate,
+    )
+    monkeypatch.setattr(agent, "_tier1_analysis", fake_tier1_analysis)
+    monkeypatch.setattr("agent.trading_agent.tier1_analysis_cache_service.get", lambda _key: None)
+    monkeypatch.setattr("agent.trading_agent.tier1_analysis_cache_service.put", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "agent.trading_agent.deterministic_prompt_context_service.build_tier1_context",
+        lambda **_kwargs: "deterministic context",
+    )
+    monkeypatch.setattr(
+        "agent.trading_agent.news_context_service.build_for_symbol",
+        lambda *_args, **_kwargs: asyncio.sleep(0, result={"prompt": "news context"}),
+    )
+
+    result = await agent._analyze_and_trade(
+        {"symbol": "006340", "name": "대원전선", "strategy_type": "AGGRESSIVE_SHORT"},
+        "cycle-fast-gate-shadow",
+        portfolio_snapshot={"cash": 1_000_000, "holding_symbols": [], "holding_count": 0, "today_trade_count": 0},
+        dynamic_limits={"min_buy_quantity": 1},
+    )
+
+    assert result == {"symbol": "006340", "signal": False, "executed": False}
+    assert tier1_called is True
+    assert decision_events[0]["decision_stage"] == "DETERMINISTIC_TIER1_FAST_GATE_SHADOW"
+    assert decision_events[0]["source"] == "deterministic_tier1_fast_gate"
+    assert decision_events[0]["risk_gate_result"] == "FAST_GATE_HOLD"
+    assert decision_events[0]["final_action"] == "SHADOW_HOLD"
+    assert decision_events[0]["metadata"]["ai_shadow"] is True
+    assert decision_events[0]["metadata"]["would_skip_tier1"] is True
 
 
 @pytest.mark.asyncio
@@ -1014,6 +1304,7 @@ async def test_on_market_event_normalizes_a_prefixed_symbol_before_analysis(monk
         return {"executed": False}
 
     monkeypatch.setattr("agent.trading_agent.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr("agent.trading_agent.settings.TRADING_ENABLED", True)
     monkeypatch.setattr("agent.trading_agent.settings.DAY_TRADING_ONLY", False)
     monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
     monkeypatch.setattr("agent.trading_agent.activity_logger.start_cycle", lambda: "cycle-live")
@@ -1036,6 +1327,35 @@ async def test_on_market_event_normalizes_a_prefixed_symbol_before_analysis(monk
     assert observed["stock_info"]["name"] == "대한광통신"
     assert observed["portfolio_snapshot"]["holding_symbols"] == ["010170"]
     assert logged[0][1]["symbol"] == "010170"
+
+
+@pytest.mark.asyncio
+async def test_on_market_event_skips_analysis_when_trading_disabled(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    agent._running = True
+    called = False
+
+    async def fake_analyze_and_trade(*args, **kwargs) -> dict:
+        nonlocal called
+        called = True
+        return {"executed": False}
+
+    monkeypatch.setattr("agent.trading_agent.settings.TRADING_ENABLED", False)
+    monkeypatch.setattr("agent.trading_agent.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr(agent, "_analyze_and_trade", fake_analyze_and_trade)
+
+    await agent._on_market_event(Event(
+        type=EventType.PRICE_SURGE,
+        data={
+            "symbol": "A010170",
+            "name": "대한광통신",
+            "price": 10_030,
+            "change_rate": 6.59,
+        },
+        source="test",
+    ))
+
+    assert called is False
 
 
 @pytest.mark.asyncio

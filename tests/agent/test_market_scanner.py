@@ -114,7 +114,10 @@ async def test_market_scanner_uses_broker_adapter_for_scan(monkeypatch) -> None:
     assert result["provider"] == "fake-provider"
     assert result["available_cash"] == 900_000
     assert result["selected"][0]["symbol"] == "005930"
+    assert result["selected"][0]["change_rate"] == 1.2
+    assert result["selected"][0]["scanner_score"] == result["scored_candidates"][0]["score"]
     assert result["scored_candidates"][0]["symbol"] == "005930"
+    assert [item["symbol"] for item in result["monitor_candidates"]] == ["005930", "035720", "000660"]
     assert "Deterministic 후보 점수" in captured_prompt["prompt"]
     assert "삼성전자(005930)" in captured_prompt["prompt"]
     assert "strategy=STABLE_SHORT" in captured_prompt["prompt"]
@@ -140,3 +143,36 @@ async def test_market_scanner_uses_broker_adapter_for_scan(monkeypatch) -> None:
         ("top", "KRX"),
         ("bottom", "KRX"),
     ]
+
+
+def test_market_data_lookup_includes_raw_rank_rows() -> None:
+    scanner = MarketScanner(broker_adapter=FakeScannerBrokerAdapter())
+
+    lookup = scanner._build_market_data_lookup(
+        [{"symbol": "005930", "price": 71_000, "change_rate": 1.2, "volume": 123456, "score": 61.5}],
+        volume_rank=[{"symbol": "005930", "price": 70_900, "change_rate": 1.1, "volume": 120000}],
+        surge_data=[{"symbol": "035720", "price": 52_000, "change_rate": 3.5, "volume": 654321}],
+        drop_data=[{"symbol": "000660", "price": 180_000, "change_rate": -2.1, "volume": 777777}],
+    )
+
+    assert lookup["005930"]["change_rate"] == 1.2
+    assert lookup["005930"]["scanner_score"] == 61.5
+    assert lookup["035720"]["change_rate"] == 3.5
+    assert lookup["035720"]["volume"] == 654321
+    assert lookup["035720"]["scanner_sources"] == ["surge_data"]
+    assert lookup["000660"]["change_rate"] == -2.1
+
+
+def test_realtime_monitor_candidates_expand_beyond_selected() -> None:
+    scanner = MarketScanner(broker_adapter=FakeScannerBrokerAdapter())
+
+    candidates = scanner._build_realtime_monitor_candidates(
+        selected=[{"symbol": "005930", "name": "삼성전자"}],
+        scored_candidates=[{"symbol": "000660", "name": "SK하이닉스"}],
+        volume_rank=[{"symbol": "035720", "name": "카카오", "price": 52_000}],
+        surge_data=[{"symbol": "005930", "name": "삼성전자"}, {"symbol": "011930", "name": "신성이엔지"}],
+        max_candidates=4,
+    )
+
+    assert [item["symbol"] for item in candidates] == ["005930", "000660", "035720", "011930"]
+    assert all(item["market"] == "KRX" for item in candidates)

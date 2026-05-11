@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -45,7 +46,7 @@ class Tier1AnalysisCacheService:
         payload = {
             "symbol": normalize_krx_symbol(symbol),
             "strategy_type": str(strategy_type or "").upper(),
-            "price": round(float(current_price or 0.0), 2),
+            "price_bucket": self._price_bucket(current_price),
             "market_regime": str(market_regime or "").upper(),
             "is_holding": normalize_krx_symbol(symbol) in holding_symbols,
             "direction": str(signal_summary.get("direction", "") or "").upper(),
@@ -97,6 +98,14 @@ class Tier1AnalysisCacheService:
             return round(float(value), digits)
         except (TypeError, ValueError):
             return None
+
+    @staticmethod
+    def _price_bucket(price: float) -> int | float:
+        numeric_price = float(price or 0.0)
+        bucket_bps = max(int(getattr(settings, "TIER1_ANALYSIS_CACHE_PRICE_BUCKET_BPS", 30) or 0), 0)
+        if numeric_price <= 0 or bucket_bps <= 0:
+            return round(numeric_price, 2)
+        return round(math.log(numeric_price) / math.log1p(bucket_bps / 10_000.0))
 
 
 tier1_analysis_cache_service = Tier1AnalysisCacheService()

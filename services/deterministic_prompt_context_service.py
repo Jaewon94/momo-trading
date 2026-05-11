@@ -38,6 +38,8 @@ class DeterministicPromptContextService:
         lines = [
             f"- deterministic_stage: TIER1_PRECHECK",
             f"- strategy_type: {strategy_type}",
+            "- strategy_semantics: STABLE_SHORT/AGGRESSIVE_SHORT mean short-term cash equity trading horizons, not short-selling or inverse positioning.",
+            "- allowed_scan_action: For non-held KRX cash equities, evaluate BUY or HOLD only; SELL only applies to already-held positions.",
             f"- market_regime: {str(market_regime or 'UNKNOWN').upper()}",
             f"- is_holding: {is_holding}",
             f"- min_buy_quantity: {min_buy_quantity}",
@@ -77,10 +79,22 @@ class DeterministicPromptContextService:
             if dynamic_limits else settings.MIN_BUY_QUANTITY
         )
         max_qty = (buying_power or {}).get("max_qty")
+        holding_symbols = [
+            normalize_krx_symbol(item)
+            for item in (portfolio_snapshot or {}).get("holding_symbols", [])
+        ]
+        normalized_symbol = normalize_krx_symbol(symbol)
+        holding_quantities = (portfolio_snapshot or {}).get("holding_quantities") or {}
+        is_holding = normalized_symbol in holding_symbols
+        holding_quantity = int(holding_quantities.get(normalized_symbol, 0) or 0)
         lines = [
             "- deterministic_stage: TIER2_PRECHECK",
             f"- strategy_type: {strategy_type}",
+            "- strategy_semantics: STABLE_SHORT/AGGRESSIVE_SHORT mean short-term cash equity trading horizons, not short-selling or inverse positioning.",
+            "- allowed_scan_action: For non-held KRX cash equities, evaluate BUY or HOLD only; SELL only applies to already-held positions.",
             f"- market_regime: {str(market_regime or 'UNKNOWN').upper()}",
+            f"- is_holding: {is_holding}",
+            f"- holding_quantity: {holding_quantity}",
             f"- tier1_recommendation: {recommendation}",
             f"- tier1_confidence: {float(tier1_analysis.get('confidence', 0.0) or 0.0):.0%}",
             f"- code_rr_ratio: {rr_ratio:.2f}" if rr_ratio is not None else "- code_rr_ratio: 계산 불가",

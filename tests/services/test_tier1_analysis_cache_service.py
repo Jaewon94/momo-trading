@@ -40,3 +40,24 @@ def test_tier1_analysis_cache_key_changes_when_feedback_context_changes() -> Non
     }
 
     assert service.build_key(**kwargs, feedback_context="a") != service.build_key(**kwargs, feedback_context="b")
+
+
+def test_tier1_analysis_cache_key_uses_price_bucket(monkeypatch) -> None:
+    service = Tier1AnalysisCacheService()
+    monkeypatch.setattr(
+        "services.tier1_analysis_cache_service.settings.TIER1_ANALYSIS_CACHE_PRICE_BUCKET_BPS",
+        30,
+        raising=False,
+    )
+    kwargs = {
+        "symbol": "005930",
+        "strategy_type": "STABLE_SHORT",
+        "chart_result": ChartAnalysisResult(signal_summary={"direction": "NEUTRAL", "confidence": 0.1}),
+        "portfolio_snapshot": {"holding_symbols": []},
+        "market_regime": "SIDEWAYS",
+        "feedback_context": "same",
+        "news_context": "same",
+    }
+
+    assert service.build_key(**kwargs, current_price=70_000) == service.build_key(**kwargs, current_price=70_020)
+    assert service.build_key(**kwargs, current_price=70_000) != service.build_key(**kwargs, current_price=70_500)

@@ -55,6 +55,10 @@ FINAL_REVIEW_PROMPT = """## 최종 검토 요청
 - 종목: {stock_name} ({symbol})
 - 현재가: {current_price:,.0f}원
 - 전략 유형: {strategy_type}
+- 이 종목 보유 여부: {is_holding}
+- 이 종목 보유 수량: {holding_quantity}주
+
+중요: 이 종목 보유 여부가 true이고 Tier 1이 SELL을 제안했다면, 비보유 종목으로 오해하지 말고 보유 포지션 청산 판단으로 검토하세요.
 
 ### 투자 가능 금액
 - 종목당 최대: {max_amount:,.0f}원

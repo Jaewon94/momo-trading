@@ -39,6 +39,7 @@ async def test_trading_agent_on_news_item_reanalyzes_relevant_holding(monkeypatc
         return None
 
     monkeypatch.setattr("agent.trading_agent.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr("agent.trading_agent.settings.TRADING_ENABLED", True)
     monkeypatch.setattr("agent.trading_agent.AsyncSessionLocal", lambda: FakeSession())
     monkeypatch.setattr("agent.trading_agent.activity_logger.start_cycle", lambda: "news-cycle")
     monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
@@ -55,6 +56,30 @@ async def test_trading_agent_on_news_item_reanalyzes_relevant_holding(monkeypatc
     assert observed["stock_info"]["symbol"] == "005930"
     assert observed["stock_info"]["trigger"] == "NEW_NEWS_ITEM"
     assert observed["snapshot"]["holding_symbols"] == ["005930"]
+
+
+@pytest.mark.asyncio
+async def test_trading_agent_on_news_item_skips_when_trading_disabled(monkeypatch):
+    agent = TradingAgent()
+    agent._running = True
+    called = False
+
+    async def fake_analyze_and_trade(*args, **kwargs):
+        nonlocal called
+        called = True
+        return {"executed": False}
+
+    monkeypatch.setattr("agent.trading_agent.settings.TRADING_ENABLED", False)
+    monkeypatch.setattr("agent.trading_agent.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr(agent, "_analyze_and_trade", fake_analyze_and_trade)
+
+    await agent._on_news_item(Event(
+        type=EventType.NEW_NEWS_ITEM,
+        data={"symbols": ["005930"], "title": "삼성전자 공시"},
+        source="test",
+    ))
+
+    assert called is False
 
 
 @pytest.mark.asyncio
@@ -81,6 +106,7 @@ async def test_trading_agent_on_news_item_skips_irrelevant_symbol(monkeypatch):
         return None
 
     monkeypatch.setattr("agent.trading_agent.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr("agent.trading_agent.settings.TRADING_ENABLED", True)
     monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
     monkeypatch.setattr(agent, "_build_portfolio_snapshot", fake_snapshot)
     monkeypatch.setattr(agent, "_analyze_and_trade", fake_analyze_and_trade)
