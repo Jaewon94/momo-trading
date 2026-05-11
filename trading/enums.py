@@ -116,6 +116,7 @@ class LLMTier(str, Enum):
 class LLMProvider(str, Enum):
     """LLM 제공자"""
     CLAUDE_CODE = "CLAUDE_CODE"  # 로컬 Claude Code CLI (구독 크레딧)
+    CLAUDE_API = "CLAUDE_API"  # Anthropic Claude API (등록된 API 키)
     CODEX = "CODEX"  # 로컬 Codex CLI (ChatGPT 로그인 또는 API 키)
     OLLAMA = "OLLAMA"  # 로컬 Ollama HTTP API
 

@@ -6,9 +6,10 @@ from typing import Any
 from loguru import logger
 
 from core.config import settings
-from core.database import AsyncSessionLocal
+from core.database import AsyncSessionLocal, run_sqlite_write_with_retry
 from core.runtime_settings import (
     MUTABLE_SETTINGS,
+    SECRET_RUNTIME_SETTINGS,
     coerce_runtime_setting_value,
     is_skipped_runtime_setting_value,
 )
@@ -29,27 +30,42 @@ class RuntimeSettingsService:
                 continue
             normalized_updates[key] = normalized
 
-        async with AsyncSessionLocal() as session:
-            async with session.begin():
-                repository = RuntimeSettingRepository(session)
-                for key, normalized in normalized_updates.items():
-                    old = getattr(settings, key, None)
-                    setattr(settings, key, normalized)
-                    await repository.upsert_value(key, self._serialize_value(normalized))
-                    changed[key] = {"old": old, "new": normalized}
-                    logger.info("설정 변경: {} = {} → {}", key, old, normalized)
+        old_values = {
+            key: getattr(settings, key, None)
+            for key in normalized_updates
+        }
+
+        async def _persist_updates() -> None:
+            async with AsyncSessionLocal() as session:
+                async with session.begin():
+                    repository = RuntimeSettingRepository(session)
+                    for key, normalized in normalized_updates.items():
+                        await repository.upsert_value(key, self._serialize_value(normalized))
+
+        await run_sqlite_write_with_retry(
+            _persist_updates,
+            retry_count=max(int(settings.SQLITE_WRITE_RETRY_COUNT), 5),
+            retry_delay_ms=max(int(settings.SQLITE_WRITE_RETRY_DELAY_MS), 250),
+        )
+
+        for key, normalized in normalized_updates.items():
+            old = old_values.get(key)
+            setattr(settings, key, normalized)
+            changed[key] = {"old": old, "new": normalized}
+            logger.info("설정 변경: {} = {} → {}", key, old, normalized)
 
         return changed
 
     async def apply_persisted_settings(self) -> dict[str, Any]:
         applied: dict[str, Any] = {}
+        allowed_keys = set(MUTABLE_SETTINGS) | SECRET_RUNTIME_SETTINGS
 
         async with AsyncSessionLocal() as session:
             repository = RuntimeSettingRepository(session)
             rows = await repository.get_all_settings()
 
         for row in rows:
-            if row.key not in MUTABLE_SETTINGS:
+            if row.key not in allowed_keys:
                 continue
 
             normalized = coerce_runtime_setting_value(row.key, self._deserialize_value(row.value_json))

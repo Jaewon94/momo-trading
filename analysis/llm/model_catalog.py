@@ -19,6 +19,16 @@ _OPENAI_CODEX_CONFIG_URL = "https://developers.openai.com/codex/config-reference
 _OPENAI_MODELS_ALL_URL = "https://developers.openai.com/api/docs/models/all"
 _OPENAI_CODEX_MODEL_URL = "https://developers.openai.com/api/docs/models/gpt-5-codex"
 
+_CODEX_CLI_SUPPORTED_MODELS = {
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5-codex",
+    "gpt-5.3-codex",
+    "gpt-5.3-codex-spark",
+    "gpt-5.2",
+}
+
 
 class ModelCatalogService:
     TTL_SEC = 3600
@@ -139,12 +149,14 @@ class ModelCatalogService:
         entries = self._seed_codex_entries()
         seen = {item["value"] for item in entries}
         pattern = re.compile(
-            r"(?:gpt-5(?:\.\d+)?-codex(?:-(?:max|mini))?(?:-\d{4}-\d{2}-\d{2})?|"
+            r"(?:gpt-5(?:\.\d+)?-codex(?:-(?:max|mini|spark))?(?:-\d{4}-\d{2}-\d{2})?|"
             r"gpt-5(?:\.\d+)?(?:-(?:pro|mini|nano))?|"
             r"codex-mini-latest)"
         )
         combined = "\n".join(doc_texts)
         for value in sorted(set(pattern.findall(combined))):
+            if value not in _CODEX_CLI_SUPPORTED_MODELS:
+                continue
             if value in seen:
                 continue
             seen.add(value)
@@ -306,6 +318,14 @@ class ModelCatalogService:
                 "source_url": "",
             },
             {
+                "value": "gpt-5.5",
+                "label": "gpt-5.5",
+                "kind": "alias",
+                "stability": "moving",
+                "source_scope": "official-doc",
+                "source_url": _OPENAI_MODELS_ALL_URL,
+            },
+            {
                 "value": "gpt-5.4",
                 "label": "gpt-5.4",
                 "kind": "alias",
@@ -314,16 +334,16 @@ class ModelCatalogService:
                 "source_url": _OPENAI_MODELS_ALL_URL,
             },
             {
-                "value": "gpt-5-codex",
-                "label": "gpt-5-codex",
+                "value": "gpt-5.4-mini",
+                "label": "gpt-5.4-mini",
                 "kind": "alias",
                 "stability": "moving",
-                "source_scope": "official-doc",
-                "source_url": _OPENAI_MODELS_ALL_URL,
+                "source_scope": "verified-runtime",
+                "source_url": "",
             },
             {
-                "value": "codex-mini-latest",
-                "label": "codex-mini-latest",
+                "value": "gpt-5-codex",
+                "label": "gpt-5-codex",
                 "kind": "alias",
                 "stability": "moving",
                 "source_scope": "official-doc",

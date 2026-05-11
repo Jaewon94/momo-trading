@@ -130,6 +130,8 @@ async def test_build_codex_catalog_includes_current_openai_models(monkeypatch):
         gpt-5.4-nano
         gpt-5-codex
         gpt-5.3-codex
+        gpt-5.3-codex-spark
+        gpt-5.2
         gpt-5.2-codex
         gpt-5.1-codex
         gpt-5.1-codex-max
@@ -151,15 +153,13 @@ async def test_build_codex_catalog_includes_current_openai_models(monkeypatch):
         "DEFAULT",
         "gpt-5.4",
         "gpt-5.4-mini",
-        "gpt-5.4-nano",
         "gpt-5-codex",
         "gpt-5.3-codex",
-        "gpt-5.2-codex",
-        "gpt-5.1-codex",
-        "gpt-5.1-codex-max",
-        "gpt-5.1-codex-mini",
-        "codex-mini-latest",
+        "gpt-5.3-codex-spark",
+        "gpt-5.2",
     }.issubset(values)
+    assert "codex-mini-latest" not in values
+    assert "gpt-5.4-nano" not in values
 
 
 @pytest.mark.asyncio

@@ -92,7 +92,7 @@ class CodexProvider:
         codex = self._find_codex()
         if not codex:
             raise RuntimeError("codex CLI를 찾을 수 없습니다 (PATH 확인)")
-        effort = "medium" if self._tier == LLMTier.TIER1 else "high"
+        effort = self._reasoning_effort()
 
         config_overrides = [
             f'model_reasoning_effort="{effort}"',
@@ -112,6 +112,15 @@ class CodexProvider:
             output_path,
             "-",
         ]
+
+    def _reasoning_effort(self) -> str:
+        configured = (
+            settings.CODEX_REASONING_EFFORT_TIER1
+            if self._tier == LLMTier.TIER1
+            else settings.CODEX_REASONING_EFFORT_TIER2
+        )
+        effort = str(configured or "").lower().strip()
+        return effort if effort in {"low", "medium", "high", "xhigh"} else "medium"
 
     def _timeout_sec(self) -> float:
         if self._tier == LLMTier.TIER1:
@@ -159,6 +168,8 @@ class CodexProvider:
         ]:
             env.pop(key, None)
         env.setdefault("OTEL_SDK_DISABLED", "true")
+        if settings.OPENAI_API_KEY:
+            env["OPENAI_API_KEY"] = settings.OPENAI_API_KEY
         return env
 
     async def generate(self, prompt: str, system_prompt: str = "") -> str:

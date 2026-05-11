@@ -134,6 +134,93 @@ async def test_llm_factory_falls_back_when_primary_unavailable(monkeypatch) -> N
     assert claude.calls == [("hello", "")]
 
 
+@pytest.mark.asyncio
+async def test_llm_factory_distributed_tier1_rotates_available_provider_chain(monkeypatch) -> None:
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_EXECUTION_MODE_TIER1", "DISTRIBUTED")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_DISTRIBUTED_PROFILE_TIER1", "FULL")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_PROVIDER_TIER1", "CODEX")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_FALLBACK_PROVIDER_TIER1", "")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.ANTHROPIC_API_KEY", "test-key")
+
+    factory = LLMFactory()
+    codex = FakeProvider(LLMProvider.CODEX, available=True, result="codex-result")
+    claude_api = FakeProvider(LLMProvider.CLAUDE_API, available=True, result="claude-api-result")
+    claude_code = FakeProvider(LLMProvider.CLAUDE_CODE, available=True, result="claude-code-result")
+    ollama = FakeProvider(LLMProvider.OLLAMA, available=True, result="ollama-result")
+    factory._providers[LLMTier.TIER1] = {
+        LLMProvider.CODEX: codex,
+        LLMProvider.CLAUDE_API: claude_api,
+        LLMProvider.CLAUDE_CODE: claude_code,
+        LLMProvider.OLLAMA: ollama,
+    }
+
+    first = await factory.generate_tier1("first")
+    second = await factory.generate_tier1("second")
+    third = await factory.generate_tier1("third")
+    fourth = await factory.generate_tier1("fourth")
+
+    assert first == ("codex-result", "CODEX")
+    assert second == ("claude-code-result", "CLAUDE_CODE")
+    assert third == ("claude-api-result", "CLAUDE_API")
+    assert fourth == ("codex-result", "CODEX")
+    assert codex.calls == [("first", ""), ("fourth", "")]
+    assert claude_code.calls == [("second", "")]
+    assert claude_api.calls == [("third", "")]
+    assert ollama.calls == []
+
+
+@pytest.mark.asyncio
+async def test_llm_factory_distributed_fast_profile_excludes_claude_code(monkeypatch) -> None:
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_EXECUTION_MODE_TIER1", "DISTRIBUTED")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_DISTRIBUTED_PROFILE_TIER1", "FAST")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_PROVIDER_TIER1", "CLAUDE_CODE")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_FALLBACK_PROVIDER_TIER1", "")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.ANTHROPIC_API_KEY", "test-key")
+
+    factory = LLMFactory()
+    codex = FakeProvider(LLMProvider.CODEX, available=True, result="codex-result")
+    claude_api = FakeProvider(LLMProvider.CLAUDE_API, available=True, result="claude-api-result")
+    claude_code = FakeProvider(LLMProvider.CLAUDE_CODE, available=True, result="claude-code-result")
+    factory._providers[LLMTier.TIER1] = {
+        LLMProvider.CODEX: codex,
+        LLMProvider.CLAUDE_API: claude_api,
+        LLMProvider.CLAUDE_CODE: claude_code,
+    }
+
+    first = await factory.generate_tier1("first")
+    second = await factory.generate_tier1("second")
+
+    assert first == ("codex-result", "CODEX")
+    assert second == ("claude-api-result", "CLAUDE_API")
+    assert codex.calls == [("first", "")]
+    assert claude_api.calls == [("second", "")]
+    assert claude_code.calls == []
+
+
+@pytest.mark.asyncio
+async def test_llm_factory_single_mode_keeps_primary_fallback_chain(monkeypatch) -> None:
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_EXECUTION_MODE_TIER1", "SINGLE")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_PROVIDER_TIER1", "CODEX")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_FALLBACK_PROVIDER_TIER1", "CLAUDE_CODE")
+
+    factory = LLMFactory()
+    codex = FakeProvider(LLMProvider.CODEX, available=True, result="codex-result")
+    claude = FakeProvider(LLMProvider.CLAUDE_CODE, available=True, result="claude-result")
+    ollama = FakeProvider(LLMProvider.OLLAMA, available=True, result="ollama-result")
+    factory._providers[LLMTier.TIER1] = {
+        LLMProvider.CODEX: codex,
+        LLMProvider.CLAUDE_CODE: claude,
+        LLMProvider.OLLAMA: ollama,
+    }
+
+    await factory.generate_tier1("first")
+    await factory.generate_tier1("second")
+
+    assert codex.calls == [("first", ""), ("second", "")]
+    assert claude.calls == []
+    assert ollama.calls == []
+
+
 def test_llm_factory_reports_status_for_both_providers(monkeypatch) -> None:
     monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_PROVIDER_TIER1", "CODEX")
     monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_PROVIDER_TIER2", "CLAUDE_CODE")
@@ -160,7 +247,7 @@ def test_llm_factory_reports_status_for_both_providers(monkeypatch) -> None:
     assert status["tier2"]["fallback_model_mode"] == "default"
     assert status["tier2"]["model"] == "claude-sonnet-4-6"
     assert status["tier2"]["model_mode"] == "explicit"
-    assert {item["id"] for item in status["available_providers"]} == {"CLAUDE_CODE", "CODEX", "OLLAMA"}
+    assert {item["id"] for item in status["available_providers"]} == {"CLAUDE_CODE", "CLAUDE_API", "CODEX", "OLLAMA"}
 
 
 def test_llm_factory_includes_provider_runtime_status(monkeypatch) -> None:
@@ -353,6 +440,44 @@ async def test_llm_factory_captures_error_when_all_providers_fail(monkeypatch) -
 
 
 @pytest.mark.asyncio
+async def test_llm_factory_suppresses_repeated_cooldown_incident_capture(monkeypatch) -> None:
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_PROVIDER_TIER1", "CODEX")
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_FALLBACK_PROVIDER_TIER1", "")
+
+    captured = []
+
+    async def fake_capture_exception(**kwargs):
+        captured.append(kwargs)
+        return {"fingerprint": "fp-1"}
+
+    async def fake_record_llm_call(**kwargs):
+        return None
+
+    factory = LLMFactory()
+    codex = FakeProvider(LLMProvider.CODEX, available=False)
+    codex.status.update({
+        "available": False,
+        "cooldown_active": True,
+        "last_failure_reason": "Codex CLI timeout (90s)",
+        "last_failure_kind": "timeout",
+        "disabled_for_sec": 300,
+    })
+    factory._providers[LLMTier.TIER1] = {
+        LLMProvider.CODEX: codex,
+    }
+
+    monkeypatch.setattr("analysis.llm.llm_factory.error_capture_service.capture_exception", fake_capture_exception)
+    monkeypatch.setattr("analysis.llm.llm_factory.observability_service.record_llm_call", fake_record_llm_call)
+
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="최근 호출 실패로 비활성화"):
+            await factory.generate("hello", LLMTier.TIER1, symbol="005930")
+
+    assert len(captured) == 1
+    assert captured[0]["detail"]["cooldown_suppression_key"].startswith("TIER1:CODEX:")
+
+
+@pytest.mark.asyncio
 async def test_llm_factory_builds_fallback_provider_with_override_model(monkeypatch) -> None:
     monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_PROVIDER_TIER1", "CODEX")
     monkeypatch.setattr("analysis.llm.llm_factory.settings.LLM_FALLBACK_PROVIDER_TIER1", "CLAUDE_CODE")
@@ -529,12 +654,20 @@ async def test_llm_factory_logs_progress_when_llm_call_is_slow(monkeypatch) -> N
     await provider.entered.wait()
     await asyncio.sleep(0.05)
 
-    assert warnings
-    assert warnings[0][0][0].value == "LLM_CALL"
-    assert warnings[0][0][1].value == "PROGRESS"
-    assert "호출 지연" in warnings[0][0][2]
-    assert warnings[0][1]["symbol"] == "005930"
-    assert warnings[0][1]["cycle_id"] == "cycle-1"
+    assert len(warnings) >= 2
+    start_event = warnings[0]
+    slow_event = warnings[1]
+    assert start_event[0][0].value == "LLM_CALL"
+    assert start_event[0][1].value == "START"
+    assert "호출 시작" in start_event[0][2]
+    assert start_event[1]["llm_provider"] == "CODEX"
+    assert start_event[1]["symbol"] == "005930"
+    assert start_event[1]["cycle_id"] == "cycle-1"
+    assert slow_event[0][0].value == "LLM_CALL"
+    assert slow_event[0][1].value == "PROGRESS"
+    assert "호출 지연" in slow_event[0][2]
+    assert slow_event[1]["symbol"] == "005930"
+    assert slow_event[1]["cycle_id"] == "cycle-1"
 
     provider.release.set()
     await task
@@ -590,6 +723,7 @@ async def test_llm_factory_re_resolves_manual_chain_after_primary_failure(monkey
 
 @pytest.mark.asyncio
 async def test_llm_factory_re_resolves_news_chain_after_primary_failure(monkeypatch) -> None:
+    monkeypatch.setattr("analysis.llm.llm_factory.settings.NEWS_LLM_EXECUTION_MODE", "SINGLE")
     monkeypatch.setattr("analysis.llm.llm_factory.settings.NEWS_LLM_PROVIDER", "CODEX")
     monkeypatch.setattr("analysis.llm.llm_factory.settings.NEWS_LLM_MODEL", "DEFAULT")
     monkeypatch.setattr("analysis.llm.llm_factory.settings.NEWS_LLM_FALLBACK_PROVIDER", "CLAUDE_CODE")

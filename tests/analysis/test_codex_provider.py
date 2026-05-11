@@ -10,6 +10,7 @@ from trading.enums import LLMTier
 def test_codex_provider_builds_ephemeral_exec_command(monkeypatch) -> None:
     monkeypatch.setattr("analysis.llm.codex_provider.settings.CODEX_MODEL", "gpt-5-codex")
     monkeypatch.setattr("analysis.llm.codex_provider.settings.CODEX_MODEL_TIER1", "gpt-5-codex")
+    monkeypatch.setattr("analysis.llm.codex_provider.settings.CODEX_REASONING_EFFORT_TIER1", "low")
     provider = CodexProvider(LLMTier.TIER1)
     monkeypatch.setattr(provider, "_find_codex", lambda: "/opt/homebrew/bin/codex")
 
@@ -19,7 +20,7 @@ def test_codex_provider_builds_ephemeral_exec_command(monkeypatch) -> None:
         "/opt/homebrew/bin/codex",
         "exec",
         "-c",
-        f'model_reasoning_effort="medium"',
+        f'model_reasoning_effort="low"',
         "-c",
         "mcp_servers={}",
         "-c",
@@ -44,6 +45,14 @@ def test_codex_provider_omits_model_flag_when_using_cli_default(monkeypatch) -> 
     command = provider._build_command("/tmp/result.txt")
 
     assert "--model" not in command
+
+
+def test_codex_provider_reads_reasoning_effort_by_tier(monkeypatch) -> None:
+    monkeypatch.setattr("analysis.llm.codex_provider.settings.CODEX_REASONING_EFFORT_TIER1", "low")
+    monkeypatch.setattr("analysis.llm.codex_provider.settings.CODEX_REASONING_EFFORT_TIER2", "high")
+
+    assert CodexProvider(LLMTier.TIER1)._reasoning_effort() == "low"
+    assert CodexProvider(LLMTier.TIER2)._reasoning_effort() == "high"
 
 
 def test_codex_provider_clean_env_removes_nested_cli_state(monkeypatch) -> None:

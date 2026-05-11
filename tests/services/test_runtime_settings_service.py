@@ -17,6 +17,10 @@ async def test_runtime_settings_service_persists_and_reloads_values(
     original_interval = settings.NEWS_POLL_INTERVAL_MIN_TRADING
     original_fetch_concurrency = settings.NEWS_FETCH_CONCURRENCY
     original_translation_concurrency = settings.NEWS_TRANSLATION_CONCURRENCY
+    original_tier1_execution_mode = settings.LLM_EXECUTION_MODE_TIER1
+    original_tier2_execution_mode = settings.LLM_EXECUTION_MODE_TIER2
+    original_manual_execution_mode = settings.MANUAL_LLM_EXECUTION_MODE
+    original_news_execution_mode = settings.NEWS_LLM_EXECUTION_MODE
 
     try:
         changed = await runtime_settings_service.update_settings({
@@ -28,6 +32,10 @@ async def test_runtime_settings_service_persists_and_reloads_values(
             "NEWS_POLL_INTERVAL_MIN_TRADING": 7,
             "NEWS_FETCH_CONCURRENCY": 6,
             "NEWS_TRANSLATION_CONCURRENCY": 2,
+            "LLM_EXECUTION_MODE_TIER1": "DISTRIBUTED",
+            "LLM_EXECUTION_MODE_TIER2": "CONSENSUS",
+            "MANUAL_LLM_EXECUTION_MODE": "SINGLE",
+            "NEWS_LLM_EXECUTION_MODE": "DISTRIBUTED",
         })
 
         assert changed["MANUAL_LLM_PROVIDER"]["new"] == "CODEX"
@@ -38,6 +46,10 @@ async def test_runtime_settings_service_persists_and_reloads_values(
         assert changed["NEWS_POLL_INTERVAL_MIN_TRADING"]["new"] == 7
         assert changed["NEWS_FETCH_CONCURRENCY"]["new"] == 6
         assert changed["NEWS_TRANSLATION_CONCURRENCY"]["new"] == 2
+        assert changed["LLM_EXECUTION_MODE_TIER1"]["new"] == "DISTRIBUTED"
+        assert changed["LLM_EXECUTION_MODE_TIER2"]["new"] == "CONSENSUS"
+        assert changed["MANUAL_LLM_EXECUTION_MODE"]["new"] == "SINGLE"
+        assert changed["NEWS_LLM_EXECUTION_MODE"]["new"] == "DISTRIBUTED"
 
         settings.MANUAL_LLM_PROVIDER = original_manual
         settings.MANUAL_LLM_MODEL = original_manual_model
@@ -47,6 +59,10 @@ async def test_runtime_settings_service_persists_and_reloads_values(
         settings.NEWS_POLL_INTERVAL_MIN_TRADING = original_interval
         settings.NEWS_FETCH_CONCURRENCY = original_fetch_concurrency
         settings.NEWS_TRANSLATION_CONCURRENCY = original_translation_concurrency
+        settings.LLM_EXECUTION_MODE_TIER1 = original_tier1_execution_mode
+        settings.LLM_EXECUTION_MODE_TIER2 = original_tier2_execution_mode
+        settings.MANUAL_LLM_EXECUTION_MODE = original_manual_execution_mode
+        settings.NEWS_LLM_EXECUTION_MODE = original_news_execution_mode
 
         applied = await runtime_settings_service.apply_persisted_settings()
 
@@ -58,6 +74,10 @@ async def test_runtime_settings_service_persists_and_reloads_values(
         assert applied["NEWS_POLL_INTERVAL_MIN_TRADING"] == 7
         assert applied["NEWS_FETCH_CONCURRENCY"] == 6
         assert applied["NEWS_TRANSLATION_CONCURRENCY"] == 2
+        assert applied["LLM_EXECUTION_MODE_TIER1"] == "DISTRIBUTED"
+        assert applied["LLM_EXECUTION_MODE_TIER2"] == "CONSENSUS"
+        assert applied["MANUAL_LLM_EXECUTION_MODE"] == "SINGLE"
+        assert applied["NEWS_LLM_EXECUTION_MODE"] == "DISTRIBUTED"
         assert settings.MANUAL_LLM_PROVIDER == "CODEX"
         assert settings.MANUAL_LLM_MODEL == "gpt-5.4"
         assert settings.MANUAL_LLM_FALLBACK_PROVIDER == "CLAUDE_CODE"
@@ -66,6 +86,10 @@ async def test_runtime_settings_service_persists_and_reloads_values(
         assert settings.NEWS_POLL_INTERVAL_MIN_TRADING == 7
         assert settings.NEWS_FETCH_CONCURRENCY == 6
         assert settings.NEWS_TRANSLATION_CONCURRENCY == 2
+        assert settings.LLM_EXECUTION_MODE_TIER1 == "DISTRIBUTED"
+        assert settings.LLM_EXECUTION_MODE_TIER2 == "CONSENSUS"
+        assert settings.MANUAL_LLM_EXECUTION_MODE == "SINGLE"
+        assert settings.NEWS_LLM_EXECUTION_MODE == "DISTRIBUTED"
     finally:
         settings.MANUAL_LLM_PROVIDER = original_manual
         settings.MANUAL_LLM_MODEL = original_manual_model
@@ -75,6 +99,10 @@ async def test_runtime_settings_service_persists_and_reloads_values(
         settings.NEWS_POLL_INTERVAL_MIN_TRADING = original_interval
         settings.NEWS_FETCH_CONCURRENCY = original_fetch_concurrency
         settings.NEWS_TRANSLATION_CONCURRENCY = original_translation_concurrency
+        settings.LLM_EXECUTION_MODE_TIER1 = original_tier1_execution_mode
+        settings.LLM_EXECUTION_MODE_TIER2 = original_tier2_execution_mode
+        settings.MANUAL_LLM_EXECUTION_MODE = original_manual_execution_mode
+        settings.NEWS_LLM_EXECUTION_MODE = original_news_execution_mode
 
 
 async def test_runtime_settings_service_normalizes_default_model(

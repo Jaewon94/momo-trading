@@ -136,6 +136,22 @@ class ClaudeCodeProvider:
             return []
         return ["--model", self._model]
 
+    def _effort(self) -> str:
+        configured = (
+            settings.CLAUDE_CODE_EFFORT_TIER1
+            if self._tier == LLMTier.TIER1
+            else settings.CLAUDE_CODE_EFFORT_TIER2
+        )
+        effort = str(configured or "").lower().strip()
+        return effort if effort in {"low", "medium", "high", "xhigh", "max"} else "medium"
+
+    def _bare_enabled(self) -> bool:
+        return bool(
+            settings.CLAUDE_CODE_BARE_TIER1
+            if self._tier == LLMTier.TIER1
+            else settings.CLAUDE_CODE_BARE_TIER2
+        )
+
     def _find_claude(self) -> str | None:
         """claude CLI 경로 탐색"""
         if self._claude_path:
@@ -175,47 +191,54 @@ class ClaudeCodeProvider:
         if not claude:
             raise RuntimeError("claude CLI를 찾을 수 없습니다 (PATH 확인)")
 
-        # Tier별 effort: TIER1(스캔/분석)=medium, TIER2(최종검토)=high
-        effort = "medium" if self._tier == LLMTier.TIER1 else "high"
-
-        cmd = [
+        base_cmd = [
             claude, "-p",
             "--output-format", "json",
             *self._model_args(),
             "--max-turns", "1",
-            "--effort", effort,
+            "--effort", self._effort(),
             "--dangerously-skip-permissions",
         ]
+        bare_enabled = self._bare_enabled()
+        if bare_enabled:
+            base_cmd.append("--bare")
 
-        actual_prompt = prompt
+        def build_command() -> tuple[list[str], str, bool]:
+            cmd = list(base_cmd)
+            actual_prompt = prompt
+            active_session_id = None if bare_enabled else self.__class__._active_session_id
 
-        if self._active_session_id:
-            if self._session_initialized:
-                # 기존 세션 이어감
-                cmd.extend(["--resume", self._active_session_id])
-                # resume 시 system_prompt 변경 불가 → 프롬프트 앞에 역할 명시
-                if system_prompt:
-                    actual_prompt = f"[역할]\n{system_prompt}\n\n[요청]\n{prompt}"
-            else:
-                # 첫 호출: 세션 생성
-                cmd.extend(["--session-id", self._active_session_id])
-                if system_prompt:
-                    cmd.extend(["--system-prompt", system_prompt])
-        else:
+            if active_session_id:
+                if self.__class__._session_initialized:
+                    # 기존 세션 이어감
+                    cmd.extend(["--resume", active_session_id])
+                    # resume 시 system_prompt 변경 불가 → 프롬프트 앞에 역할 명시
+                    if system_prompt:
+                        actual_prompt = f"[역할]\n{system_prompt}\n\n[요청]\n{prompt}"
+                else:
+                    # 첫 호출: 세션 생성
+                    cmd.extend(["--session-id", active_session_id])
+                    if system_prompt:
+                        cmd.extend(["--system-prompt", system_prompt])
+                return cmd, actual_prompt, True
+
             # 세션 없음: 일회성
             cmd.extend(["--no-session-persistence"])
             if system_prompt:
                 cmd.extend(["--system-prompt", system_prompt])
+            return cmd, actual_prompt, False
 
         # 세션 사용 시 직렬화 (같은 세션에 동시 resume 방지)
-        if self._active_session_id:
+        if not bare_enabled and self._active_session_id:
             async with self._get_lock():
+                cmd, actual_prompt, uses_session = build_command()
                 result = await self._execute(cmd, actual_prompt)
                 # 첫 호출 성공 후 세션 초기화 완료 표시
-                if not self.__class__._session_initialized:
+                if uses_session and not self.__class__._session_initialized:
                     self.__class__._session_initialized = True
                 return result
         else:
+            cmd, actual_prompt, _ = build_command()
             return await self._execute(cmd, actual_prompt)
 
     @staticmethod
@@ -225,6 +248,8 @@ class ClaudeCodeProvider:
         env = os.environ.copy()
         env.pop("CLAUDECODE", None)
         env.pop("CLAUDE_CODE_ENTRYPOINT", None)
+        if settings.ANTHROPIC_API_KEY:
+            env["ANTHROPIC_API_KEY"] = settings.ANTHROPIC_API_KEY
         return env
 
     async def _execute(self, cmd: list, prompt: str) -> str:
@@ -237,18 +262,34 @@ class ClaudeCodeProvider:
             env=self._clean_env(),
         )
 
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(input=prompt.encode("utf-8")),
-            timeout=300.0,
-        )
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(input=prompt.encode("utf-8")),
+                timeout=300.0,
+            )
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            await self._terminate_process(proc)
+            raise
 
         if proc.returncode != 0:
             err = stderr.decode("utf-8", errors="replace")[:500]
             # stderr 비어있으면 stdout에서 에러 메시지 추출
             if not err.strip():
                 err = stdout.decode("utf-8", errors="replace")[:500]
-            logger.error("Claude Code 호출 실패 (exit {}): {}", proc.returncode, err)
-            raise RuntimeError(f"Claude Code 실패 (exit {proc.returncode}): {err}")
+            # JSON 응답이면 is_error/duration_ms를 분리해 진단 단서로 노출 (rate limit/quota 의심)
+            diag = ""
+            try:
+                payload = json.loads(stdout.decode("utf-8", errors="replace"))
+                if isinstance(payload, dict) and payload.get("is_error"):
+                    diag = (
+                        f" [api_duration={payload.get('duration_api_ms', payload.get('duration_ms'))}ms"
+                        f", model={self._model or 'default'}"
+                        f", session={'resume' if self.__class__._session_initialized else 'new'}]"
+                    )
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                pass
+            logger.error("Claude Code 호출 실패 (exit {}){}: {}", proc.returncode, diag, err)
+            raise RuntimeError(f"Claude Code 실패 (exit {proc.returncode}){diag}: {err}")
 
         raw = stdout.decode("utf-8", errors="replace").strip()
         if not raw:
@@ -265,6 +306,16 @@ class ClaudeCodeProvider:
             raise RuntimeError("Claude Code 빈 응답")
 
         return result_text
+
+    async def _terminate_process(self, proc) -> None:
+        if proc.returncode is not None:
+            return
+        proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
 
     def _track_usage(self, resp: dict) -> None:
         """JSON 응답에서 토큰 사용량 누적"""

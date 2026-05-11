@@ -5,6 +5,7 @@ import time
 
 from loguru import logger
 
+from analysis.llm.claude_api_provider import ClaudeApiProvider
 from analysis.llm.claude_code_provider import ClaudeCodeProvider
 from analysis.llm.codex_provider import CodexProvider
 from analysis.llm.ollama_provider import OllamaProvider
@@ -36,16 +37,20 @@ class LLMFactory:
         self._tier_semaphore_limits: dict[LLMTier, int] = {}
         self._provider_semaphores: dict[LLMProvider, asyncio.Semaphore] = {}
         self._provider_semaphore_limits: dict[LLMProvider, int] = {}
+        self._cooldown_capture_until: dict[str, float] = {}
+        self._distributed_rotation: dict[str, int] = {}
 
     @staticmethod
     def _create_provider_map():
         return {
             LLMTier.TIER1: {
+                LLMProvider.CLAUDE_API: ClaudeApiProvider(LLMTier.TIER1),
                 LLMProvider.CLAUDE_CODE: ClaudeCodeProvider(LLMTier.TIER1),
                 LLMProvider.CODEX: CodexProvider(LLMTier.TIER1),
                 LLMProvider.OLLAMA: OllamaProvider(LLMTier.TIER1),
             },
             LLMTier.TIER2: {
+                LLMProvider.CLAUDE_API: ClaudeApiProvider(LLMTier.TIER2),
                 LLMProvider.CLAUDE_CODE: ClaudeCodeProvider(LLMTier.TIER2),
                 LLMProvider.CODEX: CodexProvider(LLMTier.TIER2),
                 LLMProvider.OLLAMA: OllamaProvider(LLMTier.TIER2),
@@ -76,8 +81,8 @@ class LLMFactory:
 
     @staticmethod
     def _provider_concurrency_limit(provider_key: LLMProvider) -> int:
-        # Codex CLI is unstable under concurrent subprocess loads, so serialize it globally.
-        if provider_key == LLMProvider.CODEX:
+        # Local CLIs are unstable under concurrent subprocess loads, so serialize each globally.
+        if provider_key in {LLMProvider.CODEX, LLMProvider.CLAUDE_CODE}:
             return 1
         return 0
 
@@ -98,6 +103,70 @@ class LLMFactory:
             if fallback not in chain:
                 chain.append(fallback)
         return chain
+
+    @staticmethod
+    def _execution_mode_for_context(tier: LLMTier, call_context: str | None) -> str:
+        if not call_context:
+            return "SINGLE"
+        context = str(call_context or "").lower()
+        if context.startswith("news"):
+            configured = settings.NEWS_LLM_EXECUTION_MODE
+        elif context.startswith("manual"):
+            configured = settings.MANUAL_LLM_EXECUTION_MODE
+        elif tier == LLMTier.TIER2:
+            configured = settings.LLM_EXECUTION_MODE_TIER2
+        else:
+            configured = settings.LLM_EXECUTION_MODE_TIER1
+        normalized = str(configured or "SINGLE").upper().strip()
+        return normalized if normalized in {"SINGLE", "DISTRIBUTED", "CONSENSUS"} else "SINGLE"
+
+    @staticmethod
+    def _distributed_profile(tier: LLMTier) -> str:
+        configured = (
+            settings.LLM_DISTRIBUTED_PROFILE_TIER1
+            if tier == LLMTier.TIER1
+            else settings.LLM_DISTRIBUTED_PROFILE_TIER2
+        )
+        normalized = str(configured or "").upper().strip()
+        return normalized if normalized in {"FAST", "FULL"} else "FAST"
+
+    def _expand_distributed_chain(self, tier: LLMTier, base_chain: list[LLMProvider]) -> list[LLMProvider]:
+        profile = self._distributed_profile(tier)
+        chain = [
+            provider
+            for provider in base_chain
+            if not (profile == "FAST" and provider == LLMProvider.CLAUDE_CODE)
+        ]
+        distributed_candidates = [LLMProvider.CODEX]
+        if profile == "FULL":
+            distributed_candidates.append(LLMProvider.CLAUDE_CODE)
+        if settings.ANTHROPIC_API_KEY:
+            distributed_candidates.append(LLMProvider.CLAUDE_API)
+        for provider in distributed_candidates:
+            if provider not in chain:
+                chain.append(provider)
+        return chain
+
+    def _effective_provider_chain(
+        self,
+        tier: LLMTier,
+        base_chain: list[LLMProvider],
+        call_context: str | None,
+        *,
+        explicit_chain: bool,
+    ) -> tuple[list[LLMProvider], str]:
+        mode = self._execution_mode_for_context(tier, call_context)
+        if explicit_chain or mode == "SINGLE":
+            return list(base_chain), "SINGLE" if explicit_chain else mode
+
+        expanded = self._expand_distributed_chain(tier, base_chain)
+        if len(expanded) <= 1:
+            return expanded, mode
+
+        rotation_key = f"{call_context or tier.value}:{tier.value}"
+        start = self._distributed_rotation.get(rotation_key, 0) % len(expanded)
+        self._distributed_rotation[rotation_key] = start + 1
+        return expanded[start:] + expanded[:start], mode
 
     def _manual_selection_resolver(
         self,
@@ -148,6 +217,8 @@ class LLMFactory:
                 return existing
         if provider_key == LLMProvider.CLAUDE_CODE:
             return ClaudeCodeProvider(tier, model_override=normalized_override)
+        if provider_key == LLMProvider.CLAUDE_API:
+            return ClaudeApiProvider(tier, model_override=normalized_override)
         if provider_key == LLMProvider.OLLAMA:
             return OllamaProvider(tier, model_override=normalized_override)
         return CodexProvider(tier, model_override=normalized_override)
@@ -217,13 +288,26 @@ class LLMFactory:
             last_error = None
             attempted_providers: set[LLMProvider] = set()
             active_chain: list[LLMProvider] = list(provider_chain) if provider_chain else self._provider_chain(tier)
+            execution_mode = self._execution_mode_for_context(tier, call_context)
             active_overrides = provider_model_overrides
 
             while True:
                 if provider_selection_resolver is not None:
-                    active_chain, active_overrides = provider_selection_resolver()
+                    resolved_chain, active_overrides = provider_selection_resolver()
+                    active_chain, execution_mode = self._effective_provider_chain(
+                        tier,
+                        list(resolved_chain),
+                        call_context,
+                        explicit_chain=False,
+                    )
                 else:
-                    active_chain = list(provider_chain) if provider_chain else self._provider_chain(tier)
+                    base_chain = list(provider_chain) if provider_chain else self._provider_chain(tier)
+                    active_chain, execution_mode = self._effective_provider_chain(
+                        tier,
+                        base_chain,
+                        call_context,
+                        explicit_chain=provider_chain is not None,
+                    )
                     active_overrides = provider_model_overrides
                 next_candidate = next(
                     (
@@ -238,7 +322,11 @@ class LLMFactory:
 
                 index, provider_key = next_candidate
                 attempted_providers.add(provider_key)
-                fallback_model = self._fallback_model_for_tier(tier) if index > 0 else None
+                fallback_model = (
+                    self._fallback_model_for_tier(tier)
+                    if execution_mode == "SINGLE" and index > 0
+                    else None
+                )
                 explicit_model_override = None
                 if active_overrides:
                     explicit_model_override = active_overrides.get(provider_key)
@@ -259,6 +347,18 @@ class LLMFactory:
                                 f"({runtime.get('disabled_for_sec', 0)}s 남음): "
                                 f"{runtime.get('last_failure_reason', 'unknown')}"
                             )
+                            cooldown_key = self._cooldown_suppression_key(
+                                tier=tier,
+                                provider=provider.provider.value,
+                                model=getattr(provider, "model_id", ""),
+                                reason=str(runtime.get("last_failure_reason", "unknown")),
+                            )
+                            setattr(last_error, "_llm_cooldown_suppression_key", cooldown_key)
+                            setattr(
+                                last_error,
+                                "_llm_cooldown_remaining_sec",
+                                int(runtime.get("disabled_for_sec", 0) or 0),
+                            )
                             logger.warning(
                                 "{} 사용 불가 (cooldown {}s, reason: {}), 다음 provider 확인",
                                 provider.provider.value,
@@ -272,6 +372,18 @@ class LLMFactory:
 
                     for attempt in range(2):
                         start = time.time()
+                        await self._log_llm_call_start(
+                            tier=tier,
+                            provider=provider.provider.value,
+                            model=provider.model_id,
+                            symbol=symbol,
+                            cycle_id=cycle_id,
+                            attempt=attempt,
+                            call_context=call_context or f"{tier.value.lower()}_analysis",
+                            execution_mode=execution_mode,
+                            provider_chain=active_chain,
+                            selected_provider_index=index,
+                        )
                         slow_warning = self._schedule_slow_call_warning(
                             tier=tier,
                             provider=provider.provider.value,
@@ -318,6 +430,7 @@ class LLMFactory:
                                 symbol=symbol,
                                 detail={
                                     "call_context": call_context or f"{tier.value.lower()}_analysis",
+                                    "execution_mode": execution_mode,
                                     "provider_chain": [item.value for item in active_chain],
                                     "selected_provider_index": index,
                                     "system_prompt_chars": len(system_prompt or ""),
@@ -364,12 +477,14 @@ class LLMFactory:
                 symbol=symbol,
                 detail={
                     "call_context": call_context or f"{tier.value.lower()}_analysis",
+                    "execution_mode": execution_mode,
                     "provider_chain": [item.value for item in active_chain],
                     "system_prompt_chars": len(system_prompt or ""),
                     "error": str(last_error)[:200] if last_error else "unknown",
                 },
             )
-            if last_error is not None:
+            if last_error is not None and self._should_capture_llm_error(last_error):
+                cooldown_key = getattr(last_error, "_llm_cooldown_suppression_key", None)
                 await error_capture_service.capture_exception(
                     component="llm_factory",
                     operation="generate",
@@ -381,9 +496,54 @@ class LLMFactory:
                         "provider_chain": [item.value for item in active_chain],
                         "system_prompt_chars": len(system_prompt or ""),
                         "prompt_chars": len(prompt or ""),
+                        "cooldown_suppression_key": cooldown_key,
                     },
                 )
             raise last_error or RuntimeError("사용 가능한 LLM provider가 없습니다")
+
+    @staticmethod
+    def _cooldown_suppression_key(*, tier: LLMTier, provider: str, model: str, reason: str) -> str:
+        return f"{tier.value}:{provider}:{model}:{reason}".strip()
+
+    def _should_capture_llm_error(self, exc: Exception) -> bool:
+        cooldown_key = getattr(exc, "_llm_cooldown_suppression_key", None)
+        if not cooldown_key:
+            return True
+        now = time.monotonic()
+        suppress_until = self._cooldown_capture_until.get(cooldown_key)
+        if suppress_until and suppress_until > now:
+            return False
+        remaining = int(getattr(exc, "_llm_cooldown_remaining_sec", 0) or 0)
+        self._cooldown_capture_until[cooldown_key] = now + max(remaining, 1)
+        return True
+
+    async def _log_llm_call_start(
+        self, *, tier: LLMTier, provider: str, model: str,
+        symbol: str | None, cycle_id: str | None, attempt: int,
+        call_context: str, execution_mode: str,
+        provider_chain: list[LLMProvider], selected_provider_index: int,
+    ) -> None:
+        """LLM 호출 시작을 activity log에 기록해 진행 중인 provider를 노출."""
+        try:
+            await activity_logger.log(
+                ActivityType.LLM_CALL,
+                ActivityPhase.START if attempt == 0 else ActivityPhase.PROGRESS,
+                f"[{tier.value}] {provider} ({model}) 호출 시작",
+                detail={
+                    "event": "llm_call_start",
+                    "attempt": attempt + 1,
+                    "call_context": call_context,
+                    "execution_mode": execution_mode,
+                    "provider_chain": [item.value for item in provider_chain],
+                    "selected_provider_index": selected_provider_index,
+                },
+                llm_provider=provider,
+                llm_tier=tier.value,
+                symbol=symbol,
+                cycle_id=cycle_id,
+            )
+        except Exception as e:
+            logger.debug("LLM 시작 로깅 실패 (무시): {}", str(e))
 
     async def _log_llm_conversation(
         self, *, tier: LLMTier, provider: str, model: str,
@@ -559,6 +719,17 @@ class LLMFactory:
 
         뉴스 primary/fallback 설정을 매 fallback 선택 시점마다 다시 읽는다.
         """
+        if news_selection is not None:
+            return await self.generate(
+                prompt,
+                tier,
+                system_prompt,
+                symbol=symbol,
+                cycle_id=cycle_id,
+                provider_chain=list(news_selection.provider_chain),
+                provider_model_overrides=news_selection.provider_model_overrides,
+                call_context="news_translation",
+            )
         return await self.generate(
             prompt,
             tier,
@@ -577,6 +748,8 @@ class LLMFactory:
         news_selection = resolve_news_selection()
         tier1_model = model_for_status("CLAUDE_CODE", LLMTier.TIER1)
         tier2_model = model_for_status("CLAUDE_CODE", LLMTier.TIER2)
+        claude_api_tier1_model = model_for_status("CLAUDE_API", LLMTier.TIER1)
+        claude_api_tier2_model = model_for_status("CLAUDE_API", LLMTier.TIER2)
         codex_tier1_model = model_for_status("CODEX", LLMTier.TIER1)
         codex_tier2_model = model_for_status("CODEX", LLMTier.TIER2)
         ollama_tier1_model = model_for_status("OLLAMA", LLMTier.TIER1)
@@ -615,6 +788,13 @@ class LLMFactory:
                     "runtime": self._provider_runtime_status(LLMProvider.CLAUDE_CODE),
                 },
                 {
+                    "id": "CLAUDE_API",
+                    "name": "Claude API",
+                    "models": {"tier1": claude_api_tier1_model, "tier2": claude_api_tier2_model},
+                    "has_key": bool(settings.ANTHROPIC_API_KEY),
+                    "runtime": self._provider_runtime_status(LLMProvider.CLAUDE_API),
+                },
+                {
                     "id": "CODEX",
                     "name": "Codex CLI (로컬)",
                     "models": {"tier1": codex_tier1_model, "tier2": codex_tier2_model},
@@ -634,7 +814,7 @@ class LLMFactory:
                 "model": manual_selection.model,
                 "fallback_provider": manual_selection.fallback_provider,
                 "fallback_model": manual_selection.fallback_model if manual_selection.fallback_provider else "",
-                "options": ["CLAUDE_CODE", "CODEX", "OLLAMA"],
+                "options": ["CLAUDE_CODE", "CLAUDE_API", "CODEX", "OLLAMA"],
             },
             "news_selection": {
                 "enabled": news_selection.enabled,
@@ -642,7 +822,7 @@ class LLMFactory:
                 "model": news_selection.model,
                 "fallback_provider": news_selection.fallback_provider,
                 "fallback_model": news_selection.fallback_model if news_selection.fallback_provider else "",
-                "options": ["CLAUDE_CODE", "CODEX", "OLLAMA"],
+                "options": ["CLAUDE_CODE", "CLAUDE_API", "CODEX", "OLLAMA"],
             },
         }
 

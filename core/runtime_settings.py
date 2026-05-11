@@ -14,6 +14,7 @@ MUTABLE_SETTINGS = [
     "POST_LIQUIDATION_BUY_BLOCK_ENABLED",
     "RECOMMENDATION_EXPIRE_MIN",
     "SCHEDULER_ENABLED",
+    "INTRADAY_RESCAN_INTERVAL_MIN",
     "RISK_APPETITE",
     "BUY_ORDER_EXECUTION_MODE",
     "BUY_SLIPPAGE_GUARD_BPS",
@@ -26,6 +27,8 @@ MUTABLE_SETTINGS = [
     "MAX_CONSECUTIVE_LOSSES",
     "MIN_STRATEGY_EXPECTANCY",
     "EXPECTANCY_SAMPLE_SIZE",
+    "STRATEGY_EXPECTANCY_GUARD_MODE",
+    "NEGATIVE_EXPECTANCY_SIZE_MULTIPLIER",
     "VOLATILITY_POSITION_SIZING_ENABLED",
     "RISK_PER_TRADE_PCT",
     "RISK_MULTIPLIER_SHORT",
@@ -44,29 +47,53 @@ MUTABLE_SETTINGS = [
     "LLM_PROVIDER_TIER2",
     "LLM_FALLBACK_PROVIDER_TIER1",
     "LLM_FALLBACK_PROVIDER_TIER2",
+    "LLM_EXECUTION_MODE_TIER1",
+    "LLM_EXECUTION_MODE_TIER2",
+    "LLM_DISTRIBUTED_PROFILE_TIER1",
+    "LLM_DISTRIBUTED_PROFILE_TIER2",
     "LLM_FALLBACK_MODEL_TIER1",
     "LLM_FALLBACK_MODEL_TIER2",
     "CLAUDE_CODE_MODEL",
     "CLAUDE_CODE_MODEL_TIER1",
     "CLAUDE_CODE_MODEL_TIER2",
+    "CLAUDE_CODE_EFFORT_TIER1",
+    "CLAUDE_CODE_EFFORT_TIER2",
+    "CLAUDE_CODE_BARE_TIER1",
+    "CLAUDE_CODE_BARE_TIER2",
     "CODEX_MODEL",
     "CODEX_MODEL_TIER1",
     "CODEX_MODEL_TIER2",
+    "CODEX_REASONING_EFFORT_TIER1",
+    "CODEX_REASONING_EFFORT_TIER2",
     "CODEX_TIMEOUT_SEC_TIER1",
     "CODEX_TIMEOUT_SEC_TIER2",
     "LLM_SLOW_CALL_WARN_SEC",
     "LLM_TIER1_CONCURRENCY",
     "LLM_TIER2_CONCURRENCY",
+    "TIER1_LLM_TIMEOUT_SEC",
+    "DETERMINISTIC_TIER1_FAST_GATE_MODE",
+    "DETERMINISTIC_TIER1_FAST_GATE_ENABLED",
+    "TIER1_ANALYSIS_CACHE_TTL_SEC",
+    "TIER1_ANALYSIS_CACHE_PRICE_BUCKET_BPS",
+    "TIER1_FAST_GATE_LATE_BUY_CUTOFF_HOUR",
+    "TIER1_FAST_GATE_LATE_BUY_CUTOFF_MINUTE",
+    "TIER1_FAST_GATE_OVERHEAT_CHANGE_PCT",
+    "TIER1_FAST_GATE_MIN_CONTINUE_SCORE",
+    "TIER1_FAST_GATE_BULL_MOMENTUM_ALLOW_ENABLED",
+    "TIER1_FAST_GATE_BULL_MOMENTUM_MIN_CHANGE_PCT",
+    "TIER1_FAST_GATE_BULL_MOMENTUM_MIN_SCORE",
     "OLLAMA_BASE_URL",
     "OLLAMA_MODEL",
     "OLLAMA_MODEL_TIER1",
     "OLLAMA_MODEL_TIER2",
     "MANUAL_LLM_PROVIDER",
+    "MANUAL_LLM_EXECUTION_MODE",
     "MANUAL_LLM_MODEL",
     "MANUAL_LLM_FALLBACK_PROVIDER",
     "MANUAL_LLM_FALLBACK_MODEL",
     "NEWS_LLM_ENABLED",
     "NEWS_LLM_PROVIDER",
+    "NEWS_LLM_EXECUTION_MODE",
     "NEWS_LLM_MODEL",
     "NEWS_LLM_FALLBACK_PROVIDER",
     "NEWS_LLM_FALLBACK_MODEL",
@@ -98,6 +125,12 @@ MUTABLE_SETTINGS = [
     "NEWS_ROLLOUT_MIN_EXPECTANCY",
     "NEWS_ROLLOUT_MAX_DRAWDOWN_KRW",
 ]
+
+SECRET_RUNTIME_SETTINGS = {
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "LLM_API_KEY_REGISTRY",
+}
 
 _SKIP = object()
 
@@ -134,12 +167,24 @@ def coerce_runtime_setting_value(key: str, value: Any) -> Any:
         if key == "LLM_SLOW_CALL_WARN_SEC":
             if normalized_int < 0 or normalized_int > 300:
                 raise HTTPException(status_code=400, detail=f"{key} must be between 0 and 300")
+        if key == "TIER1_LLM_TIMEOUT_SEC":
+            if normalized_int < 10 or normalized_int > 180:
+                raise HTTPException(status_code=400, detail=f"{key} must be between 10 and 180")
+        if key == "TIER1_ANALYSIS_CACHE_TTL_SEC":
+            if normalized_int < 10 or normalized_int > 1800:
+                raise HTTPException(status_code=400, detail=f"{key} must be between 10 and 1800")
+        if key == "TIER1_ANALYSIS_CACHE_PRICE_BUCKET_BPS":
+            if normalized_int < 0 or normalized_int > 200:
+                raise HTTPException(status_code=400, detail=f"{key} must be between 0 and 200")
         if key == "NEWS_SOURCE_FAILURE_COOLDOWN_MIN":
             if normalized_int < 1 or normalized_int > 240:
                 raise HTTPException(status_code=400, detail=f"{key} must be between 1 and 240")
         if key == "BROKER_BALANCE_RETRY_DELAY_MS":
             if normalized_int < 100 or normalized_int > 5000:
                 raise HTTPException(status_code=400, detail=f"{key} must be between 100 and 5000")
+        if key == "INTRADAY_RESCAN_INTERVAL_MIN":
+            if normalized_int < 1 or normalized_int > 60:
+                raise HTTPException(status_code=400, detail=f"{key} must be between 1 and 60")
         return normalized_int
 
     if isinstance(current, float):
@@ -165,13 +210,13 @@ def coerce_runtime_setting_value(key: str, value: Any) -> Any:
         normalized = str(value).upper()
         if key.startswith("LLM_FALLBACK_PROVIDER_") and normalized in {"", "NONE"}:
             return ""
-        if normalized not in {"CLAUDE_CODE", "CODEX", "OLLAMA"}:
+        if normalized not in {"CLAUDE_CODE", "CLAUDE_API", "CODEX", "OLLAMA"}:
             return _SKIP
         return normalized
 
     if key in {"MANUAL_LLM_PROVIDER", "NEWS_LLM_PROVIDER"}:
         normalized = str(value).upper()
-        if normalized not in {"CLAUDE_CODE", "CODEX", "OLLAMA"}:
+        if normalized not in {"CLAUDE_CODE", "CLAUDE_API", "CODEX", "OLLAMA"}:
             return _SKIP
         return normalized
 
@@ -179,7 +224,7 @@ def coerce_runtime_setting_value(key: str, value: Any) -> Any:
         normalized = str(value).upper()
         if normalized in {"", "NONE"}:
             return ""
-        if normalized not in {"CLAUDE_CODE", "CODEX", "OLLAMA"}:
+        if normalized not in {"CLAUDE_CODE", "CLAUDE_API", "CODEX", "OLLAMA"}:
             return _SKIP
         return normalized
 
@@ -201,6 +246,20 @@ def coerce_runtime_setting_value(key: str, value: Any) -> Any:
             return _SKIP
         return normalized
 
+    if key == "NEWS_GATE_ROLLOUT_MODE":
+        normalized = str(value or "").upper().strip()
+        if normalized in {"", "LEGACY"}:
+            return ""
+        if normalized not in {
+            "OFF",
+            "POLL_ONLY",
+            "SHADOW_ONLY",
+            "SEMI_AUTO_GATE_RECOMMENDATION",
+            "BUY_BLOCK_GATE",
+        }:
+            return _SKIP
+        return normalized
+
     if key in {
         "LLM_FALLBACK_MODEL_TIER1",
         "LLM_FALLBACK_MODEL_TIER2",
@@ -219,6 +278,43 @@ def coerce_runtime_setting_value(key: str, value: Any) -> Any:
         "NEWS_LLM_FALLBACK_MODEL",
     }:
         return normalize_llm_model_value(str(value))
+
+    if key in {"CLAUDE_CODE_EFFORT_TIER1", "CLAUDE_CODE_EFFORT_TIER2"}:
+        normalized = str(value or "").lower().strip()
+        if normalized not in {"low", "medium", "high", "xhigh", "max"}:
+            return _SKIP
+        return normalized
+
+    if key in {"CODEX_REASONING_EFFORT_TIER1", "CODEX_REASONING_EFFORT_TIER2"}:
+        normalized = str(value or "").lower().strip()
+        if normalized not in {"low", "medium", "high", "xhigh"}:
+            return _SKIP
+        return normalized
+
+    if key in {
+        "LLM_EXECUTION_MODE_TIER1",
+        "LLM_EXECUTION_MODE_TIER2",
+        "MANUAL_LLM_EXECUTION_MODE",
+        "NEWS_LLM_EXECUTION_MODE",
+    }:
+        normalized = str(value or "").upper().strip()
+        if normalized not in {"SINGLE", "DISTRIBUTED", "CONSENSUS"}:
+            return _SKIP
+        return normalized
+
+    if key == "DETERMINISTIC_TIER1_FAST_GATE_MODE":
+        normalized = str(value or "").upper().strip()
+        if normalized in {"", "LEGACY"}:
+            return ""
+        if normalized not in {"OFF", "SHADOW", "ENFORCE"}:
+            return _SKIP
+        return normalized
+
+    if key in {"LLM_DISTRIBUTED_PROFILE_TIER1", "LLM_DISTRIBUTED_PROFILE_TIER2"}:
+        normalized = str(value or "").upper().strip()
+        if normalized not in {"FAST", "FULL"}:
+            return _SKIP
+        return normalized
 
     if isinstance(current, str):
         return str(value)

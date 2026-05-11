@@ -131,6 +131,9 @@ def _model_for_provider(provider: LLMProvider, *, tier: LLMTier) -> str:
     if provider == LLMProvider.OLLAMA:
         value = settings.OLLAMA_MODEL_TIER1 if tier == LLMTier.TIER1 else settings.OLLAMA_MODEL_TIER2
         return normalize_llm_model_value(value or settings.OLLAMA_MODEL)
+    if provider == LLMProvider.CLAUDE_API:
+        value = settings.CLAUDE_CODE_MODEL_TIER1 if tier == LLMTier.TIER1 else settings.CLAUDE_CODE_MODEL_TIER2
+        return normalize_llm_model_value(value or settings.CLAUDE_CODE_MODEL)
     value = settings.CLAUDE_CODE_MODEL_TIER1 if tier == LLMTier.TIER1 else settings.CLAUDE_CODE_MODEL_TIER2
     return normalize_llm_model_value(value or settings.CLAUDE_CODE_MODEL)
 
