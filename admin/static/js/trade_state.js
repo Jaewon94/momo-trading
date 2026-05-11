@@ -29,10 +29,6 @@ export function buildPortfolioQuickStatsModel(
   const opened = Array.isArray(trades?.opened) ? trades.opened : [];
   const sellExecutions = Array.isArray(trades?.sell_executions) ? trades.sell_executions : [];
   const completed = Array.isArray(trades?.completed) ? trades.completed : [];
-  const fallbackRealizedTodayPnl = completed.reduce((sum, item) => sum + Number(item?.pnl || 0), 0);
-  const realizedTodayPnl = sessionAvailable
-    ? Number(sessionMetrics?.realized_today_pnl || 0)
-    : fallbackRealizedTodayPnl;
   const currentExposureKrw = sessionAvailable
     ? Number(sessionMetrics?.current_exposure_krw || stockValue)
     : stockValue;
@@ -77,7 +73,6 @@ export function buildPortfolioQuickStatsModel(
     snapshotStaleMessage: sessionAvailable ? String(sessionMetrics?.snapshot_stale_message || "") : "",
     snapshotStaleBlocksBuy: sessionAvailable ? sessionMetrics?.snapshot_stale_blocks_buy === true : false,
     snapshotIsStale: sessionAvailable ? sessionMetrics?.is_stale === true : false,
-    realizedTodayPnl,
     cash,
     stockValue,
     cashRatio,
@@ -112,23 +107,6 @@ function toneFromNumber(value) {
   return "neutral";
 }
 
-function formatKstClock(value) {
-  if (!value) return "";
-  const match = String(value).match(/T(\d{2}):(\d{2})/);
-  if (match) return `${match[1]}:${match[2]}`;
-  return "";
-}
-
-function formatRealizedPeriod(stats = {}) {
-  if (!stats?.tradingDate || !stats?.baselineAt || !stats?.latestSnapshotAt) {
-    return "청산 완료 기준";
-  }
-  const start = formatKstClock(stats.baselineAt);
-  const end = formatKstClock(stats.latestSnapshotAt);
-  if (!start || !end) return "청산 완료 기준";
-  return `${stats.tradingDate} ${start} ~ ${end}`;
-}
-
 export function buildAccountOverviewModel(stats = {}) {
   const totalAsset = Number(stats?.totalAsset || 0);
   const cash = Number(stats?.cash || 0);
@@ -136,7 +114,6 @@ export function buildAccountOverviewModel(stats = {}) {
   const cashRatio = totalAsset > 0 ? (cash / totalAsset) * 100 : 0;
   const stockRatio = totalAsset > 0 ? (stockValue / totalAsset) * 100 : 0;
   const pnlTone = toneFromNumber(stats?.unrealizedPnl);
-  const realizedTodayTone = toneFromNumber(stats?.realizedTodayPnl);
   const totalAssetMeta = stats?.assetDeltaAvailable
     ? `장시작 대비 ${formatWon(stats.assetDelta, { signed: true })} / ${formatPercent(stats.assetDeltaRate, { signed: true, digits: 2 })}`
     : "장시작 기준선 대기";
@@ -167,19 +144,13 @@ export function buildAccountOverviewModel(stats = {}) {
         label: "주식 평가액",
         value: formatWon(stockValue),
         meta: `${formatPercent(stockRatio)} · 노출 ${formatPercent(stats?.currentExposurePct || 0)}`,
-        tone: stats?.marketExposure ? "negative" : "neutral",
+        tone: "neutral",
       },
       {
         label: "평가손익",
         value: formatWon(stats?.unrealizedPnl, { signed: true }),
         meta: formatPercent(stats?.unrealizedPnlRate, { digits: 2 }),
         tone: pnlTone,
-      },
-      {
-        label: "당일 실현손익",
-        value: formatWon(stats?.realizedTodayPnl, { signed: true }),
-        meta: formatRealizedPeriod(stats),
-        tone: realizedTodayTone,
       },
       {
         label: "현금/스냅샷 차이",

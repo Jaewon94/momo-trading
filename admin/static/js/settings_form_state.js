@@ -22,12 +22,28 @@ const SETTINGS_CONTROL_BINDINGS = [
     getValue: (settings) => settings.LLM_PROVIDER_TIER1 || settings.LLM_PROVIDER || 'CLAUDE_CODE',
   },
   {
+    elementId: 'set-llm-tier1-execution-mode',
+    getValue: (settings) => settings.LLM_EXECUTION_MODE_TIER1 || 'DISTRIBUTED',
+  },
+  {
+    elementId: 'set-llm-tier1-distributed-profile',
+    getValue: (settings) => settings.LLM_DISTRIBUTED_PROFILE_TIER1 || 'FAST',
+  },
+  {
     elementId: 'set-llm-tier1-concurrency',
     getValue: (settings) => stringifyNullable(settings.LLM_TIER1_CONCURRENCY),
   },
   {
     elementId: 'set-llm-tier2-provider',
     getValue: (settings) => settings.LLM_PROVIDER_TIER2 || settings.LLM_PROVIDER || 'CLAUDE_CODE',
+  },
+  {
+    elementId: 'set-llm-tier2-execution-mode',
+    getValue: (settings) => settings.LLM_EXECUTION_MODE_TIER2 || 'SINGLE',
+  },
+  {
+    elementId: 'set-llm-tier2-distributed-profile',
+    getValue: (settings) => settings.LLM_DISTRIBUTED_PROFILE_TIER2 || 'FULL',
   },
   {
     elementId: 'set-llm-tier2-concurrency',
@@ -50,9 +66,39 @@ const SETTINGS_CONTROL_BINDINGS = [
     getValue: (settings) => stringifyNullable(settings.CODEX_TIMEOUT_SEC_TIER2),
   },
   {
+    elementId: 'set-claude-effort-tier1',
+    getValue: (settings) => settings.CLAUDE_CODE_EFFORT_TIER1 || 'low',
+  },
+  {
+    elementId: 'set-claude-effort-tier2',
+    getValue: (settings) => settings.CLAUDE_CODE_EFFORT_TIER2 || 'high',
+  },
+  {
+    elementId: 'set-claude-bare-tier1',
+    getValue: (settings) => Boolean(settings.CLAUDE_CODE_BARE_TIER1),
+    type: 'checked',
+  },
+  {
+    elementId: 'set-claude-bare-tier2',
+    getValue: (settings) => Boolean(settings.CLAUDE_CODE_BARE_TIER2),
+    type: 'checked',
+  },
+  {
+    elementId: 'set-codex-effort-tier1',
+    getValue: (settings) => settings.CODEX_REASONING_EFFORT_TIER1 || 'low',
+  },
+  {
+    elementId: 'set-codex-effort-tier2',
+    getValue: (settings) => settings.CODEX_REASONING_EFFORT_TIER2 || 'high',
+  },
+  {
     key: 'MANUAL_LLM_PROVIDER',
     elementId: 'set-manual-llm-provider',
     shouldApply: (value) => Boolean(value),
+  },
+  {
+    elementId: 'set-manual-llm-execution-mode',
+    getValue: (settings) => settings.MANUAL_LLM_EXECUTION_MODE || 'SINGLE',
   },
   {
     key: 'MANUAL_LLM_FALLBACK_PROVIDER',
@@ -70,6 +116,10 @@ const SETTINGS_CONTROL_BINDINGS = [
     elementId: 'set-news-llm-enabled',
     getValue: (settings) => Boolean(settings.NEWS_LLM_ENABLED),
     type: 'checked',
+  },
+  {
+    elementId: 'set-news-llm-execution-mode',
+    getValue: (settings) => settings.NEWS_LLM_EXECUTION_MODE || 'DISTRIBUTED',
   },
   {
     elementId: 'set-news-llm-provider',
@@ -106,6 +156,10 @@ const SETTINGS_CONTROL_BINDINGS = [
     elementId: 'set-news-domestic-media-enabled',
     getValue: (settings) => Boolean(settings.NEWS_DOMESTIC_MEDIA_ENABLED),
     type: 'checked',
+  },
+  {
+    elementId: 'set-news-gate-rollout-mode',
+    getValue: (settings) => settings.NEWS_GATE_ROLLOUT_MODE || '',
   },
   {
     elementId: 'set-news-gate-enabled',

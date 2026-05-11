@@ -30,6 +30,10 @@ import {
 } from './settings_apply_state.js';
 import { applySettingsToForm } from './settings_form_state.js';
 import {
+  buildLLMExecutionModeState,
+  getDefaultLLMExecutionMode,
+  getLLMExecutionModeElementId,
+  getLLMExecutionModeSettingKey,
   getStandaloneModelSelectorState,
   getTierProviderElementId,
   resolveTierModelState,
@@ -107,6 +111,7 @@ let runtimeSettings = null;
 let runtimeSystemStatus = null;
 let newsOverviewSnapshot = null;
 let llmUsageSnapshot = null;
+let llmApiKeyStatus = null;
 let llmCatalog = null;
 let runtimeControlPending = false;
 let activeSettingsTab = 'operating';
@@ -120,6 +125,7 @@ let positionTimelineLoadingMore = false;
 let activeEventRadarFilter = 'all';
 let activeEventRadarSymbol = '';
 let eventRadarExpanded = false;
+let activeCenterTopPanel = 'radar';
 let activeTradeCenterTab = 'pending';
 let activeTradeCenterSort = 'latest';
 let activeTradeCenterQuery = '';
@@ -131,6 +137,7 @@ let activeNewsArchiveItem = null;
 let lastManualNewsFetchState = null;
 const TRADE_CENTER_PAGE_SIZE = 20;
 const EVENT_RADAR_PANEL_KEY = 'momo:event-radar:expanded';
+const CENTER_TOP_PANEL_KEY = 'momo:center-top-panel';
 const knownStockNames = {};
 const knownStockMeta = {};
 let paneLayout = {
@@ -567,11 +574,14 @@ document.addEventListener('DOMContentLoaded', () => {
   loadLLMCatalog();
   loadSystemStatus();
   loadLLMUsage();
+  loadLLMApiKeyStatus();
   loadReportList();
   loadAccountInfo();
   loadLLMStatus();
   loadEventRadar();
+  loadCenterTopPanelState();
   loadEventRadarPanelState();
+  applyCenterTopPanelState();
   applyEventRadarPanelState();
   connectSSE();
   loadTodayActivities();
@@ -620,6 +630,70 @@ function toggleEventRadarPanel() {
   eventRadarExpanded = !eventRadarExpanded;
   saveEventRadarPanelState();
   applyEventRadarPanelState();
+}
+
+function loadCenterTopPanelState() {
+  try {
+    const raw = localStorage.getItem(CENTER_TOP_PANEL_KEY);
+    activeCenterTopPanel = raw === 'executions' ? 'executions' : 'radar';
+  } catch {
+    activeCenterTopPanel = 'radar';
+  }
+}
+
+function saveCenterTopPanelState() {
+  try {
+    localStorage.setItem(CENTER_TOP_PANEL_KEY, activeCenterTopPanel);
+  } catch {
+    // no-op
+  }
+}
+
+function setCenterTopPanel(panel) {
+  activeCenterTopPanel = panel === 'executions' ? 'executions' : 'radar';
+  saveCenterTopPanelState();
+  applyCenterTopPanelState();
+}
+
+function refreshCenterTopPanel() {
+  if (activeCenterTopPanel === 'executions') {
+    loadAccountInfo();
+  } else {
+    loadEventRadar();
+  }
+}
+
+function applyCenterTopPanelState() {
+  const isExecutions = activeCenterTopPanel === 'executions';
+  const shell = document.getElementById('event-radar-shell');
+  const title = document.getElementById('center-panel-title');
+  const description = document.getElementById('center-panel-description');
+  const radarSummary = document.getElementById('event-radar-summary');
+  const radarFilters = document.getElementById('event-radar-filters');
+  const radarList = document.getElementById('event-radar-list');
+  const executionStrip = document.getElementById('live-execution-strip');
+  const toggle = document.getElementById('event-radar-toggle');
+  const radarTab = document.getElementById('center-tab-radar');
+  const executionTab = document.getElementById('center-tab-executions');
+
+  if (shell) shell.dataset.activePanel = activeCenterTopPanel;
+  if (title) title.textContent = isExecutions ? '최근 체결' : '지금 확인할 실시간 이벤트';
+  if (description) {
+    description.textContent = isExecutions
+      ? '매도 완료와 매수 체결을 같은 위치에서 빠르게 확인합니다.'
+      : '급등락, 거래량, 손절/익절 이벤트를 우선순위 순으로 보여줍니다.';
+  }
+  [radarSummary, radarFilters, radarList].forEach((el) => {
+    if (el) el.classList.toggle('hidden', isExecutions);
+    if (el) el.style.display = isExecutions ? 'none' : '';
+  });
+  if (executionStrip) {
+    executionStrip.classList.toggle('hidden', !isExecutions);
+    executionStrip.style.display = isExecutions ? 'block' : 'none';
+  }
+  if (toggle) toggle.classList.add('hidden');
+  if (radarTab) radarTab.classList.toggle('active', !isExecutions);
+  if (executionTab) executionTab.classList.toggle('active', isExecutions);
 }
 
 // ── Sidebar Accordion ──
@@ -760,6 +834,8 @@ function renderSettingsDraftState() {
   applySettingsToForm(formSettings);
   renderTierModelSelectors(formSettings);
   renderStandaloneModelSelectors(formSettings);
+  renderLLMExecutionModeControls(formSettings);
+  renderProviderSpecificLLMControls(formSettings);
   renderTierConcurrencyFields(formSettings);
   renderNewsTranslationConcurrencyField(formSettings);
   renderSettingGuidance(formSettings);
@@ -1213,12 +1289,31 @@ function renderEventRadar(state) {
   const listEl = document.getElementById('event-radar-list');
   if (!summaryEl || !filtersEl || !listEl) return;
 
-  summaryEl.innerHTML = state.summaryPills.map((pill) => `
-    <div class="event-radar-summary-pill">
-      <div class="event-radar-summary-label">${escapeHtml(pill.label)}</div>
-      <div class="event-radar-summary-value">${escapeHtml(pill.value)}</div>
-    </div>
-  `).join('');
+  const tradeStageMap = buildTradeStageMap();
+  const visibleCards = filterEventRadarCards(state.cards, activeEventRadarFilter);
+  if (activeEventRadarSymbol) {
+    visibleCards.sort((a, b) => {
+      if (a.symbol === activeEventRadarSymbol && b.symbol !== activeEventRadarSymbol) return -1;
+      if (a.symbol !== activeEventRadarSymbol && b.symbol === activeEventRadarSymbol) return 1;
+      return 0;
+    });
+  }
+
+  summaryEl.innerHTML = visibleCards.length
+    ? visibleCards.slice(0, 8).map((card) => `
+      <button
+        type="button"
+        class="event-radar-summary-pill tone-${escapeHtml(card.tone || 'watch')} ${card.symbol === activeEventRadarSymbol ? 'is-focused' : ''}"
+        data-radar-open-trade="${escapeHtml(card.symbol || '')}"
+        data-radar-tone="${escapeHtml(card.tone || '')}"
+      >
+        <div class="event-radar-summary-label">${escapeHtml(card.event_type || 'EVENT')} · ${escapeHtml(card.occurredTimeLabel || '')}</div>
+        <div class="event-radar-summary-value">${escapeHtml(card.title || card.symbol || '-')}</div>
+        <div class="event-radar-summary-meta">${escapeHtml(card.subtitle || card.metaLine || '')}</div>
+        <div class="event-radar-summary-meta">상태 ${escapeHtml(card.stateLabel || '-')} · 거래 ${escapeHtml(tradeStageMap[card.symbol] || '미진입')}</div>
+      </button>
+    `).join('')
+    : `<div class="event-radar-empty w-full">${escapeHtml(state.emptyMessage)}</div>`;
 
   filtersEl.innerHTML = state.filters.map((filter) => `
     <button
@@ -1230,16 +1325,6 @@ function renderEventRadar(state) {
       <span class="event-radar-filter-count">${escapeHtml(String(filter.count))}</span>
     </button>
   `).join('');
-
-  const tradeStageMap = buildTradeStageMap();
-  const visibleCards = filterEventRadarCards(state.cards, activeEventRadarFilter);
-  if (activeEventRadarSymbol) {
-    visibleCards.sort((a, b) => {
-      if (a.symbol === activeEventRadarSymbol && b.symbol !== activeEventRadarSymbol) return -1;
-      if (a.symbol !== activeEventRadarSymbol && b.symbol === activeEventRadarSymbol) return 1;
-      return 0;
-    });
-  }
   if (!visibleCards.length) {
     listEl.innerHTML = `<div class="event-radar-empty">${escapeHtml(state.emptyMessage)}</div>`;
     return;
@@ -1739,6 +1824,7 @@ async function loadAccountInfo() {
     renderAccountHoldings(holdJson.data);
     renderPendingOrders(pendJson.data);
     renderTodayTrades(tradeJson.data);
+    renderLiveExecutionStrip(tradeJson.data);
     refreshStockCardActions();
     if (currentView === 'trades-center') {
       loadTradesCenterView(latestAccountSnapshot);
@@ -2002,6 +2088,141 @@ function renderTodayTrades(data) {
       <div class="text-[11px] text-gray-500 mt-2">상세 목록은 거래 센터에서 확인</div>
     </div>
   `;
+}
+
+function renderLiveExecutionStrip(data) {
+  ensureLiveExecutionStrip();
+  const shell = document.getElementById('live-execution-strip');
+  const listEl = document.getElementById('live-execution-list');
+  if (!shell || !listEl) return;
+
+  const state = buildTradePanelState(data);
+  const sellSeen = new Set();
+  const sellRows = [];
+  (Array.isArray(state.completed) ? state.completed : []).forEach((trade) => {
+    sellSeen.add(buildTradeDedupeKey(trade, 'sell'));
+    sellRows.push({ trade, tone: 'sell', label: '전량 매도 완료' });
+  });
+  (Array.isArray(state.sellExecutions) ? state.sellExecutions : []).forEach((trade) => {
+    const key = buildTradeDedupeKey(trade, 'sell');
+    if (sellSeen.has(key)) return;
+    sellSeen.add(key);
+    sellRows.push({ trade, tone: 'sell', label: '매도 체결' });
+  });
+  const buyRows = (Array.isArray(state.opened) ? state.opened : [])
+    .filter((trade) => !trade.exit_at)
+    .map((trade) => ({ trade, tone: 'buy', label: '매수 체결' }));
+
+  const rows = [...sellRows, ...buyRows]
+    .filter((row) => row.trade)
+    .sort((a, b) => {
+      const at = getTradeEventTime(a.trade, a.tone);
+      const bt = getTradeEventTime(b.trade, b.tone);
+      return bt - at;
+    })
+    .slice(0, 8);
+
+  if (!rows.length) {
+    listEl.innerHTML = '<div class="event-radar-empty w-full">최근 체결이 없습니다.</div>';
+    applyCenterTopPanelState();
+    return;
+  }
+
+  listEl.innerHTML = rows.map(({ trade, tone, label }) => {
+    const time = formatTradeEventTime(trade, tone);
+    const qty = Number(trade.quantity || 0).toLocaleString();
+    const price = Number(tone === 'sell' ? trade.exit_price : trade.entry_price || 0).toLocaleString();
+    const pnl = tone === 'sell' && trade.pnl != null
+      ? ` · 손익 ${Number(trade.pnl) >= 0 ? '+' : ''}${formatKRW(trade.pnl)}`
+      : '';
+    return `
+      <div class="live-execution-card tone-${escapeHtml(tone)}">
+        <div class="live-execution-label">${escapeHtml(label)} · ${escapeHtml(time)}</div>
+        <div class="live-execution-title">${escapeHtml(trade.stock_name || trade.stock_symbol || '-')}</div>
+        <div class="live-execution-meta">${escapeHtml(trade.stock_symbol || '-')} · ${qty}주 @${price}원${escapeHtml(pnl)}</div>
+      </div>
+    `;
+  }).join('');
+  applyCenterTopPanelState();
+}
+
+function buildTradeDedupeKey(trade, tone) {
+  const rawTime = tone === 'sell'
+    ? (trade.exit_at || trade.created_at)
+    : (trade.entry_at || trade.created_at);
+  const minute = rawTime ? String(rawTime).slice(0, 16) : '';
+  return [
+    tone,
+    trade.stock_symbol || '',
+    trade.quantity || '',
+    minute,
+  ].join(':');
+}
+
+function ensureLiveExecutionStrip() {
+  ensureLiveExecutionStripStyles();
+  if (document.getElementById('live-execution-strip')) return;
+  const radar = document.getElementById('event-radar-shell');
+  if (!radar) return;
+  const section = document.createElement('div');
+  section.id = 'live-execution-strip';
+  section.className = 'live-execution-strip mt-3 hidden';
+  section.innerHTML = `
+    <div id="live-execution-list" class="live-execution-scroll"></div>
+  `;
+  radar.appendChild(section);
+}
+
+function ensureLiveExecutionStripStyles() {
+  if (document.getElementById('live-execution-strip-styles')) return;
+  const style = document.createElement('style');
+  style.id = 'live-execution-strip-styles';
+  style.textContent = `
+    .center-panel-tabs{display:inline-flex;gap:4px;border:1px solid rgba(71,85,105,.85);border-radius:8px;padding:3px;background:rgba(15,16,33,.58)}
+    .center-panel-tab{border-radius:6px;padding:5px 9px;color:#94a3b8;font-size:11px;transition:.15s ease}
+    .center-panel-tab.active{background:rgba(37,99,235,.24);color:#dbeafe}
+    .event-radar-shell{height:212px;overflow:hidden}
+    .event-radar-shell:not(.compact):not([data-active-panel="executions"]){height:212px}
+    .event-radar-shell[data-active-panel="executions"]{height:212px}
+    .event-radar-shell[data-active-panel="executions"] #event-radar-summary,.event-radar-shell[data-active-panel="executions"] #event-radar-filters,.event-radar-shell[data-active-panel="executions"] #event-radar-list{display:none}
+    .event-radar-shell[data-active-panel="radar"] #live-execution-strip{display:none}
+    .event-radar-shell[data-active-panel="executions"] #live-execution-strip{display:block}
+    .event-radar-shell #event-radar-filters,.event-radar-list{display:none}
+    .event-radar-summary-grid{display:flex;gap:8px;overflow-x:auto;padding:10px;height:124px;border:1px solid rgba(51,65,85,.75);border-radius:10px;background:rgba(15,23,42,.52)}
+    .event-radar-summary-pill{min-width:220px;height:92px;border:1px solid rgba(51,65,85,.92);border-radius:8px;background:rgba(15,16,33,.82);padding:8px 10px;text-align:left}
+    .event-radar-summary-pill.tone-buy{border-color:rgba(16,185,129,.38);background:linear-gradient(90deg,rgba(6,78,59,.18),rgba(15,16,33,.82))}
+    .event-radar-summary-pill.tone-sell{border-color:rgba(96,165,250,.55);background:linear-gradient(90deg,rgba(30,64,175,.22),rgba(15,16,33,.82))}
+    .event-radar-summary-pill.tone-watch{border-color:rgba(148,163,184,.36)}
+    .event-radar-summary-label{color:#94a3b8;font-size:11px}
+    .event-radar-summary-value{color:#f8fafc;font-size:13px;font-weight:700;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .event-radar-summary-meta{color:#94a3b8;font-size:11px;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .live-execution-strip{border:1px solid rgba(51,65,85,.75);border-radius:10px;background:rgba(15,23,42,.52);padding:10px;height:124px;overflow:hidden}
+    .live-execution-scroll{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px}
+    .live-execution-card{min-width:220px;height:92px;border:1px solid rgba(71,85,105,.9);border-radius:8px;background:rgba(15,16,33,.82);padding:8px 10px}
+    .live-execution-card.tone-sell{border-color:rgba(96,165,250,.55);background:linear-gradient(90deg,rgba(30,64,175,.22),rgba(15,16,33,.82))}
+    .live-execution-card.tone-buy{border-color:rgba(248,113,113,.45);background:linear-gradient(90deg,rgba(127,29,29,.20),rgba(15,16,33,.82))}
+    .live-execution-label{color:#cbd5e1;font-size:11px}
+    .live-execution-title{color:#f8fafc;font-size:13px;font-weight:700;margin-top:2px}
+    .live-execution-meta{color:#94a3b8;font-size:11px;margin-top:4px}
+  `;
+  document.head.appendChild(style);
+}
+
+function getTradeEventTime(trade, tone) {
+  const raw = tone === 'sell'
+    ? (trade.exit_at || trade.created_at)
+    : (trade.entry_at || trade.created_at);
+  const ts = raw ? new Date(raw).getTime() : 0;
+  return Number.isFinite(ts) ? ts : 0;
+}
+
+function formatTradeEventTime(trade, tone) {
+  const raw = tone === 'sell'
+    ? (trade.exit_at || trade.created_at)
+    : (trade.entry_at || trade.created_at);
+  return raw
+    ? new Date(raw).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
+    : '-';
 }
 
 async function fetchTradeCenterSnapshot() {
@@ -2482,11 +2703,14 @@ function appendActivity(data) {
     lastActivityGroupKey = groupKey;
   } else {
     // Symbol-specific → route to stock card
-    const cardKey = `${activity.cycle_id || 'ev'}:${symbol}`;
+    const isSellCompletion = isSellCompletionActivity(activity);
+    const cardKey = isSellCompletion
+      ? `sell:${activity.id || activity.created_at || Date.now()}:${symbol}`
+      : `${activity.cycle_id || 'ev'}:${symbol}`;
     let card = stockCards[cardKey];
 
     // 정확한 키 매칭 실패 시 → 같은 종목의 진행 중인 카드에 합류
-    if (!card) {
+    if (!card && !isSellCompletion) {
       for (const [key, existing] of Object.entries(stockCards)) {
         if (key.endsWith(':' + symbol) && (!existing.outcome || existing.outcome === 'progress' || existing.outcome === 'buy')) {
           card = existing;
@@ -2503,6 +2727,9 @@ function appendActivity(data) {
     }
     addStepToCard(card, activity);
     updateCardHeader(card);
+    if (isSellCompletion && !card.isOpen) {
+      toggleCardBody(card);
+    }
     lastActivityGroupKey = `symbol:${cardKey}`;
   }
 
@@ -2512,6 +2739,16 @@ function appendActivity(data) {
   if (autoScroll) {
     container.scrollTop = container.scrollHeight;
   }
+}
+
+function isSellCompletionActivity(activity = {}) {
+  const summary = String(activity.summary || '');
+  return (
+    activity.phase === 'COMPLETE'
+    && (activity.activity_type === 'ORDER' || activity.activity_type === 'TRADE_RESULT' || activity.activity_type === 'DECISION')
+    && (summary.includes('매도') || summary.includes('SELL'))
+    && (summary.includes('완료') || summary.includes('체결') || summary.includes('주문 접수'))
+  );
 }
 
 function buildActivityMetaLine(meta = {}) {
@@ -2863,14 +3100,14 @@ function updateCardHeader(card) {
     }
 
     // 주문 실행/체결 — 방향 유지, 상태만 갱신
-    if (a.activity_type === 'DECISION' || a.activity_type === 'ORDER') {
+    if (a.activity_type === 'DECISION' || a.activity_type === 'ORDER' || a.activity_type === 'TRADE_RESULT') {
       const summ = a.summary || '';
       const isSell = outcome === 'sell' || summ.includes('SELL') || summ.includes('매도');
-      if (a.phase === 'COMPLETE' && (summ.includes('주문 접수') || summ.includes('체결'))) {
+      if (a.phase === 'COMPLETE' && (summ.includes('주문 접수') || summ.includes('체결') || summ.includes('완료'))) {
         outcome = isSell ? 'sell' : 'buy';
         outcomeText = isSell ? '📉 매도 완료' : '📈 매수 완료';
         outcomeBg = isSell ? 'bg-blue-900/50 text-blue-200 font-bold border border-blue-700/50' : 'bg-red-900/50 text-red-200 font-bold border border-red-700/50';
-      } else if (summ.includes('주문 실행')) {
+      } else if (summ.includes('주문 실행') || summ.includes('주문 접수')) {
         // 주문 접수 전 — 방향만 표시
         if (outcome !== 'buy' && outcome !== 'sell') {
           outcome = isSell ? 'sell' : 'buy';
@@ -4031,6 +4268,82 @@ function renderPeriodRows(rows = [], emptyLabel = '집계 대기 중입니다.')
   `;
 }
 
+function renderLifecycleIntegrityPanel(lifecycle = {}) {
+  const toneClasses = {
+    emerald: {
+      border: 'border-emerald-700/50',
+      bg: 'bg-emerald-950/20',
+      text: 'text-emerald-300',
+      pill: 'border-emerald-700/60 text-emerald-200',
+    },
+    amber: {
+      border: 'border-amber-700/50',
+      bg: 'bg-amber-950/20',
+      text: 'text-amber-300',
+      pill: 'border-amber-700/60 text-amber-200',
+    },
+    rose: {
+      border: 'border-rose-700/50',
+      bg: 'bg-rose-950/20',
+      text: 'text-rose-300',
+      pill: 'border-rose-700/60 text-rose-200',
+    },
+    gray: {
+      border: 'border-gray-700',
+      bg: 'bg-dark-900/40',
+      text: 'text-gray-300',
+      pill: 'border-gray-600 text-gray-300',
+    },
+  };
+  const tone = toneClasses[lifecycle.tone] || toneClasses.gray;
+  const summaryRows = Array.isArray(lifecycle.summaryRows) ? lifecycle.summaryRows : [];
+  const checks = Array.isArray(lifecycle.checks) ? lifecycle.checks : [];
+  const checkTone = (status) => {
+    if (status === 'FAIL') return 'border-rose-700/50 bg-rose-950/20 text-rose-300';
+    if (status === 'WARN') return 'border-amber-700/50 bg-amber-950/20 text-amber-300';
+    if (status === 'OK') return 'border-emerald-700/50 bg-emerald-950/20 text-emerald-300';
+    return 'border-gray-700 bg-dark-950/30 text-gray-400';
+  };
+
+  return `
+    <section class="rounded-2xl border ${tone.border} ${tone.bg} px-4 py-4 mb-4">
+      <div class="flex items-start justify-between gap-3 mb-3">
+        <div>
+          <div class="text-xs uppercase tracking-[0.12em] ${tone.text}">Trade Lifecycle</div>
+          <div class="mt-1 text-sm font-medium text-white">매수-매도-성과 반영 흐름 점검</div>
+          <div class="mt-1 text-sm text-gray-300">${escapeHtml(lifecycle.help || '')}</div>
+        </div>
+        <div class="text-right">
+          <div class="inline-flex rounded-full border px-3 py-1 text-[11px] ${tone.pill}">${escapeHtml(lifecycle.statusLabel || '대기')} · ${escapeHtml(lifecycle.status || 'UNKNOWN')}</div>
+          ${lifecycle.days ? `<div class="mt-2 text-[10px] text-gray-500">최근 ${escapeHtml(String(lifecycle.days))}일</div>` : ''}
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-2 text-sm md:grid-cols-3 xl:grid-cols-6">
+        ${summaryRows.map((item) => `
+          <div class="rounded-xl border border-gray-700/70 bg-dark-950/30 px-3 py-2">
+            <div class="text-[11px] text-gray-500">${escapeHtml(item.label)}</div>
+            <div class="mt-1 font-semibold text-white">${escapeHtml(item.value)}</div>
+          </div>
+        `).join('')}
+      </div>
+      ${checks.length ? `
+        <div class="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+          ${checks.map((item) => `
+            <div class="rounded-xl border px-3 py-2 ${checkTone(item.status)}">
+              <div class="flex items-center justify-between gap-2">
+                <div class="text-[11px] font-medium">${escapeHtml(item.label || item.key)}</div>
+                <div class="text-[10px]">${escapeHtml(item.status)}</div>
+              </div>
+              <div class="mt-1 text-[11px] text-white">${escapeHtml(item.actual)}</div>
+              <div class="mt-1 text-[10px] text-gray-500">기준 ${escapeHtml(item.target)}</div>
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
+    </section>
+  `;
+}
+
 function renderObservabilityChartCard(card, strokeClass) {
   const path = card?.line?.path || '';
   if (!path) {
@@ -4452,8 +4765,35 @@ function createPerformanceDashboard(state) {
           <div class="news-overview-value">${escapeHtml(state.currentAccount.totalAsset)}</div>
           <div class="news-overview-help">현재 계좌 스냅샷</div>
         </div>
+        <div class="news-overview-card">
+          <div class="news-overview-label">장시작 대비 총자산</div>
+          <div class="news-overview-value">${escapeHtml(state.accountPnl.totalAssetDelta)}</div>
+          <div class="news-overview-help">${escapeHtml(state.accountPnl.reconciliationStatus)}</div>
+        </div>
+        <div class="news-overview-card">
+          <div class="news-overview-label">설명 안 된 차이</div>
+          <div class="news-overview-value">${escapeHtml(state.accountPnl.cashOrSnapshotDelta)}</div>
+          <div class="news-overview-help">${escapeHtml(state.accountPnl.message || state.accountPnl.sampleStatus)}</div>
+        </div>
       </div>
     </section>
+    ${state.dataQuality.excludedReconciliationCloseRows !== '0건' ? `
+      <section class="rounded-2xl border border-amber-700/50 bg-amber-950/20 px-4 py-4 mb-4">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <div class="text-xs uppercase tracking-[0.12em] text-amber-300">Performance Data Quality</div>
+            <div class="mt-1 text-sm font-medium text-white">대사용 중립 종료는 성과 표본에서 제외했습니다.</div>
+            <div class="mt-1 text-sm text-gray-300">${escapeHtml(state.dataQuality.reason || '브로커 보유 대사 종료는 실제 실현손익 표본이 아닙니다.')}</div>
+          </div>
+          <div class="text-right text-[11px] text-amber-200">
+            <div>원장 닫힘 ${escapeHtml(state.dataQuality.closedTradeRows)}</div>
+            <div>성과 표본 ${escapeHtml(state.dataQuality.performanceTradeCount)}</div>
+            <div>제외 ${escapeHtml(state.dataQuality.excludedReconciliationCloseRows)}</div>
+          </div>
+        </div>
+      </section>
+    ` : ''}
+    ${renderLifecycleIntegrityPanel(state.lifecycle)}
     <div class="news-overview-grid mb-4">
       ${state.summaryCards.map((card) => `
         <div class="news-overview-card">
@@ -4535,14 +4875,14 @@ function createPerformanceDashboard(state) {
       <section class="rounded-2xl border border-gray-700 bg-dark-900/40 px-4 py-4">
         <div class="flex items-center justify-between gap-3 mb-3">
           <div>
-            <div class="text-xs uppercase tracking-[0.12em] text-gray-500">By Strategy</div>
-            <div class="text-sm text-gray-400 mt-1">전략별 기대값과 손익 비교</div>
+            <div class="text-xs uppercase tracking-[0.12em] text-gray-500">By Execution Profile</div>
+            <div class="text-sm text-gray-400 mt-1">실행 프로파일별 기대값과 손익 비교</div>
           </div>
           <div class="performance-table-head">
             <span>건수</span><span>E</span><span>PF</span><span>손익</span>
           </div>
         </div>
-        ${renderMetricRows(state.byStrategyRows, '전략 집계가 아직 없습니다.')}
+        ${renderMetricRows(state.byExecutionProfileRows, '실행 프로파일 집계가 아직 없습니다.')}
       </section>
     </div>
     <div class="grid gap-4 xl:grid-cols-2">
@@ -4582,17 +4922,19 @@ async function loadPerformanceView(observabilityHours = null) {
   cleanupStockCards();
 
   try {
-    const [summaryJson, weeklyJson, monthlyJson, overviewJson] = await Promise.all([
+    const [summaryJson, weeklyJson, monthlyJson, overviewJson, lifecycleJson] = await Promise.all([
       fetchJson(`${API}/performance/summary?days=30`),
       fetchJson(`${API}/performance/periodic?period=weekly&size=6`),
       fetchJson(`${API}/performance/periodic?period=monthly&size=6`),
       fetchJson(`${API}/news/overview?recent_limit=4&performance_days=30`),
+      fetchJson(`${API}/trades/lifecycle-integrity?days=7`),
     ]);
     const state = buildPerformanceDashboardState({
       summary: summaryJson?.data || {},
       weekly: weeklyJson?.data || {},
       monthly: monthlyJson?.data || {},
       newsOverview: overviewJson?.data || {},
+      lifecycle: lifecycleJson?.data || {},
     });
     if (overviewJson?.data) {
       newsOverviewSnapshot = overviewJson.data;
@@ -5371,6 +5713,7 @@ async function refreshRuntimePanels() {
     loadSystemStatus(),
     loadLLMStatus(),
     loadLLMUsage(),
+    loadLLMApiKeyStatus(),
   ]);
 }
 
@@ -5506,6 +5849,27 @@ function renderTierConcurrencyFields(settingsOverride = getSettingsFormSettings(
 
   applyState('tier1');
   applyState('tier2');
+}
+
+function renderProviderSpecificLLMControls(settingsOverride = getSettingsFormSettings()) {
+  const setVisible = (id, visible) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.toggle('hidden', !visible);
+  };
+
+  const applyTier = (tier) => {
+    const provider = String(getTierProvider(tier, 'primary', settingsOverride) || '').toUpperCase();
+    const isCodex = provider === 'CODEX';
+    const isClaude = provider === 'CLAUDE_CODE';
+
+    setVisible(`llm-${tier}-codex-timeout-field`, isCodex);
+    setVisible(`llm-${tier}-codex-options`, isCodex);
+    setVisible(`llm-${tier}-claude-options`, isClaude);
+  };
+
+  applyTier('tier1');
+  applyTier('tier2');
 }
 
 function renderNewsTranslationConcurrencyField(settingsOverride = getSettingsFormSettings()) {
@@ -5996,11 +6360,211 @@ async function loadLLMUsage() {
     const json = await resp.json();
     llmUsageSnapshot = json.data;
     renderLLMUsage();
+    renderLLMExecutionModeControls();
   } catch (err) {
     console.error('LLM usage error:', err);
     if (panelEl) {
       panelEl.innerHTML = `<div class="text-red-400">조회 실패: ${escapeHtml(err.message)}</div>`;
     }
+  }
+}
+
+async function loadLLMApiKeyStatus() {
+  try {
+    const resp = await fetch(`${API}/llm/api-keys`);
+    if (!resp.ok) {
+      throw new Error('LLM API 키 상태 조회 실패');
+    }
+    const json = await resp.json();
+    llmApiKeyStatus = json.data || {};
+    renderLLMApiKeyStatus(llmApiKeyStatus);
+    renderLLMExecutionModeControls();
+  } catch (err) {
+    console.error('LLM API key status error:', err);
+    llmApiKeyStatus = null;
+    renderLLMApiKeyStatus(null, err.message);
+    renderLLMExecutionModeControls();
+  }
+}
+
+function renderLLMApiKeyStatus(data, errorMessage = '') {
+  const rows = [
+    { provider: 'CODEX', elementId: 'llm-api-key-codex-status' },
+    { provider: 'CLAUDE_CODE', elementId: 'llm-api-key-claude-status' },
+  ];
+  rows.forEach(({ provider, elementId }) => {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    if (!data) {
+      el.textContent = errorMessage || '조회 실패';
+      el.className = 'text-[11px] text-red-400';
+      return;
+    }
+    const item = data[provider] || {};
+    if (item.configured) {
+      el.textContent = `등록됨 ${item.masked || ''}`.trim();
+      el.className = 'text-[11px] text-emerald-300';
+    } else {
+      el.textContent = '미등록';
+      el.className = 'text-[11px] text-gray-500';
+    }
+  });
+
+  const summaryEl = document.getElementById('llm-api-key-worker-summary');
+  const listEl = document.getElementById('llm-api-key-list');
+  if (!data) {
+    if (summaryEl) {
+      summaryEl.textContent = errorMessage || '조회 실패';
+      summaryEl.className = 'text-xs text-red-400 mt-1';
+    }
+    if (listEl) {
+      listEl.innerHTML = `<div class="text-xs text-red-400">조회 실패: ${escapeHtml(errorMessage || '')}</div>`;
+    }
+    return;
+  }
+
+  const workerSummary = data.worker_summary || {};
+  if (summaryEl) {
+    summaryEl.textContent = `CLI ${workerSummary.cli_slots || 0}개 · API ${workerSummary.api_slots || 0}개`;
+    summaryEl.className = 'text-xs text-gray-300 mt-1';
+  }
+
+  if (listEl) {
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (!items.length) {
+      listEl.innerHTML = '<div class="rounded-lg border border-gray-700 bg-dark-800/40 px-3 py-2 text-xs text-gray-500">등록된 API worker 키가 없습니다.</div>';
+    } else {
+      listEl.innerHTML = items.map((item) => `
+        <div class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-700 bg-dark-800/50 px-3 py-2">
+          <div>
+            <div class="text-sm text-gray-200">${escapeHtml(item.label || item.provider_label || item.provider || 'API')}</div>
+            <div class="text-[11px] text-gray-500">${escapeHtml(item.provider_label || item.provider || '')} · ${escapeHtml(item.masked || '')} · ${item.enabled ? '사용' : '중지'}</div>
+          </div>
+          <button onclick="clearLLMApiKey('${escapeHtml(item.id || '')}')"
+            class="bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs rounded px-2 py-1.5 transition">삭제</button>
+        </div>
+      `).join('');
+    }
+  }
+}
+
+function getLLMWorkerCounts() {
+  const apiSlots = Number(llmApiKeyStatus?.worker_summary?.api_slots || 0);
+  let cliSlots = 0;
+  const claudeCodeAvailable = Boolean(llmUsageSnapshot?.claude_code?.available);
+  if (claudeCodeAvailable) cliSlots += 1;
+  if (llmUsageSnapshot?.codex?.available) cliSlots += 1;
+  return {
+    cliSlots: Math.max(cliSlots, 0),
+    apiSlots: Math.max(apiSlots || 0, 0),
+    claudeCodeAvailable,
+  };
+}
+
+function renderLLMExecutionModeControls(settingsOverride = getSettingsFormSettings()) {
+  const counts = getLLMWorkerCounts();
+  ['tier1', 'tier2', 'manual', 'news'].forEach((scope) => {
+    const selectId = getLLMExecutionModeElementId(scope);
+    const key = getLLMExecutionModeSettingKey(scope);
+    const selectEl = document.getElementById(selectId);
+    const mode = selectEl?.value || settingsOverride?.[key] || getDefaultLLMExecutionMode(scope);
+    const profileKey = scope === 'tier1'
+      ? 'LLM_DISTRIBUTED_PROFILE_TIER1'
+      : (scope === 'tier2' ? 'LLM_DISTRIBUTED_PROFILE_TIER2' : null);
+    const profileEl = profileKey
+      ? document.getElementById(scope === 'tier1' ? 'set-llm-tier1-distributed-profile' : 'set-llm-tier2-distributed-profile')
+      : null;
+    const distributedProfile = profileKey ? (profileEl?.value || settingsOverride?.[profileKey]) : undefined;
+    const state = buildLLMExecutionModeState({ scope, mode, distributedProfile, ...counts });
+    const titleEl = document.getElementById(`llm-${scope}-execution-mode-title`);
+    const helpEl = document.getElementById(`llm-${scope}-execution-mode-help`);
+    const workerEl = document.getElementById(`llm-${scope}-execution-mode-worker`);
+    const profileHelpEl = document.getElementById(`llm-${scope}-distributed-profile-help`);
+    const primaryLabelEl = document.getElementById(`llm-${scope}-primary-label`);
+    const primaryHelpEl = document.getElementById(`llm-${scope}-primary-help`);
+    const fallbackSectionEl = document.getElementById(`llm-${scope}-fallback-section`);
+    const isTierScope = scope === 'tier1' || scope === 'tier2';
+    const isPoolMode = state.usesWorkerPool;
+
+    if (titleEl) titleEl.textContent = state.label;
+    if (helpEl) {
+      helpEl.textContent = `${state.helpText} ${state.recommendation}`;
+      helpEl.className = 'text-[11px] text-gray-500 mt-1';
+    }
+    if (workerEl) {
+      workerEl.textContent = state.warningText
+        ? `${state.workerText} · ${state.warningText}`
+        : state.workerText;
+      workerEl.className = `text-[11px] mt-1 ${state.warningText ? 'text-amber-300' : 'text-gray-500'}`;
+    }
+    if (profileHelpEl) {
+      profileHelpEl.textContent = `${state.profileText}. ${scope === 'tier1' ? '실시간 자동매매는 빠른 구성을 권장합니다.' : '정밀 검토는 전체 워커 구성을 선택할 수 있습니다.'}`;
+      profileHelpEl.className = `text-[11px] mt-1 ${state.distributedProfile === 'FULL' && scope === 'tier1' ? 'text-amber-300' : 'text-gray-500'}`;
+    }
+    if (isTierScope && primaryLabelEl) {
+      primaryLabelEl.textContent = isPoolMode
+        ? (scope === 'tier1' ? '우선 시작 worker (T1)' : '우선 시작 worker (T2)')
+        : (scope === 'tier1' ? '기본 분석 AI (T1)' : '최종 검토 AI (T2)');
+    }
+    if (isTierScope && primaryHelpEl) {
+      primaryHelpEl.textContent = isPoolMode
+        ? '분산 모드에서는 이 provider부터 시작하고, 선택한 worker pool이 뒤따라 붙습니다. 풀백은 사용하지 않습니다.'
+        : '';
+      primaryHelpEl.className = 'text-[11px] text-gray-500 mt-1';
+    }
+    if (isTierScope && fallbackSectionEl) {
+      fallbackSectionEl.classList.toggle('hidden', isPoolMode);
+    }
+  });
+}
+
+async function addLLMApiKey() {
+  const providerEl = document.getElementById('set-llm-api-key-provider');
+  const labelEl = document.getElementById('set-llm-api-key-label');
+  const input = document.getElementById('set-llm-api-key-value');
+  const provider = providerEl?.value || 'CLAUDE_API';
+  const label = (labelEl?.value || '').trim();
+  const apiKey = (input?.value || '').trim();
+  if (!apiKey) {
+    setStatus('error', 'API 키를 입력하세요.');
+    input?.focus();
+    return;
+  }
+
+  try {
+    const resp = await fetch(`${API}/llm/api-keys`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, label, api_key: apiKey }),
+    });
+    const json = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      throw new Error(json.detail || json.message || 'API 키 저장 실패');
+    }
+    if (input) input.value = '';
+    if (labelEl) labelEl.value = '';
+    await loadLLMApiKeyStatus();
+    setStatus('success', 'LLM API 키가 추가되었습니다.');
+  } catch (err) {
+    console.error('LLM API key save error:', err);
+    setStatus('error', `API 키 저장 실패: ${err.message || '알 수 없는 오류'}`);
+  }
+}
+
+async function clearLLMApiKey(provider) {
+  try {
+    const resp = await fetch(`${API}/llm/api-keys/${encodeURIComponent(provider)}`, {
+      method: 'DELETE',
+    });
+    const json = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      throw new Error(json.detail || json.message || 'API 키 해제 실패');
+    }
+    await loadLLMApiKeyStatus();
+    setStatus('success', 'LLM API 키가 해제되었습니다.');
+  } catch (err) {
+    console.error('LLM API key clear error:', err);
+    setStatus('error', `API 키 해제 실패: ${err.message || '알 수 없는 오류'}`);
   }
 }
 
@@ -6358,7 +6922,12 @@ Object.assign(window, {
   loadErrorObservabilityView,
   loadTodayActivities,
   loadEventRadar,
+  refreshCenterTopPanel,
+  setCenterTopPanel,
   refreshLLMCatalog,
+  loadLLMApiKeyStatus,
+  addLLMApiKey,
+  clearLLMApiKey,
   refreshRuntimePanels,
   reconcilePendingTrades,
   resetOperationalBaseline,

@@ -1,4 +1,7 @@
-import { getTierModelSettingKey } from "./settings_llm_state.js";
+import {
+  getLLMExecutionModeSettingKey,
+  getTierModelSettingKey,
+} from "./settings_llm_state.js";
 
 const DIRECT_SETTING_BINDINGS = [
   bindChecked('set-trading', 'TRADING_ENABLED'),
@@ -10,10 +13,12 @@ const DIRECT_SETTING_BINDINGS = [
   bindValue('set-news-llm-fallback-provider', 'NEWS_LLM_FALLBACK_PROVIDER'),
   bindValue('set-news-llm-fallback-model', 'NEWS_LLM_FALLBACK_MODEL'),
   bindChecked('set-news-llm-enabled', 'NEWS_LLM_ENABLED'),
+  bindValue('set-news-llm-execution-mode', 'NEWS_LLM_EXECUTION_MODE'),
   bindChecked('set-news-include-foreign', 'NEWS_INCLUDE_FOREIGN'),
   bindChecked('set-news-translate-foreign-enabled', 'NEWS_TRANSLATE_FOREIGN_ENABLED'),
   bindChecked('set-news-nasdaq-enabled', 'NEWS_NASDAQ_ENABLED'),
   bindChecked('set-news-domestic-media-enabled', 'NEWS_DOMESTIC_MEDIA_ENABLED'),
+  bindValue('set-news-gate-rollout-mode', 'NEWS_GATE_ROLLOUT_MODE'),
   bindChecked('set-news-gate-enabled', 'NEWS_GATE_ENABLED'),
   bindChecked('set-news-poll-enabled', 'NEWS_POLL_ENABLED'),
   bindChecked('set-news-shadow-enabled', 'NEWS_SHADOW_ENABLED'),
@@ -31,14 +36,25 @@ const DIRECT_SETTING_BINDINGS = [
   bindValue('set-ollama-base-url', 'OLLAMA_BASE_URL'),
   bindValue('set-ollama-model', 'OLLAMA_MODEL'),
   bindValue('set-llm-tier1-provider', 'LLM_PROVIDER_TIER1'),
+  bindValue('set-llm-tier1-execution-mode', 'LLM_EXECUTION_MODE_TIER1'),
+  bindValue('set-llm-tier1-distributed-profile', 'LLM_DISTRIBUTED_PROFILE_TIER1'),
   bindValue('set-llm-tier1-concurrency', 'LLM_TIER1_CONCURRENCY'),
   bindValue('set-llm-tier2-provider', 'LLM_PROVIDER_TIER2'),
+  bindValue('set-llm-tier2-execution-mode', 'LLM_EXECUTION_MODE_TIER2'),
+  bindValue('set-llm-tier2-distributed-profile', 'LLM_DISTRIBUTED_PROFILE_TIER2'),
   bindValue('set-llm-tier2-concurrency', 'LLM_TIER2_CONCURRENCY'),
   bindValue('set-llm-tier1-fallback', 'LLM_FALLBACK_PROVIDER_TIER1'),
   bindValue('set-llm-tier2-fallback', 'LLM_FALLBACK_PROVIDER_TIER2'),
   bindValue('set-codex-timeout-tier1', 'CODEX_TIMEOUT_SEC_TIER1'),
   bindValue('set-codex-timeout-tier2', 'CODEX_TIMEOUT_SEC_TIER2'),
+  bindValue('set-claude-effort-tier1', 'CLAUDE_CODE_EFFORT_TIER1'),
+  bindValue('set-claude-effort-tier2', 'CLAUDE_CODE_EFFORT_TIER2'),
+  bindChecked('set-claude-bare-tier1', 'CLAUDE_CODE_BARE_TIER1'),
+  bindChecked('set-claude-bare-tier2', 'CLAUDE_CODE_BARE_TIER2'),
+  bindValue('set-codex-effort-tier1', 'CODEX_REASONING_EFFORT_TIER1'),
+  bindValue('set-codex-effort-tier2', 'CODEX_REASONING_EFFORT_TIER2'),
   bindValue('set-manual-llm-provider', 'MANUAL_LLM_PROVIDER'),
+  bindValue('set-manual-llm-execution-mode', 'MANUAL_LLM_EXECUTION_MODE'),
   bindValue('set-manual-llm-model', 'MANUAL_LLM_MODEL'),
   bindValue('set-manual-llm-fallback-provider', 'MANUAL_LLM_FALLBACK_PROVIDER'),
   bindValue('set-manual-llm-fallback-model', 'MANUAL_LLM_FALLBACK_MODEL'),
@@ -76,7 +92,7 @@ export function resolveTierModelSettingChange({
   };
 }
 
-export { DIRECT_SETTING_BINDINGS };
+export { DIRECT_SETTING_BINDINGS, getLLMExecutionModeSettingKey };
 
 function bindChecked(elementId, key) {
   return {

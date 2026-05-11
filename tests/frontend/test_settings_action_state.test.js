@@ -31,6 +31,18 @@ describe("settings_action_state", () => {
       id: "set-codex-timeout-tier1",
       value: "90",
     });
+    const claudeEffortChange = resolveDirectSettingChange({
+      id: "set-claude-effort-tier1",
+      value: "low",
+    });
+    const claudeBareChange = resolveDirectSettingChange({
+      id: "set-claude-bare-tier1",
+      checked: true,
+    });
+    const codexEffortChange = resolveDirectSettingChange({
+      id: "set-codex-effort-tier2",
+      value: "high",
+    });
     const sessionChange = resolveDirectSettingChange({
       id: "set-news-claude-share-session",
       checked: false,
@@ -55,6 +67,18 @@ describe("settings_action_state", () => {
     expect(tier1TimeoutChange).toEqual({
       key: "CODEX_TIMEOUT_SEC_TIER1",
       value: "90",
+    });
+    expect(claudeEffortChange).toEqual({
+      key: "CLAUDE_CODE_EFFORT_TIER1",
+      value: "low",
+    });
+    expect(claudeBareChange).toEqual({
+      key: "CLAUDE_CODE_BARE_TIER1",
+      value: true,
+    });
+    expect(codexEffortChange).toEqual({
+      key: "CODEX_REASONING_EFFORT_TIER2",
+      value: "high",
     });
     expect(sessionChange).toEqual({
       key: "NEWS_CLAUDE_SHARE_SESSION",
@@ -90,6 +114,64 @@ describe("settings_action_state", () => {
     });
   });
 
+  test("maps execution mode controls to scope-specific setting updates", () => {
+    expect(
+      resolveDirectSettingChange({
+        id: "set-llm-tier1-execution-mode",
+        value: "DISTRIBUTED",
+      }),
+    ).toEqual({
+      key: "LLM_EXECUTION_MODE_TIER1",
+      value: "DISTRIBUTED",
+    });
+    expect(
+      resolveDirectSettingChange({
+        id: "set-llm-tier2-execution-mode",
+        value: "CONSENSUS",
+      }),
+    ).toEqual({
+      key: "LLM_EXECUTION_MODE_TIER2",
+      value: "CONSENSUS",
+    });
+    expect(
+      resolveDirectSettingChange({
+        id: "set-llm-tier1-distributed-profile",
+        value: "FAST",
+      }),
+    ).toEqual({
+      key: "LLM_DISTRIBUTED_PROFILE_TIER1",
+      value: "FAST",
+    });
+    expect(
+      resolveDirectSettingChange({
+        id: "set-llm-tier2-distributed-profile",
+        value: "FULL",
+      }),
+    ).toEqual({
+      key: "LLM_DISTRIBUTED_PROFILE_TIER2",
+      value: "FULL",
+    });
+    expect(
+      resolveDirectSettingChange({
+        id: "set-manual-llm-execution-mode",
+        value: "SINGLE",
+      }),
+    ).toEqual({
+      key: "MANUAL_LLM_EXECUTION_MODE",
+      value: "SINGLE",
+    });
+    expect(
+      resolveDirectSettingChange({
+        id: "set-news-llm-execution-mode",
+        value: "DISTRIBUTED",
+      }),
+    ).toEqual({
+      key: "NEWS_LLM_EXECUTION_MODE",
+      value: "DISTRIBUTED",
+    });
+  });
+
+
   test("maps order submission mode control", () => {
     const change = resolveDirectSettingChange({
       id: "set-order-submission-mode",
@@ -99,6 +181,18 @@ describe("settings_action_state", () => {
     expect(change).toEqual({
       key: "ORDER_SUBMISSION_MODE",
       value: "READ_ONLY",
+    });
+  });
+
+  test("maps news rollout mode control", () => {
+    const change = resolveDirectSettingChange({
+      id: "set-news-gate-rollout-mode",
+      value: "SEMI_AUTO_GATE_RECOMMENDATION",
+    });
+
+    expect(change).toEqual({
+      key: "NEWS_GATE_ROLLOUT_MODE",
+      value: "SEMI_AUTO_GATE_RECOMMENDATION",
     });
   });
 

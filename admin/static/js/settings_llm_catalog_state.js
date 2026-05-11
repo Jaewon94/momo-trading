@@ -1,4 +1,7 @@
 export function getCatalogProvider(catalog, provider) {
+  if (provider === "CLAUDE_API") {
+    return catalog?.providers?.find((item) => item.id === "CLAUDE_CODE") || null;
+  }
   return catalog?.providers?.find((item) => item.id === provider) || null;
 }
 
@@ -45,5 +48,5 @@ export function buildProviderModelSourceText(providerCatalog, entries, currentVa
 export function getProviderModelPlaceholder(provider) {
   if (provider === "CODEX") return "예: gpt-5-codex / gpt-5.4";
   if (provider === "OLLAMA") return "예: llama3.1:8b / qwen2.5:14b";
-  return "예: sonnet / claude-sonnet-4-6";
+  return "예: haiku / sonnet / claude-sonnet-4-6";
 }

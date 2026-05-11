@@ -36,29 +36,28 @@ describe("trade_state", () => {
     });
   });
 
-  test("builds portfolio quick stats with separate unrealized and today's realized pnl", () => {
-    expect(
-      buildPortfolioQuickStatsModel(
-        {
-          total_asset: 1000000,
-          total_pnl: 120000,
-          total_pnl_rate: 12,
-          cash: 250000,
-          stock_value: 750000,
-        },
-        [{}, {}],
-        [{}],
-        {
-          opened: [{}, {}],
-          sell_executions: [{}],
-          completed: [{ pnl: 30000 }, { pnl: -5000 }],
-        },
-      ),
-    ).toMatchObject({
+  test("builds portfolio quick stats without surfacing local realized pnl", () => {
+    const stats = buildPortfolioQuickStatsModel(
+      {
+        total_asset: 1000000,
+        total_pnl: 120000,
+        total_pnl_rate: 12,
+        cash: 250000,
+        stock_value: 750000,
+      },
+      [{}, {}],
+      [{}],
+      {
+        opened: [{}, {}],
+        sell_executions: [{}],
+        completed: [{ pnl: 30000 }, { pnl: -5000 }],
+      },
+    );
+
+    expect(stats).toMatchObject({
       totalAsset: 1000000,
       unrealizedPnl: 120000,
       unrealizedPnlRate: 12,
-      realizedTodayPnl: 25000,
       cashRatio: 25,
       holdingCount: 2,
       pendingCount: 1,
@@ -67,6 +66,7 @@ describe("trade_state", () => {
       completedCount: 2,
       unmatchedSellExecutions: 0,
     });
+    expect(stats).not.toHaveProperty("realizedTodayPnl");
   });
 
   test("builds precise account overview labels without large-unit abbreviation", () => {
@@ -99,13 +99,13 @@ describe("trade_state", () => {
       pnlTone: "negative",
       rows: [
         { label: "현금", value: "181,724,859원", meta: "34.5%" },
-        { label: "주식 평가액", value: "341,909,010원", meta: "64.9% · 노출 64.9%" },
+        { label: "주식 평가액", value: "341,909,010원", meta: "64.9% · 노출 64.9%", tone: "neutral" },
         { label: "평가손익", value: "-2,704,805원", meta: "-1.32%", tone: "negative" },
-        { label: "당일 실현손익", value: "+35,000원", meta: "2026-04-22 09:00 ~ 13:04", tone: "positive" },
         { label: "현금/스냅샷 차이" },
       ],
     });
     expect(buildAccountOverviewModel(stats).rows.map((row) => row.label)).not.toContain("보유");
+    expect(buildAccountOverviewModel(stats).rows.map((row) => row.label)).not.toContain("당일 실현손익");
   });
 
   test("uses session metrics for day-session asset and unrealized movement", () => {
@@ -159,7 +159,6 @@ describe("trade_state", () => {
       currentExposurePct: 77,
       marketExposure: true,
       riskLabel: "EXPOSED_PROFIT",
-      realizedTodayPnl: 25000,
       intradayHighAsset: 1015000,
       intradayLowAsset: 972000,
       latestSnapshotAt: "2026-04-22T13:04:18+09:00",
@@ -201,7 +200,7 @@ describe("trade_state", () => {
     const overview = buildAccountOverviewModel(stats);
     expect(overview.exposureTone).toBe("neutral");
     expect(overview.rows[1]).toMatchObject({ label: "주식 평가액", value: "0원", tone: "neutral" });
-    expect(overview.rows[4]).toMatchObject({
+    expect(overview.rows[3]).toMatchObject({
       label: "현금/스냅샷 차이",
       value: "-5,000원",
       tone: "negative",
@@ -233,7 +232,6 @@ describe("trade_state", () => {
       assetDeltaAvailable: false,
       dailyUnrealizedDelta: 0,
       dailyUnrealizedAvailable: false,
-      realizedTodayPnl: 25000,
       intradayHighAsset: 1000000,
       intradayLowAsset: 1000000,
     });

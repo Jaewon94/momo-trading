@@ -63,3 +63,100 @@ export function getStandaloneModelSelectorState(kind, runtimeSettings, provider,
     customId: isFallback ? `set-${providerSuffix}-llm-fallback-model-custom` : `set-${providerSuffix}-llm-model-custom`,
   };
 }
+
+export function normalizeLLMExecutionMode(value, fallback = 'SINGLE') {
+  const normalized = String(value || '').trim().toUpperCase();
+  if (['SINGLE', 'DISTRIBUTED', 'CONSENSUS'].includes(normalized)) {
+    return normalized;
+  }
+  return fallback;
+}
+
+export function getLLMExecutionModeSettingKey(scope) {
+  if (scope === 'tier1') return 'LLM_EXECUTION_MODE_TIER1';
+  if (scope === 'tier2') return 'LLM_EXECUTION_MODE_TIER2';
+  if (scope === 'news') return 'NEWS_LLM_EXECUTION_MODE';
+  return 'MANUAL_LLM_EXECUTION_MODE';
+}
+
+export function getLLMExecutionModeElementId(scope) {
+  if (scope === 'tier1') return 'set-llm-tier1-execution-mode';
+  if (scope === 'tier2') return 'set-llm-tier2-execution-mode';
+  if (scope === 'news') return 'set-news-llm-execution-mode';
+  return 'set-manual-llm-execution-mode';
+}
+
+export function getDefaultLLMExecutionMode(scope) {
+  if (scope === 'tier1' || scope === 'news') return 'DISTRIBUTED';
+  return 'SINGLE';
+}
+
+export function normalizeLLMDistributedProfile(value, fallback = 'FAST') {
+  const normalized = String(value || '').trim().toUpperCase();
+  if (['FAST', 'FULL'].includes(normalized)) {
+    return normalized;
+  }
+  return fallback;
+}
+
+export function getDefaultLLMDistributedProfile(scope) {
+  return scope === 'tier2' ? 'FULL' : 'FAST';
+}
+
+export function buildLLMExecutionModeState({
+  scope,
+  mode,
+  cliSlots = 0,
+  apiSlots = 0,
+  distributedProfile,
+  claudeCodeAvailable = false,
+} = {}) {
+  const normalizedScope = ['tier1', 'tier2', 'news', 'manual'].includes(scope) ? scope : 'manual';
+  const normalizedMode = normalizeLLMExecutionMode(mode, getDefaultLLMExecutionMode(normalizedScope));
+  const normalizedProfile = normalizeLLMDistributedProfile(
+    distributedProfile,
+    getDefaultLLMDistributedProfile(normalizedScope),
+  );
+  const rawCliSlots = Math.max(Number(cliSlots) || 0, 0);
+  const excludedClaudeCodeSlots = normalizedProfile === 'FAST' && claudeCodeAvailable ? 1 : 0;
+  const effectiveCliSlots = Math.max(rawCliSlots - excludedClaudeCodeSlots, 0);
+  const effectiveApiSlots = Math.max(Number(apiSlots) || 0, 0);
+  const totalSlots = effectiveCliSlots + effectiveApiSlots;
+  const labels = {
+    SINGLE: '메인+풀백',
+    DISTRIBUTED: '분산 처리',
+    CONSENSUS: '합의 검증',
+  };
+  const helpByMode = {
+    SINGLE: '메인 provider를 먼저 쓰고 실패하면 fallback으로 넘깁니다.',
+    DISTRIBUTED: '등록된 CLI/API worker에 작업 큐를 나눠 처리합니다. 각 worker는 기본적으로 하나씩 순차 실행합니다.',
+    CONSENSUS: '중요 판단을 여러 worker로 검증하는 모드입니다. 속도보다 안정성을 우선합니다.',
+  };
+  const recommendationByScope = {
+    tier1: 'T1은 종목 수가 많아 분산 처리가 기본 추천입니다.',
+    tier2: 'T2는 최종 판단이라 메인+풀백 또는 합의 검증이 적합합니다.',
+    news: '뉴스 번역/요약은 독립 작업이 많아 분산 처리와 잘 맞습니다.',
+    manual: '수동 Q&A와 리포트는 응답 일관성이 중요해 메인+풀백이 적합합니다.',
+  };
+
+  return {
+    scope: normalizedScope,
+    mode: normalizedMode,
+    label: labels[normalizedMode],
+    helpText: helpByMode[normalizedMode],
+    recommendation: recommendationByScope[normalizedScope],
+    totalSlots,
+    cliSlots: effectiveCliSlots,
+    apiSlots: effectiveApiSlots,
+    distributedProfile: normalizedProfile,
+    profileText: normalizedProfile === 'FULL'
+      ? '전체 워커 구성: Claude Code CLI 포함'
+      : '빠른 구성: Claude Code CLI 제외',
+    usesSingleSelection: normalizedMode === 'SINGLE',
+    usesWorkerPool: normalizedMode !== 'SINGLE',
+    workerText: `사용 가능 worker ${totalSlots}개 (CLI ${effectiveCliSlots} · API ${effectiveApiSlots})`,
+    warningText: normalizedMode !== 'SINGLE' && totalSlots < 2
+      ? '등록된 worker가 2개 미만이면 실제 효과는 메인+풀백과 비슷합니다.'
+      : '',
+  };
+}

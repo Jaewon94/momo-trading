@@ -404,13 +404,28 @@
       background:
         linear-gradient(180deg, rgba(15,16,33,0.98), rgba(15,23,42,0.95)),
         radial-gradient(circle at top left, rgba(96,165,250,0.12), transparent 42%);
+      height: 212px;
+      overflow: hidden;
     }
-    .event-radar-shell.compact #event-radar-filters,
-    .event-radar-shell.compact #event-radar-list {
+    .event-radar-shell:not(.compact):not([data-active-panel="executions"]) {
+      height: 212px;
+    }
+    .event-radar-shell[data-active-panel="executions"] {
+      height: 212px;
+    }
+    .event-radar-shell[data-active-panel="executions"] #event-radar-summary,
+    .event-radar-shell[data-active-panel="executions"] #event-radar-filters,
+    .event-radar-shell[data-active-panel="executions"] #event-radar-list {
       display: none;
     }
-    .event-radar-shell.compact #event-radar-summary {
-      margin-top: 10px;
+    .event-radar-shell[data-active-panel="radar"] #live-execution-strip {
+      display: none;
+    }
+    .event-radar-shell[data-active-panel="executions"] #live-execution-strip {
+      display: block;
+    }
+    .event-radar-shell #event-radar-filters {
+      display: none;
     }
     .event-radar-toggle {
       border: 1px solid rgba(71,85,105,0.9);
@@ -425,15 +440,49 @@
       border-color: rgba(96,165,250,0.8);
       color: #eff6ff;
     }
+    .center-panel-tabs {
+      display: inline-flex;
+      gap: 4px;
+      border: 1px solid rgba(71,85,105,0.85);
+      border-radius: 8px;
+      padding: 3px;
+      background: rgba(15,16,33,0.58);
+    }
+    .center-panel-tab {
+      border-radius: 6px;
+      padding: 5px 9px;
+      color: #94a3b8;
+      font-size: 11px;
+      transition: 0.15s ease;
+    }
+    .center-panel-tab.active {
+      background: rgba(37,99,235,0.24);
+      color: #dbeafe;
+    }
     .event-radar-summary-grid {
-      display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px;
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding: 10px;
+      height: 124px;
+      border: 1px solid rgba(51,65,85,0.75);
+      border-radius: 10px;
+      background: rgba(15,23,42,0.52);
     }
     .event-radar-summary-pill {
-      border: 1px solid rgba(51,65,85,0.92); border-radius: 16px;
-      background: rgba(15,23,42,0.6); padding: 12px 14px;
+      min-width: 220px;
+      height: 92px;
+      border: 1px solid rgba(51,65,85,0.92);
+      border-radius: 8px;
+      background: rgba(15,16,33,0.82);
+      padding: 8px 10px;
     }
+    .event-radar-summary-pill.tone-buy { border-color: rgba(16,185,129,0.38); background: linear-gradient(90deg, rgba(6,78,59,0.18), rgba(15,16,33,0.82)); }
+    .event-radar-summary-pill.tone-sell { border-color: rgba(96,165,250,0.55); background: linear-gradient(90deg, rgba(30,64,175,0.22), rgba(15,16,33,0.82)); }
+    .event-radar-summary-pill.tone-watch { border-color: rgba(148,163,184,0.36); }
     .event-radar-summary-label { color: #94a3b8; font-size: 11px; }
-    .event-radar-summary-value { color: #f8fafc; font-size: 18px; font-weight: 700; margin-top: 6px; }
+    .event-radar-summary-value { color: #f8fafc; font-size: 13px; font-weight: 700; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .event-radar-summary-meta { color: #94a3b8; font-size: 11px; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .event-radar-filter-row { display: flex; flex-wrap: wrap; gap: 8px; }
     .event-radar-filter-chip {
       display: inline-flex; align-items: center; gap: 8px;
@@ -449,7 +498,7 @@
       min-width: 20px; height: 20px; border-radius: 999px; padding: 0 6px;
       background: rgba(255,255,255,0.08); color: #94a3b8; font-size: 11px;
     }
-    .event-radar-list { display: grid; gap: 10px; }
+    .event-radar-list { display: none; }
     .event-radar-card {
       border: 1px solid rgba(51,65,85,0.92); border-radius: 18px; padding: 14px;
       background: rgba(15,16,33,0.7);
@@ -508,6 +557,39 @@
     .position-recent-event-chip.tone-sell { border-color: rgba(248,113,113,0.28); }
     .position-recent-event-chip-label { color: #f8fafc; font-size: 13px; font-weight: 600; }
     .position-recent-event-chip-meta { color: #94a3b8; font-size: 11px; }
+    .live-execution-strip {
+      border: 1px solid rgba(51,65,85,0.75);
+      border-radius: 10px;
+      background: rgba(15,23,42,0.52);
+      padding: 10px;
+      height: 124px;
+      overflow: hidden;
+    }
+    .live-execution-scroll {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+    .live-execution-card {
+      min-width: 220px;
+      height: 92px;
+      border: 1px solid rgba(71,85,105,0.9);
+      border-radius: 8px;
+      background: rgba(15,16,33,0.82);
+      padding: 8px 10px;
+    }
+    .live-execution-card.tone-sell {
+      border-color: rgba(96,165,250,0.55);
+      background: linear-gradient(90deg, rgba(30,64,175,0.22), rgba(15,16,33,0.82));
+    }
+    .live-execution-card.tone-buy {
+      border-color: rgba(248,113,113,0.45);
+      background: linear-gradient(90deg, rgba(127,29,29,0.20), rgba(15,16,33,0.82));
+    }
+    .live-execution-label { color: #cbd5e1; font-size: 11px; }
+    .live-execution-title { color: #f8fafc; font-size: 13px; font-weight: 700; margin-top: 2px; }
+    .live-execution-meta { color: #94a3b8; font-size: 11px; margin-top: 4px; }
     @media (max-width: 960px) {
       .event-radar-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .event-radar-card { grid-template-columns: 1fr; }
@@ -1302,20 +1384,27 @@
         <div class="flex items-start justify-between gap-4">
           <div>
             <div class="text-[11px] uppercase tracking-[0.2em] text-gray-500">Event Radar</div>
-            <div class="text-sm font-medium text-white mt-1">지금 확인할 실시간 이벤트</div>
-            <div class="text-xs text-gray-500 mt-1">급등락, 거래량, 손절/익절 이벤트를 우선순위 순으로 보여줍니다.</div>
+            <div id="center-panel-title" class="text-sm font-medium text-white mt-1">지금 확인할 실시간 이벤트</div>
+            <div id="center-panel-description" class="text-xs text-gray-500 mt-1">급등락, 거래량, 손절/익절 이벤트를 우선순위 순으로 보여줍니다.</div>
           </div>
           <div class="flex items-center gap-2">
+            <div class="center-panel-tabs">
+              <button type="button" id="center-tab-radar" class="center-panel-tab active" onclick="setCenterTopPanel('radar')">이벤트</button>
+              <button type="button" id="center-tab-executions" class="center-panel-tab" onclick="setCenterTopPanel('executions')">체결</button>
+            </div>
             <button type="button" id="event-radar-toggle" onclick="toggleEventRadarPanel()" class="event-radar-toggle">펼치기</button>
-            <button onclick="loadEventRadar()" class="text-[11px] text-gray-400 hover:text-gray-200 transition">새로고침</button>
+            <button onclick="refreshCenterTopPanel()" class="text-[11px] text-gray-400 hover:text-gray-200 transition">새로고침</button>
           </div>
         </div>
-        <div id="event-radar-summary" class="event-radar-summary-grid mt-4">
+        <div id="event-radar-summary" class="event-radar-summary-grid mt-3">
           <div class="event-radar-summary-pill"><div class="event-radar-summary-label">실시간 이벤트</div><div class="event-radar-summary-value">-</div></div>
         </div>
         <div id="event-radar-filters" class="event-radar-filter-row mt-3"></div>
         <div id="event-radar-list" class="event-radar-list mt-3">
           <div class="event-radar-empty">이벤트 레이더를 불러오는 중...</div>
+        </div>
+        <div id="live-execution-strip" class="live-execution-strip mt-3 hidden">
+          <div id="live-execution-list" class="live-execution-scroll"></div>
         </div>
       </section>
 
@@ -1777,6 +1866,61 @@
               <summary>
                 <div>
                   <div class="flex flex-wrap items-center gap-2">
+                    <div class="text-sm font-medium text-white">API 키</div>
+                    <span class="rounded-full border border-gray-600 bg-dark-800 px-2 py-0.5 text-[10px] text-gray-300">선택</span>
+                  </div>
+                  <div class="text-[11px] text-gray-500 mt-1">API worker 키를 여러 개 등록해 provider pool에 넣습니다.</div>
+                </div>
+                <span class="settings-accordion-arrow">&#x25BC;</span>
+              </summary>
+              <div class="settings-accordion-body space-y-4">
+                <div class="grid gap-3 md:grid-cols-[1fr_1fr_1.4fr_auto]">
+                  <div>
+                    <label class="text-xs block mb-1 text-gray-500">Provider</label>
+                    <select id="set-llm-api-key-provider"
+                      class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                      <option value="CLAUDE_API">Claude API</option>
+                      <option value="OPENAI_API">OpenAI API</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="text-xs block mb-1 text-gray-500">이름</label>
+                    <input id="set-llm-api-key-label" type="text" autocomplete="off" placeholder="예: claude-api-1"
+                      class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
+                  </div>
+                  <div>
+                    <label class="text-xs block mb-1 text-gray-500">API 키</label>
+                    <input id="set-llm-api-key-value" type="password" autocomplete="off" placeholder="API key"
+                      class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
+                  </div>
+                  <div class="flex items-end">
+                    <button onclick="addLLMApiKey()"
+                      class="w-full bg-blue-600 hover:bg-blue-700 text-white text-xs rounded px-3 py-2 transition">추가</button>
+                  </div>
+                </div>
+                <div class="grid gap-2 md:grid-cols-3">
+                  <div class="rounded-lg border border-gray-700 bg-dark-800/50 px-3 py-2">
+                    <div class="text-[11px] text-gray-500">Codex CLI env</div>
+                    <div id="llm-api-key-codex-status" class="text-xs text-gray-400 mt-1">확인 중...</div>
+                  </div>
+                  <div class="rounded-lg border border-gray-700 bg-dark-800/50 px-3 py-2">
+                    <div class="text-[11px] text-gray-500">Claude Code CLI env</div>
+                    <div id="llm-api-key-claude-status" class="text-xs text-gray-400 mt-1">확인 중...</div>
+                  </div>
+                  <div class="rounded-lg border border-gray-700 bg-dark-800/50 px-3 py-2">
+                    <div class="text-[11px] text-gray-500">분산 worker 슬롯</div>
+                    <div id="llm-api-key-worker-summary" class="text-xs text-gray-400 mt-1">확인 중...</div>
+                  </div>
+                </div>
+                <div id="llm-api-key-list" class="space-y-2"></div>
+                <div class="text-[11px] text-gray-500">저장된 값은 다시 표시하지 않고, 등록 여부와 마스킹된 일부만 보여줍니다.</div>
+              </div>
+            </details>
+
+            <details class="settings-accordion">
+              <summary>
+                <div>
+                  <div class="flex flex-wrap items-center gap-2">
                     <div class="text-sm font-medium text-white">분석용 AI (T1)</div>
                     <span class="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] text-sky-200">추천: 빠르고 저비용인 분석형 모델</span>
                   </div>
@@ -1785,10 +1929,39 @@
                 <span class="settings-accordion-arrow">&#x25BC;</span>
               </summary>
               <div class="settings-accordion-body">
-                <label class="text-sm block mb-1">기본 분석 AI (T1)</label>
+                <div class="rounded-lg border border-gray-700 bg-dark-800/50 p-3 mb-4">
+                  <div class="grid gap-3 md:grid-cols-[220px_1fr]">
+                    <div>
+                      <label class="text-xs block mb-1 text-gray-500">실행 방식</label>
+                      <select id="set-llm-tier1-execution-mode"
+                        class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                        <option value="SINGLE">메인+풀백</option>
+                        <option value="DISTRIBUTED">분산 처리</option>
+                        <option value="CONSENSUS">합의 검증</option>
+                      </select>
+                    </div>
+                    <div>
+                      <div id="llm-tier1-execution-mode-title" class="text-sm text-gray-200">분산 처리</div>
+                      <div id="llm-tier1-execution-mode-help" class="text-[11px] text-gray-500 mt-1">등록된 CLI/API worker에 작업 큐를 나눠 처리합니다.</div>
+                      <div id="llm-tier1-execution-mode-worker" class="text-[11px] text-gray-500 mt-1">worker 확인 중...</div>
+                    </div>
+                  </div>
+                  <div class="mt-3 border-t border-gray-800 pt-3">
+                    <label class="text-xs block mb-1 text-gray-500">분산 워커 구성</label>
+                    <select id="set-llm-tier1-distributed-profile"
+                      class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                      <option value="FAST">빠른 자동매매용 · Claude Code 제외</option>
+                      <option value="FULL">전체 워커 · Claude Code 포함</option>
+                    </select>
+                    <div id="llm-tier1-distributed-profile-help" class="text-[11px] text-gray-500 mt-1">T1은 응답 지연이 매매 타이밍에 직접 영향을 줍니다.</div>
+                  </div>
+                </div>
+                <div id="llm-tier1-primary-section">
+                <label id="llm-tier1-primary-label" class="text-sm block mb-1">기본 분석 AI (T1)</label>
                 <select id="set-llm-tier1-provider"
                   class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
                   <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CLAUDE_API">Claude API</option>
                   <option value="CODEX">Codex</option>
                   <option value="OLLAMA">Ollama</option>
                 </select>
@@ -1796,6 +1969,8 @@
                 <select id="set-llm-tier1-model" onchange="updateTierModelSetting('tier1', this.value)"
                   class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
                 <div id="llm-tier1-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+                <div id="llm-tier1-primary-help" class="text-[11px] text-gray-500 mt-1"></div>
+                </div>
                 <div class="grid gap-3 md:grid-cols-2 mt-4">
                   <div>
                     <label class="text-xs block mb-1 text-gray-500">T1 동시 분석 수</label>
@@ -1803,18 +1978,49 @@
                       class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
                     <div id="set-llm-tier1-concurrency-help" class="text-[11px] text-gray-500 mt-1">Tier1 호출을 동시에 몇 개까지 허용할지 정합니다.</div>
                   </div>
-                  <div>
+                  <div id="llm-tier1-codex-timeout-field">
                     <label class="text-xs block mb-1 text-gray-500">Codex timeout (초)</label>
                     <input id="set-codex-timeout-tier1" type="number" min="30" max="300" step="1"
                       class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
                     <div class="text-[11px] text-gray-500 mt-1">T1 provider가 Codex일 때만 적용됩니다.</div>
                   </div>
                 </div>
+                <div class="grid gap-3 md:grid-cols-2 mt-4">
+                  <div id="llm-tier1-claude-options">
+                    <label class="text-xs block mb-1 text-gray-500">Claude effort</label>
+                    <select id="set-claude-effort-tier1"
+                      class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                      <option value="low">low</option>
+                      <option value="medium">medium</option>
+                      <option value="high">high</option>
+                      <option value="xhigh">xhigh</option>
+                      <option value="max">max</option>
+                    </select>
+                    <label class="mt-2 flex items-center gap-2 text-xs text-gray-300">
+                      <input id="set-claude-bare-tier1" type="checkbox" class="rounded border-gray-600 bg-dark-700">
+                      <span>Claude bare 모드</span>
+                    </label>
+                    <div class="text-[11px] text-gray-500 mt-1">T1 Claude 호출의 추론 강도와 부가 기능 로딩을 줄입니다.</div>
+                  </div>
+                  <div id="llm-tier1-codex-options">
+                    <label class="text-xs block mb-1 text-gray-500">Codex reasoning effort</label>
+                    <select id="set-codex-effort-tier1"
+                      class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                      <option value="low">low</option>
+                      <option value="medium">medium</option>
+                      <option value="high">high</option>
+                      <option value="xhigh">xhigh</option>
+                    </select>
+                    <div class="text-[11px] text-gray-500 mt-1">Codex의 `/fast` 성격은 low에 가깝습니다.</div>
+                  </div>
+                </div>
+                <div id="llm-tier1-fallback-section">
                 <label class="text-xs block mt-3 mb-1 text-gray-500">T1 Fallback</label>
                 <select id="set-llm-tier1-fallback"
                   class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
                   <option value="">없음</option>
                   <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CLAUDE_API">Claude API</option>
                   <option value="CODEX">Codex</option>
                   <option value="OLLAMA">Ollama</option>
                 </select>
@@ -1822,6 +2028,7 @@
                 <select id="set-llm-tier1-fallback-model" onchange="updateTierModelSetting('tier1', this.value, 'fallback')"
                   class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
                 <div id="llm-tier1-fallback-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+                </div>
               </div>
             </details>
 
@@ -1837,10 +2044,39 @@
                 <span class="settings-accordion-arrow">&#x25BC;</span>
               </summary>
               <div class="settings-accordion-body">
-                <label class="text-sm block mb-1">최종 검토 AI (T2)</label>
+                <div class="rounded-lg border border-gray-700 bg-dark-800/50 p-3 mb-4">
+                  <div class="grid gap-3 md:grid-cols-[220px_1fr]">
+                    <div>
+                      <label class="text-xs block mb-1 text-gray-500">실행 방식</label>
+                      <select id="set-llm-tier2-execution-mode"
+                        class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                        <option value="SINGLE">메인+풀백</option>
+                        <option value="DISTRIBUTED">분산 처리</option>
+                        <option value="CONSENSUS">합의 검증</option>
+                      </select>
+                    </div>
+                    <div>
+                      <div id="llm-tier2-execution-mode-title" class="text-sm text-gray-200">메인+풀백</div>
+                      <div id="llm-tier2-execution-mode-help" class="text-[11px] text-gray-500 mt-1">메인 provider를 먼저 쓰고 실패하면 fallback으로 넘깁니다.</div>
+                      <div id="llm-tier2-execution-mode-worker" class="text-[11px] text-gray-500 mt-1">worker 확인 중...</div>
+                    </div>
+                  </div>
+                  <div class="mt-3 border-t border-gray-800 pt-3">
+                    <label class="text-xs block mb-1 text-gray-500">분산 워커 구성</label>
+                    <select id="set-llm-tier2-distributed-profile"
+                      class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                      <option value="FAST">빠른 검토용 · Claude Code 제외</option>
+                      <option value="FULL">정밀 검토용 · Claude Code 포함</option>
+                    </select>
+                    <div id="llm-tier2-distributed-profile-help" class="text-[11px] text-gray-500 mt-1">T2는 속도보다 판단 품질이 중요하면 전체 워커 구성이 적합합니다.</div>
+                  </div>
+                </div>
+                <div id="llm-tier2-primary-section">
+                <label id="llm-tier2-primary-label" class="text-sm block mb-1">최종 검토 AI (T2)</label>
                 <select id="set-llm-tier2-provider"
                   class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
                   <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CLAUDE_API">Claude API</option>
                   <option value="CODEX">Codex</option>
                   <option value="OLLAMA">Ollama</option>
                 </select>
@@ -1848,6 +2084,8 @@
                 <select id="set-llm-tier2-model" onchange="updateTierModelSetting('tier2', this.value)"
                   class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
                 <div id="llm-tier2-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+                <div id="llm-tier2-primary-help" class="text-[11px] text-gray-500 mt-1"></div>
+                </div>
                 <div class="grid gap-3 md:grid-cols-2 mt-4">
                   <div>
                     <label class="text-xs block mb-1 text-gray-500">T2 동시 검토 수</label>
@@ -1855,18 +2093,49 @@
                       class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
                     <div id="set-llm-tier2-concurrency-help" class="text-[11px] text-gray-500 mt-1">Tier2 검토 호출의 병렬 실행 상한입니다.</div>
                   </div>
-                  <div>
+                  <div id="llm-tier2-codex-timeout-field">
                     <label class="text-xs block mb-1 text-gray-500">Codex timeout (초)</label>
                     <input id="set-codex-timeout-tier2" type="number" min="30" max="300" step="1"
                       class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200">
                     <div class="text-[11px] text-gray-500 mt-1">T2 provider가 Codex일 때만 적용됩니다.</div>
                   </div>
                 </div>
+                <div class="grid gap-3 md:grid-cols-2 mt-4">
+                  <div id="llm-tier2-claude-options">
+                    <label class="text-xs block mb-1 text-gray-500">Claude effort</label>
+                    <select id="set-claude-effort-tier2"
+                      class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                      <option value="low">low</option>
+                      <option value="medium">medium</option>
+                      <option value="high">high</option>
+                      <option value="xhigh">xhigh</option>
+                      <option value="max">max</option>
+                    </select>
+                    <label class="mt-2 flex items-center gap-2 text-xs text-gray-300">
+                      <input id="set-claude-bare-tier2" type="checkbox" class="rounded border-gray-600 bg-dark-700">
+                      <span>Claude bare 모드</span>
+                    </label>
+                    <div class="text-[11px] text-gray-500 mt-1">T2는 품질 우선이면 high 이상을 권장합니다.</div>
+                  </div>
+                  <div id="llm-tier2-codex-options">
+                    <label class="text-xs block mb-1 text-gray-500">Codex reasoning effort</label>
+                    <select id="set-codex-effort-tier2"
+                      class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                      <option value="low">low</option>
+                      <option value="medium">medium</option>
+                      <option value="high">high</option>
+                      <option value="xhigh">xhigh</option>
+                    </select>
+                    <div class="text-[11px] text-gray-500 mt-1">최종 검토는 high, 속도 우선은 medium/low로 낮춥니다.</div>
+                  </div>
+                </div>
+                <div id="llm-tier2-fallback-section">
                 <label class="text-xs block mt-3 mb-1 text-gray-500">T2 Fallback</label>
                 <select id="set-llm-tier2-fallback"
                   class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
                   <option value="">없음</option>
                   <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CLAUDE_API">Claude API</option>
                   <option value="CODEX">Codex</option>
                   <option value="OLLAMA">Ollama</option>
                 </select>
@@ -1874,6 +2143,7 @@
                 <select id="set-llm-tier2-fallback-model" onchange="updateTierModelSetting('tier2', this.value, 'fallback')"
                   class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm"></select>
                 <div id="llm-tier2-fallback-model-source" class="text-[11px] text-gray-500 mt-1"></div>
+                </div>
               </div>
             </details>
 
@@ -1889,10 +2159,29 @@
                 <span class="settings-accordion-arrow">&#x25BC;</span>
               </summary>
               <div class="settings-accordion-body">
+                <div class="rounded-lg border border-gray-700 bg-dark-800/50 p-3 mb-4">
+                  <div class="grid gap-3 md:grid-cols-[220px_1fr]">
+                    <div>
+                      <label class="text-xs block mb-1 text-gray-500">실행 방식</label>
+                      <select id="set-manual-llm-execution-mode"
+                        class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                        <option value="SINGLE">메인+풀백</option>
+                        <option value="DISTRIBUTED">분산 처리</option>
+                        <option value="CONSENSUS">합의 검증</option>
+                      </select>
+                    </div>
+                    <div>
+                      <div id="llm-manual-execution-mode-title" class="text-sm text-gray-200">메인+풀백</div>
+                      <div id="llm-manual-execution-mode-help" class="text-[11px] text-gray-500 mt-1">메인 provider를 먼저 쓰고 실패하면 fallback으로 넘깁니다.</div>
+                      <div id="llm-manual-execution-mode-worker" class="text-[11px] text-gray-500 mt-1">worker 확인 중...</div>
+                    </div>
+                  </div>
+                </div>
                 <label class="text-sm block mb-1">1순위 Provider</label>
                 <select id="set-manual-llm-provider"
                   class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
                   <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CLAUDE_API">Claude API</option>
                   <option value="CODEX">Codex</option>
                   <option value="OLLAMA">Ollama</option>
                 </select>
@@ -1908,6 +2197,7 @@
                   class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
                   <option value="">없음</option>
                   <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CLAUDE_API">Claude API</option>
                   <option value="CODEX">Codex</option>
                   <option value="OLLAMA">Ollama</option>
                 </select>
@@ -1931,10 +2221,29 @@
                 <span class="settings-accordion-arrow">&#x25BC;</span>
               </summary>
               <div class="settings-accordion-body">
+                <div class="rounded-lg border border-gray-700 bg-dark-800/50 p-3 mb-4">
+                  <div class="grid gap-3 md:grid-cols-[220px_1fr]">
+                    <div>
+                      <label class="text-xs block mb-1 text-gray-500">실행 방식</label>
+                      <select id="set-news-llm-execution-mode"
+                        class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                        <option value="SINGLE">메인+풀백</option>
+                        <option value="DISTRIBUTED">분산 처리</option>
+                        <option value="CONSENSUS">합의 검증</option>
+                      </select>
+                    </div>
+                    <div>
+                      <div id="llm-news-execution-mode-title" class="text-sm text-gray-200">분산 처리</div>
+                      <div id="llm-news-execution-mode-help" class="text-[11px] text-gray-500 mt-1">등록된 CLI/API worker에 작업 큐를 나눠 처리합니다.</div>
+                      <div id="llm-news-execution-mode-worker" class="text-[11px] text-gray-500 mt-1">worker 확인 중...</div>
+                    </div>
+                  </div>
+                </div>
                 <label class="text-sm block mb-1">1순위 Provider</label>
                 <select id="set-news-llm-provider"
                   class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
                   <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CLAUDE_API">Claude API</option>
                   <option value="CODEX">Codex</option>
                   <option value="OLLAMA">Ollama</option>
                 </select>
@@ -1950,6 +2259,7 @@
                   class="w-full bg-dark-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
                   <option value="">없음</option>
                   <option value="CLAUDE_CODE">Claude Code</option>
+                  <option value="CLAUDE_API">Claude API</option>
                   <option value="CODEX">Codex</option>
                   <option value="OLLAMA">Ollama</option>
                 </select>
