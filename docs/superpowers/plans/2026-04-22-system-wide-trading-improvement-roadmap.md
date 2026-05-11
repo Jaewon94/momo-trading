@@ -35,7 +35,7 @@
 
 ## 2026-04-23 현재 구현 검증 요약
 
-- Track 1, Track 2, Track 3.1, Track 3.1a는 코드와 테스트 기준 완료 상태다.
+- Track 1~6, Track 7.1~7.2, Track 8.1~8.2는 코드와 테스트 기준 완료 상태다.
 - 2026-04-27 운영 확인에서 `010170`의 stale DB-only `PENDING_CONFIRM` 주문은 수동 cleanup으로 `CONFIRM_FAILED` 처리했다. 브로커 pending에 없는 오래된 DB pending은 자동 주문을 만들지 않고 DB 정합성 작업으로만 다룬다.
 - 브로커 보유와 DB open BUY lot 불일치 보강을 추가했다. confirmed BUY 직후와 account equity snapshot 직후 broker holdings delta를 `HOLDING_SYNC` lot으로 백필하며, broker 보유에서 사라진 DB-only open lot은 dry-run report 후 수동 apply에서 `BROKER_HOLDING_MISSING`으로 중립 종결할 수 있다.
 - Track 5.1은 observability rollup key의 provider/model `NULL` 정규화와 maintenance failure preflight WARN 노출까지 구현됐다.
@@ -728,7 +728,7 @@
   - Expected: PASS.
   - Result: 관련 backtesting/data loader 테스트 통과.
 
-- [ ] **Step 5: 커밋**
+- [x] **Step 5: 커밋**
   - Commit: `fix: remove default same-bar backtest execution`
 
 ### Task 7.2: fee/fill/report metadata 분리
@@ -742,25 +742,30 @@
 - Test: `tests/backtesting/test_fee_models.py`
 - Test: `tests/backtesting/test_report_metadata.py`
 
-- [ ] **Step 1: 실패 테스트 작성**
+- [x] **Step 1: 실패 테스트 작성**
   - KRX fee/tax, slippage, partial fill, 상하한가/거래정지 guard fixture를 만든다.
   - report에 `model_family`, `execution_policy`, `fee_model`, `fill_model`이 표시되는지 테스트한다.
+  - Result: `tests/backtesting/test_fee_models.py`, `tests/backtesting/test_fill_models.py`, `tests/backtesting/test_report_metadata.py` 추가.
 
-- [ ] **Step 2: 실패 확인**
+- [x] **Step 2: 실패 확인**
   - Run: `./.venv313/bin/python -m pytest tests/backtesting/test_fill_models.py tests/backtesting/test_fee_models.py tests/backtesting/test_report_metadata.py -q`
   - Expected: 모델/metadata 부재로 실패.
+  - Result: 신규 `backtesting.fill_models`/`backtesting.fee_models` 부재로 실패 확인.
 
-- [ ] **Step 3: 최소 구현**
+- [x] **Step 3: 최소 구현**
   - `KoreaStockFeeModel`, `NextBarOHLCFillModel`, `LimitGuardFillModel`을 추가한다.
   - backtest가 live LLM pipeline이 아니라 `RULE_BASED_TECHNICAL_PROXY`임을 report에 표시한다.
+  - Result: fee/fill model을 분리하고 `BacktestEngine.metadata()` 및 report `metadata`에 execution/fee/fill/model family를 노출.
 
-- [ ] **Step 4: 통과 확인**
+- [x] **Step 4: 통과 확인**
   - Run: `./.venv313/bin/python -m pytest tests/backtesting -q`
   - Expected: PASS.
+  - Result: `9 passed`.
 
-- [ ] **Step 5: 문서/커밋**
+- [x] **Step 5: 문서/커밋**
   - Update: F-021~F-025.
   - Commit: `feat: add explicit backtest fill and fee models`
+  - Result: findings/status 문서 갱신. 커밋은 최종 검증 후 별도 생성.
 
 ## Track 8: LLM and News Simplification
 
@@ -773,24 +778,29 @@
 - Test: `tests/analysis/test_llm_factory.py`
 - Test: `tests/services/test_error_incident_service.py`
 
-- [ ] **Step 1: 실패 테스트 작성**
+- [x] **Step 1: 실패 테스트 작성**
   - Codex timeout 후 cooldown 중 10개 후보가 들어와도 incident는 cooldown window당 1건만 생성되는지 테스트한다.
+  - Result: `test_llm_factory_suppresses_repeated_cooldown_incident_capture` 추가.
 
-- [ ] **Step 2: 실패 확인**
+- [x] **Step 2: 실패 확인**
   - Run: `./.venv313/bin/python -m pytest tests/analysis/test_llm_factory.py tests/services/test_error_incident_service.py -q`
   - Expected: incident 증폭으로 실패.
+  - Result: factory-level cooldown suppression 부재를 테스트로 고정.
 
-- [ ] **Step 3: 최소 구현**
+- [x] **Step 3: 최소 구현**
   - provider health/circuit-open event와 per-call failure를 분리한다.
   - cooldown 중에는 동일 provider/model/root cause incident를 dedupe한다.
+  - Result: `LLMFactory`가 cooldown suppression key와 남은 시간을 exception detail에 붙이고 같은 cooldown window에서는 `error_capture` 호출을 생략한다.
 
-- [ ] **Step 4: 통과 확인**
+- [x] **Step 4: 통과 확인**
   - Run: `./.venv313/bin/python -m pytest tests/analysis/test_llm_factory.py tests/services/test_error_incident_service.py -q`
   - Expected: PASS.
+  - Result: `27 passed`.
 
-- [ ] **Step 5: 문서/커밋**
+- [x] **Step 5: 문서/커밋**
   - Update: F-007/F-027.
   - Commit: `fix: dedupe llm cooldown incidents`
+  - Result: findings/status 문서 갱신. 커밋은 최종 검증 후 별도 생성.
 
 ### Task 8.2: 뉴스는 shadow/report-only rollout으로 고정
 
@@ -806,26 +816,31 @@
 - Test: `tests/services/test_news_reporting_service.py`
 - Test: `tests/frontend/test_settings_action_state.test.js`
 
-- [ ] **Step 1: 실패 테스트 작성**
+- [x] **Step 1: 실패 테스트 작성**
   - sample size가 부족하면 `NEWS_GATE_ENABLED=true` 적용 요청이 거부되거나 warning required 상태가 되는지 테스트한다.
   - fetch concurrency와 translation concurrency 설명/분류가 분리되어 반환되는지 테스트한다.
+  - Result: `SEMI_AUTO_GATE_RECOMMENDATION` rollout mode, settings mapping, reporting concurrency metadata 테스트 추가.
 
-- [ ] **Step 2: 실패 확인**
+- [x] **Step 2: 실패 확인**
   - Run: `./.venv313/bin/python -m pytest tests/services/test_news_runtime_service.py tests/services/test_news_signal_service.py tests/services/test_news_reporting_service.py -q`
   - Expected: rollout gate/report 부재로 실패.
+  - Result: 신규 mode/report metadata 부재를 테스트로 고정.
 
-- [ ] **Step 3: 최소 구현**
+- [x] **Step 3: 최소 구현**
   - news mode를 `OFF|POLL_ONLY|SHADOW_ONLY|SEMI_AUTO_GATE_RECOMMENDATION|BUY_BLOCK_GATE`로 정의한다.
   - 기본값은 현재처럼 OFF.
   - BUY_BLOCK_GATE는 forward return 표본과 source report 조건을 통과해야만 허용한다.
+  - Result: rollout mode set과 runtime validation에 `SEMI_AUTO_GATE_RECOMMENDATION` 추가. `BUY_BLOCK_GATE`는 기존처럼 `PROMOTE`일 때만 block, 미충족 시 shadow-only downgrade.
 
-- [ ] **Step 4: UI 테스트**
+- [x] **Step 4: UI 테스트**
   - Run: `pnpm vitest run tests/frontend/test_settings_action_state.test.js`
   - Expected: PASS.
+  - Result: `7 passed`.
 
-- [ ] **Step 5: 문서/커밋**
+- [x] **Step 5: 문서/커밋**
   - Update: F-028/F-029/F-030.
   - Commit: `feat: constrain news rollout modes`
+  - Result: findings/status 문서 갱신. 커밋은 최종 검증 후 별도 생성.
 
 ### Task 8.3: 뉴스 context를 약한 보조 신호로 Tier prompt와 report에 연결
 
@@ -869,24 +884,29 @@
 - Test: `tests/strategy/test_strategy_profiles.py`
 - Test: `tests/agent/test_trading_agent_market_data.py`
 
-- [ ] **Step 1: 실패 테스트 작성**
+- [x] **Step 1: 실패 테스트 작성**
   - `STABLE_SHORT`/`AGGRESSIVE_SHORT`가 alpha strategy가 아니라 execution/risk profile로 report되는지 테스트한다.
+  - Result: `tests/strategy/test_strategy_profiles.py` 추가. decision benchmark의 `by_alpha_source`, `by_execution_profile`, `by_risk_profile` 집계 테스트를 보강했다.
 
-- [ ] **Step 2: 실패 확인**
+- [x] **Step 2: 실패 확인**
   - Run: `./.venv313/bin/python -m pytest tests/strategy/test_strategy_profiles.py tests/agent/test_trading_agent_market_data.py -q`
   - Expected: 현재 명명 혼합으로 실패.
+  - Result: profile metadata와 benchmark grouping 부재를 테스트로 고정.
 
-- [ ] **Step 3: 최소 구현**
+- [x] **Step 3: 최소 구현**
   - `alpha_source`, `execution_profile`, `risk_profile` 필드를 분리한다.
   - legacy `StockScreener` 사용 여부를 명시하고, 미사용이면 deprecated 표시한다.
+  - Result: `strategy.base`에 `StrategyProfile`/metadata helper를 추가하고, strategy signal metadata, TradeResult note, decision benchmark, performance summary에 profile axis를 노출했다. DB `strategy_type`은 호환을 위해 유지한다.
 
-- [ ] **Step 4: 통과 확인**
+- [x] **Step 4: 통과 확인**
   - Run: `./.venv313/bin/python -m pytest tests/strategy/test_strategy_profiles.py tests/agent/test_trading_agent_market_data.py -q`
   - Expected: PASS.
+  - Result: 관련 strategy/benchmark/performance/agent 테스트 `32 passed`.
 
-- [ ] **Step 5: 문서/커밋**
+- [x] **Step 5: 문서/커밋**
   - Update: F-017/F-018/F-020.
   - Commit: `refactor: separate alpha source and execution profile`
+  - Result: findings/status 문서 갱신. 커밋은 최종 검증 후 별도 생성.
 
 ## 최종 검증 게이트
 

@@ -45,7 +45,7 @@
 ### F-001: 감사 중 runtime이 AUTONOMOUS 상태로 운영 중이었음
 
 - 심각도: `P1`
-- 상태: `완화됨`
+- 상태: `해결됨`
 - 영역: `운영 | 주문`
 - 현상: 감사 운영 기준은 `read-only / semi-auto`였지만, 실제 runtime은 `TRADING_ENABLED=true`, `AUTONOMY_MODE="AUTONOMOUS"`였습니다.
 - 영향: 감사 중에도 자동 주문 경로가 계속 열려 있을 수 있어 증거 수집 중 상태가 변하고, 주문/PnL 분석이 흔들릴 수 있습니다.
@@ -260,7 +260,7 @@
 ### F-014: account equity는 기록되지만 전략 성과/kill switch와 충분히 연결되지 않음
 
 - 심각도: `P1`
-- 상태: `확정`
+- 상태: `해결됨`
 - 영역: `PnL | 리스크 | 성과 측정`
 - 현상: `account_equity_snapshots`는 총자산, 현금, 주식평가, 평가손익을 잘 저장하고 session metrics도 계산합니다. 그러나 PerformanceTracker와 TradingGuard의 핵심 성과/손실 판단은 closed `TradeResult`에 치우쳐 있습니다.
 - 영향: 계좌 총자산이 장중 크게 흔들려도 전략 기대값, 연속 손실, kill switch에는 즉시 반영되지 않습니다. 현재 같은 장중에는 total_asset 517,447,795~533,288,675 범위까지 움직였습니다.
@@ -271,6 +271,7 @@
 - Rollout: 먼저 리포트 경고와 chart, 이후 BUY gate/kill switch에 연결.
 - Rollback: gate 적용 전 report-only 단계는 제거 가능.
 - 분류: `유지하되 harden`
+- 조치: Track 7.1에서 기본 체결 정책을 `NEXT_OPEN`으로 변경하고, 기존 같은 봉 종가 체결은 `LEGACY_SAME_CLOSE` 명시 옵션으로만 남겼습니다. 리포트 metadata에도 execution policy를 노출합니다.
 - 조치: Track 3 Task 3.1에서 latest account equity snapshot과 day baseline을 이용한 `total_asset_delta`, `unrealized_broker_pnl` report-only 요약을 추가했습니다. Track 3 Task 3.2에서 같은 canonical summary를 `TradingGuard`의 account equity drawdown guard에 연결했습니다.
 
 ### F-015: daily report의 주문 count와 TradeResult count가 섞여 리포트 해석이 혼란스러움
@@ -323,7 +324,7 @@
 ### F-018: `StableShort`/`AggressiveShort`는 독립 전략 alpha가 아니라 LLM 판단의 실행 프로필에 가까움
 
 - 심각도: `P1`
-- 상태: `확정`
+- 상태: `완화됨`
 - 영역: `전략 | 성과 측정`
 - 현상: 두 전략 클래스는 `recommendation=BUY/SELL/HOLD`와 confidence를 LLM 분석에서 받아 손절/익절/긴급도와 reason text를 붙입니다. RSI/MACD/trend 조건은 대체로 설명 보강이며 BUY 진입의 독립 hard edge 조건이 아닙니다.
 - 영향: 리포트가 `STABLE_SHORT` 또는 `AGGRESSIVE_SHORT`의 성과처럼 표시되면 실제로는 LLM decision pipeline 성과를 전략 성과로 오해할 수 있습니다. 어떤 전략이 돈을 버는지 attribution이 틀어집니다.
@@ -334,11 +335,12 @@
 - Rollout: 리포트 문구/모델 필드부터 바꾸고, 기존 DB 값은 migration 없이 alias로 유지합니다.
 - Rollback: 표시명만 되돌리면 됩니다.
 - 분류: `유지하되 harden`
+- 조치: Track 7.1~7.2에서 backtest report `metadata.model_family=RULE_BASED_TECHNICAL_PROXY`, `execution_policy`, `fee_model`, `fill_model`을 별도 노출하도록 했습니다. Track 9.1에서 `StrategyProfile`을 추가해 `alpha_source=LLM_DECISION_PIPELINE`, `execution_profile=STABLE_SHORT|AGGRESSIVE_SHORT`, `risk_profile=STABLE|AGGRESSIVE`를 분리했습니다. DB `strategy_type`은 호환용으로 유지하되, signal metadata, TradeResult notes, performance summary, decision benchmark에 새 attribution 축을 노출합니다.
 
 ### F-019: 단계별 benchmark/control group이 없어 LLM, 기술분석, risk gate의 기여도를 분리할 수 없음
 
 - 심각도: `P1`
-- 상태: `확정`
+- 상태: `완화됨`
 - 영역: `전략 | LLM | 성과 측정`
 - 현상: no-trade, random same candidates, scanner-only, technical-only, Tier1-only, Tier2-only, risk/cost-gated, actual recommendation/order 간 비교 결과가 저장되지 않습니다.
 - 영향: 특정 단계가 수익을 높이는지, 지연과 비용만 늘리는지 알 수 없습니다. 특히 LLM 호출 비용/지연과 뉴스/기술분석 단계의 가치를 평가할 수 없습니다.
@@ -366,6 +368,7 @@
 - Rollback: 실험 flag를 끄고 이전 runtime setting snapshot으로 복구합니다.
 - 분류: `실험`
 - 조치: 장마감 청산 이후 자동 BUY 차단을 추가해, 청산 직후 재진입을 실거래가 아닌 관측/로그 대상으로 제한했습니다.
+- 추가 조치: Track 9.1에서 strategy profile attribution 축을 분리해 `STABLE_SHORT`/`AGGRESSIVE_SHORT` 성과를 독립 alpha로 오해하지 않도록 했습니다. 파라미터 조정은 여전히 `alpha_source`, `execution_profile`, `risk_profile`별 표본이 쌓인 뒤에만 진행합니다.
 
 ### F-021: 백테스트가 현재 봉 정보를 보고 같은 봉 종가에 진입하는 look-ahead/동시체결 가정을 가짐
 
@@ -381,11 +384,12 @@
 - Rollout: 기존 API에는 `execution_timing` 기본값을 보수적으로 추가하고, 기존 방식은 `LEGACY_SAME_CLOSE`로 명시합니다.
 - Rollback: feature flag로 legacy 체결 정책을 유지할 수 있게 합니다.
 - 분류: `유지하되 harden`
+- 조치: Track 7.2에서 `KoreaStockFeeModel`, `NextBarOHLCFillModel`, `LimitGuardFillModel`을 추가했습니다. 수수료/매도세/슬리피지/거래정지·상하한가 lock guard는 모델 metadata로 리포트에 남습니다. 부분체결/호가단위 정밀화는 후속 과제로 남깁니다.
 
 ### F-022: 백테스트가 live LLM pipeline이 아니라 rule-based RSI/MACD 대체 모델을 검증함
 
 - 심각도: `P1`
-- 상태: `확정`
+- 상태: `부분 완료`
 - 영역: `백테스트 | 전략 | LLM`
 - 현상: live trading은 scanner, chart, Tier1 LLM, Tier2 LLM, strategy profile, risk/cost gate를 거치지만, backtest는 `_build_rule_based_analysis`에서 RSI/MACD/cross 점수로 recommendation을 만듭니다.
 - 영향: backtest 결과가 좋아도 live LLM 전략이 좋다는 증거가 아닙니다. 반대로 backtest가 나빠도 LLM pipeline을 부정할 수 없습니다.
@@ -396,11 +400,12 @@
 - Rollout: 표시 필드부터 추가하고, LLM replay backtest는 별도 실험으로 둡니다.
 - Rollback: 표시 필드 제거 가능.
 - 분류: `유지하되 harden`
+- 조치: Track 7.1~7.2로 execution/fee/fill metadata는 리포트에 들어갔습니다. 날짜 범위 필터링과 데이터 source/version/hash는 아직 후속 과제입니다.
 
 ### F-023: 백테스트 체결 모델이 미체결/부분체결/호가/상하한가/세금을 반영하지 않음
 
 - 심각도: `P1`
-- 상태: `확정`
+- 상태: `완화됨`
 - 영역: `백테스트 | 주문 | 성과 측정`
 - 현상: `_buy`와 `_close_position`은 고정 percentage slippage와 commission만 반영하고 전량 체결로 처리합니다. KRX 호가단위, 가격제한폭, 거래정지, 거래세/제세금, 부분체결, 주문 거부가 없습니다.
 - 영향: 특히 단기/급등주 전략에서는 체결 가능성과 비용이 성과 대부분을 좌우할 수 있어 실제보다 성과가 과대평가될 수 있습니다.
@@ -411,6 +416,7 @@
 - Rollout: report-only로 비용 breakdown을 먼저 출력하고, 이후 기존 결과와 새 결과를 나란히 표시합니다.
 - Rollback: legacy cost model을 별도 옵션으로 유지합니다.
 - 분류: `유지하되 harden`
+- 조치: `tests/backtesting/test_engine_execution_model.py`, `test_fee_models.py`, `test_fill_models.py`, `test_report_metadata.py`를 추가했고 `tests/backtesting -q` 기준 9개 테스트가 통과합니다. metrics edge case 확대는 후속입니다.
 
 ### F-024: 백테스트 data loader가 날짜 범위와 trading day를 엄밀하게 보장하지 않음
 
@@ -472,7 +478,7 @@
 - Rollout: observability 집계 변경부터 적용하고 LLM 라우팅은 유지합니다.
 - Rollback: 기존 error_capture 호출 방식으로 되돌릴 수 있습니다.
 - 분류: `유지하되 harden`
-- 조치: cooldown incident fingerprint에서 `(N초 남음)`처럼 매 호출마다 달라지는 잔여시간을 제거해 같은 provider/model/root cause 장애를 하나로 누적합니다. LLM slow/error 활동 로그와 observability metric은 유지해 장애 자체는 숨기지 않습니다.
+- 조치: cooldown incident fingerprint에서 `(N초 남음)`처럼 매 호출마다 달라지는 잔여시간을 제거해 같은 provider/model/root cause 장애를 하나로 누적합니다. 추가로 `LLMFactory`가 동일 provider/model/root cause cooldown window 안에서는 `error_capture` 호출 자체를 1회로 제한합니다. LLM slow/error 활동 로그와 observability metric은 유지해 장애 자체는 숨기지 않습니다.
 
 ### F-028: 뉴스 기능은 현재 꺼져 있고 저장 표본도 stale/neutral이라 매매 가치가 검증되지 않음
 
@@ -491,6 +497,7 @@
 - 조치: 뉴스 deterministic enrichment/backfill, source별 report, decision benchmark의 뉴스 source 집계를 추가했습니다. 2026-04-27에는 `NewsContextService`를 추가해 최근 뉴스의 종목/종목명/source 매칭 결과를 Tier1/Tier2 prompt에 넣고 `news_context_*` metadata를 trade note/report/benchmark에 남깁니다.
 - 운영 원칙: 뉴스 context는 BUY hard gate가 아니라 약한 보조 맥락입니다. 실제 차단/승급은 forward return 표본과 source별 성과가 쌓인 뒤에만 검토합니다.
 - 모델 정책: 뉴스 번역 `qwen3:4b`는 응답 지연, prompt echo, JSON 안정성 문제로 운영 후보에서 제외합니다. 뉴스 번역이 필요하면 8b 이상 후보를 별도 검증하고, 현재 운영 기준은 `OLLAMA/qwen3:14b`입니다.
+- rollout 조치: `NEWS_GATE_ROLLOUT_MODE`에 `SEMI_AUTO_GATE_RECOMMENDATION`을 추가했습니다. `BUY_BLOCK_GATE`는 rollout status가 `PROMOTE`일 때만 실제 BUY 차단으로 승격되고, 그 외에는 shadow-only로 자동 downgrade됩니다.
 
 ### F-029: 뉴스 fetch 병렬도와 번역 병렬도가 다른 개념인데 Admin/운영 문서에서 혼동될 수 있음
 
@@ -507,6 +514,7 @@
 - Rollback: 설명 문구 제거 가능.
 - 분류: `유지하되 harden`
 - 조치: 뉴스 번역 추천 서비스는 8b 미만 모델을 추천하지 않도록 보정했고, 해외 뉴스 번역이 꺼진 상태에서는 번역 모델 다운그레이드를 운영 액션으로 추천하지 않습니다. 기능별 LLM 호출 breakdown과 뉴스 관련 metric은 Admin observability에서 분리해서 볼 수 있게 했습니다.
+- 추가 조치: 뉴스 overview settings에 `NEWS_FETCH_CONCURRENCY`와 `NEWS_TRANSLATION_CONCURRENCY`를 `source fetch fan-out`/`foreign news translation fan-out`으로 분리한 metadata를 노출합니다. Admin 설정 action mapping도 `NEWS_GATE_ROLLOUT_MODE`를 직접 다룹니다.
 
 ### F-030: 뉴스 source별 성과 기여도와 중복/stale/실패율이 rollout gate와 연결되지 않음
 
@@ -523,6 +531,7 @@
 - Rollback: source별 runtime flag를 기존 값으로 복구.
 - 분류: `실험`
 - 조치: decision benchmark는 `news_top_contributors.source_code`뿐 아니라 `news_context_source_codes`와 `news_context_items`도 뉴스 enriched 판정에 포함합니다. `by_news_source_blocked`, `by_news_source_blocked_comparison`, `candidate_path_comparison`으로 source별 blocked 후보와 실제 BUY 후보를 read-only로 비교할 수 있습니다.
+- 추가 조치: rollout mode 후보를 `OFF|POLL_ONLY|SHADOW_ONLY|SEMI_AUTO_GATE_RECOMMENDATION|BUY_BLOCK_GATE`로 명시하고, `BUY_BLOCK_GATE`는 performance rollout 조건을 통과한 경우에만 실제 차단으로 동작하게 유지했습니다.
 - 남은 검증: `news_context_*`가 붙은 거래와 없는 거래의 forward return, 손실 회피율, source별 품질 비교는 실제 운영 표본이 더 필요합니다.
 
 ### F-031: 주문 생성 경로의 세션 가드가 자동매매 지원 세션보다 넓음

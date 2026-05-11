@@ -12,7 +12,7 @@
 
 최근 추가된 AI 비용 절감 축인 `CandidateScoringService`, `PreAnalysisGate`, `DeterministicFinalGate`, `Tier1AnalysisCacheService`, `AI_SKIPPED` metric, `HoldingsPrecheckService`, `HoldingsReviewCacheService`는 코드와 테스트 기준으로 구현 완료 상태다. 다만 이 문서에서 `운영 반영`은 실제 9000 프로세스 재기동과 런타임 확인까지 끝난 항목만 뜻하므로, 최신 보유종목 precheck/review cache는 현재 기준 `코드 반영 완료`로 적는다.
 
-2026-04-27 운영 확인 기준 서버는 `AUTONOMOUS/FULL` 상태에서 Kiwoom 연결, 뉴스 폴링, Admin API가 정상 응답했다. Tier1/Tier2/Manual LLM은 운영 의도대로 `CODEX/gpt-5.4` 단독이며 fallback은 비워둔다. 뉴스 번역은 `OLLAMA/qwen3:14b`를 유지하고, `qwen3:4b`는 반복된 지연/JSON 안정성 문제로 운영 후보에서 제외한다.
+2026-04-27 운영 확인 기준 서버는 `AUTONOMOUS/FULL` 상태에서 Kiwoom 연결, 뉴스 폴링, Admin API가 정상 응답했다. 이후 후속 구현 작업 전 운영 안전선으로 `ORDER_SUBMISSION_MODE=READ_ONLY`를 적용했고 scheduler 재시작이 정상 완료됐다. Tier1/Tier2/Manual LLM은 운영 의도대로 `CODEX/gpt-5.4` 단독이며 fallback은 비워둔다. 뉴스 번역은 `OLLAMA/qwen3:14b`를 유지하고, `qwen3:4b`는 반복된 지연/JSON 안정성 문제로 운영 후보에서 제외한다.
 
 같은 확인에서 `010170`의 stale DB-only `PENDING_CONFIRM` 주문은 수동 cleanup으로 `CONFIRM_FAILED` 처리했다. `452190`은 broker 보유 3,800주와 DB open qty 3,800주가 일치했고 pending 주문은 0건이었다. 이 상태는 broker holdings delta 백필과 account snapshot 이후 백필 경로가 정상적으로 DB 보유 정합성을 회복했음을 보여준다.
 
@@ -151,6 +151,11 @@
 - SQLite 운영 DB 쓰기 경합 완화를 위해 `run_sqlite_write_with_retry`에 프로세스 내부 write 직렬화를 추가했다. 활동 로그 저장은 lock 재시도마다 새 ORM 엔트리를 생성하고, retry 기본을 최소 5회/250ms로 올려 기동 직후 뉴스 폴링과 observability/activity log 저장이 겹칠 때의 `database is locked` 실패를 줄인다.
 - confirmed BUY 후 즉시 holdings backfill을 수행해 broker 체결은 됐지만 DB open BUY가 부족한 상태를 줄인다. account equity snapshot도 같은 백필을 수행해 장중 보유 재평가와 smart liquidation이 `TradeResult 없음`으로 멈추는 빈도를 낮춘다.
 - DB open BUY가 broker holdings에서 사라진 경우는 자동 매도/매수로 보정하지 않는다. pending 여부를 확인한 뒤 DB 정합성 작업으로만 중립 종결하며, 실제 realized PnL truth는 broker execution history 연동 전까지 제한적으로 해석한다.
+- 백테스트 위생 Track 7.2를 구현했다. `KoreaStockFeeModel`, `NextBarOHLCFillModel`, `LimitGuardFillModel`을 추가했고 report metadata에 `model_family`, `execution_policy`, `fee_model`, `fill_model`을 분리 노출한다. `tests/backtesting -q` 기준 9개 테스트가 통과한다.
+- LLM cooldown incident 증폭 방지를 구현했다. cooldown 중 같은 provider/model/root cause는 window 안에서 `error_capture` 호출을 1회로 제한하고, observability metric은 유지한다.
+- 뉴스 rollout mode에 `SEMI_AUTO_GATE_RECOMMENDATION`을 추가했다. 명시적 `BUY_BLOCK_GATE`는 rollout status가 `PROMOTE`일 때만 실제 BUY 차단으로 동작하고, 미충족 시 `SHADOW_ONLY`로 downgrade된다. 뉴스 overview settings에는 fetch concurrency와 translation concurrency의 역할 metadata를 분리 노출한다.
+- 2026-04-27 청산 대사 확인: 과거 `SELL|CONFIRMED` 15건은 존재하지만 해당 매도가 `BUY` lot의 `exit_price/pnl/return_pct`로 연결되지 않아, 이후 보유 대사 작업이 72개 BUY lot를 `HOLDING_RECONCILIATION_CLOSE` 중립 종료로 닫았다. `TradeCloseReconciliationService`와 `GET /api/v1/admin/trades/close-reconciliation?days=30` read-only dry-run을 추가했다. 현재 운영 DB dry-run 기준 SELL 15건, BUY 후보 74건, 일부 이상 매칭 SELL 13건, 매칭 수량 33,131주, 미매칭 SELL 수량 3,133주, 추정 PnL +2,280,836원이다.
+- 청산 대사 apply endpoint는 `POST /api/v1/admin/trades/close-reconciliation/apply?days=30`로 추가했다. 이 endpoint는 `ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED` 설정과 무관하게 `APPLY_TRADE_CLOSE_RECONCILIATION` 확인 토큰을 요구한다. 2026-04-28 00:02 KST 기준 완전 매칭 SELL 11건을 적용해 BUY lot 33건의 `exit_price/pnl/return_pct/exit_at`를 보정했고, 적용 손익은 +1,767,928원이다. 적용 후 성과분석 30일 요약은 성과 거래 38건, PF 1.86, MDD -668,482원으로 계산된다. 미매칭 수량이 남는 SELL 4건/3,133주는 수동 검토 대상이다.
 
 ## 아직 미구현 또는 추가 검증이 필요한 핵심 항목
 
@@ -193,7 +198,7 @@
 - backtest same-bar execution 제거.
 - Backtest 기본 체결 정책을 `NEXT_OPEN`으로 바꾸고, 과거 같은 봉 종가 체결은 `LEGACY_SAME_CLOSE`를 명시한 경우에만 사용하도록 1차 수정했다. API 요청/리포트 config에는 `execution_timing`과 `RULE_BASED_TECHNICAL_PROXY` model family를 표시한다.
 - fee/fill/report metadata 분리.
-- `STABLE_SHORT`/`AGGRESSIVE_SHORT`를 alpha source와 execution profile로 분리.
+- `STABLE_SHORT`/`AGGRESSIVE_SHORT`를 alpha source와 execution profile로 분리 완료. `strategy_type` DB 호환은 유지하고, `alpha_source`, `execution_profile`, `risk_profile`을 signal metadata, trade notes, performance summary, decision benchmark에 추가했다.
 - SQLite는 단일 파일 DB라 외부 프로세스 간 lock 가능성은 남는다. 다음 운영 재기동 후 `database is locked`가 반복되면 뉴스 폴링 완료 로그와 observability metric 저장 순서를 더 분리하거나 startup 뉴스 폴링을 지연 실행으로 바꾼다.
 
 ## 권장 실행 순서
@@ -201,9 +206,10 @@
 1. `qwen3:4b` 뉴스 번역은 운영 전환 후보에서 제외한다. 뉴스 번역 Ollama 경량화가 필요하면 8b 이상 모델을 별도 후보로 검증한다.
 2. Tier1/Tier2/Manual은 Codex-only 정책을 유지한다. fallback provider는 장애 회피 목적이라도 운영 의도와 충돌할 수 있으므로 임의로 추가하지 않는다.
 3. broker holdings와 DB open qty mismatch를 계속 확인한다. `HOLDING_SYNC` 백필은 정합성 복구이고, `BROKER_HOLDING_MISSING` 중립 종결은 realized PnL truth가 아니다.
-4. `AI_SKIPPED/HOLDINGS_PRECHECK` 표본이 쌓이면 `HOLDINGS_PRECHECK_SKIP_CLEAR_HOLD_ENABLED` 활성화 여부를 결정한다.
-5. 장중 보유 재평가 review cache hit율/오판율을 운영 표본으로 확인한다.
-6. 뉴스 gate의 Tier2 전 차단 이동은 shadow/rollout 표본을 더 확인한 뒤 재검토한다.
+4. `GET /api/v1/admin/trades/close-reconciliation?days=30` dry-run 결과에 남은 미매칭 SELL 4건/3,133주를 확인한다. 완전 매칭 11건은 이미 confirmation token으로 apply 완료했으므로, partial/unmatched SELL은 별도 브로커 체결 원장 확인 후 처리한다.
+5. `AI_SKIPPED/HOLDINGS_PRECHECK` 표본이 쌓이면 `HOLDINGS_PRECHECK_SKIP_CLEAR_HOLD_ENABLED` 활성화 여부를 결정한다.
+6. 장중 보유 재평가 review cache hit율/오판율을 운영 표본으로 확인한다.
+7. 뉴스 gate의 Tier2 전 차단 이동은 shadow/rollout 표본을 더 확인한 뒤 재검토한다.
 
 ## 당장 바꾸지 말 것
 
