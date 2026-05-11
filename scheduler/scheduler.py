@@ -50,6 +50,7 @@ class TradingScheduler:
         self._background_tasks: set[asyncio.Task[object]] = set()
         self._last_event_news_poll_at = 0.0
         self._last_event_news_poll_by_symbol: dict[str, float] = {}
+        self._soft_stop_observations: dict[str, dict[str, object]] = {}
         self._event_handlers_registered = False
         self._register_news_event_handlers()
 
@@ -89,6 +90,50 @@ class TradingScheduler:
         event_bus.subscribe(EventType.RECOMMENDATION_CREATED, self._on_news_trigger_event)
         event_bus.subscribe(EventType.MARKET_OPEN, self._on_news_trigger_event)
         self._event_handlers_registered = True
+
+    def _soft_stop_buffer_pct(self) -> float:
+        appetite = str(getattr(settings, "RISK_APPETITE", "CONSERVATIVE") or "CONSERVATIVE").upper()
+        return {
+            "CONSERVATIVE": 0.4,
+            "MODERATE": 0.8,
+            "AGGRESSIVE": 1.2,
+        }.get(appetite, 0.4)
+
+    def _should_defer_soft_stop(
+        self,
+        symbol: str,
+        *,
+        pnl_rate: float,
+        stop_loss_pct: float,
+        minutes_left: int,
+        observed_at: float,
+        scope: str,
+    ) -> tuple[bool, str]:
+        """Defer shallow stop-loss breaches once to avoid selling on a brief shakeout."""
+        key = f"{scope}:{normalize_krx_symbol(symbol)}"
+        if pnl_rate > stop_loss_pct:
+            self._soft_stop_observations.pop(key, None)
+            return False, ""
+
+        breach_depth = stop_loss_pct - pnl_rate
+        if breach_depth >= self._soft_stop_buffer_pct():
+            self._soft_stop_observations.pop(key, None)
+            return False, "hard_breach"
+        if minutes_left <= 20:
+            self._soft_stop_observations.pop(key, None)
+            return False, "near_close"
+
+        previous = self._soft_stop_observations.get(key)
+        if previous and observed_at - float(previous.get("observed_at", 0.0)) <= 180:
+            self._soft_stop_observations.pop(key, None)
+            return False, "confirmed"
+
+        self._soft_stop_observations[key] = {
+            "observed_at": observed_at,
+            "pnl_rate": pnl_rate,
+            "stop_loss_pct": stop_loss_pct,
+        }
+        return True, "first_observation"
 
     def _schedule_background_task(
         self,
@@ -336,6 +381,18 @@ class TradingScheduler:
                 name="장중 재스캔",
                 misfire_grace_time=600,
             )
+            self.scheduler.add_job(
+                self._intraday_rescan,
+                "cron",
+                minute=f"*/{max(int(settings.INTRADAY_RESCAN_INTERVAL_MIN or 10), 1)}",
+                hour="9-14",
+                day_of_week="mon-fri",
+                id="intraday_rescan_interval",
+                name="장중 정기 재스캔",
+                misfire_grace_time=300,
+                max_instances=1,
+                coalesce=True,
+            )
 
         if include_news_jobs:
             self.scheduler.add_job(
@@ -489,6 +546,9 @@ class TradingScheduler:
         await asyncio.sleep(3)
 
         if market_calendar.is_krx_trading_hours():
+            if not settings.TRADING_ENABLED:
+                logger.info("서버 기동: 장중이지만 TRADING_ENABLED=false → startup 시장 스캔 스킵")
+                return
             logger.debug("서버 기동: 장중 → 즉시 시장 스캔 + 매매 시작")
             asyncio.create_task(self._market_open_scan())
         else:
@@ -599,6 +659,14 @@ class TradingScheduler:
         if market_calendar.is_krx_holiday():
             logger.debug("휴장일 — 장 시작 스캔 스킵")
             return
+        if not settings.TRADING_ENABLED:
+            logger.info("TRADING_ENABLED=false → 장 시작 스캔/AI 매매 사이클 스킵")
+            await activity_logger.log(
+                ActivityType.SCHEDULE,
+                ActivityPhase.SKIP,
+                "TRADING_ENABLED=false → 장 시작 스캔/AI 매매 사이클 스킵",
+            )
+            return
 
         logger.debug("=== 장 시작 첫 스캔 (09:05) — 전체 시장 분석 + 매매 시작 ===")
         await activity_logger.log(
@@ -614,8 +682,8 @@ class TradingScheduler:
             # 1. AI Agent 매매 사이클 실행 (전체 시장 스캔 → 분석 → 매매)
             result = await trading_agent.run_cycle()
 
-            # 2. 선정 종목 + 보유종목을 WebSocket 실시간 구독
-            selected = result.get("selected_symbols", [])
+            # 2. 실시간 감시 후보 + 보유종목을 WebSocket 구독
+            selected = result.get("monitor_symbols") or result.get("selected_symbols", [])
 
             # 보유종목 추가
             from trading.account_manager import account_manager
@@ -661,6 +729,14 @@ class TradingScheduler:
 
         if market_calendar.is_krx_holiday():
             return
+        if not settings.TRADING_ENABLED:
+            logger.info("TRADING_ENABLED=false → 장중 재스캔/AI 매매 사이클 스킵")
+            await activity_logger.log(
+                ActivityType.SCHEDULE,
+                ActivityPhase.SKIP,
+                "TRADING_ENABLED=false → 장중 재스캔/AI 매매 사이클 스킵",
+            )
+            return
 
         # 매수 마감 시간 이후면 재스캔 불필요
         if settings.DAY_TRADING_ONLY:
@@ -679,8 +755,8 @@ class TradingScheduler:
         try:
             result = await trading_agent.run_cycle()
 
-            # 선정 종목 WebSocket 구독 갱신
-            selected = result.get("selected_symbols", [])
+            # 실시간 감시 후보 WebSocket 구독 갱신
+            selected = result.get("monitor_symbols") or result.get("selected_symbols", [])
             if selected:
                 from trading.account_manager import account_manager
                 from realtime.stream_manager import SubscriptionPriority, SubscriptionRequest, stream_manager
@@ -850,10 +926,13 @@ class TradingScheduler:
 
             alerts = []
             for h in holdings:
+                symbol = normalize_krx_symbol(getattr(h, "symbol", ""))
+                if not symbol:
+                    continue
                 if h.avg_buy_price <= 0 or h.quantity <= 0:
                     continue
                 # MCP로 현재가 직접 조회
-                current = await self._fetch_current_price(h.symbol)
+                current = await self._fetch_current_price(symbol)
                 if current <= 0:
                     continue
                 pnl_rate = (current - h.avg_buy_price) / h.avg_buy_price * 100
@@ -863,10 +942,10 @@ class TradingScheduler:
 
                 # AI가 설정한 임계값이 있으면 우선 사용, 없으면 기본값
                 from realtime.event_detector import event_detector
-                th = event_detector.get_thresholds(h.symbol)
+                th = event_detector.get_thresholds(symbol)
 
                 if th.stop_loss <= 0 and th.take_profit <= 0:
-                    alerts.append(f"⚠️ {h.name}({h.symbol}): AI 손절/익절 미설정 — 기본값 적용 중")
+                    alerts.append(f"⚠️ {h.name}({symbol}): AI 손절/익절 미설정 — 기본값 적용 중")
 
                 stop_loss_pct = -3.0  # 기본값
                 take_profit_pct = 5.0
@@ -877,8 +956,28 @@ class TradingScheduler:
 
                 # 손절/익절
                 if pnl_rate <= stop_loss_pct:
-                    should_sell = True
                     reason = f"손절 도달 ({pnl_rate:+.1f}%, 기준 {stop_loss_pct:+.1f}%)"
+                    defer_sell, defer_reason = self._should_defer_soft_stop(
+                        symbol,
+                        pnl_rate=pnl_rate,
+                        stop_loss_pct=stop_loss_pct,
+                        minutes_left=minutes_left,
+                        observed_at=current_dt.timestamp(),
+                        scope="holdings_check",
+                    )
+                    if defer_sell:
+                        alerts.append(
+                            f"👀 {h.name}({symbol}): {reason} — 완충 확인 중 "
+                            f"(얕은 이탈, 다음 점검까지 보류)"
+                        )
+                        continue
+                    should_sell = True
+                    if defer_reason == "confirmed":
+                        reason += " — 2회 연속 확인"
+                    elif defer_reason == "hard_breach":
+                        reason += " — 손절선 깊게 이탈"
+                    elif defer_reason == "near_close":
+                        reason += " — 장마감 임박"
                 elif pnl_rate >= take_profit_pct:
                     should_sell = True
                     reason = f"익절 도달 ({pnl_rate:+.1f}%, 기준 {take_profit_pct:+.1f}%)"
@@ -894,47 +993,53 @@ class TradingScheduler:
                 if should_sell and settings.TRADING_ENABLED:
                     # P0-2: 이중 매도 방지
                     from agent.trading_agent import trading_agent
-                    if not await trading_agent._acquire_sell(h.symbol):
+                    if not await trading_agent._acquire_sell(symbol):
                         alerts.append(
-                            f"\u26a0\ufe0f {h.name}({h.symbol}): {reason} → 이미 매도 진행 중"
+                            f"\u26a0\ufe0f {h.name}({symbol}): {reason} → 이미 매도 진행 중"
                         )
                         continue
                     try:
-                        sell_resp = await self._place_market_sell(h.symbol, h.quantity)
+                        sell_resp = await self._place_market_sell(symbol, h.quantity)
                         status = "성공" if sell_resp.success else f"실패: {sell_resp.error or ''}"
                         alerts.append(
-                            f"\U0001f6a8 {h.name}({h.symbol}): {reason} → 매도 {status}"
+                            f"\U0001f6a8 {h.name}({symbol}): {reason} → 매도 {status}"
                         )
                         if sell_resp.success:
                             from realtime.event_detector import event_detector
-                            event_detector.remove_levels(h.symbol)
-                            # 체결 확인 + TradeResult 기록
-                            from agent.decision_maker import decision_maker
-                            await decision_maker.confirm_and_record(
-                                symbol=h.symbol, side="SELL",
-                                order_id=str(getattr(sell_resp, "order_id", "") or ""), quantity=h.quantity,
+                            event_detector.remove_levels(symbol)
+                            await activity_logger.log(
+                                ActivityType.ORDER, ActivityPhase.PROGRESS,
+                                f"🚨 보유점검 매도 주문 접수: {h.name}({symbol}) "
+                                f"{h.quantity}주 — {reason} — 체결 확인 대기",
+                                symbol=symbol,
+                            )
+                            await self._track_scheduler_sell_confirmation(
+                                holding=h,
+                                response=sell_resp,
+                                symbol=symbol,
+                                quantity=int(h.quantity),
                                 expected_price=current,
                                 exit_reason="HOLDINGS_CHECK",
                             )
-                            # UI에 개별 매도 표시
                             await activity_logger.log(
                                 ActivityType.ORDER, ActivityPhase.COMPLETE,
-                                f"🚨 보유점검 매도: {h.name}({h.symbol}) {h.quantity}주 — {reason}",
-                                symbol=h.symbol,
+                                f"📉 보유점검 매도 완료: {h.name}({symbol}) "
+                                f"{h.quantity}주 — {reason} — 체결 확인 완료",
+                                symbol=symbol,
                             )
                             # 매도 성공 → 재스캔 트리거
                             import asyncio
                             asyncio.create_task(self._trigger_rescan_after_sell())
                     except Exception as e:
                         alerts.append(
-                            f"\u274c {h.name}({h.symbol}): {reason} → 매도 오류: {str(e)[:50]}"
+                            f"\u274c {h.name}({symbol}): {reason} → 매도 오류: {str(e)[:50]}"
                         )
                     finally:
-                        trading_agent._release_sell(h.symbol)
+                        trading_agent._release_sell(symbol)
                 elif should_sell:
                     # TRADING_ENABLED=false이면 알림만
                     alerts.append(
-                        f"\u26a0\ufe0f {h.name}({h.symbol}): {reason} (TRADING_ENABLED=false)"
+                        f"\u26a0\ufe0f {h.name}({symbol}): {reason} (TRADING_ENABLED=false)"
                     )
 
             if alerts:
@@ -1110,9 +1215,9 @@ class TradingScheduler:
                     sold_count += 1
                     pnl_text = f"{h.pnl_rate:+.1f}%" if hasattr(h, "pnl_rate") else ""
                     await activity_logger.log(
-                        ActivityType.ORDER, ActivityPhase.COMPLETE,
-                        f"\U0001f6a8 청산: {h.name}({h.symbol}) "
-                        f"{h.quantity}주 시장가 매도 {pnl_text}",
+                        ActivityType.ORDER, ActivityPhase.PROGRESS,
+                        f"\U0001f6a8 청산 주문 접수: {h.name}({h.symbol}) "
+                        f"{h.quantity}주 시장가 매도 {pnl_text} — 체결 확인 대기",
                         symbol=h.symbol,
                     )
                     await self._record_liquidation_sell(h, resp)
@@ -1152,7 +1257,7 @@ class TradingScheduler:
                     else:
                         logger.error("청산 재시도 실패: {}({}) — {}", h.name, h.symbol, resp.error or "")
 
-            summary = f"\U0001f6a8 {mode_label} 완료: {sold_count}건 매도"
+            summary = f"\U0001f6a8 {mode_label} 주문 접수: {sold_count}건 매도"
             if to_hold:
                 hold_names = ", ".join(f"{h.name}" for h in to_hold)
                 summary += f" | HOLD {len(to_hold)}건: {hold_names}"
@@ -1175,23 +1280,55 @@ class TradingScheduler:
             )
 
     async def _record_liquidation_sell(self, holding, response) -> None:
+        await self._track_scheduler_sell_confirmation(
+            holding=holding,
+            response=response,
+            symbol=getattr(holding, "symbol", ""),
+            quantity=int(getattr(holding, "quantity", 0) or 0),
+            expected_price=float(getattr(holding, "current_price", 0.0) or 0.0),
+            exit_reason="FORCE_LIQUIDATION",
+        )
+
+    async def _track_scheduler_sell_confirmation(
+        self,
+        *,
+        holding,
+        response,
+        symbol: str,
+        quantity: int,
+        expected_price: float,
+        exit_reason: str,
+    ) -> None:
         order_id = str(getattr(response, "order_id", "") or "")
         if not order_id:
             logger.error(
-                "청산 체결 기록 스킵: {}({}) — 주문번호 없음",
+                "SELL 체결 추적 스킵: {}({}) — 주문번호 없음",
                 getattr(holding, "name", ""),
-                getattr(holding, "symbol", ""),
+                symbol,
             )
             return
 
         from agent.decision_maker import decision_maker
-        await decision_maker.confirm_and_record(
-            symbol=getattr(holding, "symbol", ""),
+        pending_record_id = await decision_maker._create_pending_record(
+            symbol=symbol,
             side="SELL",
             order_id=order_id,
-            quantity=int(getattr(holding, "quantity", 0) or 0),
-            expected_price=float(getattr(holding, "current_price", 0.0) or 0.0),
-            exit_reason="FORCE_LIQUIDATION",
+            quantity=quantity,
+            expected_price=expected_price,
+            analysis_context={
+                "stock_name": getattr(holding, "name", "") or symbol,
+                "strategy_type": exit_reason,
+                "ai_recommendation": "SELL",
+            },
+        )
+        await decision_maker.confirm_and_record(
+            symbol=symbol,
+            side="SELL",
+            order_id=order_id,
+            quantity=quantity,
+            expected_price=expected_price,
+            exit_reason=exit_reason,
+            pending_record_id=pending_record_id,
         )
 
     async def _collect_holdings_data(
@@ -1219,15 +1356,24 @@ class TradingScheduler:
 
             for h in sellable:
                 try:
+                    symbol = normalize_krx_symbol(getattr(h, "symbol", ""))
+                    if not symbol:
+                        review_required.append(self._holding_review_required(
+                            h,
+                            reason_code="SYMBOL_NORMALIZATION_FAILED",
+                            reason="보유종목 심볼 정규화 실패",
+                        ))
+                        logger.warning("보유종목 심볼 정규화 실패 {} → REVIEW_REQUIRED", getattr(h, "symbol", ""))
+                        continue
                     try:
-                        current_price = await self._fetch_current_price(h.symbol)
+                        current_price = await self._fetch_current_price(symbol)
                     except Exception as price_error:
                         review_required.append(self._holding_review_required(
                             h,
                             reason_code="PRICE_LOOKUP_FAILED",
                             reason=f"현재가 조회 실패: {str(price_error)[:120]}",
                         ))
-                        logger.warning("현재가 조회 실패 {} → REVIEW_REQUIRED: {}", h.symbol, str(price_error))
+                        logger.warning("현재가 조회 실패 {} → REVIEW_REQUIRED: {}", symbol, str(price_error))
                         continue
 
                     if current_price <= 0:
@@ -1236,10 +1382,10 @@ class TradingScheduler:
                             reason_code="PRICE_LOOKUP_FAILED",
                             reason="현재가 조회 실패",
                         ))
-                        logger.warning("현재가 조회 실패 {} → REVIEW_REQUIRED", h.symbol)
+                        logger.warning("현재가 조회 실패 {} → REVIEW_REQUIRED", symbol)
                         continue
 
-                    trade_result = await repo.get_open_buy(h.symbol)
+                    trade_result = await repo.get_open_buy(symbol)
 
                     if trade_result is None:
                         review_required.append(self._holding_review_required(
@@ -1247,7 +1393,7 @@ class TradingScheduler:
                             reason_code="TRADE_RESULT_MISSING",
                             reason="open BUY TradeResult 없음",
                         ))
-                        logger.warning("TradeResult 없음 {} → REVIEW_REQUIRED", h.symbol)
+                        logger.warning("TradeResult 없음 {} → REVIEW_REQUIRED", symbol)
                         continue
 
                     avg_price = h.avg_buy_price
@@ -1256,11 +1402,11 @@ class TradingScheduler:
                     max_hold_days = _get_max_hold_days(trade_result.strategy_type, settings)
 
                     # 현재 event_detector 활성 임계값
-                    th = event_detector.get_thresholds(h.symbol)
+                    th = event_detector.get_thresholds(symbol)
 
                     data = {
-                        "symbol": h.symbol,
-                        "stock_name": h.name or trade_result.stock_name or h.symbol,
+                        "symbol": symbol,
+                        "stock_name": h.name or trade_result.stock_name or symbol,
                         "avg_price": avg_price,
                         "current_price": current_price,
                         "pnl_rate": pnl_rate,
@@ -1275,7 +1421,7 @@ class TradingScheduler:
                         "active_take_profit": th.take_profit,
                     }
                     holdings_data.append(data)
-                    holdings_map[h.symbol] = (h, trade_result, current_price)
+                    holdings_map[symbol] = (h, trade_result, current_price)
 
                 except Exception as e:
                     review_required.append(self._holding_review_required(
@@ -1283,7 +1429,7 @@ class TradingScheduler:
                         reason_code="HOLDING_DATA_ERROR",
                         reason=f"보유종목 데이터 수집 오류: {str(e)[:120]}",
                     ))
-                    logger.warning("보유종목 데이터 수집 오류 {} → REVIEW_REQUIRED: {}", h.symbol, str(e))
+                    logger.warning("보유종목 데이터 수집 오류 {} → REVIEW_REQUIRED: {}", getattr(h, "symbol", ""), str(e))
 
         if review_required:
             await self._record_holdings_review_required_metrics(review_required)
@@ -1935,15 +2081,24 @@ class TradingScheduler:
                 try:
                     from trading.account_manager import account_manager
                     actual_holdings = await account_manager.get_holdings()
-                    actual_symbols = {h.symbol for h in actual_holdings if h.quantity > 0}
+                    actual_symbols = {
+                        normalize_krx_symbol(getattr(h, "symbol", ""))
+                        for h in actual_holdings
+                        if h.quantity > 0 and normalize_krx_symbol(getattr(h, "symbol", ""))
+                    }
                 except Exception:
-                    actual_symbols = {tr.stock_symbol for tr in open_positions}
+                    actual_symbols = {
+                        normalize_krx_symbol(getattr(tr, "stock_symbol", ""))
+                        for tr in open_positions
+                        if normalize_krx_symbol(getattr(tr, "stock_symbol", ""))
+                    }
 
                 orphan_count = 0
                 # 고아 레코드에 대해 실제 매도 가격 추정 시도
                 # SELL 레코드나 현재가로 exit_price/pnl 계산
                 for tr in open_positions:
-                    if tr.stock_symbol not in actual_symbols:
+                    symbol = normalize_krx_symbol(getattr(tr, "stock_symbol", ""))
+                    if symbol not in actual_symbols:
                         from util.time_util import now_kst
                         now = now_kst()
                         tr.exit_at = now
@@ -1952,7 +2107,7 @@ class TradingScheduler:
                         # exit_price 추정: 현재가 또는 마지막 SELL 레코드
                         exit_price = 0.0
                         try:
-                            exit_price = await self._fetch_current_price(tr.stock_symbol)
+                            exit_price = await self._fetch_current_price(symbol)
                         except Exception:
                             pass
 
@@ -1979,6 +2134,7 @@ class TradingScheduler:
             restored = 0
             warnings = []
             for tr in open_positions:
+                symbol = normalize_krx_symbol(getattr(tr, "stock_symbol", ""))
                 # event_detector 임계값 재설정
                 kwargs = {}
                 if tr.ai_stop_loss_price and tr.ai_stop_loss_price > 0:
@@ -1986,7 +2142,7 @@ class TradingScheduler:
                 if tr.ai_target_price and tr.ai_target_price > 0:
                     kwargs["take_profit"] = tr.ai_target_price
                 if kwargs:
-                    event_detector.set_thresholds(tr.stock_symbol, **kwargs)
+                    event_detector.set_thresholds(symbol or tr.stock_symbol, **kwargs)
                     restored += 1
 
                 # 최대 보유일 경고
@@ -1995,7 +2151,7 @@ class TradingScheduler:
                 max_days = _get_max_hold_days(tr.strategy_type, settings)
                 if hold_days >= max_days:
                     warnings.append(
-                        f"{tr.stock_name}({tr.stock_symbol}): 보유 {hold_days}일 ≥ 최대 {max_days}일"
+                        f"{tr.stock_name}({symbol or tr.stock_symbol}): 보유 {hold_days}일 ≥ 최대 {max_days}일"
                     )
 
             msg = f"\U0001f30d 오버나이트 포지션 {len(open_positions)}건 점검"
@@ -2014,6 +2170,7 @@ class TradingScheduler:
     async def _check_overnight_gap(self) -> None:
         """장 시작 갭 체크 (09:05) — 오버나이트 포지션 손절/익절 즉시 처리"""
         from services.activity_logger import activity_logger
+        from util.time_util import now_kst
 
         try:
             from core.database import AsyncSessionLocal
@@ -2029,17 +2186,30 @@ class TradingScheduler:
                 open_positions = await repo.get_all_open()
 
             # symbol → TradeResult 매핑
-            open_map = {tr.stock_symbol: tr for tr in open_positions}
+            open_map = {
+                normalize_krx_symbol(getattr(tr, "stock_symbol", "")): tr
+                for tr in open_positions
+                if normalize_krx_symbol(getattr(tr, "stock_symbol", ""))
+            }
 
             alerts = []
+            current_dt = now_kst()
+            close_time = current_dt.replace(
+                hour=settings.FORCE_LIQUIDATION_HOUR,
+                minute=settings.FORCE_LIQUIDATION_MINUTE,
+                second=0, microsecond=0,
+            )
+            minutes_left = max(0, int((close_time - current_dt).total_seconds() / 60))
+            opening_gap_window = current_dt.hour == 9 and current_dt.minute <= 20
             for h in holdings:
                 if h.quantity <= 0:
                     continue
-                tr = open_map.get(h.symbol)
+                symbol = normalize_krx_symbol(getattr(h, "symbol", ""))
+                tr = open_map.get(symbol)
                 if not tr:
                     continue  # 당일 매수 등 — 갭 체크 불필요
 
-                current = await self._fetch_current_price(h.symbol)
+                current = await self._fetch_current_price(symbol)
                 if current <= 0:
                     continue
 
@@ -2048,8 +2218,35 @@ class TradingScheduler:
 
                 # 갭 하락 → 손절가 이하
                 if tr.ai_stop_loss_price and current <= tr.ai_stop_loss_price:
-                    should_sell = True
                     reason = f"갭 하락 손절 (현재 {current:,.0f} ≤ 손절 {tr.ai_stop_loss_price:,.0f})"
+                    stop_loss_pct = -3.0
+                    pnl_rate = 0.0
+                    avg_buy_price = float(getattr(h, "avg_buy_price", 0.0) or 0.0)
+                    if avg_buy_price > 0:
+                        pnl_rate = (current - avg_buy_price) / avg_buy_price * 100
+                        stop_loss_pct = ((tr.ai_stop_loss_price - avg_buy_price) / avg_buy_price) * 100
+                    if avg_buy_price > 0 and not opening_gap_window:
+                        defer_sell, defer_reason = self._should_defer_soft_stop(
+                            symbol,
+                            pnl_rate=pnl_rate,
+                            stop_loss_pct=stop_loss_pct,
+                            minutes_left=minutes_left,
+                            observed_at=current_dt.timestamp(),
+                            scope="gap_check",
+                        )
+                        if defer_sell:
+                            alerts.append(
+                                f"👀 {h.name}({symbol}): {reason} — 완충 확인 중 "
+                                f"(얕은 이탈, 다음 점검까지 보류)"
+                            )
+                            continue
+                        if defer_reason == "confirmed":
+                            reason += " — 2회 연속 확인"
+                        elif defer_reason == "hard_breach":
+                            reason += " — 손절선 깊게 이탈"
+                        elif defer_reason == "near_close":
+                            reason += " — 장마감 임박"
+                    should_sell = True
 
                 # 갭 상승 → 익절가 이상
                 elif tr.ai_target_price and current >= tr.ai_target_price:
@@ -2059,23 +2256,55 @@ class TradingScheduler:
                 if should_sell and settings.TRADING_ENABLED:
                     # P0-2: 이중 매도 방지
                     from agent.trading_agent import trading_agent
-                    if not await trading_agent._acquire_sell(h.symbol):
-                        alerts.append(f"\u26a0\ufe0f {h.name}({h.symbol}): {reason} → 이미 매도 진행 중")
+                    if not await trading_agent._acquire_sell(symbol):
+                        alerts.append(f"\u26a0\ufe0f {h.name}({symbol}): {reason} → 이미 매도 진행 중")
                         continue
                     try:
-                        sell_resp = await self._place_market_sell(h.symbol, h.quantity)
+                        sell_resp = await self._place_market_sell(symbol, h.quantity)
                         status = "성공" if sell_resp.success else f"실패: {sell_resp.error or ''}"
-                        alerts.append(f"\U0001f6a8 {h.name}({h.symbol}): {reason} → 매도 {status}")
+                        alerts.append(f"\U0001f6a8 {h.name}({symbol}): {reason} → 매도 {status}")
                         if sell_resp.success:
                             from realtime.event_detector import event_detector
-                            event_detector.remove_levels(h.symbol)
-                            # 체결 확인 + TradeResult 기록
-                            from agent.decision_maker import decision_maker
-                            await decision_maker.confirm_and_record(
-                                symbol=h.symbol, side="SELL",
-                                order_id=str(getattr(sell_resp, "order_id", "") or ""), quantity=h.quantity,
+                            event_detector.remove_levels(symbol)
+                            await activity_logger.log(
+                                ActivityType.ORDER,
+                                ActivityPhase.COMPLETE,
+                                (
+                                    f"📉 [{h.name}] 갭 체크 매도 완료: "
+                                    f"{reason} — {int(h.quantity)}주 체결"
+                                ),
+                                symbol=symbol,
+                                detail={
+                                    "action": "SELL",
+                                    "source": "GAP_CHECK",
+                                    "reason": reason,
+                                    "quantity": int(h.quantity),
+                                    "price": current,
+                                    "order_id": getattr(sell_resp, "order_id", None),
+                                },
+                            )
+                            await self._track_scheduler_sell_confirmation(
+                                holding=h,
+                                response=sell_resp,
+                                symbol=symbol,
+                                quantity=int(h.quantity),
                                 expected_price=current,
                                 exit_reason="GAP_CHECK",
+                            )
+                        else:
+                            await activity_logger.log(
+                                ActivityType.ORDER,
+                                ActivityPhase.ERROR,
+                                f"❌ [{h.name}] 갭 체크 매도 실패: {reason} — {sell_resp.error or '오류 없음'}",
+                                symbol=symbol,
+                                detail={
+                                    "action": "SELL",
+                                    "source": "GAP_CHECK",
+                                    "reason": reason,
+                                    "quantity": int(h.quantity),
+                                    "price": current,
+                                    "error": sell_resp.error,
+                                },
                             )
                     finally:
                         trading_agent._release_sell(h.symbol)

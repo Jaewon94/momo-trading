@@ -8,7 +8,7 @@
 
 거래일: 평일 (토/일 + 공휴일/대체공휴일 제외)
 """
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 
 import holidays
 
@@ -16,6 +16,13 @@ from util.time_util import KST, now_kst
 
 # 한국 공휴일 (대체공휴일 포함) — 매년 자동 갱신
 _kr_holidays = holidays.KR(years=range(2024, 2030))
+
+# KRX 정기 휴장일 중 holidays.KR에 포함되지 않는 날.
+# 근로자의 날은 법정 공휴일은 아니지만 한국거래소 증권/파생/일반상품 시장 휴장일이다.
+_krx_extra_holidays = {
+    date(year, 5, 1): "근로자의 날"
+    for year in range(2024, 2030)
+}
 
 
 class MarketCalendar:
@@ -49,7 +56,8 @@ class MarketCalendar:
         dt = dt or now_kst()
         if dt.weekday() >= 5:  # 토, 일
             return True
-        return dt.date() in _kr_holidays
+        current_date = dt.date()
+        return current_date in _kr_holidays or current_date in _krx_extra_holidays
 
     @staticmethod
     def is_krx_trading_day(dt: datetime | None = None) -> bool:
@@ -249,7 +257,8 @@ class MarketCalendar:
     def get_holiday_name(dt: datetime | None = None) -> str | None:
         """공휴일이면 휴일명 반환, 아니면 None"""
         dt = dt or now_kst()
-        return _kr_holidays.get(dt.date())
+        current_date = dt.date()
+        return _kr_holidays.get(current_date) or _krx_extra_holidays.get(current_date)
 
 
 market_calendar = MarketCalendar()

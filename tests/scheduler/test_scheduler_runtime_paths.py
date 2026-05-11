@@ -4,7 +4,7 @@ import asyncio
 
 from core.events import Event, EventType
 from scheduler.scheduler import TradingScheduler
-from trading.enums import Market, OrderSide, OrderType
+from trading.enums import ActivityPhase, ActivityType, Market, OrderSide, OrderType
 from trading.models import CurrentPrice, OrderResult
 
 
@@ -276,12 +276,37 @@ async def test_scheduler_on_startup_schedules_market_open_scan_during_trading_ho
     monkeypatch.setattr("asyncio.sleep", fake_sleep)
     monkeypatch.setattr("asyncio.create_task", fake_create_task)
     monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
     monkeypatch.setattr(scheduler, "_market_open_scan", fake_market_open_scan)
 
     await scheduler._on_startup()
 
     assert sleep_calls == [3]
     assert len(created_tasks) == 1
+
+
+@pytest.mark.asyncio
+async def test_scheduler_on_startup_skips_market_open_scan_when_trading_disabled(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    sleep_calls: list[float] = []
+    created_tasks: list[object] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    def fake_create_task(coro):
+        created_tasks.append(coro)
+        coro.close()
+
+    monkeypatch.setattr("asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("asyncio.create_task", fake_create_task)
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", False)
+
+    await scheduler._on_startup()
+
+    assert sleep_calls == [3]
+    assert created_tasks == []
 
 
 @pytest.mark.asyncio
@@ -335,6 +360,7 @@ def test_scheduler_setup_jobs_registers_expected_job_ids() -> None:
         "pre_market",
         "market_open_scan",
         "intraday_rescan",
+        "intraday_rescan_interval",
         "news_poll_trading",
         "news_poll_off_hours",
         "news_translation_backfill",
@@ -350,6 +376,60 @@ def test_scheduler_setup_jobs_registers_expected_job_ids() -> None:
         "market_data",
         "expire_recommendations",
     }
+
+
+def test_soft_stop_defers_shallow_breach_once_then_confirms(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    monkeypatch.setattr("scheduler.scheduler.settings.RISK_APPETITE", "MODERATE")
+
+    defer_first, reason_first = scheduler._should_defer_soft_stop(
+        "005930",
+        pnl_rate=-3.2,
+        stop_loss_pct=-3.0,
+        minutes_left=45,
+        observed_at=1000.0,
+        scope="holdings_check",
+    )
+    defer_second, reason_second = scheduler._should_defer_soft_stop(
+        "005930",
+        pnl_rate=-3.3,
+        stop_loss_pct=-3.0,
+        minutes_left=44,
+        observed_at=1060.0,
+        scope="holdings_check",
+    )
+
+    assert defer_first is True
+    assert reason_first == "first_observation"
+    assert defer_second is False
+    assert reason_second == "confirmed"
+
+
+def test_soft_stop_allows_immediate_sell_on_hard_breach_or_near_close(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    monkeypatch.setattr("scheduler.scheduler.settings.RISK_APPETITE", "MODERATE")
+
+    defer_hard, reason_hard = scheduler._should_defer_soft_stop(
+        "005930",
+        pnl_rate=-4.1,
+        stop_loss_pct=-3.0,
+        minutes_left=45,
+        observed_at=1000.0,
+        scope="holdings_check",
+    )
+    defer_late, reason_late = scheduler._should_defer_soft_stop(
+        "000660",
+        pnl_rate=-3.2,
+        stop_loss_pct=-3.0,
+        minutes_left=10,
+        observed_at=1000.0,
+        scope="holdings_check",
+    )
+
+    assert defer_hard is False
+    assert reason_hard == "hard_breach"
+    assert defer_late is False
+    assert reason_late == "near_close"
 
 
 @pytest.mark.asyncio
@@ -796,10 +876,36 @@ async def test_market_open_scan_delegates_to_trading_agent_run_cycle(monkeypatch
     monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
     monkeypatch.setattr("realtime.stream_manager.stream_manager.update_subscriptions", fake_update_subscriptions)
     monkeypatch.setattr("scheduler.scheduler.settings.DAY_TRADING_ONLY", True)
+    monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
 
     await scheduler._market_open_scan()
 
     assert observed == ["run_cycle", "get_holdings"]
+
+
+@pytest.mark.asyncio
+async def test_market_open_scan_skips_when_trading_disabled(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    run_cycle_called = False
+    logs: list[tuple] = []
+
+    async def fake_run_cycle() -> dict:
+        nonlocal run_cycle_called
+        run_cycle_called = True
+        return {}
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append((args, kwargs))
+
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_holiday", lambda: False)
+    monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", False)
+    monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.trading_agent.trading_agent.run_cycle", fake_run_cycle)
+
+    await scheduler._market_open_scan()
+
+    assert run_cycle_called is False
+    assert logs[0][0][1] == ActivityPhase.SKIP
 
 
 @pytest.mark.asyncio
@@ -841,6 +947,7 @@ async def test_market_open_scan_checks_overnight_gap_in_swing_mode(monkeypatch) 
 
     monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_holiday", lambda: False)
     monkeypatch.setattr("scheduler.scheduler.settings.DAY_TRADING_ONLY", False)
+    monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
     monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
     monkeypatch.setattr(scheduler, "_check_overnight_gap", fake_check_overnight_gap)
     monkeypatch.setattr("agent.trading_agent.trading_agent.run_cycle", fake_run_cycle)
@@ -865,6 +972,7 @@ async def test_intraday_rescan_skips_after_buy_cutoff_in_day_trading_mode(monkey
         return None
 
     monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_holiday", lambda: False)
+    monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
     monkeypatch.setattr("scheduler.scheduler.settings.DAY_TRADING_ONLY", True)
     monkeypatch.setattr("scheduler.scheduler.settings.BUY_CUTOFF_HOUR", 14)
     monkeypatch.setattr("scheduler.scheduler.settings.BUY_CUTOFF_MINUTE", 30)
@@ -875,6 +983,31 @@ async def test_intraday_rescan_skips_after_buy_cutoff_in_day_trading_mode(monkey
     await scheduler._intraday_rescan()
 
     assert run_cycle_called is False
+
+
+@pytest.mark.asyncio
+async def test_intraday_rescan_skips_when_trading_disabled(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    run_cycle_called = False
+    logs: list[tuple] = []
+
+    async def fake_run_cycle() -> dict:
+        nonlocal run_cycle_called
+        run_cycle_called = True
+        return {}
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append((args, kwargs))
+
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_holiday", lambda: False)
+    monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", False)
+    monkeypatch.setattr("agent.trading_agent.trading_agent.run_cycle", fake_run_cycle)
+    monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
+
+    await scheduler._intraday_rescan()
+
+    assert run_cycle_called is False
+    assert logs[0][0][1] == ActivityPhase.SKIP
 
 
 @pytest.mark.asyncio
@@ -897,6 +1030,7 @@ async def test_intraday_rescan_refreshes_subscriptions_when_new_symbols_exist(mo
         observed.append(symbols)
 
     monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_holiday", lambda: False)
+    monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
     monkeypatch.setattr("scheduler.scheduler.settings.DAY_TRADING_ONLY", True)
     monkeypatch.setattr("util.time_util.now_kst", lambda: __import__("datetime").datetime(2026, 4, 2, 11, 0))
     monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
@@ -975,6 +1109,7 @@ async def test_holdings_check_returns_early_when_no_holdings_exist(monkeypatch) 
 async def test_holdings_check_executes_sell_and_triggers_rescan(monkeypatch) -> None:
     scheduler = TradingScheduler()
     logs: list[str] = []
+    log_calls: list[tuple[tuple, dict]] = []
     removed_levels: list[str] = []
     confirmed_orders: list[dict] = []
     released: list[str] = []
@@ -1006,6 +1141,7 @@ async def test_holdings_check_executes_sell_and_triggers_rescan(monkeypatch) -> 
             return OrderResult(success=True, order_id="SELL-HOLDING", message="ok")
 
     async def fake_log(*args, **kwargs) -> None:
+        log_calls.append((args, kwargs))
         logs.append(args[2])
 
     async def fake_acquire_sell(_symbol: str) -> bool:
@@ -1013,6 +1149,12 @@ async def test_holdings_check_executes_sell_and_triggers_rescan(monkeypatch) -> 
 
     async def fake_confirm_and_record(**kwargs) -> None:
         confirmed_orders.append(kwargs)
+
+    async def fake_create_pending_record(**kwargs) -> str:
+        return "pending-sell-adapter"
+
+    async def fake_create_pending_record(**kwargs) -> str:
+        return "pending-sell-1"
 
     class DummyTask:
         pass
@@ -1036,6 +1178,7 @@ async def test_holdings_check_executes_sell_and_triggers_rescan(monkeypatch) -> 
     monkeypatch.setattr("agent.trading_agent.trading_agent._acquire_sell", fake_acquire_sell)
     monkeypatch.setattr("agent.trading_agent.trading_agent._release_sell", released.append)
     monkeypatch.setattr("realtime.event_detector.event_detector.remove_levels", removed_levels.append)
+    monkeypatch.setattr("agent.decision_maker.decision_maker._create_pending_record", fake_create_pending_record)
     monkeypatch.setattr("agent.decision_maker.decision_maker.confirm_and_record", fake_confirm_and_record)
     monkeypatch.setattr("asyncio.create_task", fake_create_task)
 
@@ -1043,6 +1186,7 @@ async def test_holdings_check_executes_sell_and_triggers_rescan(monkeypatch) -> 
 
     assert confirmed_orders[0]["order_id"] == "SELL-HOLDING"
     assert confirmed_orders[0]["exit_reason"] == "HOLDINGS_CHECK"
+    assert confirmed_orders[0]["pending_record_id"] == "pending-sell-1"
     assert removed_levels == ["005930"]
     assert released == ["005930"]
     assert len(created_tasks) == 1
@@ -1346,6 +1490,7 @@ async def test_force_liquidation_returns_when_smart_liquidation_keeps_all_holdin
 async def test_force_liquidation_does_not_rescan_after_successful_swing_sell(monkeypatch) -> None:
     scheduler = TradingScheduler()
     logs: list[str] = []
+    log_calls: list[tuple[tuple, dict]] = []
     removed_levels: list[str] = []
     created_tasks: list[object] = []
     confirmed_orders: list[dict] = []
@@ -1369,6 +1514,7 @@ async def test_force_liquidation_does_not_rescan_after_successful_swing_sell(mon
             return OrderResult(success=True, order_id="SELL-1", message="ok")
 
     async def fake_log(*args, **kwargs) -> None:
+        log_calls.append((args, kwargs))
         logs.append(args[2])
 
     async def fake_acquire_sell(symbol: str) -> bool:
@@ -1379,6 +1525,12 @@ async def test_force_liquidation_does_not_rescan_after_successful_swing_sell(mon
 
     async def fake_confirm_and_record(**kwargs) -> None:
         confirmed_orders.append(kwargs)
+
+    async def fake_create_pending_record(**kwargs) -> str:
+        return "pending-sell-gap"
+
+    async def fake_create_pending_record(**kwargs) -> str:
+        return "pending-sell-1"
 
     async def fake_trigger_rescan_after_sell() -> None:
         return None
@@ -1401,6 +1553,7 @@ async def test_force_liquidation_does_not_rescan_after_successful_swing_sell(mon
     monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
     monkeypatch.setattr("agent.trading_agent.trading_agent._acquire_sell", fake_acquire_sell)
     monkeypatch.setattr("agent.trading_agent.trading_agent._release_sell", fake_release_sell)
+    monkeypatch.setattr("agent.decision_maker.decision_maker._create_pending_record", fake_create_pending_record)
     monkeypatch.setattr("agent.decision_maker.decision_maker.confirm_and_record", fake_confirm_and_record)
     monkeypatch.setattr("realtime.event_detector.event_detector.remove_levels", removed_levels.append)
     monkeypatch.setattr(scheduler, "_trigger_rescan_after_sell", fake_trigger_rescan_after_sell)
@@ -1410,10 +1563,11 @@ async def test_force_liquidation_does_not_rescan_after_successful_swing_sell(mon
 
     assert confirmed_orders[0]["order_id"] == "SELL-1"
     assert confirmed_orders[0]["exit_reason"] == "FORCE_LIQUIDATION"
+    assert confirmed_orders[0]["pending_record_id"] == "pending-sell-1"
     assert removed_levels == ["005930"]
     assert released == ["005930"]
     assert created_tasks == []
-    assert any("완료: 1건 매도" in message for message in logs)
+    assert any("주문 접수: 1건 매도" in message for message in logs)
 
 
 @pytest.mark.asyncio
@@ -1520,7 +1674,7 @@ async def test_collect_holdings_data_marks_symbol_for_review_when_price_lookup_f
 @pytest.mark.asyncio
 async def test_collect_holdings_data_builds_prompt_payload_for_valid_holding(monkeypatch) -> None:
     scheduler = TradingScheduler()
-    holding = SimpleNamespace(symbol="005930", name="삼성전자", quantity=2, avg_buy_price=70_000)
+    holding = SimpleNamespace(symbol="A005930", name="삼성전자", quantity=2, avg_buy_price=70_000)
     trade_result = SimpleNamespace(
         stock_name="삼성전자",
         ai_confidence=0.83,
@@ -1528,6 +1682,7 @@ async def test_collect_holdings_data_builds_prompt_payload_for_valid_holding(mon
         ai_stop_loss_price=68_000,
         strategy_type="STABLE_SHORT",
     )
+    observed: dict[str, str] = {}
 
     class FakeSession:
         async def __aenter__(self):
@@ -1540,12 +1695,14 @@ async def test_collect_holdings_data_builds_prompt_payload_for_valid_holding(mon
         def __init__(self, _session) -> None:
             pass
 
-        async def get_open_buy(self, _symbol: str):
+        async def get_open_buy(self, symbol: str):
+            observed["repo_symbol"] = symbol
             return trade_result
 
     async def fake_get_current_price(_symbol: str):
+        observed["price_symbol"] = _symbol
         return CurrentPrice(
-            symbol="005930",
+            symbol=_symbol,
             market=Market.KRX,
             price=73_000,
             change=0.0,
@@ -1563,7 +1720,10 @@ async def test_collect_holdings_data_builds_prompt_payload_for_valid_holding(mon
     monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
     monkeypatch.setattr(
         "realtime.event_detector.event_detector.get_thresholds",
-        lambda _symbol: SimpleNamespace(stop_loss=68_500, take_profit=74_500),
+        lambda _symbol: (
+            observed.update({"threshold_symbol": _symbol})
+            or SimpleNamespace(stop_loss=68_500, take_profit=74_500)
+        ),
     )
     monkeypatch.setattr("strategy.holding_policy._calc_hold_days", lambda _tr: 2)
     monkeypatch.setattr("strategy.holding_policy._get_max_hold_days", lambda _strategy, _settings: 5)
@@ -1572,6 +1732,11 @@ async def test_collect_holdings_data_builds_prompt_payload_for_valid_holding(mon
 
     assert review_required == []
     assert holdings_map["005930"] == (holding, trade_result, 73_000)
+    assert observed == {
+        "price_symbol": "005930",
+        "repo_symbol": "005930",
+        "threshold_symbol": "005930",
+    }
     assert holdings_data[0]["symbol"] == "005930"
     assert holdings_data[0]["stock_name"] == "삼성전자"
     assert round(holdings_data[0]["pnl_rate"], 2) == round((73_000 - 70_000) / 70_000 * 100, 2)
@@ -1709,6 +1874,9 @@ async def test_force_liquidation_retries_failed_orders_once(monkeypatch) -> None
     async def fake_confirm_and_record(**kwargs) -> None:
         confirmed_orders.append(kwargs)
 
+    async def fake_create_pending_record(**kwargs) -> str:
+        return "pending-sell-retry"
+
     monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_holiday", lambda: False)
     monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
     monkeypatch.setattr("scheduler.scheduler.settings.DAY_TRADING_ONLY", False)
@@ -1720,6 +1888,7 @@ async def test_force_liquidation_retries_failed_orders_once(monkeypatch) -> None
     monkeypatch.setattr("asyncio.sleep", fake_sleep)
     monkeypatch.setattr("agent.trading_agent.trading_agent._acquire_sell", fake_acquire_sell)
     monkeypatch.setattr("agent.trading_agent.trading_agent._release_sell", lambda _symbol: None)
+    monkeypatch.setattr("agent.decision_maker.decision_maker._create_pending_record", fake_create_pending_record)
     monkeypatch.setattr("agent.decision_maker.decision_maker.confirm_and_record", fake_confirm_and_record)
     monkeypatch.setattr("realtime.event_detector.event_detector.remove_levels", lambda _symbol: None)
 
@@ -1734,6 +1903,7 @@ async def test_force_liquidation_retries_failed_orders_once(monkeypatch) -> None
         "quantity": 2,
         "expected_price": 69_500,
         "exit_reason": "FORCE_LIQUIDATION",
+        "pending_record_id": "pending-sell-retry",
     }]
     assert any("청산 1건 실패" in message for message in logs)
     assert any("실패 1건" in message for message in logs)
@@ -1777,7 +1947,7 @@ async def test_force_liquidation_continues_when_order_task_raises(monkeypatch) -
 
     await scheduler._force_liquidation()
 
-    assert any("스마트 청산 완료: 0건 매도" in message for message in logs)
+    assert any("스마트 청산 주문 접수: 0건 매도" in message for message in logs)
 
 
 @pytest.mark.asyncio
@@ -2640,6 +2810,7 @@ async def test_intraday_holdings_review_records_sell_failure_message(monkeypatch
 async def test_check_overnight_gap_executes_sell_on_stop_loss(monkeypatch) -> None:
     scheduler = TradingScheduler()
     logs: list[str] = []
+    log_calls: list[tuple[tuple, dict]] = []
     removed_levels: list[str] = []
     confirmed_orders: list[dict] = []
     released: list[str] = []
@@ -2682,6 +2853,7 @@ async def test_check_overnight_gap_executes_sell_on_stop_loss(monkeypatch) -> No
             return OrderResult(success=True, order_id="SELL-GAP", message="ok")
 
     async def fake_log(*args, **kwargs) -> None:
+        log_calls.append((args, kwargs))
         logs.append(args[2])
 
     async def fake_acquire_sell(_symbol: str) -> bool:
@@ -2707,7 +2879,11 @@ async def test_check_overnight_gap_executes_sell_on_stop_loss(monkeypatch) -> No
     assert released == ["005930"]
     assert confirmed_orders[0]["order_id"] == "SELL-GAP"
     assert confirmed_orders[0]["exit_reason"] == "GAP_CHECK"
-    assert "갭 하락 손절" in logs[0]
+    order_logs = [call for call in log_calls if call[0][0] == ActivityType.ORDER]
+    assert order_logs[0][0][1] == ActivityPhase.COMPLETE
+    assert order_logs[0][1]["symbol"] == "005930"
+    assert order_logs[0][1]["detail"]["source"] == "GAP_CHECK"
+    assert "갭 하락 손절" in logs[-1]
 
 
 @pytest.mark.asyncio
@@ -2803,6 +2979,9 @@ async def test_holdings_check_uses_broker_adapter_for_kiwoom_sell_path(monkeypat
     async def fake_confirm_and_record(**kwargs) -> None:
         confirmed_orders.append(kwargs)
 
+    async def fake_create_pending_record(**kwargs) -> str:
+        return "pending-sell-adapter"
+
     async def fail_get_current_price(_symbol: str):
         raise AssertionError("mcp current price should not be used")
 
@@ -2826,12 +3005,14 @@ async def test_holdings_check_uses_broker_adapter_for_kiwoom_sell_path(monkeypat
     monkeypatch.setattr("agent.trading_agent.trading_agent._acquire_sell", fake_acquire_sell)
     monkeypatch.setattr("agent.trading_agent.trading_agent._release_sell", lambda _symbol: None)
     monkeypatch.setattr("realtime.event_detector.event_detector.remove_levels", lambda _symbol: None)
+    monkeypatch.setattr("agent.decision_maker.decision_maker._create_pending_record", fake_create_pending_record)
     monkeypatch.setattr("agent.decision_maker.decision_maker.confirm_and_record", fake_confirm_and_record)
     monkeypatch.setattr("asyncio.create_task", lambda coro: (coro.close(), object())[1])
 
     await scheduler._holdings_check()
 
     assert confirmed_orders[0]["order_id"] == "SELL-ADAPTER"
+    assert confirmed_orders[0]["pending_record_id"] == "pending-sell-adapter"
     assert adapter_orders[0].side == OrderSide.SELL
     assert adapter_orders[0].order_type == OrderType.MARKET
     assert adapter_orders[0].market == Market.KRX
@@ -2866,6 +3047,9 @@ async def test_force_liquidation_uses_broker_adapter_for_kiwoom_sell_path(monkey
 
     async def fake_confirm_and_record(**kwargs) -> None:
         confirmed_orders.append(kwargs)
+
+    async def fake_create_pending_record(**kwargs) -> str:
+        return "pending-sell-gap"
 
     async def fail_place_order(**kwargs):
         raise AssertionError("mcp place_order should not be used")
@@ -2945,6 +3129,9 @@ async def test_check_overnight_gap_uses_broker_adapter_for_kiwoom_sell_path(monk
     async def fake_confirm_and_record(**kwargs) -> None:
         confirmed_orders.append(kwargs)
 
+    async def fake_create_pending_record(**kwargs) -> str:
+        return "pending-sell-gap"
+
     async def fail_get_current_price(_symbol: str):
         raise AssertionError("mcp current price should not be used")
 
@@ -2963,11 +3150,15 @@ async def test_check_overnight_gap_uses_broker_adapter_for_kiwoom_sell_path(monk
     monkeypatch.setattr("agent.trading_agent.trading_agent._acquire_sell", fake_acquire_sell)
     monkeypatch.setattr("agent.trading_agent.trading_agent._release_sell", lambda _symbol: None)
     monkeypatch.setattr("realtime.event_detector.event_detector.remove_levels", lambda _symbol: None)
+    monkeypatch.setattr("agent.decision_maker.decision_maker._create_pending_record", fake_create_pending_record)
     monkeypatch.setattr("agent.decision_maker.decision_maker.confirm_and_record", fake_confirm_and_record)
 
     await scheduler._check_overnight_gap()
 
     assert confirmed_orders[0]["order_id"] == "SELL-GAP-ADAPTER"
+    assert confirmed_orders[0]["symbol"] == "005930"
+    assert confirmed_orders[0]["pending_record_id"] == "pending-sell-gap"
+    assert adapter_orders[0].symbol == "005930"
     assert adapter_orders[0].side == OrderSide.SELL
     assert adapter_orders[0].order_type == OrderType.MARKET
     assert adapter_orders[0].market == Market.KRX
