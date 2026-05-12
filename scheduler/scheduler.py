@@ -1614,6 +1614,11 @@ class TradingScheduler:
 
                     # 현재 event_detector 활성 임계값
                     th = event_detector.get_thresholds(symbol)
+                    news_context = await self._build_holding_news_context(
+                        session,
+                        symbol=symbol,
+                        name=h.name or trade_result.stock_name or symbol,
+                    )
 
                     data = {
                         "symbol": symbol,
@@ -1630,6 +1635,7 @@ class TradingScheduler:
                         "strategy_type": trade_result.strategy_type or "N/A",
                         "active_stop_loss": th.stop_loss,
                         "active_take_profit": th.take_profit,
+                        **news_context,
                     }
                     holdings_data.append(data)
                     holdings_map[symbol] = (h, trade_result, current_price)
@@ -1646,6 +1652,51 @@ class TradingScheduler:
             await self._record_holdings_review_required_metrics(review_required)
 
         return holdings_data, holdings_map, review_required
+
+    async def _build_holding_news_context(self, session, *, symbol: str, name: str) -> dict:
+        try:
+            from services.news_context_service import news_context_service
+
+            payload = await news_context_service.build_for_symbol(
+                session,
+                symbol=symbol,
+                name=name,
+            )
+        except Exception as exc:
+            logger.debug("보유 재평가 뉴스 컨텍스트 조회 실패 {}: {}", symbol, str(exc))
+            return {
+                "news_context_available": False,
+                "news_context_tone": "LOOKUP_FAILED",
+                "news_context_negative_pressure": None,
+                "news_context_negative_count": 0,
+                "news_context_positive_count": 0,
+                "news_context_neutral_count": 0,
+                "news_context_item_count": 0,
+                "news_context_source_codes": [],
+                "news_context_items": [],
+                "news_context_prompt": (
+                    "### 최근 뉴스 보조 컨텍스트\n"
+                    "- 뉴스 컨텍스트 조회 실패. 뉴스는 중립으로 보고 가격/수급/리스크를 우선 판단하세요."
+                ),
+            }
+
+        items = list(payload.get("items") or [])
+        return {
+            "news_context_available": bool(payload.get("available")),
+            "news_context_tone": payload.get("tone"),
+            "news_context_negative_pressure": payload.get("negative_pressure"),
+            "news_context_negative_count": int(payload.get("negative_count") or 0),
+            "news_context_positive_count": int(payload.get("positive_count") or 0),
+            "news_context_neutral_count": int(payload.get("neutral_count") or 0),
+            "news_context_item_count": len(items),
+            "news_context_source_codes": sorted({
+                str(item.get("source_code") or "").upper()
+                for item in items
+                if item.get("source_code")
+            }),
+            "news_context_items": items[:3],
+            "news_context_prompt": str(payload.get("prompt") or ""),
+        }
 
     @staticmethod
     def _holding_review_required(holding, *, reason_code: str, reason: str) -> dict:
@@ -1723,6 +1774,11 @@ class TradingScheduler:
                     "pnl_rate": data.get("pnl_rate"),
                     "hold_days": data.get("hold_days"),
                     "max_hold_days": data.get("max_hold_days"),
+                    "news_context_available": data.get("news_context_available"),
+                    "news_context_tone": data.get("news_context_tone"),
+                    "news_context_negative_pressure": data.get("news_context_negative_pressure"),
+                    "news_context_item_count": data.get("news_context_item_count"),
+                    "news_context_source_codes": data.get("news_context_source_codes"),
                 },
             )
         except Exception as exc:

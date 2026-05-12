@@ -15,12 +15,15 @@ HOLDINGS_REVIEW_SYSTEM = """당신은 한국 주식 장중 보유종목 재평�
 4. **전략 특성**: 전략별 손절/보유 기간
 5. **시장 국면 변화**: 매수 시점 대비 현재 국면이 악화되었는지
 6. **임계값 적정성**: 현재 stop_loss/take_profit이 시장 상황에 맞는지
+7. **뉴스/공시 변화**: 최근 뉴스는 보조 근거로 쓰되, 악재는 손절/축소/트레일링 강화 근거로 우선 점검
 
 ## 임계값 조정 가이드
 - 시장 BULL→BEAR 전환: 손절선 타이트하게 (예: -3% → -1.5%)
 - 수익 중 + 추세 약화: 익절선 낮춰서 이익 확보 (예: +5% → +3%)
 - 강한 상승 추세: 손절선 올려서 이익 보호 (트레일링 효과)
 - 급등 후 장 마감 임박 + 추세 강도 약화: 전량 SELL보다 PARTIAL_SELL 또는 TIGHTEN_STOP을 우선 검토
+- 긍정 뉴스 + 기술적 추세 유지: 성급한 전량 SELL보다 HOLD/ADD_BUY/느슨한 익절 유지 검토
+- 부정 뉴스/공시 + 손실 확대 또는 추세 훼손: SELL/PARTIAL_SELL/TIGHTEN_STOP 근거로 명확히 반영
 - 조정하지 않아도 되면 adjusted 필드를 null로 반환
 
 ## 금지 사항
@@ -92,6 +95,12 @@ def build_holdings_review_prompt(
         active_tp = d.get("active_take_profit")
         active_sl_text = f"{active_sl:,.0f}원" if active_sl and active_sl > 0 else "미설정"
         active_tp_text = f"{active_tp:,.0f}원" if active_tp and active_tp > 0 else "미설정"
+        news_context = str(d.get("news_context_prompt") or "").strip()
+        if not news_context:
+            news_context = (
+                "### 최근 뉴스 보조 컨텍스트\n"
+                "- 최근 연결 뉴스 없음 또는 조회 실패. 뉴스는 중립으로 보고 가격/수급/리스크를 우선 판단하세요."
+            )
 
         lines.append(
             f"#### {i}. {d.get('stock_name', '')} ({d['symbol']})\n"
@@ -102,8 +111,8 @@ def build_holdings_review_prompt(
             f"- AI 신뢰도: {d.get('confidence', 0):.2f}\n"
             f"- 목표가: {target_text} | 손절가: {stop_text}\n"
             f"- 현재 활성 익절가: {active_tp_text} | 활성 손절가: {active_sl_text}\n"
-            f"- 당일 고점 대비/거래량/뉴스 등 추가 컨텍스트가 없으면 데이터 부족을 이유에 명시\n"
-            f"- 전략: {d.get('strategy_type', 'N/A')}"
+            f"- 전략: {d.get('strategy_type', 'N/A')}\n"
+            f"{news_context}"
         )
 
     holdings_detail = "\n\n".join(lines) if lines else "보유종목 없음"

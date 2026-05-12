@@ -1814,6 +1814,20 @@ async def test_collect_holdings_data_builds_prompt_payload_for_valid_holding(mon
     monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
     monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
     monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
+    async def fake_news_context(_session, *, symbol: str, name: str):
+        observed["news_symbol"] = symbol
+        observed["news_name"] = name
+        return {
+            "news_context_available": True,
+            "news_context_tone": "POSITIVE_SUPPORT",
+            "news_context_negative_pressure": 0.0,
+            "news_context_item_count": 1,
+            "news_context_source_codes": ["DART"],
+            "news_context_items": [{"source_code": "DART", "title": "공급계약"}],
+            "news_context_prompt": "### 최근 뉴스 보조 컨텍스트\n- [POSITIVE] 공급계약",
+        }
+
+    monkeypatch.setattr(scheduler, "_build_holding_news_context", fake_news_context)
     monkeypatch.setattr(
         "realtime.event_detector.event_detector.get_thresholds",
         lambda _symbol: (
@@ -1832,12 +1846,18 @@ async def test_collect_holdings_data_builds_prompt_payload_for_valid_holding(mon
         "price_symbol": "005930",
         "repo_symbol": "005930",
         "threshold_symbol": "005930",
+        "news_symbol": "005930",
+        "news_name": "삼성전자",
     }
     assert holdings_data[0]["symbol"] == "005930"
     assert holdings_data[0]["stock_name"] == "삼성전자"
     assert round(holdings_data[0]["pnl_rate"], 2) == round((73_000 - 70_000) / 70_000 * 100, 2)
     assert holdings_data[0]["active_stop_loss"] == 68_500
     assert holdings_data[0]["active_take_profit"] == 74_500
+    assert holdings_data[0]["news_context_available"] is True
+    assert holdings_data[0]["news_context_tone"] == "POSITIVE_SUPPORT"
+    assert holdings_data[0]["news_context_item_count"] == 1
+    assert "공급계약" in holdings_data[0]["news_context_prompt"]
 
 
 @pytest.mark.asyncio
