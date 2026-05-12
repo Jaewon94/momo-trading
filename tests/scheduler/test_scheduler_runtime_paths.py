@@ -2537,6 +2537,88 @@ async def test_intraday_holdings_review_queues_add_buy_followup(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
+async def test_intraday_holdings_review_executes_partial_sell(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    logs: list[str] = []
+    sell_orders: list[tuple[str, int]] = []
+    confirms: list[dict] = []
+    created_tasks: list[object] = []
+    holding = SimpleNamespace(symbol="005930", name="삼성전자", quantity=10)
+    trade_result = SimpleNamespace(stock_name="삼성전자", strategy_type="STABLE_SHORT")
+
+    async def fake_get_holdings() -> list:
+        return [holding]
+
+    async def fake_collect_holdings_data(_sellable):
+        return (
+            [{"symbol": "005930", "stock_name": "삼성전자", "strategy_type": "STABLE_SHORT"}],
+            {"005930": (holding, trade_result, 72_000)},
+            [],
+        )
+
+    async def fake_generate_tier1(prompt, system_prompt=None):
+        return (
+            '{"decisions":[{"symbol":"005930","action":"PARTIAL_SELL","reason":"급등 후 일부 수익 보호","confidence":0.81,"partial_exit_pct":40}]}',
+            "CODEX",
+        )
+
+    async def fake_place_market_sell(symbol, quantity):
+        sell_orders.append((symbol, quantity))
+        return SimpleNamespace(success=True, order_id="S1", error=None)
+
+    async def fake_confirm_and_record(**kwargs):
+        confirms.append(kwargs)
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append(args[2])
+
+    class DummyTask:
+        pass
+
+    def fake_create_task(coro):
+        created_tasks.append(coro)
+        coro.close()
+        return DummyTask()
+
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
+    monkeypatch.setattr(scheduler, "_collect_holdings_data", fake_collect_holdings_data)
+    monkeypatch.setattr(scheduler, "_place_market_sell", fake_place_market_sell)
+    monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr("util.time_util.now_kst", lambda: __import__("datetime").datetime(2026, 4, 2, 13, 0))
+    monkeypatch.setattr("analysis.llm.prompts.holdings_review.build_holdings_review_prompt", lambda *args: "prompt")
+    monkeypatch.setattr("analysis.llm.llm_factory.llm_factory.generate_tier1", fake_generate_tier1)
+    monkeypatch.setattr(
+        "core.json_utils.parse_llm_json",
+        lambda text: {
+            "decisions": [
+                {
+                    "symbol": "005930",
+                    "action": "PARTIAL_SELL",
+                    "reason": "급등 후 일부 수익 보호",
+                    "confidence": 0.81,
+                    "partial_exit_pct": 40,
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr("agent.decision_maker.decision_maker.confirm_and_record", fake_confirm_and_record)
+    monkeypatch.setattr("agent.trading_agent.trading_agent._acquire_sell", lambda _symbol: __import__("asyncio").sleep(0, result=True))
+    monkeypatch.setattr("agent.trading_agent.trading_agent._release_sell", lambda _symbol: None)
+    monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.trading_agent.trading_agent._market_regime", "BULLISH")
+    monkeypatch.setattr("agent.trading_agent.trading_agent._market_context", "강세 유지")
+    monkeypatch.setattr("asyncio.create_task", fake_create_task)
+
+    await scheduler._intraday_holdings_review()
+
+    assert sell_orders == [("005930", 4)]
+    assert confirms[0]["quantity"] == 4
+    assert confirms[0]["exit_reason"] == "PARTIAL_TAKE_PROFIT"
+    assert any("PARTIAL_SELL 매도 성공 (4주)" in message for message in logs)
+
+
+@pytest.mark.asyncio
 async def test_intraday_holdings_review_uses_cache_without_llm(monkeypatch) -> None:
     scheduler = TradingScheduler()
     logs: list[str] = []

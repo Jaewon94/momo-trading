@@ -594,6 +594,33 @@ async def test_tier1_analysis_timeout_returns_hold_fallback(monkeypatch) -> None
     assert "TIER1_LLM_TIMEOUT" in result["key_factors"]
 
 
+def test_normalize_tier1_decision_preserves_position_management_exit_plan() -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+
+    result = agent._normalize_tier1_decision(
+        {
+            "recommendation": "HOLD",
+            "entry_action": "SKIP",
+            "position_action": "TIGHTEN_STOP",
+            "confidence": 0.62,
+            "exit_plan": {
+                "stop_loss_price": 10_800,
+                "take_profit_price": 12_200,
+                "trailing_stop_pct": 1.2,
+            },
+        },
+        symbol="005930",
+        portfolio_snapshot={"holding_symbols": ["005930"]},
+    )
+
+    assert result["recommendation"] == "HOLD"
+    assert result["entry_action"] == "SKIP"
+    assert result["position_action"] == "TIGHTEN_STOP"
+    assert result["stop_loss_price"] == 10_800
+    assert result["target_price"] == 12_200
+    assert result["trailing_stop_pct"] == 1.2
+
+
 @pytest.mark.asyncio
 async def test_tier2_review_uses_tier_provider_without_manual_override(monkeypatch) -> None:
     agent = TradingAgent(broker_adapter=StubBrokerAdapter())

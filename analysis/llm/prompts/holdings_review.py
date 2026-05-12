@@ -5,7 +5,7 @@
 """
 
 HOLDINGS_REVIEW_SYSTEM = """당신은 한국 주식 장중 보유종목 재평가 전문가입니다.
-보유종목 데이터와 시장 상황을 분석하여 종목별로 HOLD/SELL/ADD_BUY를 판단하고,
+보유종목 데이터와 시장 상황을 분석하여 종목별로 HOLD/SELL/PARTIAL_SELL/ADD_BUY/TIGHTEN_STOP을 판단하고,
 현재 설정된 손절/익절 임계값이 시장 국면에 적합한지 평가합니다.
 
 ## 판단 프레임워크
@@ -20,11 +20,13 @@ HOLDINGS_REVIEW_SYSTEM = """당신은 한국 주식 장중 보유종목 재평�
 - 시장 BULL→BEAR 전환: 손절선 타이트하게 (예: -3% → -1.5%)
 - 수익 중 + 추세 약화: 익절선 낮춰서 이익 확보 (예: +5% → +3%)
 - 강한 상승 추세: 손절선 올려서 이익 보호 (트레일링 효과)
+- 급등 후 장 마감 임박 + 추세 강도 약화: 전량 SELL보다 PARTIAL_SELL 또는 TIGHTEN_STOP을 우선 검토
 - 조정하지 않아도 되면 adjusted 필드를 null로 반환
 
 ## 금지 사항
 - "보수적으로 SELL" 편향 판단 금지 — 데이터 근거로만 판단
 - 시장 국면만으로 전량 SELL 판정 금지 — 종목별 개별 판단
+- PARTIAL_SELL은 수익 보호나 갭 리스크 축소 목적일 때만 사용하고, 수량 비율을 partial_exit_pct로 명시
 - 반드시 한국어로 답변"""
 
 HOLDINGS_REVIEW_PROMPT = """## 장중 보유종목 재평가
@@ -50,11 +52,13 @@ JSON:
 ```json
 {{"decisions": [
   {{"symbol": "종목코드",
-   "action": "HOLD | SELL | ADD_BUY",
+   "action": "HOLD | SELL | PARTIAL_SELL | ADD_BUY | TIGHTEN_STOP",
    "reason": "판단 근거 1~2문장",
    "confidence": 0.00,
+   "partial_exit_pct": 0.0,
    "adjusted_stop_loss_price": null,
-   "adjusted_take_profit_price": null
+   "adjusted_take_profit_price": null,
+   "trailing_stop_pct": 0.0
   }}
 ]}}
 ```"""
@@ -98,6 +102,7 @@ def build_holdings_review_prompt(
             f"- AI 신뢰도: {d.get('confidence', 0):.2f}\n"
             f"- 목표가: {target_text} | 손절가: {stop_text}\n"
             f"- 현재 활성 익절가: {active_tp_text} | 활성 손절가: {active_sl_text}\n"
+            f"- 당일 고점 대비/거래량/뉴스 등 추가 컨텍스트가 없으면 데이터 부족을 이유에 명시\n"
             f"- 전략: {d.get('strategy_type', 'N/A')}"
         )
 

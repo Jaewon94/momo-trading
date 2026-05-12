@@ -988,6 +988,11 @@ class TradingAgent:
             )
             return result
 
+        analysis = self._normalize_tier1_decision(
+            analysis,
+            symbol=symbol,
+            portfolio_snapshot=portfolio_snapshot,
+        )
         recommendation = analysis.get("recommendation", "HOLD")
 
         # 스캔 파이프라인 SELL: 미보유 종목만 스킵, 보유 종목은 Tier2 리뷰 진행
@@ -1018,14 +1023,47 @@ class TradingAgent:
 
         if recommendation == "HOLD":
             reason = analysis.get("reason") or analysis.get("summary", "판단 근거 없음")
+            is_holding = symbol in [
+                normalize_krx_symbol(item)
+                for item in (portfolio_snapshot or {}).get("holding_symbols", [])
+            ]
+            active_thresholds = {}
+            if is_holding:
+                active_thresholds = self._apply_trade_thresholds(
+                    symbol,
+                    analysis,
+                    {},
+                    current_price=current_price,
+                    horizon=decide_trade_horizon(
+                        strategy_type=strategy_type,
+                        trigger=str(stock_info.get("trigger", "")),
+                        change_rate=float(price_resp.data.get("change_rate", 0.0) if price_resp.data else 0.0),
+                        confidence=float(analysis.get("confidence", 0.0) or 0.0),
+                        market_regime=self._market_regime,
+                    ),
+                )
+            position_action = str(analysis.get("position_action") or "HOLD").upper()
+            threshold_suffix = ""
+            if active_thresholds:
+                threshold_suffix = " | 임계값 " + ", ".join(
+                    f"{key}={float(value):,.0f}" if key != "trailing_stop_pct" else f"{key}={float(value):.1f}%"
+                    for key, value in active_thresholds.items()
+                )
             await activity_logger.log(
                 ActivityType.TIER1_ANALYSIS, ActivityPhase.COMPLETE,
-                f"\U0001f4ca [{name}] Tier1: HOLD → 스킵 | {reason[:100]}",
+                f"\U0001f4ca [{name}] Tier1: {position_action} → "
+                f"{'보유 관리' if is_holding else '스킵'} | {reason[:100]}{threshold_suffix}",
                 cycle_id=cycle_id, symbol=symbol,
                 detail={
                     "recommendation": "HOLD",
+                    "entry_action": analysis.get("entry_action"),
+                    "position_action": position_action,
                     "reason": reason,
                     "confidence": analysis.get("confidence") or 0,
+                    "target_price": analysis.get("target_price"),
+                    "stop_loss_price": analysis.get("stop_loss_price"),
+                    "trailing_stop_pct": analysis.get("trailing_stop_pct"),
+                    "active_thresholds": active_thresholds,
                     "key_factors": analysis.get("key_factors", []),
                 },
                 llm_provider=analysis.get("provider"),
@@ -2688,6 +2726,9 @@ class TradingAgent:
             "target_price": 0,
             "stop_loss_price": 0,
             "trailing_stop_pct": 0.0,
+            "entry_action": "SKIP",
+            "position_action": "HOLD",
+            "exit_plan": {},
             "key_factors": ["TIER1_LLM_TIMEOUT", symbol],
             "provider": "TIMEOUT_FALLBACK",
         }
@@ -3153,6 +3194,75 @@ class TradingAgent:
             analysis["target_price"] = None
             analysis["stop_loss_price"] = None
 
+        return analysis
+
+    def _normalize_tier1_decision(
+        self,
+        analysis: dict,
+        *,
+        symbol: str,
+        portfolio_snapshot: dict | None,
+    ) -> dict:
+        """Normalize the expanded Tier1 schema while preserving legacy responses."""
+        if not analysis:
+            return {}
+
+        normalized_symbol = normalize_krx_symbol(symbol)
+        holding_symbols = [
+            normalize_krx_symbol(item)
+            for item in (portfolio_snapshot or {}).get("holding_symbols", [])
+        ]
+        is_holding = normalized_symbol in holding_symbols
+
+        recommendation = str(analysis.get("recommendation") or "HOLD").upper()
+        entry_action = str(analysis.get("entry_action") or "").upper()
+        position_action = str(analysis.get("position_action") or "").upper()
+
+        if not entry_action:
+            entry_action = "BUY" if recommendation == "BUY" else "SKIP"
+        if not position_action:
+            if recommendation == "SELL" and is_holding:
+                position_action = "SELL"
+            elif recommendation == "BUY" and is_holding:
+                position_action = "ADD_BUY"
+            else:
+                position_action = "HOLD"
+
+        valid_position_actions = {"HOLD", "SELL", "PARTIAL_SELL", "ADD_BUY", "TIGHTEN_STOP"}
+        if position_action not in valid_position_actions:
+            position_action = "HOLD"
+        if entry_action not in {"BUY", "SKIP"}:
+            entry_action = "SKIP"
+
+        exit_plan = analysis.get("exit_plan") if isinstance(analysis.get("exit_plan"), dict) else {}
+        plan_stop = self._optional_float(exit_plan.get("stop_loss_price"))
+        plan_take_profit = self._optional_float(
+            exit_plan.get("take_profit_price") or exit_plan.get("target_price")
+        )
+        plan_trailing = self._optional_float(exit_plan.get("trailing_stop_pct"))
+        if plan_stop and plan_stop > 0 and not analysis.get("stop_loss_price"):
+            analysis["stop_loss_price"] = plan_stop
+        if plan_take_profit and plan_take_profit > 0 and not analysis.get("target_price"):
+            analysis["target_price"] = plan_take_profit
+        if plan_trailing and plan_trailing > 0 and not analysis.get("trailing_stop_pct"):
+            analysis["trailing_stop_pct"] = plan_trailing
+
+        if is_holding:
+            if position_action == "SELL":
+                recommendation = "SELL"
+            elif position_action == "ADD_BUY":
+                recommendation = "BUY"
+            else:
+                recommendation = "HOLD"
+        else:
+            recommendation = "BUY" if entry_action == "BUY" and recommendation == "BUY" else "HOLD"
+            if position_action == "SELL":
+                position_action = "HOLD"
+
+        analysis["recommendation"] = recommendation
+        analysis["entry_action"] = entry_action
+        analysis["position_action"] = position_action
+        analysis["exit_plan"] = exit_plan
         return analysis
 
     def _parse_json(self, text: str) -> dict | None:

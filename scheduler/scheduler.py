@@ -2074,8 +2074,10 @@ class TradingScheduler:
                                     "action": d.get("action", "HOLD").upper(),
                                     "reason": d.get("reason", ""),
                                     "confidence": d.get("confidence", 0.0),
+                                    "partial_exit_pct": d.get("partial_exit_pct"),
                                     "adjusted_stop_loss_price": d.get("adjusted_stop_loss_price"),
                                     "adjusted_take_profit_price": d.get("adjusted_take_profit_price"),
+                                    "trailing_stop_pct": d.get("trailing_stop_pct"),
                                 }
                                 cache_key = holdings_review_cache_service.build_key(
                                     holding_data=next(item for item in holdings_data if item["symbol"] == symbol),
@@ -2146,54 +2148,64 @@ class TradingScheduler:
                     conf = 0.0
                     decision = {}
 
-                if action == "SELL" and settings.TRADING_ENABLED:
+                if action in {"SELL", "PARTIAL_SELL"} and settings.TRADING_ENABLED:
                     # 즉시 시장가 매도
                     if not await trading_agent._acquire_sell(symbol):
-                        log_lines.append(f"  - {stock_name}({symbol}): SELL → 이미 매도 진행 중")
+                        log_lines.append(f"  - {stock_name}({symbol}): {action} → 이미 매도 진행 중")
                         continue
                     try:
-                        sell_resp = await self._place_market_sell(symbol, h.quantity)
+                        sell_quantity = int(h.quantity)
+                        exit_reason = "HOLDINGS_REVIEW"
+                        if action == "PARTIAL_SELL":
+                            partial_pct = self._coerce_partial_exit_pct(decision.get("partial_exit_pct"))
+                            sell_quantity = max(1, min(int(h.quantity), int(int(h.quantity) * partial_pct / 100)))
+                            exit_reason = "PARTIAL_TAKE_PROFIT"
+                        sell_resp = await self._place_market_sell(symbol, sell_quantity)
                         if sell_resp.success:
-                            event_detector.remove_levels(symbol)
+                            if action == "SELL" or sell_quantity >= int(h.quantity):
+                                event_detector.remove_levels(symbol)
                             await decision_maker.confirm_and_record(
                                 symbol=symbol, side="SELL",
-                                order_id=str(getattr(sell_resp, "order_id", "") or ""), quantity=h.quantity,
+                                order_id=str(getattr(sell_resp, "order_id", "") or ""), quantity=sell_quantity,
                                 expected_price=current_price,
-                                exit_reason="HOLDINGS_REVIEW",
+                                exit_reason=exit_reason,
                             )
                             # UI에 개별 매도 표시
                             await activity_logger.log(
                                 ActivityType.ORDER, ActivityPhase.COMPLETE,
-                                f"🔄 장중 재평가 매도: {stock_name}({symbol}) {h.quantity}주 — {reason}",
+                                f"🔄 장중 재평가 매도: {stock_name}({symbol}) {sell_quantity}주 — {reason}",
                                 symbol=symbol,
                             )
                             log_lines.append(
-                                f"  - {stock_name}({symbol}): SELL 매도 성공 — {reason} "
+                                f"  - {stock_name}({symbol}): {action} 매도 성공 ({sell_quantity}주) — {reason} "
                                 f"(AI {conf:.2f})"
                             )
                             # 매도 성공 → 재스캔 트리거
                             asyncio.create_task(self._trigger_rescan_after_sell())
                         else:
                             log_lines.append(
-                                f"  - {stock_name}({symbol}): SELL 매도 실패 — "
+                                f"  - {stock_name}({symbol}): {action} 매도 실패 — "
                                 f"{sell_resp.error or ''}"
                             )
                     except Exception as e:
                         log_lines.append(
-                            f"  - {stock_name}({symbol}): SELL 매도 오류 — {str(e)[:50]}"
+                            f"  - {stock_name}({symbol}): {action} 매도 오류 — {str(e)[:50]}"
                         )
                     finally:
                         trading_agent._release_sell(symbol)
 
-                elif action == "HOLD":
+                elif action in {"HOLD", "TIGHTEN_STOP"}:
                     # 임계값 동적 조정
                     kwargs = {}
                     adj_sl = decision.get("adjusted_stop_loss_price")
                     adj_tp = decision.get("adjusted_take_profit_price")
+                    trailing = decision.get("trailing_stop_pct")
                     if adj_sl is not None and isinstance(adj_sl, (int, float)) and float(adj_sl) > 0:
                         kwargs["stop_loss"] = float(adj_sl)
                     if adj_tp is not None and isinstance(adj_tp, (int, float)) and float(adj_tp) > 0:
                         kwargs["take_profit"] = float(adj_tp)
+                    if trailing is not None and isinstance(trailing, (int, float)) and float(trailing) > 0:
+                        kwargs["trailing_stop_pct"] = float(trailing)
 
                     if kwargs:
                         event_detector.set_thresholds(symbol, **kwargs)
@@ -2216,12 +2228,12 @@ class TradingScheduler:
 
                         adj_text = ", ".join(f"{k}={v:,.0f}" for k, v in kwargs.items())
                         log_lines.append(
-                            f"  - {stock_name}({symbol}): HOLD + 임계값 조정 [{adj_text}] — "
+                            f"  - {stock_name}({symbol}): {action} + 임계값 조정 [{adj_text}] — "
                             f"{reason} (AI {conf:.2f})"
                         )
                     else:
                         log_lines.append(
-                            f"  - {stock_name}({symbol}): HOLD — {reason} (AI {conf:.2f})"
+                            f"  - {stock_name}({symbol}): {action} — {reason} (AI {conf:.2f})"
                         )
 
                 elif action == "ADD_BUY":
@@ -2240,9 +2252,9 @@ class TradingScheduler:
                         f"{reason} (AI {conf:.2f})"
                     )
 
-                elif action == "SELL" and not settings.TRADING_ENABLED:
+                elif action in {"SELL", "PARTIAL_SELL"} and not settings.TRADING_ENABLED:
                     log_lines.append(
-                        f"  - {stock_name}({symbol}): SELL → TRADING_ENABLED=false — "
+                        f"  - {stock_name}({symbol}): {action} → TRADING_ENABLED=false — "
                         f"{reason} (AI {conf:.2f})"
                     )
 
@@ -2266,6 +2278,14 @@ class TradingScheduler:
                 ActivityType.HOLDINGS_CHECK, ActivityPhase.ERROR,
                 f"❌ 장중 보유 재평가 오류: {str(e)[:100]}",
             )
+
+    @staticmethod
+    def _coerce_partial_exit_pct(value) -> float:
+        try:
+            pct = float(value)
+        except (TypeError, ValueError):
+            pct = 50.0
+        return max(10.0, min(90.0, pct))
 
     async def _check_overnight_positions(self) -> None:
         """오버나이트 포지션 프리마켓 점검 (08:50)
