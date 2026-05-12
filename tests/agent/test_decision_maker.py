@@ -8,7 +8,7 @@ from agent.decision_maker import DecisionMaker
 from core.events import EventType
 from models.trade_result import TradeResult
 from strategy.signal import TradeSignal
-from trading.enums import Market, OrderConfirmStatus, OrderSide, OrderType, SignalAction
+from trading.enums import ActivityPhase, Market, OrderConfirmStatus, OrderSide, OrderType, SignalAction
 from trading.models import HoldingInfo, OrderRequest, OrderResult, OrderStatusInfo, PendingOrderInfo
 
 
@@ -619,6 +619,36 @@ async def test_decision_maker_create_pending_record_creates_trade_result(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_decision_maker_blocks_buy_when_pending_buy_confirm_exists(monkeypatch) -> None:
+    adapter = FakeBrokerAdapter(OrderResult(success=True, order_id="ORD-NEW", message="ok"))
+    decision_maker = DecisionMaker(broker_adapter=adapter)
+    pending = SimpleNamespace(
+        stock_symbol="003280",
+        stock_name="흥아해운",
+        order_id="ORD-PENDING",
+    )
+    logs: list[tuple] = []
+
+    async def fake_log(*args, **kwargs):
+        logs.append((args, kwargs))
+
+    async def fake_record_decision_event(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(decision_maker, "_find_pending_buy_block", lambda _symbol: __import__("asyncio").sleep(0, result=pending))
+    monkeypatch.setattr("agent.decision_maker.activity_logger.log", fake_log)
+    monkeypatch.setattr(decision_maker, "_record_decision_event", fake_record_decision_event)
+
+    result = await decision_maker._execute_autonomous(build_signal(), cycle_id="cycle-pending")
+
+    assert result["success"] is False
+    assert result["blocked_by_pending_confirm"] is True
+    assert adapter.requests == []
+    assert "미확정 매수 주문" in result["message"]
+    assert logs[1][0][1] == ActivityPhase.SKIP
+
+
+@pytest.mark.asyncio
 async def test_decision_maker_cancel_unfilled_order_invokes_executor(monkeypatch) -> None:
     adapter = FakeBrokerAdapter(OrderResult(success=True, order_id="ORD-CANCEL", message="ok"))
     decision_maker = DecisionMaker(broker_adapter=adapter)
@@ -818,6 +848,62 @@ def test_decision_maker_sell_fill_handles_mixed_timezone_datetimes() -> None:
     assert open_buy.exit_reason == "STOP_LOSS"
 
 
+def test_decision_maker_marks_remaining_lot_after_partial_take_profit() -> None:
+    open_buy = FakeTradeResultRecord(
+        id="buy-1",
+        stock_symbol="005930",
+        stock_name="삼성전자",
+        side="BUY",
+        strategy_type="MOMENTUM",
+        entry_price=70_000,
+        quantity=10,
+        entry_at=datetime(2026, 5, 5, 9, 30),
+        exit_price=0.0,
+        pnl=0.0,
+        return_pct=0.0,
+        is_win=False,
+        hold_days=0,
+        exit_reason="",
+        exit_at=None,
+        notes='{"trade_horizon":"SHORT"}',
+    )
+
+    result = DecisionMaker._apply_sell_fill_to_open_buys(
+        FakeSession(),
+        [open_buy],
+        symbol="005930",
+        filled_qty=4,
+        filled_price=72_000,
+        exit_reason="PARTIAL_TAKE_PROFIT",
+        closed_at=datetime(2026, 5, 5, 10, 30),
+    )
+
+    assert result["partial_exit"] is True
+    assert result["applied_quantity"] == 4
+    assert open_buy.quantity == 6
+    assert "PARTIAL_TAKE_PROFIT_DONE" in open_buy.notes
+
+
+@pytest.mark.asyncio
+async def test_decision_maker_adjusts_sell_fill_when_broker_holding_disappeared() -> None:
+    adapter = FakeBrokerAdapter(OrderResult(success=True, order_id="ORD-SELL", message="ok"))
+    adapter.holdings = []
+    decision_maker = DecisionMaker(broker_adapter=adapter)
+    open_buys = [
+        SimpleNamespace(stock_symbol="065440", quantity=3896, exit_at=None),
+        SimpleNamespace(stock_symbol="065440", quantity=451, exit_at=None),
+    ]
+
+    adjusted = await decision_maker._adjust_sell_filled_qty_from_holdings(
+        symbol="065440",
+        requested_quantity=4500,
+        reported_filled_qty=153,
+        open_buys=open_buys,
+    )
+
+    assert adjusted == 4347
+
+
 @pytest.mark.asyncio
 async def test_decision_maker_record_trade_result_closes_open_buys_on_sell(monkeypatch) -> None:
     decision_maker = DecisionMaker(
@@ -978,9 +1064,19 @@ async def test_decision_maker_record_trade_result_partially_closes_open_buy_lots
 
 @pytest.mark.asyncio
 async def test_decision_maker_confirm_pending_record_marks_partial_exit(monkeypatch) -> None:
-    decision_maker = DecisionMaker(
-        broker_adapter=FakeBrokerAdapter(OrderResult(success=True, order_id="ORD-PSELL", message="ok"))
-    )
+    adapter = FakeBrokerAdapter(OrderResult(success=True, order_id="ORD-PSELL", message="ok"))
+    adapter.holdings = [
+        HoldingInfo(
+            symbol="005930",
+            name="삼성전자",
+            quantity=2,
+            avg_buy_price=100.0,
+            current_price=120.0,
+            pnl=0.0,
+            pnl_rate=0.0,
+        )
+    ]
+    decision_maker = DecisionMaker(broker_adapter=adapter)
     session = FakeSession()
     closed_at = __import__("datetime").datetime(2026, 4, 6, 12, 20, 0)
     pending_sell = FakeTradeResultRecord(
@@ -1250,6 +1346,68 @@ async def test_decision_maker_cancels_when_order_status_is_missing(monkeypatch) 
     assert cancelled == [("ORD-3", "005930")]
     assert settled == [("ORD-3", False)]
     assert adapter.cache_invalidated is False
+
+
+@pytest.mark.asyncio
+async def test_decision_maker_marks_pending_failed_when_order_status_times_out(monkeypatch) -> None:
+    class TimeoutBrokerAdapter(FakeBrokerAdapter):
+        async def get_order_status(self, order_id: str) -> OrderStatusInfo | None:
+            self.queried_order_ids.append(order_id)
+            raise asyncio.TimeoutError
+
+    adapter = TimeoutBrokerAdapter(
+        OrderResult(success=True, order_id="ORD-TIMEOUT", message="주문 접수")
+    )
+    decision_maker = DecisionMaker(broker_adapter=adapter)
+    failed_marks: list[tuple[str | None, str]] = []
+    settled: list[tuple[str, bool]] = []
+
+    async def fake_sleep(_: float) -> None:
+        return None
+
+    async def fake_mark_pending_failed(pending_record_id: str | None, reason: str) -> None:
+        failed_marks.append((pending_record_id, reason))
+
+    async def fake_on_settled(order_id: str, success: bool) -> None:
+        settled.append((order_id, success))
+
+    monkeypatch.setattr("agent.decision_maker.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr(decision_maker, "_mark_pending_failed", fake_mark_pending_failed)
+
+    await decision_maker.confirm_and_record(
+        symbol="005930",
+        side="BUY",
+        order_id="ORD-TIMEOUT",
+        quantity=1,
+        expected_price=71_000,
+        pending_record_id="pending-timeout",
+        on_settled=fake_on_settled,
+    )
+
+    assert adapter.queried_order_ids == ["ORD-TIMEOUT"]
+    assert failed_marks == [("pending-timeout", "체결 확인 타임아웃 (15초)")]
+    assert settled == [("ORD-TIMEOUT", False)]
+    assert adapter.cache_invalidated is False
+
+
+def test_decision_maker_uses_risk_based_buy_confirm_wait(monkeypatch) -> None:
+    monkeypatch.setattr("agent.decision_maker.settings.RISK_APPETITE", "CONSERVATIVE")
+    monkeypatch.setattr("agent.decision_maker.settings.BUY_ORDER_CONFIRM_WAIT_SEC_CONSERVATIVE", 90)
+    assert DecisionMaker._order_confirm_wait_sec("BUY") == 90
+
+    monkeypatch.setattr("agent.decision_maker.settings.RISK_APPETITE", "MODERATE")
+    monkeypatch.setattr("agent.decision_maker.settings.BUY_ORDER_CONFIRM_WAIT_SEC_MODERATE", 60)
+    assert DecisionMaker._order_confirm_wait_sec("BUY") == 60
+
+    monkeypatch.setattr("agent.decision_maker.settings.RISK_APPETITE", "AGGRESSIVE")
+    monkeypatch.setattr("agent.decision_maker.settings.BUY_ORDER_CONFIRM_WAIT_SEC_AGGRESSIVE", 30)
+    assert DecisionMaker._order_confirm_wait_sec("BUY") == 30
+
+
+def test_decision_maker_keeps_sell_confirm_wait_short(monkeypatch) -> None:
+    monkeypatch.setattr("agent.decision_maker.settings.RISK_APPETITE", "CONSERVATIVE")
+    monkeypatch.setattr("agent.decision_maker.settings.SELL_ORDER_CONFIRM_WAIT_SEC", 3)
+    assert DecisionMaker._order_confirm_wait_sec("SELL") == 3
 
 
 @pytest.mark.asyncio

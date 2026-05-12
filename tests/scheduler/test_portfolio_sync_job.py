@@ -76,6 +76,115 @@ async def test_recover_pending_confirms_uses_kiwoom_holdings_for_filled_buy(monk
 
 
 @pytest.mark.asyncio
+async def test_recover_pending_confirms_marks_stale_kiwoom_buy_without_broker_match_failed(monkeypatch) -> None:
+    pending_trade = SimpleNamespace(
+        order_id="0019413",
+        stock_symbol="003280",
+        side="BUY",
+        quantity=7800,
+        entry_price=1895.0,
+        exit_price=0.0,
+        notes="PENDING_CONFIRM",
+        status=OrderConfirmStatus.PENDING_CONFIRM.value,
+        created_at=__import__("datetime").datetime(2026, 4, 6, 10, 0, 0),
+    )
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def begin(self):
+            return self
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_pending_confirms(self):
+            return [pending_trade]
+
+    class FakeBrokerAdapter:
+        provider = BrokerProvider.KIWOOM
+
+        async def get_pending_orders(self):
+            return []
+
+        async def get_holdings(self):
+            return []
+
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("trading.broker_factory.get_broker_adapter", lambda: FakeBrokerAdapter())
+    monkeypatch.setattr(
+        "scheduler.jobs.portfolio_sync_job.now_kst",
+        lambda: __import__("datetime").datetime(2026, 4, 6, 10, 2, 0),
+    )
+
+    summary = await _recover_pending_confirms()
+
+    assert summary["failed"] == 1
+    assert pending_trade.status == OrderConfirmStatus.CONFIRM_FAILED.value
+    assert "stale BUY pending" in pending_trade.notes
+
+
+@pytest.mark.asyncio
+async def test_recover_pending_confirms_keeps_fresh_kiwoom_buy_without_broker_match_pending(monkeypatch) -> None:
+    pending_trade = SimpleNamespace(
+        order_id="0019414",
+        stock_symbol="003280",
+        side="BUY",
+        quantity=7800,
+        entry_price=1895.0,
+        exit_price=0.0,
+        notes="PENDING_CONFIRM",
+        status=OrderConfirmStatus.PENDING_CONFIRM.value,
+        created_at=__import__("datetime").datetime(2026, 4, 6, 10, 1, 0),
+    )
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def begin(self):
+            return self
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_pending_confirms(self):
+            return [pending_trade]
+
+    class FakeBrokerAdapter:
+        provider = BrokerProvider.KIWOOM
+
+        async def get_pending_orders(self):
+            return []
+
+        async def get_holdings(self):
+            return []
+
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("trading.broker_factory.get_broker_adapter", lambda: FakeBrokerAdapter())
+    monkeypatch.setattr(
+        "scheduler.jobs.portfolio_sync_job.now_kst",
+        lambda: __import__("datetime").datetime(2026, 4, 6, 10, 1, 30),
+    )
+
+    summary = await _recover_pending_confirms()
+
+    assert summary["skipped"] == 1
+    assert pending_trade.status == OrderConfirmStatus.PENDING_CONFIRM.value
+
+
+@pytest.mark.asyncio
 async def test_close_open_buys_missing_from_holdings_dry_run_does_not_mutate(monkeypatch) -> None:
     open_trade = SimpleNamespace(
         id="open-1",

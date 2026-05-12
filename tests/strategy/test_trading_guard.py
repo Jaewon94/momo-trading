@@ -325,6 +325,90 @@ async def test_trading_guard_blocks_loss_streak_probation_overheat(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_trading_guard_blocks_loss_streak_probation_repeated_loss_pattern(monkeypatch):
+    guard = TradingGuard()
+
+    async def fake_realized_drawdown(*, portfolio_budget: float) -> float:
+        return 0.0
+
+    async def fake_account_drawdown() -> dict:
+        return {"available": False, "snapshot_stale_blocks_buy": False}
+
+    async def fake_losses() -> int:
+        return 7
+
+    async def fake_expectancy(strategy_type: str) -> float | None:
+        return 0.1
+
+    monkeypatch.setattr(guard, "_get_daily_realized_pnl_pct", fake_realized_drawdown)
+    monkeypatch.setattr(guard, "_get_account_equity_drawdown", fake_account_drawdown)
+    monkeypatch.setattr(guard, "_get_consecutive_losses", fake_losses)
+    monkeypatch.setattr(guard, "_get_strategy_expectancy", fake_expectancy)
+    monkeypatch.setattr("strategy.trading_guard.settings.MAX_DAILY_DRAWDOWN_PCT", 2.5)
+    monkeypatch.setattr("strategy.trading_guard.settings.MAX_CONSECUTIVE_LOSSES", 4)
+    monkeypatch.setattr("strategy.trading_guard.settings.LOSS_STREAK_RECOVERY_MODE", "PROBATION")
+    monkeypatch.setattr("strategy.trading_guard.settings.LOSS_STREAK_RECOVERY_MAX_DAILY_BUYS", 1)
+    monkeypatch.setattr("strategy.trading_guard.settings.LOSS_STREAK_RECOVERY_MIN_CHANGE_PCT", 2.0)
+    monkeypatch.setattr("strategy.trading_guard.settings.LOSS_STREAK_RECOVERY_MAX_CHANGE_PCT", 10.0)
+
+    result = await guard.evaluate_buy_guard(
+        strategy_type="STABLE_SHORT",
+        portfolio_budget=1_000_000,
+        candidate_change_rate=5.0,
+        candidate_pattern="UPTREND",
+        today_trade_count=0,
+        current_holding_count=0,
+    )
+
+    assert result["approved"] is False
+    assert result["trigger"] == "CONSECUTIVE_LOSSES_PROBATION"
+    assert "손실 반복 패턴" in result["reason"]
+
+
+@pytest.mark.asyncio
+async def test_trading_guard_blocks_loss_streak_probation_weak_intraday(monkeypatch):
+    guard = TradingGuard()
+
+    async def fake_realized_drawdown(*, portfolio_budget: float) -> float:
+        return 0.0
+
+    async def fake_account_drawdown() -> dict:
+        return {"available": False, "snapshot_stale_blocks_buy": False}
+
+    async def fake_losses() -> int:
+        return 7
+
+    async def fake_expectancy(strategy_type: str) -> float | None:
+        return 0.1
+
+    monkeypatch.setattr(guard, "_get_daily_realized_pnl_pct", fake_realized_drawdown)
+    monkeypatch.setattr(guard, "_get_account_equity_drawdown", fake_account_drawdown)
+    monkeypatch.setattr(guard, "_get_consecutive_losses", fake_losses)
+    monkeypatch.setattr(guard, "_get_strategy_expectancy", fake_expectancy)
+    monkeypatch.setattr("strategy.trading_guard.settings.MAX_DAILY_DRAWDOWN_PCT", 2.5)
+    monkeypatch.setattr("strategy.trading_guard.settings.MAX_CONSECUTIVE_LOSSES", 4)
+    monkeypatch.setattr("strategy.trading_guard.settings.LOSS_STREAK_RECOVERY_MODE", "PROBATION")
+    monkeypatch.setattr("strategy.trading_guard.settings.LOSS_STREAK_RECOVERY_MAX_DAILY_BUYS", 1)
+    monkeypatch.setattr("strategy.trading_guard.settings.LOSS_STREAK_RECOVERY_MIN_CHANGE_PCT", 2.0)
+    monkeypatch.setattr("strategy.trading_guard.settings.LOSS_STREAK_RECOVERY_MAX_CHANGE_PCT", 10.0)
+
+    result = await guard.evaluate_buy_guard(
+        strategy_type="STABLE_SHORT",
+        portfolio_budget=1_000_000,
+        candidate_change_rate=5.0,
+        intraday_direction="NEUTRAL",
+        intraday_vwap_position="BELOW_VWAP",
+        intraday_volume_trend="STABLE",
+        today_trade_count=0,
+        current_holding_count=0,
+    )
+
+    assert result["approved"] is False
+    assert result["trigger"] == "CONSECUTIVE_LOSSES_PROBATION"
+    assert "장중 확인 부족" in result["reason"]
+
+
+@pytest.mark.asyncio
 async def test_trading_guard_reads_account_equity_drawdown_from_snapshots():
     guard = TradingGuard()
     today = now_kst().date()

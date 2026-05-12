@@ -8,18 +8,19 @@
               + 1시간 간격 보유종목 안전 점검 (시간 기반 조기 청산 포함)
   11:00/13:00  장중 재스캔 — 새로운 기회 탐색
   14:30  신규 매수 마감 (청산 시간 확보)
-  15:10  보유종목 전량 시장가 강제 청산 (종가경매 전, 병렬 실행)
+  15:10  장마감 보유 심사 (DAY_TRADING_ONLY=true일 때만 전량 강제 청산)
   15:30  KRX 폐장
   15:40  장 마감 성과 리뷰 (KRX 종가 기반, 피드백 학습)
   16:00  포트폴리오 정산 (KIS ↔ DB 동기화)
   16:30  일봉 데이터 보관용 수집
 
 ※ DAY_TRADING_ONLY=true: 당일 매수→당일 청산 필수 (오버나이트 없음)
-※ DAY_TRADING_ONLY=false: 스윙 모드 — 유망 종목 오버나이트 보유 (스마트 청산)
+※ DAY_TRADING_ONLY=false: 스윙 모드 — AI 보유 심사 후 유망 종목 오버나이트 보유
 """
 from collections.abc import Awaitable
 import asyncio
 import copy
+import json
 import time as _time
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -38,6 +39,7 @@ from trading.broker_factory import get_broker_adapter
 from trading.enums import ActivityPhase, ActivityType, Market, OrderSide, OrderType
 from trading.models import OrderRequest
 from scheduler.jobs.forward_return_label_job import forward_return_label_job
+from strategy.trade_horizon import TradeHorizon
 
 
 class TradingScheduler:
@@ -134,6 +136,134 @@ class TradingScheduler:
             "stop_loss_pct": stop_loss_pct,
         }
         return True, "first_observation"
+
+    @staticmethod
+    def _trade_horizon_from_result(tr) -> str:
+        notes = str(getattr(tr, "notes", "") or "")
+        try:
+            parsed = json.loads(notes)
+        except (TypeError, ValueError):
+            parsed = {}
+        if isinstance(parsed, dict):
+            horizon = str(parsed.get("trade_horizon") or "").upper()
+            if horizon in {TradeHorizon.SHORT, TradeHorizon.MID, TradeHorizon.LONG}:
+                return horizon
+        strategy_type = str(getattr(tr, "strategy_type", "") or "").upper()
+        if "AGGRESSIVE" in strategy_type:
+            return TradeHorizon.SHORT
+        return TradeHorizon.MID
+
+    @staticmethod
+    def _note_has_marker(tr, marker: str) -> bool:
+        return marker in str(getattr(tr, "notes", "") or "")
+
+    @staticmethod
+    def _partial_take_profit_threshold_pct(horizon: str) -> float:
+        key = str(horizon or TradeHorizon.MID).upper()
+        if key == TradeHorizon.SHORT:
+            return float(getattr(settings, "PARTIAL_TAKE_PROFIT_PCT_SHORT", 1.5) or 1.5)
+        if key == TradeHorizon.LONG:
+            return float(getattr(settings, "PARTIAL_TAKE_PROFIT_PCT_LONG", 5.0) or 5.0)
+        return float(getattr(settings, "PARTIAL_TAKE_PROFIT_PCT_MID", 3.0) or 3.0)
+
+    @staticmethod
+    def _partial_take_profit_size_pct(horizon: str) -> float:
+        key = str(horizon or TradeHorizon.MID).upper()
+        if key == TradeHorizon.SHORT:
+            return float(getattr(settings, "PARTIAL_TAKE_PROFIT_SIZE_PCT_SHORT", 40.0) or 40.0)
+        if key == TradeHorizon.LONG:
+            return float(getattr(settings, "PARTIAL_TAKE_PROFIT_SIZE_PCT_LONG", 25.0) or 25.0)
+        return float(getattr(settings, "PARTIAL_TAKE_PROFIT_SIZE_PCT_MID", 33.0) or 33.0)
+
+    @staticmethod
+    def _breakeven_trigger_pct(horizon: str) -> float:
+        key = str(horizon or TradeHorizon.MID).upper()
+        if key == TradeHorizon.SHORT:
+            return float(getattr(settings, "BREAKEVEN_TRIGGER_PCT_SHORT", 1.0) or 1.0)
+        if key == TradeHorizon.LONG:
+            return float(getattr(settings, "BREAKEVEN_TRIGGER_PCT_LONG", 2.0) or 2.0)
+        return float(getattr(settings, "BREAKEVEN_TRIGGER_PCT_MID", 1.5) or 1.5)
+
+    def _partial_take_profit_quantity(self, *, holding_quantity: int, horizon: str) -> int:
+        if not bool(getattr(settings, "PARTIAL_TAKE_PROFIT_ENABLED", True)):
+            return 0
+        quantity = int(holding_quantity or 0)
+        if quantity <= 1:
+            return 0
+        size_pct = min(max(self._partial_take_profit_size_pct(horizon), 1.0), 95.0)
+        sell_qty = int(quantity * size_pct / 100.0)
+        return min(max(sell_qty, 1), quantity - 1)
+
+    def _should_partial_take_profit(self, *, tr, pnl_rate: float, holding_quantity: int) -> tuple[bool, int, str]:
+        if not bool(getattr(settings, "POSITION_EXIT_MANAGEMENT_ENABLED", True)):
+            return False, 0, ""
+        if self._note_has_marker(tr, "PARTIAL_TAKE_PROFIT_DONE"):
+            return False, 0, ""
+        horizon = self._trade_horizon_from_result(tr)
+        trigger_pct = self._partial_take_profit_threshold_pct(horizon)
+        if pnl_rate < trigger_pct:
+            return False, 0, ""
+        quantity = self._partial_take_profit_quantity(
+            holding_quantity=holding_quantity,
+            horizon=horizon,
+        )
+        if quantity <= 0:
+            return False, 0, ""
+        return True, quantity, f"{horizon} 부분익절 ({pnl_rate:+.1f}% ≥ {trigger_pct:+.1f}%)"
+
+    def _breakeven_stop_price(self, *, avg_buy_price: float, pnl_rate: float, tr) -> float | None:
+        if not bool(getattr(settings, "POSITION_EXIT_MANAGEMENT_ENABLED", True)):
+            return None
+        if not bool(getattr(settings, "BREAKEVEN_STOP_ENABLED", True)):
+            return None
+        if avg_buy_price <= 0:
+            return None
+        horizon = self._trade_horizon_from_result(tr)
+        if pnl_rate < self._breakeven_trigger_pct(horizon):
+            return None
+        buffer_bps = max(int(getattr(settings, "BREAKEVEN_BUFFER_BPS", 10) or 0), 0)
+        return avg_buy_price * (1 + buffer_bps / 10000.0)
+
+    def _scale_in_candidate_reason(
+        self,
+        *,
+        tr,
+        pnl_rate: float,
+        current_price: float,
+        active_stop_loss: float,
+    ) -> str | None:
+        if not bool(getattr(settings, "SCALE_IN_CANDIDATE_ENABLED", True)):
+            return None
+        horizon = self._trade_horizon_from_result(tr)
+        if horizon == TradeHorizon.SHORT:
+            return None
+        min_pullback = (
+            float(getattr(settings, "SCALE_IN_MIN_PULLBACK_PCT_LONG", -4.0) or -4.0)
+            if horizon == TradeHorizon.LONG
+            else float(getattr(settings, "SCALE_IN_MIN_PULLBACK_PCT_MID", -2.5) or -2.5)
+        )
+        max_pullback = float(getattr(settings, "SCALE_IN_MAX_PULLBACK_PCT", -0.8) or -0.8)
+        if not (min_pullback <= pnl_rate <= max_pullback):
+            return None
+        if active_stop_loss > 0 and current_price <= active_stop_loss:
+            return None
+        return f"{horizon} 눌림 추가매수 후보 ({pnl_rate:+.1f}%, 손절선 위)"
+
+    async def _update_open_position_stop_loss(self, symbol: str, stop_loss_price: float) -> None:
+        if stop_loss_price <= 0:
+            return
+        from core.database import AsyncSessionLocal
+        from repositories.trade_result_repository import TradeResultRepository
+
+        normalized = normalize_krx_symbol(symbol)
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                repo = TradeResultRepository(session)
+                open_buys = await repo.get_all_open_buys(normalized)
+                for open_buy in open_buys:
+                    current_stop = float(getattr(open_buy, "ai_stop_loss_price", 0.0) or 0.0)
+                    if current_stop <= 0 or stop_loss_price > current_stop:
+                        open_buy.ai_stop_loss_price = stop_loss_price
 
     def _schedule_background_task(
         self,
@@ -483,7 +613,7 @@ class TradingScheduler:
                 misfire_grace_time=600,
             )
 
-            # ── 장 마감 전 청산 (15:10 평일) — DAY_TRADING: 전량 매도 / 스윙: 스마트 청산 ──
+            # ── 장 마감 전 보유 심사 (15:10 평일) — DAY_TRADING: 전량 매도 / 스윙: AI 보유 심사 ──
             self.scheduler.add_job(
                 self._force_liquidation,
                 "cron",
@@ -491,7 +621,7 @@ class TradingScheduler:
                 minute=settings.FORCE_LIQUIDATION_MINUTE,
                 day_of_week="mon-fri",
                 id="force_liquidation",
-                name="장 마감 전 청산",
+                name="장 마감 전 보유 심사",
                 misfire_grace_time=300,
             )
 
@@ -913,6 +1043,22 @@ class TradingScheduler:
             if not holdings:
                 return
 
+            from core.database import AsyncSessionLocal
+            from repositories.trade_result_repository import TradeResultRepository
+
+            try:
+                async with AsyncSessionLocal() as session:
+                    repo = TradeResultRepository(session)
+                    open_positions = await repo.get_all_open()
+            except Exception as exc:
+                logger.debug("보유종목 점검 open position 조회 생략: {}", str(exc))
+                open_positions = []
+            open_map = {
+                normalize_krx_symbol(getattr(tr, "stock_symbol", "")): tr
+                for tr in open_positions
+                if normalize_krx_symbol(getattr(tr, "stock_symbol", ""))
+            }
+
             # 구독 갱신 (WebSocket 연결 복원 대비)
             await self._update_realtime_subscriptions()
 
@@ -943,6 +1089,7 @@ class TradingScheduler:
                 # AI가 설정한 임계값이 있으면 우선 사용, 없으면 기본값
                 from realtime.event_detector import event_detector
                 th = event_detector.get_thresholds(symbol)
+                tr = open_map.get(symbol)
 
                 if th.stop_loss <= 0 and th.take_profit <= 0:
                     alerts.append(f"⚠️ {h.name}({symbol}): AI 손절/익절 미설정 — 기본값 적용 중")
@@ -954,8 +1101,46 @@ class TradingScheduler:
                 if th.take_profit > 0 and h.avg_buy_price > 0:
                     take_profit_pct = ((th.take_profit - h.avg_buy_price) / h.avg_buy_price) * 100
 
+                sell_quantity = int(h.quantity)
+                exit_reason = "HOLDINGS_CHECK"
+
+                if tr:
+                    new_stop = self._breakeven_stop_price(
+                        avg_buy_price=float(h.avg_buy_price),
+                        pnl_rate=pnl_rate,
+                        tr=tr,
+                    )
+                    if new_stop and (th.stop_loss <= 0 or new_stop > th.stop_loss):
+                        event_detector.set_thresholds(symbol, stop_loss=new_stop)
+                        await self._update_open_position_stop_loss(symbol, new_stop)
+                        th = event_detector.get_thresholds(symbol)
+                        stop_loss_pct = ((th.stop_loss - h.avg_buy_price) / h.avg_buy_price) * 100
+                        await activity_logger.log(
+                            ActivityType.HOLDINGS_CHECK,
+                            ActivityPhase.PROGRESS,
+                            f"🛡️ {h.name}({symbol}) 본전스탑 상향: {new_stop:,.0f}원",
+                            symbol=symbol,
+                            detail={
+                                "action": "BREAKEVEN_STOP",
+                                "pnl_rate": pnl_rate,
+                                "stop_loss": new_stop,
+                                "horizon": self._trade_horizon_from_result(tr),
+                            },
+                        )
+
+                    do_partial, partial_qty, partial_reason = self._should_partial_take_profit(
+                        tr=tr,
+                        pnl_rate=pnl_rate,
+                        holding_quantity=int(h.quantity),
+                    )
+                    if do_partial:
+                        should_sell = True
+                        sell_quantity = partial_qty
+                        exit_reason = "PARTIAL_TAKE_PROFIT"
+                        reason = partial_reason
+
                 # 손절/익절
-                if pnl_rate <= stop_loss_pct:
+                if not should_sell and pnl_rate <= stop_loss_pct:
                     reason = f"손절 도달 ({pnl_rate:+.1f}%, 기준 {stop_loss_pct:+.1f}%)"
                     defer_sell, defer_reason = self._should_defer_soft_stop(
                         symbol,
@@ -978,17 +1163,40 @@ class TradingScheduler:
                         reason += " — 손절선 깊게 이탈"
                     elif defer_reason == "near_close":
                         reason += " — 장마감 임박"
-                elif pnl_rate >= take_profit_pct:
+                elif not should_sell and pnl_rate >= take_profit_pct:
                     should_sell = True
                     reason = f"익절 도달 ({pnl_rate:+.1f}%, 기준 {take_profit_pct:+.1f}%)"
                 # 시간 기반 조건 (데이트레이딩 전용)
-                elif settings.DAY_TRADING_ONLY:
+                elif not should_sell and settings.DAY_TRADING_ONLY:
                     if minutes_left <= 60 and pnl_rate > 1.0:
                         should_sell = True
                         reason = f"잔여 {minutes_left}분 + 수익 {pnl_rate:+.1f}% → 조기 익절"
                     elif minutes_left <= 30 and pnl_rate < -1.0:
                         should_sell = True
                         reason = f"잔여 {minutes_left}분 + 손실 {pnl_rate:+.1f}% → 조기 손절"
+
+                if not should_sell and tr:
+                    scale_reason = self._scale_in_candidate_reason(
+                        tr=tr,
+                        pnl_rate=pnl_rate,
+                        current_price=current,
+                        active_stop_loss=th.stop_loss,
+                    )
+                    if scale_reason:
+                        await activity_logger.log(
+                            ActivityType.HOLDINGS_CHECK,
+                            ActivityPhase.PROGRESS,
+                            f"📌 {h.name}({symbol}) {scale_reason} — 자동 물타기 미실행, 후보 기록",
+                            symbol=symbol,
+                            detail={
+                                "action": "SCALE_IN_CANDIDATE",
+                                "pnl_rate": pnl_rate,
+                                "current_price": current,
+                                "avg_buy_price": h.avg_buy_price,
+                                "stop_loss": th.stop_loss,
+                                "horizon": self._trade_horizon_from_result(tr),
+                            },
+                        )
 
                 if should_sell and settings.TRADING_ENABLED:
                     # P0-2: 이중 매도 방지
@@ -999,37 +1207,37 @@ class TradingScheduler:
                         )
                         continue
                     try:
-                        sell_resp = await self._place_market_sell(symbol, h.quantity)
+                        sell_resp = await self._place_market_sell(symbol, sell_quantity)
                         status = "성공" if sell_resp.success else f"실패: {sell_resp.error or ''}"
                         alerts.append(
                             f"\U0001f6a8 {h.name}({symbol}): {reason} → 매도 {status}"
                         )
                         if sell_resp.success:
-                            from realtime.event_detector import event_detector
-                            event_detector.remove_levels(symbol)
                             await activity_logger.log(
                                 ActivityType.ORDER, ActivityPhase.PROGRESS,
                                 f"🚨 보유점검 매도 주문 접수: {h.name}({symbol}) "
-                                f"{h.quantity}주 — {reason} — 체결 확인 대기",
+                                f"{sell_quantity}주 — {reason} — 체결 확인 대기",
                                 symbol=symbol,
                             )
                             await self._track_scheduler_sell_confirmation(
                                 holding=h,
                                 response=sell_resp,
                                 symbol=symbol,
-                                quantity=int(h.quantity),
+                                quantity=int(sell_quantity),
                                 expected_price=current,
-                                exit_reason="HOLDINGS_CHECK",
+                                exit_reason=exit_reason,
                             )
                             await activity_logger.log(
                                 ActivityType.ORDER, ActivityPhase.COMPLETE,
                                 f"📉 보유점검 매도 완료: {h.name}({symbol}) "
-                                f"{h.quantity}주 — {reason} — 체결 확인 완료",
+                                f"{sell_quantity}주 — {reason} — 체결 확인 완료",
                                 symbol=symbol,
                             )
-                            # 매도 성공 → 재스캔 트리거
-                            import asyncio
-                            asyncio.create_task(self._trigger_rescan_after_sell())
+                            if sell_quantity >= int(h.quantity):
+                                event_detector.remove_levels(symbol)
+                                # 매도 성공 → 재스캔 트리거
+                                import asyncio
+                                asyncio.create_task(self._trigger_rescan_after_sell())
                     except Exception as e:
                         alerts.append(
                             f"\u274c {h.name}({symbol}): {reason} → 매도 오류: {str(e)[:50]}"
@@ -1098,10 +1306,10 @@ class TradingScheduler:
             logger.warning("장외 리뷰 체크 실패: {}", str(e))
 
     async def _force_liquidation(self) -> None:
-        """장 마감 전 청산
+        """장 마감 전 보유 심사
 
         DAY_TRADING_ONLY=True: 보유종목 전량 시장가 매도 (기존 동작)
-        DAY_TRADING_ONLY=False: 종목별 스마트 판정 (HOLD/SELL)
+        DAY_TRADING_ONLY=False: 종목별 AI 우선 판정 (HOLD/SELL), HOLD 가능
         """
         import asyncio
         from scheduler.market_calendar import market_calendar
@@ -1122,7 +1330,7 @@ class TradingScheduler:
             if not holdings:
                 await activity_logger.log(
                     ActivityType.SCHEDULE, ActivityPhase.PROGRESS,
-                    "\u2705 보유종목 없음 — 청산 불필요",
+                    "\u2705 보유종목 없음 — 장마감 보유 심사 불필요",
                 )
                 return
 
@@ -1172,12 +1380,12 @@ class TradingScheduler:
                 to_sell = sellable
                 to_hold = []
 
-            mode_label = "스마트 청산" if not settings.DAY_TRADING_ONLY else "강제 청산"
+            mode_label = "AI 보유 심사" if not settings.DAY_TRADING_ONLY else "강제 청산"
             logger.warning("=== 장 마감 전 {} 시작 (매도 {}건, HOLD {}건) ===",
                            mode_label, len(to_sell), len(to_hold))
             await activity_logger.log(
                 ActivityType.SCHEDULE, ActivityPhase.PROGRESS,
-                f"\U0001f6a8 {mode_label} — 매도 {len(to_sell)}건, HOLD {len(to_hold)}건",
+                f"\U0001f50e 장마감 {mode_label} — 매도 {len(to_sell)}건, HOLD {len(to_hold)}건",
             )
 
             if not to_sell:
@@ -1220,7 +1428,8 @@ class TradingScheduler:
                         f"{h.quantity}주 시장가 매도 {pnl_text} — 체결 확인 대기",
                         symbol=h.symbol,
                     )
-                    await self._record_liquidation_sell(h, resp)
+                    exit_reason = "FORCE_LIQUIDATION" if settings.DAY_TRADING_ONLY else "CLOSE_REVIEW"
+                    await self._record_liquidation_sell(h, resp, exit_reason=exit_reason)
                 else:
                     failed_holdings.append(h)
                     logger.error(
@@ -1253,11 +1462,12 @@ class TradingScheduler:
                     if resp.success:
                         sold_count += 1
                         logger.info("청산 재시도 성공: {}({})", h.name, h.symbol)
-                        await self._record_liquidation_sell(h, resp)
+                        exit_reason = "FORCE_LIQUIDATION" if settings.DAY_TRADING_ONLY else "CLOSE_REVIEW"
+                        await self._record_liquidation_sell(h, resp, exit_reason=exit_reason)
                     else:
                         logger.error("청산 재시도 실패: {}({}) — {}", h.name, h.symbol, resp.error or "")
 
-            summary = f"\U0001f6a8 {mode_label} 주문 접수: {sold_count}건 매도"
+            summary = f"\U0001f50e 장마감 {mode_label} 주문 접수: {sold_count}건 매도"
             if to_hold:
                 hold_names = ", ".join(f"{h.name}" for h in to_hold)
                 summary += f" | HOLD {len(to_hold)}건: {hold_names}"
@@ -1273,20 +1483,20 @@ class TradingScheduler:
                     event_detector.remove_levels(h.symbol)
 
         except Exception as e:
-            logger.error("청산 오류: {}", str(e))
+            logger.error("장마감 보유 심사 오류: {}", str(e))
             await activity_logger.log(
                 ActivityType.SCHEDULE, ActivityPhase.ERROR,
-                f"\u274c 청산 오류: {str(e)[:100]}",
+                f"\u274c 장마감 보유 심사 오류: {str(e)[:100]}",
             )
 
-    async def _record_liquidation_sell(self, holding, response) -> None:
+    async def _record_liquidation_sell(self, holding, response, *, exit_reason: str = "FORCE_LIQUIDATION") -> None:
         await self._track_scheduler_sell_confirmation(
             holding=holding,
             response=response,
             symbol=getattr(holding, "symbol", ""),
             quantity=int(getattr(holding, "quantity", 0) or 0),
             expected_price=float(getattr(holding, "current_price", 0.0) or 0.0),
-            exit_reason="FORCE_LIQUIDATION",
+            exit_reason=exit_reason,
         )
 
     async def _track_scheduler_sell_confirmation(

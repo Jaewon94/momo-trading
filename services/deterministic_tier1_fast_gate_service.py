@@ -124,6 +124,22 @@ class DeterministicTier1FastGateService:
             score -= 12
             reasons.append("intraday trend bearish")
 
+        vwap_position = str(intraday.get("vwap_position", "") or "").upper()
+        if vwap_position == "ABOVE_VWAP":
+            score += 4
+            reasons.append("above intraday VWAP")
+        elif vwap_position == "BELOW_VWAP":
+            score -= 4
+            reasons.append("below intraday VWAP")
+
+        volume_trend = str(intraday.get("vol_trend", "") or "").upper()
+        if volume_trend == "INCREASING":
+            score += 4
+            reasons.append("intraday volume increasing")
+        elif volume_trend == "DECREASING":
+            score -= 4
+            reasons.append("intraday volume decreasing")
+
         rsi = self._float(indicators.get("rsi_14"))
         if rsi >= 78:
             score -= 10
@@ -140,17 +156,26 @@ class DeterministicTier1FastGateService:
             score -= 7
             reasons.append("MACD negative")
 
-        if self._volume_weakening(daily_df, minute_df):
-            score -= 12
+        volume_weakening = self._volume_weakening(daily_df, minute_df)
+        if volume_weakening:
+            score -= 8
             reasons.append("volume weakening")
         else:
             score += 4
             reasons.append("volume acceptable")
 
         risk_profile = self._risk_profile()
+        upper_limit_fade_risk = (
+            change_rate >= risk_profile.overheat_change_pct
+            and vwap_position == "BELOW_VWAP"
+            and volume_trend == "DECREASING"
+            and volume_weakening
+        )
         if change_rate >= risk_profile.overheat_change_pct:
-            score -= 18
+            score -= 18 if upper_limit_fade_risk else 8
             reasons.append("near upper-limit overheat")
+            if upper_limit_fade_risk:
+                reasons.append("upper-limit fade risk")
         elif 3.0 <= change_rate <= 18.0:
             score += 8
             reasons.append("moderate positive momentum")
@@ -202,6 +227,10 @@ class DeterministicTier1FastGateService:
                     "trend_direction": trend_direction,
                     "signal_direction": signal_direction,
                     "intraday_direction": intraday_direction,
+                    "intraday_vwap_position": vwap_position,
+                    "intraday_volume_trend": volume_trend,
+                    "volume_weakening": volume_weakening,
+                    "upper_limit_fade_risk": upper_limit_fade_risk,
                     "bull_momentum_allow": bull_momentum_allow,
                     "reasons": reasons,
                 },
@@ -222,6 +251,10 @@ class DeterministicTier1FastGateService:
                 "trend_direction": trend_direction,
                 "signal_direction": signal_direction,
                 "intraday_direction": intraday_direction,
+                "intraday_vwap_position": vwap_position,
+                "intraday_volume_trend": volume_trend,
+                "volume_weakening": volume_weakening,
+                "upper_limit_fade_risk": upper_limit_fade_risk,
                 "bull_momentum_allow": bull_momentum_allow,
                 "reasons": reasons,
             },
@@ -261,7 +294,7 @@ class DeterministicTier1FastGateService:
         if appetite == "AGGRESSIVE":
             return FastGateRiskProfile(
                 risk_appetite=appetite,
-                min_continue_score=max(35.0, min_continue - 13.0),
+                min_continue_score=max(35.0, min_continue - 15.0),
                 overheat_change_pct=min(31.0, overheat + 4.0),
                 bull_momentum_min_change_pct=max(2.0, bull_min_change - 4.0),
                 bull_momentum_min_score=max(20.0, bull_min_score - 10.0),
@@ -273,7 +306,7 @@ class DeterministicTier1FastGateService:
         if appetite == "MODERATE":
             return FastGateRiskProfile(
                 risk_appetite=appetite,
-                min_continue_score=max(42.0, min_continue - 7.0),
+                min_continue_score=max(45.0, min_continue - 10.0),
                 overheat_change_pct=min(30.0, overheat + 2.0),
                 bull_momentum_min_change_pct=max(3.0, bull_min_change - 2.0),
                 bull_momentum_min_score=max(25.0, bull_min_score - 5.0),

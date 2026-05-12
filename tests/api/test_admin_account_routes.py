@@ -231,6 +231,39 @@ async def test_admin_holdings_route_uses_broker_adapter(client, monkeypatch):
     assert payload["data"][0]["quantity"] == 7
 
 
+async def test_admin_holdings_route_includes_trade_horizon(client, monkeypatch):
+    from models.trade_result import TradeResult
+    from tests.conftest import TestAsyncSessionLocal
+
+    async with TestAsyncSessionLocal() as session:
+        session.add(TradeResult(
+            stock_symbol="005930",
+            stock_name="삼성전자",
+            side="BUY",
+            strategy_type="STABLE_SHORT",
+            entry_price=70_000,
+            exit_price=0,
+            quantity=7,
+            status="CONFIRMED",
+            entry_at=_dt(9, 5),
+            exit_at=None,
+            notes='{"trade_horizon":"LONG"}',
+        ))
+        await session.commit()
+
+    monkeypatch.setattr(
+        "api.routes.admin.get_broker_adapter",
+        lambda: FakeBrokerAdapter(),
+    )
+
+    response = await client.get("/api/v1/admin/account/holdings")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["data"][0]["trade_horizon"] == "LONG"
+    assert payload["data"][0]["trade_horizon_label"] == "장기"
+
+
 async def test_admin_pending_orders_route_uses_broker_adapter(client, monkeypatch):
     monkeypatch.setattr(
         "api.routes.admin.get_broker_adapter",

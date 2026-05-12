@@ -1435,6 +1435,7 @@ class TradingAgent:
         # 5. 리스크 검사
         snap = portfolio_snapshot or {}
         candidate_change_rate = self._optional_float(stock_info.get("change_rate"))
+        intraday = getattr(chart_result.trend, "intraday", None) or {}
         risk_result = await risk_manager.check(
             signal=signal,
             portfolio_cash=snap.get("cash", 0),
@@ -1445,6 +1446,10 @@ class TradingAgent:
             dynamic_limits=dynamic_limits,
             market_regime=self._market_regime,
             candidate_change_rate=candidate_change_rate,
+            candidate_pattern=self._extract_entry_pattern(chart_result),
+            intraday_direction=intraday.get("direction"),
+            intraday_vwap_position=intraday.get("vwap_position"),
+            intraday_volume_trend=intraday.get("vol_trend"),
         )
 
         if not risk_result.get("approved"):

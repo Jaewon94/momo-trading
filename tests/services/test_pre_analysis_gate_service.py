@@ -71,3 +71,21 @@ def test_pre_analysis_gate_allows_holding_even_on_bearish_chart_signal() -> None
 
     assert decision.approved is True
     assert decision.code == "APPROVED"
+
+
+def test_pre_analysis_gate_blocks_invalid_bollinger_order_for_new_buy() -> None:
+    service = PreAnalysisGateService()
+
+    decision = service.evaluate(
+        symbol="005930",
+        current_price=70_000,
+        daily_df=pd.DataFrame([{"close": 70_000}]),
+        chart_result=ChartAnalysisResult(
+            indicators={"bb_upper": 68_000, "bb_middle": 70_000, "bb_lower": 72_000}
+        ),
+        portfolio_snapshot={"cash": 1_000_000, "holding_symbols": []},
+        dynamic_limits={"min_buy_quantity": 1},
+    )
+
+    assert decision.approved is False
+    assert decision.code == "INVALID_INDICATOR_DATA"

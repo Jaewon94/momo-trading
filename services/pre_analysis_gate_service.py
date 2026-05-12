@@ -64,6 +64,15 @@ class PreAnalysisGateService:
                 reason="현재가와 일봉이 모두 없어 Tier1 분석을 진행하지 않음",
             )
 
+        indicator_quality = self._evaluate_indicator_quality(chart_result)
+        if not is_holding and indicator_quality is not None:
+            return PreAnalysisGateDecision(
+                approved=False,
+                code="INVALID_INDICATOR_DATA",
+                reason=indicator_quality["reason"],
+                detail=indicator_quality,
+            )
+
         signal_summary = chart_result.signal_summary or {}
         direction = str(signal_summary.get("direction", "") or "").upper()
         confidence = float(signal_summary.get("confidence", 0.0) or 0.0)
@@ -87,6 +96,29 @@ class PreAnalysisGateService:
             code="APPROVED",
             reason="Tier1 분석 진행 가능",
         )
+
+    @staticmethod
+    def _evaluate_indicator_quality(chart_result: ChartAnalysisResult) -> dict | None:
+        indicators = chart_result.indicators or {}
+        bb_upper = PreAnalysisGateService._to_float(indicators.get("bb_upper"))
+        bb_middle = PreAnalysisGateService._to_float(indicators.get("bb_middle"))
+        bb_lower = PreAnalysisGateService._to_float(indicators.get("bb_lower"))
+        if all(value is not None for value in [bb_upper, bb_middle, bb_lower]):
+            if not (bb_upper >= bb_middle >= bb_lower):
+                return {
+                    "reason": "볼린저 밴드 상/중/하단 순서가 비정상이라 분석을 보류합니다.",
+                    "bb_upper": bb_upper,
+                    "bb_middle": bb_middle,
+                    "bb_lower": bb_lower,
+                }
+        return None
+
+    @staticmethod
+    def _to_float(value) -> float | None:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
 
 pre_analysis_gate_service = PreAnalysisGateService()

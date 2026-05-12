@@ -142,6 +142,49 @@ class DecisionMaker:
             )
             return result
 
+        if signal.action == OrderSide.BUY:
+            pending_block = await self._find_pending_buy_block(signal.symbol)
+            if pending_block:
+                message = (
+                    "미확정 매수 주문 확인 대기 중: "
+                    f"{pending_block.stock_name or pending_block.stock_symbol}"
+                    f"({pending_block.stock_symbol}) 주문번호 {pending_block.order_id or '-'}"
+                )
+                await activity_logger.log(
+                    ActivityType.DECISION,
+                    ActivityPhase.SKIP,
+                    f"⏸️ [{signal.symbol}] 주문 보류: {message}",
+                    cycle_id=cycle_id,
+                    symbol=signal.symbol,
+                )
+                result = {
+                    "mode": "AUTONOMOUS",
+                    "symbol": signal.symbol,
+                    "action": signal.action.value,
+                    "success": False,
+                    "order_id": "",
+                    "message": message,
+                    "blocked_by_pending_confirm": True,
+                    "data": None,
+                }
+                await event_bus.publish(Event(
+                    type=EventType.ORDER_EXECUTED,
+                    data=result,
+                    source="decision_maker",
+                ))
+                await self._record_decision_event(
+                    signal,
+                    cycle_id=cycle_id,
+                    decision_stage="ORDER_GATE",
+                    risk_gate_result="BLOCKED",
+                    final_action="SKIP",
+                    status="SKIPPED",
+                    reason=message,
+                    result=result,
+                    analysis_context=analysis_context,
+                )
+                return result
+
         submission_decision = decide_order_submission(signal.action.value)
         if signal.action.value == OrderSide.BUY.value and is_post_liquidation_buy_blocked():
             block_msg = "장마감 청산 이후 자동 BUY 차단"
@@ -293,22 +336,20 @@ class DecisionMaker:
                 expected_price=price,
                 analysis_context=analysis_context,
             )
-            # 체결 확인 + TradeResult 업데이트 (백그라운드, 매매 흐름 차단 안 함)
-            task = asyncio.create_task(
-                self.confirm_and_record(
-                    symbol=signal.symbol,
-                    side=signal.action.value,
-                    order_id=order_id,
-                    quantity=qty,
-                    expected_price=price,
-                    analysis_context=analysis_context,
-                    cycle_id=cycle_id,
-                    pending_record_id=pending_record_id,
-                    on_settled=on_settled,
-                )
+            # 자동 주문에서는 확인 작업을 같은 흐름에서 끝낸다.
+            # 백그라운드로 넘기면 브로커/DB 불일치 시 PENDING_CONFIRM이 오래 남아
+            # 다음 주문 판단을 막거나 중복 주문 위험을 키울 수 있다.
+            await self.confirm_and_record(
+                symbol=signal.symbol,
+                side=signal.action.value,
+                order_id=order_id,
+                quantity=qty,
+                expected_price=price,
+                analysis_context=analysis_context,
+                cycle_id=cycle_id,
+                pending_record_id=pending_record_id,
+                on_settled=on_settled,
             )
-            self._pending_tasks.add(task)
-            task.add_done_callback(self._pending_tasks.discard)
         else:
             error_msg = order_result.message or "주문번호 없음"
             # 매매불가 종목 → 런타임 블록리스트 등록 (이후 스캔에서 제외)
@@ -341,6 +382,15 @@ class DecisionMaker:
         )
 
         return result
+
+    async def _find_pending_buy_block(self, symbol: str) -> TradeResult | None:
+        async with AsyncSessionLocal() as session:
+            repo = TradeResultRepository(session)
+            symbol_pending = await repo.get_pending_buy_confirms(symbol)
+            if symbol_pending:
+                return symbol_pending[0]
+            any_pending = await repo.get_pending_buy_confirms()
+            return any_pending[0] if any_pending else None
 
     async def _record_decision_event(
         self,
@@ -647,6 +697,11 @@ class DecisionMaker:
                 target = cls._build_partial_close_clone(open_buy, close_qty=close_qty, symbol=symbol)
                 session.add(target)
                 open_buy.quantity = lot_qty - close_qty
+                if str(exit_reason or "").upper() == "PARTIAL_TAKE_PROFIT":
+                    notes = str(getattr(open_buy, "notes", "") or "")
+                    marker = "PARTIAL_TAKE_PROFIT_DONE"
+                    if marker not in notes:
+                        open_buy.notes = f"{notes} | {marker}" if notes else marker
 
             entry_price = float(getattr(open_buy, "entry_price", 0.0) or 0.0)
             pnl = (filled_price - entry_price) * close_qty
@@ -746,13 +801,27 @@ class DecisionMaker:
 
         pending_record_id가 있으면 기존 PENDING_CONFIRM 레코드를 UPDATE.
         없으면 기존 방식(새 레코드 생성)으로 폴백.
-        3초 대기 → 브로커 어댑터로 체결 확인 → 체결 시 기록.
+        주문 성격에 맞게 대기 → 브로커 어댑터로 체결 확인 → 체결 시 기록.
         on_settled: 체결 확인 완료 시 호출되는 콜백 (order_id, success)
         """
         try:
-            await asyncio.sleep(3)  # KIS 체결 처리 대기
+            await asyncio.sleep(self._order_confirm_wait_sec(side))
 
-            order_status = await self._broker_adapter.get_order_status(order_id)
+            confirm_timeout_sec = float(
+                getattr(settings, "ORDER_CONFIRM_STATUS_TIMEOUT_SEC", 15) or 15
+            )
+            try:
+                order_status = await asyncio.wait_for(
+                    self._broker_adapter.get_order_status(order_id),
+                    timeout=confirm_timeout_sec,
+                )
+            except asyncio.TimeoutError:
+                reason = f"체결 확인 타임아웃 ({confirm_timeout_sec:.0f}초)"
+                logger.warning("[{}] 주문 {} {}", symbol, order_id, reason)
+                await self._mark_pending_failed(pending_record_id, reason)
+                if on_settled:
+                    await on_settled(order_id, False)
+                return
             if not order_status:
                 if side == "SELL":
                     inferred = await self._infer_and_record_sell_fill_from_holdings(
@@ -848,6 +917,23 @@ class DecisionMaker:
             # 체결 실패 콜백 → 예약 환불
             if on_settled:
                 await on_settled(order_id, False)
+
+    @staticmethod
+    def _order_confirm_wait_sec(side: str) -> float:
+        if str(side or "").upper() != "BUY":
+            return float(getattr(settings, "SELL_ORDER_CONFIRM_WAIT_SEC", 3) or 3)
+
+        risk_appetite = str(getattr(settings, "RISK_APPETITE", "MODERATE") or "MODERATE").upper()
+        setting_name_by_risk = {
+            "CONSERVATIVE": "BUY_ORDER_CONFIRM_WAIT_SEC_CONSERVATIVE",
+            "MODERATE": "BUY_ORDER_CONFIRM_WAIT_SEC_MODERATE",
+            "AGGRESSIVE": "BUY_ORDER_CONFIRM_WAIT_SEC_AGGRESSIVE",
+        }
+        setting_name = setting_name_by_risk.get(
+            risk_appetite,
+            "BUY_ORDER_CONFIRM_WAIT_SEC_MODERATE",
+        )
+        return float(getattr(settings, setting_name, 60) or 60)
 
     async def _infer_and_record_sell_fill_from_holdings(
         self,
@@ -955,6 +1041,57 @@ class DecisionMaker:
         except Exception as exc:
             logger.warning("[{}] BUY 체결 후 보유수량 백필 실패: {}", symbol, str(exc))
 
+    async def _adjust_sell_filled_qty_from_holdings(
+        self,
+        *,
+        symbol: str,
+        requested_quantity: int,
+        reported_filled_qty: int,
+        open_buys: list[TradeResult],
+    ) -> int:
+        """Kiwoom status can report a stale partial fill after a market SELL.
+
+        If broker holdings already shrank more than the reported fill, prefer the
+        holding delta so DB lots do not remain open after a real full exit.
+        """
+        normalized_symbol = normalize_krx_symbol(symbol)
+        db_open_qty = sum(
+            int(getattr(open_buy, "quantity", 0) or 0)
+            for open_buy in open_buys
+            if getattr(open_buy, "exit_at", None) is None
+        )
+        if db_open_qty <= 0:
+            return int(reported_filled_qty or 0)
+
+        try:
+            holdings = await self._broker_adapter.get_holdings()
+            current_holding_qty = 0
+            for holding in holdings or []:
+                if normalize_krx_symbol(getattr(holding, "symbol", "")) == normalized_symbol:
+                    current_holding_qty = int(getattr(holding, "quantity", 0) or 0)
+                    break
+
+            inferred_filled_qty = max(db_open_qty - current_holding_qty, 0)
+            requested_qty = int(requested_quantity or 0)
+            if requested_qty > 0:
+                inferred_filled_qty = min(inferred_filled_qty, requested_qty)
+
+            reported_qty = int(reported_filled_qty or 0)
+            if inferred_filled_qty > reported_qty:
+                logger.warning(
+                    "[{}] SELL 체결수량 보정: 브로커 상태 {}주 < DB {}주, reported={}주 → applied={}주",
+                    normalized_symbol,
+                    current_holding_qty,
+                    db_open_qty,
+                    reported_qty,
+                    inferred_filled_qty,
+                )
+                return inferred_filled_qty
+        except Exception as exc:
+            logger.warning("[{}] SELL 체결수량 보유수량 보정 실패: {}", normalized_symbol, str(exc))
+
+        return int(reported_filled_qty or 0)
+
     async def _cancel_unfilled_order(self, order_id: str, symbol: str) -> None:
         """미체결 주문 취소 시도"""
         if not order_id:
@@ -981,6 +1118,8 @@ class DecisionMaker:
     ) -> None:
         """PENDING_CONFIRM → CONFIRMED 업데이트"""
         now = now_kst()
+        fallback_record_needed = False
+        activity_log: dict | None = None
         try:
             async with AsyncSessionLocal() as session:
                 async with session.begin():
@@ -988,90 +1127,101 @@ class DecisionMaker:
                     tr = await repo.filter_by_one(id=pending_record_id)
                     if not tr:
                         logger.warning("[{}] pending 레코드 {} 미발견 → 새 레코드 생성", symbol, pending_record_id)
-                        await self._record_trade_result(
-                            symbol=symbol, side=side, order_id="",
-                            filled_qty=filled_qty, filled_price=filled_price,
-                            analysis_context=analysis_context,
-                            exit_reason=exit_reason, cycle_id=cycle_id,
-                        )
-                        return
-
-                    # 체결 정보 업데이트
-                    tr.status = OrderConfirmStatus.CONFIRMED.value
-                    tr.quantity = filled_qty
-                    if side == "BUY":
-                        tr.entry_price = filled_price
-                        tr.entry_at = tr.entry_at or now
-                        tr.entry_pattern = tr.entry_pattern or (analysis_context or {}).get("entry_pattern")
-                        tr.notes = self._build_trade_notes(analysis_context, pending=False)
-                    elif side == "SELL":
-                        tr.exit_price = filled_price
-                        tr.exit_at = now
-                        tr.exit_reason = exit_reason or "SIGNAL"
-                        open_buys = await repo.get_all_open_buys(symbol)
-                        total_open_qty = sum(
-                            int(getattr(open_buy, "quantity", 0) or 0)
-                            for open_buy in open_buys
-                            if getattr(open_buy, "exit_at", None) is None
-                        )
-                        if filled_qty > 0 and total_open_qty > filled_qty:
-                            try:
-                                holdings = await self.broker_adapter.get_holdings()
-                                current_holding_qty = 0
-                                for holding in holdings:
-                                    if normalize_krx_symbol(getattr(holding, "symbol", "")) == symbol:
-                                        current_holding_qty = int(getattr(holding, "quantity", 0) or 0)
-                                        break
-                                if total_open_qty > current_holding_qty + filled_qty:
-                                    neutral_fill = self._neutral_close_excess_open_buys(
-                                        session,
-                                        open_buys,
-                                        symbol=symbol,
-                                        target_open_qty=current_holding_qty + filled_qty,
-                                        closed_at=now,
-                                        note_reason="before sell confirmation",
-                                    )
-                                    if neutral_fill["closed_quantity"] > 0:
-                                        logger.warning(
-                                            "[{}] 매도 체결 전 DB 초과수량 중립 정리: {}주 ({}건)",
-                                            symbol,
-                                            neutral_fill["closed_quantity"],
-                                            neutral_fill["closed_count"],
-                                        )
-                            except Exception as reconcile_exc:
-                                logger.warning("[{}] 매도 전 초과수량 정리 확인 실패: {}", symbol, str(reconcile_exc))
-                        sell_fill = self._apply_sell_fill_to_open_buys(
-                            session,
-                            open_buys,
-                            symbol=symbol,
-                            filled_qty=filled_qty,
-                            filled_price=filled_price,
-                            exit_reason=exit_reason,
-                            closed_at=now,
-                        )
-                        applied_qty = int(sell_fill["applied_quantity"] or 0) or int(filled_qty or 0)
-                        tr.quantity = applied_qty
-                        tr.notes = self._build_sell_fill_notes(
-                            partial_exit=bool(sell_fill["partial_exit"]),
-                            filled_quantity=applied_qty,
-                            requested_quantity=filled_qty,
-                            remaining_open_quantity=int(sell_fill["remaining_open_quantity"] or 0),
-                            closed_lot_count=int(sell_fill["closed_lot_count"] or 0),
-                        )
-                        if open_buys:
-                            logger.debug(
-                                "[{}] 미청산 BUY {}건 {} 청산 완료",
-                                symbol,
-                                int(sell_fill["closed_lot_count"] or 0),
-                                "부분" if sell_fill["partial_exit"] else "전량",
+                        fallback_record_needed = True
+                    else:
+                        # 체결 정보 업데이트
+                        tr.status = OrderConfirmStatus.CONFIRMED.value
+                        tr.quantity = filled_qty
+                        if side == "BUY":
+                            tr.entry_price = filled_price
+                            tr.entry_at = tr.entry_at or now
+                            tr.entry_pattern = tr.entry_pattern or (analysis_context or {}).get("entry_pattern")
+                            tr.notes = self._build_trade_notes(analysis_context, pending=False)
+                        elif side == "SELL":
+                            tr.exit_price = filled_price
+                            tr.exit_at = now
+                            tr.exit_reason = exit_reason or "SIGNAL"
+                            open_buys = await repo.get_all_open_buys(symbol)
+                            filled_qty = await self._adjust_sell_filled_qty_from_holdings(
+                                symbol=symbol,
+                                requested_quantity=int(getattr(tr, "quantity", 0) or filled_qty or 0),
+                                reported_filled_qty=filled_qty,
+                                open_buys=open_buys,
                             )
-                    logger.debug("[{}] PENDING → CONFIRMED: {}주 @{:,.0f}원", symbol, tr.quantity, filled_price)
+                            total_open_qty = sum(
+                                int(getattr(open_buy, "quantity", 0) or 0)
+                                for open_buy in open_buys
+                                if getattr(open_buy, "exit_at", None) is None
+                            )
+                            if filled_qty > 0 and total_open_qty > filled_qty:
+                                try:
+                                    holdings = await self._broker_adapter.get_holdings()
+                                    current_holding_qty = 0
+                                    for holding in holdings:
+                                        if normalize_krx_symbol(getattr(holding, "symbol", "")) == symbol:
+                                            current_holding_qty = int(getattr(holding, "quantity", 0) or 0)
+                                            break
+                                    if total_open_qty > current_holding_qty + filled_qty:
+                                        neutral_fill = self._neutral_close_excess_open_buys(
+                                            session,
+                                            open_buys,
+                                            symbol=symbol,
+                                            target_open_qty=current_holding_qty + filled_qty,
+                                            closed_at=now,
+                                            note_reason="before sell confirmation",
+                                        )
+                                        if neutral_fill["closed_quantity"] > 0:
+                                            logger.warning(
+                                                "[{}] 매도 체결 전 DB 초과수량 중립 정리: {}주 ({}건)",
+                                                symbol,
+                                                neutral_fill["closed_quantity"],
+                                                neutral_fill["closed_count"],
+                                            )
+                                except Exception as reconcile_exc:
+                                    logger.warning("[{}] 매도 전 초과수량 정리 확인 실패: {}", symbol, str(reconcile_exc))
+                            sell_fill = self._apply_sell_fill_to_open_buys(
+                                session,
+                                open_buys,
+                                symbol=symbol,
+                                filled_qty=filled_qty,
+                                filled_price=filled_price,
+                                exit_reason=exit_reason,
+                                closed_at=now,
+                            )
+                            applied_qty = int(sell_fill["applied_quantity"] or 0) or int(filled_qty or 0)
+                            tr.quantity = applied_qty
+                            tr.notes = self._build_sell_fill_notes(
+                                partial_exit=bool(sell_fill["partial_exit"]),
+                                filled_quantity=applied_qty,
+                                requested_quantity=filled_qty,
+                                remaining_open_quantity=int(sell_fill["remaining_open_quantity"] or 0),
+                                closed_lot_count=int(sell_fill["closed_lot_count"] or 0),
+                            )
+                            if open_buys:
+                                logger.debug(
+                                    "[{}] 미청산 BUY {}건 {} 청산 완료",
+                                    symbol,
+                                    int(sell_fill["closed_lot_count"] or 0),
+                                    "부분" if sell_fill["partial_exit"] else "전량",
+                                )
+                        logger.debug("[{}] PENDING → CONFIRMED: {}주 @{:,.0f}원", symbol, tr.quantity, filled_price)
 
-                    await activity_logger.log(
-                        ActivityType.TRADE_RESULT, ActivityPhase.COMPLETE,
-                        f"\U0001f4dd [{symbol}] {side} 체결 확인: {filled_qty}주 @{filled_price:,.0f}원",
-                        cycle_id=cycle_id, symbol=symbol,
-                    )
+                        activity_log = {
+                            "activity_type": ActivityType.TRADE_RESULT,
+                            "phase": ActivityPhase.COMPLETE,
+                            "summary": f"\U0001f4dd [{symbol}] {side} 체결 확인: {filled_qty}주 @{filled_price:,.0f}원",
+                            "cycle_id": cycle_id,
+                            "symbol": symbol,
+                        }
+            if fallback_record_needed:
+                await self._record_trade_result(
+                    symbol=symbol, side=side, order_id="",
+                    filled_qty=filled_qty, filled_price=filled_price,
+                    analysis_context=analysis_context,
+                    exit_reason=exit_reason, cycle_id=cycle_id,
+                )
+            if activity_log:
+                await activity_logger.log(**activity_log)
         except Exception as e:
             logger.error("[{}] PENDING→CONFIRMED 업데이트 실패: {}", symbol, str(e))
 
@@ -1105,9 +1255,11 @@ class DecisionMaker:
         """체결 확인 후 TradeResult 생성/업데이트"""
         ctx = analysis_context or {}
         now = now_kst()
+        activity_logs: list[dict] = []
 
         try:
             async def _write_trade_result() -> None:
+                attempt_activity_logs: list[dict] = []
                 async with AsyncSessionLocal() as session:
                     async with session.begin():
                         repo = TradeResultRepository(session)
@@ -1151,13 +1303,16 @@ class DecisionMaker:
                                 "[TradeResult] 매수 기록 생성: {} {}주 @{:,.0f}원",
                                 symbol, filled_qty, filled_price,
                             )
-                            await activity_logger.log(
-                                ActivityType.TRADE_RESULT, ActivityPhase.COMPLETE,
-                                f"\U0001f4dd [{symbol}] 매수 체결 기록: "
-                                f"{filled_qty}주 @{filled_price:,.0f}원",
-                                cycle_id=cycle_id,
-                                symbol=symbol,
-                            )
+                            attempt_activity_logs.append({
+                                "activity_type": ActivityType.TRADE_RESULT,
+                                "phase": ActivityPhase.COMPLETE,
+                                "summary": (
+                                    f"\U0001f4dd [{symbol}] 매수 체결 기록: "
+                                    f"{filled_qty}주 @{filled_price:,.0f}원"
+                                ),
+                                "cycle_id": cycle_id,
+                                "symbol": symbol,
+                            })
 
                         elif side == "SELL":
                             # 매도 체결 → 미청산 BUY 전체 일괄 청산
@@ -1184,11 +1339,17 @@ class DecisionMaker:
                                 session.add(tr)
                                 return
 
+                            adjusted_filled_qty = await self._adjust_sell_filled_qty_from_holdings(
+                                symbol=symbol,
+                                requested_quantity=filled_qty,
+                                reported_filled_qty=filled_qty,
+                                open_buys=open_buys,
+                            )
                             sell_fill = self._apply_sell_fill_to_open_buys(
                                 session,
                                 open_buys,
                                 symbol=symbol,
-                                filled_qty=filled_qty,
+                                filled_qty=adjusted_filled_qty,
                                 filled_price=filled_price,
                                 exit_reason=exit_reason,
                                 closed_at=now,
@@ -1205,16 +1366,19 @@ class DecisionMaker:
                                 symbol, closed_lot_count, "부분" if sell_fill["partial_exit"] else "전량", filled_price,
                                 pnl_sign, total_pnl, pnl_sign, avg_return,
                             )
-                            await activity_logger.log(
-                                ActivityType.TRADE_RESULT, ActivityPhase.COMPLETE,
-                                f"{'✅' if total_pnl > 0 else '❌'} [{symbol}] 매도 청산: "
-                                f"{closed_lot_count}건 BUY {'부분' if sell_fill['partial_exit'] else '전량'} — "
-                                f"{pnl_sign}{total_pnl:,.0f}원 ({pnl_sign}{avg_return:.1f}%) "
-                                f"| {exit_reason or 'SIGNAL'}"
-                                + (f" | 체결 {applied_qty}주 / 잔량 {int(sell_fill['remaining_open_quantity'] or 0)}주" if sell_fill["partial_exit"] else ""),
-                                cycle_id=cycle_id,
-                                symbol=symbol,
-                                detail={
+                            attempt_activity_logs.append({
+                                "activity_type": ActivityType.TRADE_RESULT,
+                                "phase": ActivityPhase.COMPLETE,
+                                "summary": (
+                                    f"{'✅' if total_pnl > 0 else '❌'} [{symbol}] 매도 청산: "
+                                    f"{closed_lot_count}건 BUY {'부분' if sell_fill['partial_exit'] else '전량'} — "
+                                    f"{pnl_sign}{total_pnl:,.0f}원 ({pnl_sign}{avg_return:.1f}%) "
+                                    f"| {exit_reason or 'SIGNAL'}"
+                                    + (f" | 체결 {applied_qty}주 / 잔량 {int(sell_fill['remaining_open_quantity'] or 0)}주" if sell_fill["partial_exit"] else "")
+                                ),
+                                "cycle_id": cycle_id,
+                                "symbol": symbol,
+                                "detail": {
                                     "closed_count": closed_lot_count,
                                     "exit_price": filled_price,
                                     "total_pnl": total_pnl,
@@ -1223,9 +1387,12 @@ class DecisionMaker:
                                     "remaining_open_quantity": int(sell_fill["remaining_open_quantity"] or 0),
                                     "partial_exit": bool(sell_fill["partial_exit"]),
                                 },
-                            )
+                            })
+                activity_logs[:] = attempt_activity_logs
 
             await run_sqlite_write_with_retry(_write_trade_result)
+            for log_payload in activity_logs:
+                await activity_logger.log(**log_payload)
 
         except Exception as e:
             logger.error("[TradeResult] 기록 실패 ({}): {}", symbol, str(e))

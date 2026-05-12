@@ -10,6 +10,24 @@ export function buildTradeSummaryCounts(trades = {}) {
   };
 }
 
+export function isNeutralReconciliationClose(trade = {}) {
+  const exitReason = String(trade?.exit_reason || "");
+  const notes = String(trade?.notes || "");
+  if (notes.includes("CLOSE_RECONCILIATION_APPLY")) return false;
+  return exitReason === "BROKER_HOLDING_MISSING"
+    || notes.includes("HOLDING_RECONCILIATION_CLOSE");
+}
+
+function visibleCompletedTrades(trades = {}) {
+  const completed = Array.isArray(trades?.completed) ? trades.completed : [];
+  return completed.filter((trade) => !isNeutralReconciliationClose(trade));
+}
+
+function visibleOpenedTrades(trades = {}) {
+  const opened = Array.isArray(trades?.opened) ? trades.opened : [];
+  return opened.filter((trade) => !isNeutralReconciliationClose(trade));
+}
+
 export function buildPortfolioQuickStatsModel(
   balance = {},
   holdings = [],
@@ -26,9 +44,9 @@ export function buildPortfolioQuickStatsModel(
   const cashRatio = totalAsset > 0 ? (cash / totalAsset) * 100 : 0;
   const holdingCount = Array.isArray(holdings) ? holdings.length : 0;
   const pendingCount = Array.isArray(pendingOrders) ? pendingOrders.length : 0;
-  const opened = Array.isArray(trades?.opened) ? trades.opened : [];
+  const opened = visibleOpenedTrades(trades);
   const sellExecutions = Array.isArray(trades?.sell_executions) ? trades.sell_executions : [];
-  const completed = Array.isArray(trades?.completed) ? trades.completed : [];
+  const completed = visibleCompletedTrades(trades);
   const currentExposureKrw = sessionAvailable
     ? Number(sessionMetrics?.current_exposure_krw || stockValue)
     : stockValue;
@@ -163,9 +181,9 @@ export function buildAccountOverviewModel(stats = {}) {
 }
 
 export function buildTradePanelState(data = {}) {
-  const opened = data?.opened || [];
+  const opened = visibleOpenedTrades(data);
   const sellExecutions = data?.sell_executions || [];
-  const completed = data?.completed || [];
+  const completed = visibleCompletedTrades(data);
   const pendingConfirms = data?.pending_confirms || [];
   const openPositions = data?.open_positions || [];
   const sections = [];

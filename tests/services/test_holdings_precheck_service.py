@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from services.holdings_precheck_service import HoldingsPrecheckService
 
 
-def test_holdings_precheck_service_skips_llm_for_clear_sell_reason() -> None:
+def test_holdings_precheck_service_keeps_llm_for_loss_sell_reason() -> None:
     service = HoldingsPrecheckService()
     holding = SimpleNamespace(symbol="005930", avg_buy_price=100_000)
     trade_result = SimpleNamespace(
@@ -22,9 +22,26 @@ def test_holdings_precheck_service_skips_llm_for_clear_sell_reason() -> None:
         settings=settings,
     )
 
-    assert decision.should_skip_llm is True
+    assert decision.should_skip_llm is False
     assert decision.action == "SELL"
     assert "손실 과대" in decision.reason
+
+
+def test_holdings_precheck_service_skips_llm_for_missing_trade_result() -> None:
+    service = HoldingsPrecheckService()
+    holding = SimpleNamespace(symbol="005930", avg_buy_price=100_000)
+    settings = SimpleNamespace(MAX_HOLD_DAYS_STABLE=5, MAX_HOLD_DAYS_AGGRESSIVE=3)
+
+    decision = service.evaluate(
+        holding=holding,
+        trade_result=None,
+        current_price=95_000,
+        settings=settings,
+    )
+
+    assert decision.should_skip_llm is True
+    assert decision.action == "SELL"
+    assert "TradeResult 없음" in decision.reason
 
 
 def test_holdings_precheck_service_keeps_llm_for_non_clear_hold_reason() -> None:

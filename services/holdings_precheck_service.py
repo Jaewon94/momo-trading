@@ -38,15 +38,11 @@ class HoldingsPrecheckService:
                 source="HOLDING_POLICY",
             )
 
-        sell_prefixes = (
+        emergency_sell_prefixes = (
             "TradeResult 없음",
             "매입가 정보 없음",
-            "손실 과대",
-            "보유 ",
-            "AI 신뢰도",
-            "목표가 도달",
         )
-        if action == "SELL" and reason.startswith(sell_prefixes):
+        if action == "SELL" and reason.startswith(emergency_sell_prefixes):
             return HoldingsPrecheckDecision(
                 should_skip_llm=True,
                 action="SELL",

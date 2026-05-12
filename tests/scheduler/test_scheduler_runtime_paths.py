@@ -282,7 +282,10 @@ async def test_scheduler_on_startup_schedules_market_open_scan_during_trading_ho
     await scheduler._on_startup()
 
     assert sleep_calls == [3]
-    assert len(created_tasks) == 1
+    assert any(
+        getattr(task, "cr_code", None) and task.cr_code.co_name == "fake_market_open_scan"
+        for task in created_tasks
+    )
 
 
 @pytest.mark.asyncio
@@ -341,7 +344,10 @@ async def test_scheduler_on_startup_schedules_post_market_check_outside_trading_
     await scheduler._on_startup()
 
     assert sleep_calls == [3]
-    assert len(created_tasks) == 1
+    assert any(
+        getattr(task, "cr_code", None) and task.cr_code.co_name == "fake_post_market_if_needed"
+        for task in created_tasks
+    )
 
 
 def test_scheduler_setup_jobs_registers_expected_job_ids() -> None:
@@ -430,6 +436,76 @@ def test_soft_stop_allows_immediate_sell_on_hard_breach_or_near_close(monkeypatc
     assert reason_hard == "hard_breach"
     assert defer_late is False
     assert reason_late == "near_close"
+
+
+def test_partial_take_profit_uses_horizon_profile(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    trade_result = SimpleNamespace(
+        strategy_type="AGGRESSIVE_SHORT",
+        notes='{"trade_horizon":"SHORT"}',
+    )
+
+    monkeypatch.setattr("scheduler.scheduler.settings.POSITION_EXIT_MANAGEMENT_ENABLED", True)
+    monkeypatch.setattr("scheduler.scheduler.settings.PARTIAL_TAKE_PROFIT_ENABLED", True)
+    monkeypatch.setattr("scheduler.scheduler.settings.PARTIAL_TAKE_PROFIT_PCT_SHORT", 1.5)
+    monkeypatch.setattr("scheduler.scheduler.settings.PARTIAL_TAKE_PROFIT_SIZE_PCT_SHORT", 40.0)
+
+    should_sell, quantity, reason = scheduler._should_partial_take_profit(
+        tr=trade_result,
+        pnl_rate=1.7,
+        holding_quantity=10,
+    )
+
+    assert should_sell is True
+    assert quantity == 4
+    assert "SHORT 부분익절" in reason
+
+
+def test_partial_take_profit_skips_when_already_done() -> None:
+    scheduler = TradingScheduler()
+    trade_result = SimpleNamespace(
+        strategy_type="AGGRESSIVE_SHORT",
+        notes='{"trade_horizon":"SHORT"} | PARTIAL_TAKE_PROFIT_DONE',
+    )
+
+    should_sell, quantity, reason = scheduler._should_partial_take_profit(
+        tr=trade_result,
+        pnl_rate=5.0,
+        holding_quantity=10,
+    )
+
+    assert should_sell is False
+    assert quantity == 0
+    assert reason == ""
+
+
+def test_breakeven_and_scale_in_are_horizon_aware(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    mid_trade = SimpleNamespace(strategy_type="STABLE_SHORT", notes='{"trade_horizon":"MID"}')
+    short_trade = SimpleNamespace(strategy_type="AGGRESSIVE_SHORT", notes='{"trade_horizon":"SHORT"}')
+
+    monkeypatch.setattr("scheduler.scheduler.settings.BREAKEVEN_STOP_ENABLED", True)
+    monkeypatch.setattr("scheduler.scheduler.settings.BREAKEVEN_TRIGGER_PCT_MID", 1.5)
+    monkeypatch.setattr("scheduler.scheduler.settings.BREAKEVEN_BUFFER_BPS", 10)
+
+    assert scheduler._breakeven_stop_price(
+        avg_buy_price=10_000,
+        pnl_rate=1.6,
+        tr=mid_trade,
+    ) == pytest.approx(10_010)
+
+    assert scheduler._scale_in_candidate_reason(
+        tr=mid_trade,
+        pnl_rate=-1.5,
+        current_price=9_850,
+        active_stop_loss=9_600,
+    )
+    assert scheduler._scale_in_candidate_reason(
+        tr=short_trade,
+        pnl_rate=-1.5,
+        current_price=9_850,
+        active_stop_loss=9_600,
+    ) is None
 
 
 @pytest.mark.asyncio
@@ -1189,7 +1265,10 @@ async def test_holdings_check_executes_sell_and_triggers_rescan(monkeypatch) -> 
     assert confirmed_orders[0]["pending_record_id"] == "pending-sell-1"
     assert removed_levels == ["005930"]
     assert released == ["005930"]
-    assert len(created_tasks) == 1
+    assert any(
+        getattr(task, "cr_code", None) and task.cr_code.co_name == "_trigger_rescan_after_sell"
+        for task in created_tasks
+    )
     assert any("보유점검 매도" in message for message in logs)
     assert any("매도 성공" in message for message in logs)
 
@@ -1450,7 +1529,7 @@ async def test_force_liquidation_logs_when_no_holdings_exist(monkeypatch) -> Non
     await scheduler._force_liquidation()
 
     assert len(logs) == 1
-    assert "청산 불필요" in logs[0][0][2]
+    assert "보유 심사 불필요" in logs[0][0][2]
 
 
 @pytest.mark.asyncio
@@ -1562,7 +1641,7 @@ async def test_force_liquidation_does_not_rescan_after_successful_swing_sell(mon
     await scheduler._force_liquidation()
 
     assert confirmed_orders[0]["order_id"] == "SELL-1"
-    assert confirmed_orders[0]["exit_reason"] == "FORCE_LIQUIDATION"
+    assert confirmed_orders[0]["exit_reason"] == "CLOSE_REVIEW"
     assert confirmed_orders[0]["pending_record_id"] == "pending-sell-1"
     assert removed_levels == ["005930"]
     assert released == ["005930"]
@@ -1902,7 +1981,7 @@ async def test_force_liquidation_retries_failed_orders_once(monkeypatch) -> None
         "order_id": "SELL-RETRY",
         "quantity": 2,
         "expected_price": 69_500,
-        "exit_reason": "FORCE_LIQUIDATION",
+        "exit_reason": "CLOSE_REVIEW",
         "pending_record_id": "pending-sell-retry",
     }]
     assert any("청산 1건 실패" in message for message in logs)
@@ -1947,7 +2026,7 @@ async def test_force_liquidation_continues_when_order_task_raises(monkeypatch) -
 
     await scheduler._force_liquidation()
 
-    assert any("스마트 청산 주문 접수: 0건 매도" in message for message in logs)
+    assert any("AI 보유 심사 주문 접수: 0건 매도" in message for message in logs)
 
 
 @pytest.mark.asyncio
@@ -2143,7 +2222,7 @@ async def test_smart_liquidation_respects_explicit_llm_sell_decision(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_smart_liquidation_skips_llm_for_clear_policy_sell(monkeypatch) -> None:
+async def test_smart_liquidation_uses_llm_for_loss_policy_sell_candidate(monkeypatch) -> None:
     scheduler = TradingScheduler()
     logs: list[str] = []
     decision_events: list[dict] = []
@@ -2164,8 +2243,11 @@ async def test_smart_liquidation_skips_llm_for_clear_policy_sell(monkeypatch) ->
             [],
         )
 
-    async def fail_generate_tier1(prompt, system_prompt=None):
-        raise AssertionError("LLM should not be called for clear policy sell")
+    async def fake_generate_tier1(prompt, system_prompt=None):
+        return (
+            '{"decisions":[{"symbol":"005930","action":"HOLD","reason":"추세 유지","confidence":0.71}]}',
+            "CODEX",
+        )
 
     async def fake_log(*args, **kwargs) -> None:
         logs.append(args[2])
@@ -2176,7 +2258,7 @@ async def test_smart_liquidation_skips_llm_for_clear_policy_sell(monkeypatch) ->
 
     monkeypatch.setattr(scheduler, "_collect_holdings_data", fake_collect_holdings_data)
     monkeypatch.setattr("analysis.llm.prompts.overnight_hold.build_overnight_prompt", lambda data, regime: "prompt")
-    monkeypatch.setattr("analysis.llm.llm_factory.llm_factory.generate_tier1", fail_generate_tier1)
+    monkeypatch.setattr("analysis.llm.llm_factory.llm_factory.generate_tier1", fake_generate_tier1)
     monkeypatch.setattr(
         "services.holdings_precheck_service.evaluate_overnight_hold",
         lambda *args, **kwargs: SimpleNamespace(action="SELL", reason="손실 과대 (-5.0% < -3%) — 손절 수준 도달"),
@@ -2187,15 +2269,10 @@ async def test_smart_liquidation_skips_llm_for_clear_policy_sell(monkeypatch) ->
 
     to_sell, to_hold = await scheduler._smart_liquidation([holding])
 
-    assert to_sell == [holding]
-    assert to_hold == []
-    assert "정책 사전판단" in logs[0]
-    assert decision_events[0]["decision_stage"] == "SMART_LIQUIDATION"
-    assert decision_events[0]["source"] == "holdings_precheck"
-    assert decision_events[0]["final_action"] == "SELL"
-    assert decision_events[0]["reference_price"] == 95_000.0
-    assert decision_events[0]["risk_gate_result"] == "PRECHECK_SELL"
-    assert decision_events[0]["metadata"]["pnl_rate"] == -5.0
+    assert to_sell == []
+    assert to_hold == [holding]
+    assert "AI 신뢰도" in logs[0]
+    assert decision_events == []
 
 
 @pytest.mark.asyncio

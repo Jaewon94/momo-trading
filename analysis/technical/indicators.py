@@ -51,9 +51,13 @@ class TechnicalIndicators:
             # 볼린저밴드 (20, 2)
             bbands = ta.bbands(df["close"], length=20, std=2)
             if bbands is not None and not bbands.empty:
-                result["bb_upper"] = round(bbands.iloc[-1, 0], 2) if not pd.isna(bbands.iloc[-1, 0]) else None
-                result["bb_middle"] = round(bbands.iloc[-1, 1], 2) if not pd.isna(bbands.iloc[-1, 1]) else None
-                result["bb_lower"] = round(bbands.iloc[-1, 2], 2) if not pd.isna(bbands.iloc[-1, 2]) else None
+                bb_lower = TechnicalIndicators._last_by_prefix(bbands, "BBL_")
+                bb_middle = TechnicalIndicators._last_by_prefix(bbands, "BBM_")
+                bb_upper = TechnicalIndicators._last_by_prefix(bbands, "BBU_")
+                if bb_upper is not None and bb_middle is not None and bb_lower is not None:
+                    result["bb_upper"] = round(bb_upper, 2)
+                    result["bb_middle"] = round(bb_middle, 2)
+                    result["bb_lower"] = round(bb_lower, 2)
 
             # 스토캐스틱 (14, 3, 3)
             stoch = ta.stoch(df["high"], df["low"], df["close"])
@@ -70,7 +74,13 @@ class TechnicalIndicators:
 
             # 볼린저밴드 Squeeze 감지 (밴드폭 축소 → 변동성 폭발 전조)
             if bbands is not None and not bbands.empty and len(bbands) >= 20:
-                bb_width = bbands.iloc[:, 0] - bbands.iloc[:, 2]  # upper - lower
+                bb_lower_series = TechnicalIndicators._series_by_prefix(bbands, "BBL_")
+                bb_upper_series = TechnicalIndicators._series_by_prefix(bbands, "BBU_")
+                bb_width = (
+                    bb_upper_series - bb_lower_series
+                    if bb_upper_series is not None and bb_lower_series is not None
+                    else pd.Series(dtype=float)
+                )
                 if not bb_width.empty:
                     current_width = bb_width.iloc[-1]
                     avg_width = bb_width.iloc[-20:].mean()
@@ -174,6 +184,23 @@ class TechnicalIndicators:
             logger.error("기술적 지표 계산 오류: {}", str(e))
 
         return result
+
+    @staticmethod
+    def _series_by_prefix(df: pd.DataFrame, prefix: str) -> pd.Series | None:
+        for column in df.columns:
+            if str(column).startswith(prefix):
+                return pd.to_numeric(df[column], errors="coerce")
+        return None
+
+    @staticmethod
+    def _last_by_prefix(df: pd.DataFrame, prefix: str) -> float | None:
+        series = TechnicalIndicators._series_by_prefix(df, prefix)
+        if series is None or series.empty:
+            return None
+        value = series.iloc[-1]
+        if pd.isna(value):
+            return None
+        return float(value)
 
     @staticmethod
     def format_for_prompt(indicators: dict) -> str:

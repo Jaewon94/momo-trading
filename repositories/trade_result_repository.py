@@ -1,7 +1,7 @@
 """매매 결과 리포지토리"""
 from datetime import date, datetime, time
 
-from sqlalchemy import select, and_, func
+from sqlalchemy import select, and_, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.trade_result import TradeResult
@@ -11,6 +11,9 @@ from util.time_util import KST
 
 
 class TradeResultRepository(AsyncBaseRepository[TradeResult]):
+    NEUTRAL_RECONCILIATION_EXIT_REASONS = frozenset({
+        "BROKER_HOLDING_MISSING",
+    })
 
     def __init__(self, session: AsyncSession):
         super().__init__(TradeResult, session)
@@ -83,6 +86,7 @@ class TradeResultRepository(AsyncBaseRepository[TradeResult]):
 
         SELL 레코드가 아닌, 청산된 BUY 레코드를 반환.
         이 레코드에 pnl, return_pct, is_win이 정확히 기록되어 있음.
+        브로커 보유 대사 과정에서 만든 중립 복구 청산은 실제 실현손익이 아니므로 제외.
         """
         start = datetime.combine(target_date, time.min, tzinfo=KST)
         end = datetime.combine(target_date, time.max, tzinfo=KST)
@@ -94,11 +98,28 @@ class TradeResultRepository(AsyncBaseRepository[TradeResult]):
                 TradeResult.exit_at >= start,
                 TradeResult.exit_at <= end,
                 TradeResult.status == "CONFIRMED",
+                self._is_not_neutral_reconciliation_close(),
             ))
             .order_by(TradeResult.exit_at.asc())
         )
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
+
+    @classmethod
+    def _is_not_neutral_reconciliation_close(cls):
+        return or_(
+            TradeResult.notes.like("%CLOSE_RECONCILIATION_APPLY%"),
+            and_(
+                or_(
+                    TradeResult.exit_reason.is_(None),
+                    TradeResult.exit_reason.notin_(cls.NEUTRAL_RECONCILIATION_EXIT_REASONS),
+                ),
+                or_(
+                    TradeResult.notes.is_(None),
+                    ~TradeResult.notes.like("%HOLDING_RECONCILIATION_CLOSE%"),
+                ),
+            ),
+        )
 
     async def get_sell_count_by_date(self, target_date: date) -> int:
         """특정 날짜의 매도 주문 건수 (SELL 레코드 수, CONFIRMED)"""
@@ -137,7 +158,11 @@ class TradeResultRepository(AsyncBaseRepository[TradeResult]):
         return list(result.scalars().all())
 
     async def get_opened_by_date(self, target_date: date) -> list[TradeResult]:
-        """특정 날짜에 진입한 매수 기록 (entry_at 기준, CONFIRMED만)"""
+        """특정 날짜에 진입한 매수 기록 (entry_at 기준, CONFIRMED만)
+
+        브로커 보유 대사 과정에서 만든 중립 복구 청산은 운영 감사용 기록이라
+        오늘 진입 목록에서도 제외한다.
+        """
         start = datetime.combine(target_date, time.min, tzinfo=KST)
         end = datetime.combine(target_date, time.max, tzinfo=KST)
         stmt = (
@@ -147,6 +172,7 @@ class TradeResultRepository(AsyncBaseRepository[TradeResult]):
                 TradeResult.entry_at >= start,
                 TradeResult.entry_at <= end,
                 TradeResult.status == "CONFIRMED",
+                self._is_not_neutral_reconciliation_close(),
             ))
             .order_by(TradeResult.entry_at.asc())
         )
@@ -201,6 +227,26 @@ class TradeResultRepository(AsyncBaseRepository[TradeResult]):
         stmt = (
             select(TradeResult)
             .where(TradeResult.status == "PENDING_CONFIRM")
+            .order_by(TradeResult.created_at.asc())
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_pending_buy_confirms(self, symbol: str | None = None) -> list[TradeResult]:
+        """미확정 BUY 주문 조회.
+
+        브로커 체결/미체결 조회가 지연되거나 누락될 때 같은 방향 주문이
+        중복으로 쌓이지 않도록 주문 게이트에서 사용한다.
+        """
+        conditions = [
+            TradeResult.side == "BUY",
+            TradeResult.status == "PENDING_CONFIRM",
+        ]
+        if symbol:
+            conditions.append(TradeResult.stock_symbol == normalize_krx_symbol(symbol))
+        stmt = (
+            select(TradeResult)
+            .where(and_(*conditions))
             .order_by(TradeResult.created_at.asc())
         )
         result = await self.db.execute(stmt)

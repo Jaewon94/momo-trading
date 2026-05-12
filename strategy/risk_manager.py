@@ -45,6 +45,10 @@ class RiskManager:
         dynamic_limits: dict | None = None,
         market_regime: str = "",
         candidate_change_rate: float | None = None,
+        candidate_pattern: str | None = None,
+        intraday_direction: str | None = None,
+        intraday_vwap_position: str | None = None,
+        intraday_volume_trend: str | None = None,
     ) -> dict:
         """
         리스크 검사
@@ -91,6 +95,10 @@ class RiskManager:
             strategy_type=signal.strategy_type,
             portfolio_budget=portfolio_budget,
             candidate_change_rate=candidate_change_rate,
+            candidate_pattern=candidate_pattern,
+            intraday_direction=intraday_direction,
+            intraday_vwap_position=intraday_vwap_position,
+            intraday_volume_trend=intraday_volume_trend,
             today_trade_count=today_trade_count,
             current_holding_count=current_holding_count,
         )
@@ -320,9 +328,10 @@ class RiskManager:
         reason = result.get("reason", "")
 
         if approved:
+            effective_daily_limit = result.get("effective_max_daily_trades", self.max_daily_trades)
             summary = (
                 f"\U0001f6e1\ufe0f [{symbol}] 리스크 검사 통과"
-                f"\n   일일거래: {today_trade_count}/{self.max_daily_trades} | {reason}"
+                f"\n   일일거래: {today_trade_count}/{effective_daily_limit} | {reason}"
             )
         else:
             summary = f"\U0001f6e1\ufe0f [{symbol}] 리스크 검사 미통과: {reason}"

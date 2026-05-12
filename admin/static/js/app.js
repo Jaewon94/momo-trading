@@ -1958,30 +1958,57 @@ function renderAccountHoldings(data) {
     return;
   }
   if (countEl) countEl.textContent = `${data.length}`;
-  el.innerHTML = data.map(h => {
-    const pnlColor = h.pnl_rate >= 0 ? 'text-green-400' : 'text-red-400';
-    const bgTint = h.pnl_rate >= 0 ? 'bg-green-900/5' : 'bg-red-900/5';
-    const evalAmt = h.current_price * h.quantity;
-    const barColor = h.pnl_rate >= 0 ? 'bg-green-500' : 'bg-red-500';
-    const barWidth = Math.min(Math.abs(h.pnl_rate) * 10, 100);
-    return `<button type="button" onclick="openPositionDetailModal('${escapeHtml(h.symbol)}')" class="w-full text-left border border-gray-700 rounded p-1.5 space-y-0.5 ${bgTint} hover:border-blue-500/60 transition">
-      <div class="flex justify-between items-center">
-        <span class="text-gray-200 font-medium truncate" title="${escapeHtml(h.symbol)}">${escapeHtml(h.name)}</span>
-        <span class="${pnlColor} font-bold text-sm">${h.pnl_rate >= 0 ? '+' : ''}${h.pnl_rate.toFixed(2)}%</span>
+  const horizonMeta = {
+    SHORT: { label: '단기', tone: 'text-sky-300 border-sky-700/60 bg-sky-950/30' },
+    MID: { label: '중기', tone: 'text-violet-300 border-violet-700/60 bg-violet-950/30' },
+    LONG: { label: '장기', tone: 'text-emerald-300 border-emerald-700/60 bg-emerald-950/30' },
+  };
+  const groups = [
+    { key: 'SHORT', label: '단기' },
+    { key: 'MID', label: '중기' },
+    { key: 'LONG', label: '장기' },
+  ].map(group => ({
+    ...group,
+    items: data.filter(h => String(h.trade_horizon || 'MID').toUpperCase() === group.key),
+  })).filter(group => group.items.length);
+
+  el.innerHTML = groups.map(group => `
+    <div class="space-y-1.5">
+      <div class="flex items-center justify-between px-0.5 text-[11px] text-gray-500">
+        <span>${group.label}</span>
+        <span>${group.items.length}종목</span>
       </div>
-      <div class="pnl-bar">
-        <div class="pnl-bar-fill ${barColor}" style="width:${barWidth}%"></div>
-      </div>
-      <div class="flex justify-between text-gray-500">
-        <span>${h.quantity}주 | 평단 ${Number(h.avg_buy_price).toLocaleString()}원</span>
-        <span>현재 ${Number(h.current_price).toLocaleString()}원</span>
-      </div>
-      <div class="flex justify-between text-gray-500">
-        <span>평가 ${formatKRW(evalAmt)}</span>
-        <span class="${pnlColor} font-medium">${h.pnl >= 0 ? '+' : ''}${formatKRW(h.pnl)}</span>
-      </div>
-    </button>`;
-  }).join('');
+      ${group.items.map(h => {
+        const horizon = String(h.trade_horizon || 'MID').toUpperCase();
+        const meta = horizonMeta[horizon] || horizonMeta.MID;
+        const pnlColor = h.pnl_rate >= 0 ? 'text-green-400' : 'text-red-400';
+        const bgTint = h.pnl_rate >= 0 ? 'bg-green-900/5' : 'bg-red-900/5';
+        const evalAmt = h.current_price * h.quantity;
+        const barColor = h.pnl_rate >= 0 ? 'bg-green-500' : 'bg-red-500';
+        const barWidth = Math.min(Math.abs(h.pnl_rate) * 10, 100);
+        return `<button type="button" onclick="openPositionDetailModal('${escapeHtml(h.symbol)}')" class="w-full text-left border border-gray-700 rounded p-1.5 space-y-0.5 ${bgTint} hover:border-blue-500/60 transition">
+          <div class="flex justify-between items-center gap-2">
+            <span class="text-gray-200 font-medium truncate" title="${escapeHtml(h.symbol)}">${escapeHtml(h.name)}</span>
+            <span class="${pnlColor} font-bold text-sm shrink-0">${h.pnl_rate >= 0 ? '+' : ''}${h.pnl_rate.toFixed(2)}%</span>
+          </div>
+          <div class="pnl-bar">
+            <div class="pnl-bar-fill ${barColor}" style="width:${barWidth}%"></div>
+          </div>
+          <div class="flex justify-between text-gray-500 gap-2">
+            <span class="truncate">${h.quantity}주 | 평단 ${Number(h.avg_buy_price).toLocaleString()}원</span>
+            <span class="shrink-0">현재 ${Number(h.current_price).toLocaleString()}원</span>
+          </div>
+          <div class="flex justify-between text-gray-500 gap-2">
+            <span class="inline-flex items-center px-1.5 py-0.5 rounded border ${meta.tone}">${escapeHtml(h.trade_horizon_label || meta.label)}</span>
+            <span class="${pnlColor} font-medium shrink-0">${h.pnl >= 0 ? '+' : ''}${formatKRW(h.pnl)}</span>
+          </div>
+          <div class="flex justify-between text-gray-500">
+            <span>평가 ${formatKRW(evalAmt)}</span>
+          </div>
+        </button>`;
+      }).join('')}
+    </div>
+  `).join('');
 }
 
 function renderPendingOrders(data) {
@@ -2101,13 +2128,13 @@ function renderLiveExecutionStrip(data) {
   const sellRows = [];
   (Array.isArray(state.completed) ? state.completed : []).forEach((trade) => {
     sellSeen.add(buildTradeDedupeKey(trade, 'sell'));
-    sellRows.push({ trade, tone: 'sell', label: '전량 매도 완료' });
+    sellRows.push({ trade, tone: 'sell', label: '전량 매도 완료', showPnl: true });
   });
   (Array.isArray(state.sellExecutions) ? state.sellExecutions : []).forEach((trade) => {
     const key = buildTradeDedupeKey(trade, 'sell');
     if (sellSeen.has(key)) return;
     sellSeen.add(key);
-    sellRows.push({ trade, tone: 'sell', label: '매도 체결' });
+    sellRows.push({ trade, tone: 'sell', label: '매도 체결', showPnl: false });
   });
   const buyRows = (Array.isArray(state.opened) ? state.opened : [])
     .filter((trade) => !trade.exit_at)
@@ -2128,11 +2155,11 @@ function renderLiveExecutionStrip(data) {
     return;
   }
 
-  listEl.innerHTML = rows.map(({ trade, tone, label }) => {
+  listEl.innerHTML = rows.map(({ trade, tone, label, showPnl }) => {
     const time = formatTradeEventTime(trade, tone);
     const qty = Number(trade.quantity || 0).toLocaleString();
     const price = Number(tone === 'sell' ? trade.exit_price : trade.entry_price || 0).toLocaleString();
-    const pnl = tone === 'sell' && trade.pnl != null
+    const pnl = tone === 'sell' && showPnl && trade.pnl != null
       ? ` · 손익 ${Number(trade.pnl) >= 0 ? '+' : ''}${formatKRW(trade.pnl)}`
       : '';
     return `

@@ -216,12 +216,12 @@ def test_fast_gate_relaxes_effective_thresholds_for_moderate_and_aggressive(monk
     )
     aggressive = DeterministicTier1FastGateService._risk_profile()
 
-    assert moderate.min_continue_score == 48.0
+    assert moderate.min_continue_score == 45.0
     assert moderate.overheat_change_pct == 29.0
     assert moderate.bull_momentum_min_change_pct == 5.0
     assert moderate.bull_momentum_min_score == 30.0
 
-    assert aggressive.min_continue_score == 42.0
+    assert aggressive.min_continue_score == 40.0
     assert aggressive.overheat_change_pct == 31.0
     assert aggressive.bull_momentum_min_change_pct == 3.0
     assert aggressive.bull_momentum_min_score == 25.0
@@ -287,5 +287,167 @@ def test_fast_gate_moderate_continues_candidate_conservative_would_skip(monkeypa
     assert conservative.should_skip_tier1 is True
 
     assert moderate.detail["score"] == 52.0
-    assert moderate.detail["threshold"] == 48.0
+    assert moderate.detail["threshold"] == 45.0
     assert moderate.should_skip_tier1 is False
+
+
+def test_fast_gate_soft_penalizes_single_intraday_weakness(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "services.deterministic_tier1_fast_gate_service.settings.DETERMINISTIC_TIER1_FAST_GATE_ENABLED",
+        True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "services.deterministic_tier1_fast_gate_service.settings.TIER1_FAST_GATE_BULL_MOMENTUM_ALLOW_ENABLED",
+        False,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "services.deterministic_tier1_fast_gate_service.settings.RISK_APPETITE",
+        "MODERATE",
+        raising=False,
+    )
+    service = DeterministicTier1FastGateService()
+    chart = ChartAnalysisResult(
+        indicators={"macd_histogram": 1.0, "rsi_14": 55.0},
+        signal_summary={"direction": "BULLISH", "confidence": 0.5},
+        trend=SimpleNamespace(
+            direction="BULLISH",
+            score=40,
+            intraday={
+                "direction": "NEUTRAL",
+                "vwap_position": "BELOW_VWAP",
+                "vol_trend": "DECREASING",
+            },
+        ),
+    )
+    daily_df = pd.DataFrame([{"close": 1000 + i, "volume": 1000 + i * 100} for i in range(6)])
+
+    decision = service.evaluate(
+        symbol="005930",
+        stock_info={"symbol": "005930", "change_rate": 2.0},
+        current_price=70_000,
+        daily_df=daily_df,
+        minute_df=None,
+        chart_result=chart,
+        portfolio_snapshot={"holding_symbols": []},
+        market_regime="SIDEWAYS",
+        now=datetime(2026, 5, 7, 12, 0),
+    )
+
+    assert decision.detail["intraday_vwap_position"] == "BELOW_VWAP"
+    assert decision.detail["intraday_volume_trend"] == "DECREASING"
+    assert decision.detail["score"] == 78.0
+    assert "below intraday VWAP" in decision.detail["reasons"]
+    assert "intraday volume decreasing" in decision.detail["reasons"]
+
+
+def test_fast_gate_allows_upper_limit_candidate_without_fade_confirmation(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "services.deterministic_tier1_fast_gate_service.settings.DETERMINISTIC_TIER1_FAST_GATE_ENABLED",
+        True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "services.deterministic_tier1_fast_gate_service.settings.TIER1_FAST_GATE_BULL_MOMENTUM_ALLOW_ENABLED",
+        False,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "services.deterministic_tier1_fast_gate_service.settings.RISK_APPETITE",
+        "MODERATE",
+        raising=False,
+    )
+    service = DeterministicTier1FastGateService()
+    chart = ChartAnalysisResult(
+        indicators={"macd_histogram": 1.0, "rsi_14": 63.0},
+        signal_summary={"direction": "BULLISH", "confidence": 0.55},
+        trend=SimpleNamespace(
+            direction="BULLISH",
+            score=45,
+            intraday={
+                "direction": "BULLISH",
+                "vwap_position": "BELOW_VWAP",
+                "vol_trend": "INCREASING",
+            },
+        ),
+    )
+    daily_df = pd.DataFrame([{"close": 1000 + i, "volume": 1000 + i * 150} for i in range(6)])
+
+    decision = service.evaluate(
+        symbol="012860",
+        stock_info={"symbol": "012860", "change_rate": 29.96},
+        current_price=3910,
+        daily_df=daily_df,
+        minute_df=None,
+        chart_result=chart,
+        portfolio_snapshot={"holding_symbols": []},
+        market_regime="THEME",
+        now=datetime(2026, 5, 12, 10, 30),
+    )
+
+    assert decision.should_skip_tier1 is False
+    assert decision.detail["upper_limit_fade_risk"] is False
+    assert decision.detail["score"] >= decision.detail["threshold"]
+    assert "near upper-limit overheat" in decision.detail["reasons"]
+    assert "upper-limit fade risk" not in decision.detail["reasons"]
+
+
+def test_fast_gate_strongly_penalizes_upper_limit_fade_risk(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "services.deterministic_tier1_fast_gate_service.settings.DETERMINISTIC_TIER1_FAST_GATE_ENABLED",
+        True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "services.deterministic_tier1_fast_gate_service.settings.TIER1_FAST_GATE_BULL_MOMENTUM_ALLOW_ENABLED",
+        False,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "services.deterministic_tier1_fast_gate_service.settings.RISK_APPETITE",
+        "MODERATE",
+        raising=False,
+    )
+    service = DeterministicTier1FastGateService()
+    chart = ChartAnalysisResult(
+        indicators={"macd_histogram": -0.2, "rsi_14": 78.0},
+        signal_summary={"direction": "NEUTRAL", "confidence": 0.35},
+        trend=SimpleNamespace(
+            direction="NEUTRAL",
+            score=5,
+            intraday={
+                "direction": "BEARISH",
+                "vwap_position": "BELOW_VWAP",
+                "vol_trend": "DECREASING",
+            },
+        ),
+    )
+    daily_df = pd.DataFrame([{"close": 1000 + i, "volume": 1000 + i * 100} for i in range(6)])
+    minute_df = pd.DataFrame(
+        [
+            {"volume": 3000},
+            {"volume": 2800},
+            {"volume": 2600},
+            {"volume": 1200},
+            {"volume": 1000},
+            {"volume": 900},
+        ]
+    )
+
+    decision = service.evaluate(
+        symbol="012860",
+        stock_info={"symbol": "012860", "change_rate": 29.96},
+        current_price=3910,
+        daily_df=daily_df,
+        minute_df=minute_df,
+        chart_result=chart,
+        portfolio_snapshot={"holding_symbols": []},
+        market_regime="SIDEWAYS",
+        now=datetime(2026, 5, 12, 10, 30),
+    )
+
+    assert decision.should_skip_tier1 is True
+    assert decision.detail["volume_weakening"] is True
+    assert decision.detail["upper_limit_fade_risk"] is True
+    assert "upper-limit fade risk" in decision.detail["reasons"]

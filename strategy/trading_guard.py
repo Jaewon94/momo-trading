@@ -20,6 +20,10 @@ class TradingGuard:
         portfolio_budget: float,
         *,
         candidate_change_rate: float | None = None,
+        candidate_pattern: str | None = None,
+        intraday_direction: str | None = None,
+        intraday_vwap_position: str | None = None,
+        intraday_volume_trend: str | None = None,
         today_trade_count: int = 0,
         current_holding_count: int = 0,
     ) -> dict:
@@ -51,6 +55,10 @@ class TradingGuard:
                 consecutive_losses=consecutive_losses,
                 max_losses=max_losses,
                 candidate_change_rate=candidate_change_rate,
+                candidate_pattern=candidate_pattern,
+                intraday_direction=intraday_direction,
+                intraday_vwap_position=intraday_vwap_position,
+                intraday_volume_trend=intraday_volume_trend,
                 today_trade_count=today_trade_count,
                 current_holding_count=current_holding_count,
             )
@@ -124,6 +132,10 @@ class TradingGuard:
         consecutive_losses: int,
         max_losses: int,
         candidate_change_rate: float | None,
+        candidate_pattern: str | None,
+        intraday_direction: str | None,
+        intraday_vwap_position: str | None,
+        intraday_volume_trend: str | None,
         today_trade_count: int,
         current_holding_count: int,
     ) -> dict:
@@ -192,6 +204,37 @@ class TradingGuard:
                         "reason": f"{reason}, probation 과열 제외 ({candidate_change_rate:.2f}% > {max_change:.2f}%)",
                     }
 
+            pattern = str(candidate_pattern or "").upper()
+            if "UPTREND" in pattern:
+                return {
+                    "action": "BLOCK",
+                    "trigger": "CONSECUTIVE_LOSSES_PROBATION",
+                    "reason": f"{reason}, probation 최근 손실 반복 패턴 제외 ({candidate_pattern})",
+                }
+
+            intra_direction = str(intraday_direction or "").upper()
+            vwap_position = str(intraday_vwap_position or "").upper()
+            volume_trend = str(intraday_volume_trend or "").upper()
+            weak_intraday = (
+                intra_direction == "BEARISH"
+                or vwap_position == "BELOW_VWAP"
+                or volume_trend == "DECREASING"
+            )
+            if weak_intraday:
+                weak_parts = [
+                    part for part in [
+                        f"분봉 {intra_direction}" if intra_direction else "",
+                        vwap_position if vwap_position else "",
+                        f"거래량 {volume_trend}" if volume_trend else "",
+                    ]
+                    if part
+                ]
+                return {
+                    "action": "BLOCK",
+                    "trigger": "CONSECUTIVE_LOSSES_PROBATION",
+                    "reason": f"{reason}, probation 장중 확인 부족 ({', '.join(weak_parts)})",
+                }
+
         multiplier = min(
             max(float(getattr(settings, "LOSS_STREAK_RECOVERY_SIZE_MULTIPLIER", 0.2) or 0.2), 0.01),
             1.0,
@@ -208,6 +251,10 @@ class TradingGuard:
                 "max_order_krw": int(getattr(settings, "LOSS_STREAK_RECOVERY_MAX_ORDER_KRW", 0) or 0),
                 "max_position_pct": float(getattr(settings, "LOSS_STREAK_RECOVERY_MAX_POSITION_PCT", 0.0) or 0.0),
                 "candidate_change_rate": candidate_change_rate,
+                "candidate_pattern": candidate_pattern,
+                "intraday_direction": intraday_direction,
+                "intraday_vwap_position": intraday_vwap_position,
+                "intraday_volume_trend": intraday_volume_trend,
             },
         }
 

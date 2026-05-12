@@ -5,6 +5,7 @@ import {
   buildPortfolioQuickStatsModel,
   buildTradePanelState,
   buildTradeSummaryCounts,
+  isNeutralReconciliationClose,
 } from "../../admin/static/js/trade_state.js";
 
 describe("trade_state", () => {
@@ -20,6 +21,44 @@ describe("trade_state", () => {
     expect(state.todayCount).toBe(3);
     expect(state.hasContent).toBe(true);
     expect(state.sections).toEqual(["sell_executions", "pending_confirms", "opened", "open_positions"]);
+  });
+
+  test("filters neutral reconciliation closes from trade panel display state", () => {
+    const state = buildTradePanelState({
+      opened: [
+        { stock_symbol: "005930", exit_reason: "" },
+        {
+          stock_symbol: "003280",
+          exit_reason: "BROKER_HOLDING_MISSING",
+          notes: "HOLDING_RECONCILIATION_CLOSE: broker holding missing; neutral close",
+        },
+      ],
+      sell_executions: [],
+      completed: [
+        { stock_symbol: "005930", pnl: 12000, exit_reason: "TAKE_PROFIT" },
+        {
+          stock_symbol: "003280",
+          pnl: 0,
+          exit_reason: "BROKER_HOLDING_MISSING",
+          notes: "HOLDING_RECONCILIATION_CLOSE: broker holding missing; neutral close",
+        },
+      ],
+      pending_confirms: [],
+      open_positions: [],
+    });
+
+    expect(state.opened.map((trade) => trade.stock_symbol)).toEqual(["005930"]);
+    expect(state.completed.map((trade) => trade.stock_symbol)).toEqual(["005930"]);
+    expect(state.sections).toEqual(["completed", "opened"]);
+  });
+
+  test("recognizes neutral reconciliation closes but keeps applied corrections visible", () => {
+    expect(isNeutralReconciliationClose({
+      notes: "HOLDING_RECONCILIATION_CLOSE: broker holding missing; neutral close",
+    })).toBe(true);
+    expect(isNeutralReconciliationClose({
+      notes: "CLOSE_RECONCILIATION_APPLY: previous=HOLDING_RECONCILIATION_CLOSE: broker holding missing; neutral close",
+    })).toBe(false);
   });
 
   test("builds quick stats counts including pending confirms", () => {

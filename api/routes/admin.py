@@ -216,6 +216,38 @@ def _parse_json_detail(detail):
         return None
 
 
+def _trade_horizon_from_trade_result(trade: TradeResult | None) -> str:
+    if not trade:
+        return "MID"
+    notes = _parse_json_detail(getattr(trade, "notes", None)) or {}
+    horizon = str(notes.get("trade_horizon") or "").upper()
+    if horizon in {"SHORT", "MID", "LONG"}:
+        return horizon
+    strategy_type = str(getattr(trade, "strategy_type", "") or "").upper()
+    if "AGGRESSIVE" in strategy_type:
+        return "SHORT"
+    return "MID"
+
+
+def _trade_horizon_label(horizon: str) -> str:
+    return {
+        "SHORT": "단기",
+        "MID": "중기",
+        "LONG": "장기",
+    }.get(str(horizon or "").upper(), "중기")
+
+
+def _representative_trade_horizon(open_buys: list[TradeResult]) -> str:
+    weighted: dict[str, int] = {"SHORT": 0, "MID": 0, "LONG": 0}
+    for trade in open_buys:
+        horizon = _trade_horizon_from_trade_result(trade)
+        quantity = int(getattr(trade, "quantity", 0) or 0)
+        weighted[horizon] = weighted.get(horizon, 0) + max(quantity, 0)
+    if not any(weighted.values()):
+        return "MID"
+    return max(weighted.items(), key=lambda item: item[1])[0]
+
+
 def _require_admin_action_confirmation(
     payload: AdminActionConfirmationVerifyRequest | None,
     *,
@@ -1410,18 +1442,30 @@ async def get_account_holdings():
     """보유 종목 조회"""
     try:
         holdings = await get_broker_adapter().get_holdings()
-        return SuccessResponse(data=[
-            {
-                "symbol": normalize_krx_symbol(getattr(h, "symbol", "")),
+        horizon_by_symbol: dict[str, str] = {}
+        async with AsyncSessionLocal() as session:
+            repo = TradeResultRepository(session)
+            for h in holdings:
+                symbol = normalize_krx_symbol(getattr(h, "symbol", ""))
+                open_buys = await repo.get_all_open_buys(symbol)
+                horizon_by_symbol[symbol] = _representative_trade_horizon(open_buys)
+
+        items = []
+        for h in holdings:
+            symbol = normalize_krx_symbol(getattr(h, "symbol", ""))
+            horizon = horizon_by_symbol.get(symbol, "MID")
+            items.append({
+                "symbol": symbol,
                 "name": h.name,
                 "quantity": h.quantity,
                 "avg_buy_price": h.avg_buy_price,
                 "current_price": h.current_price,
                 "pnl": h.pnl,
                 "pnl_rate": h.pnl_rate,
-            }
-            for h in holdings
-        ])
+                "trade_horizon": horizon,
+                "trade_horizon_label": _trade_horizon_label(horizon),
+            })
+        return SuccessResponse(data=items)
     except Exception as e:
         logger.error("보유 종목 조회 실패: {}", str(e))
         await _capture_admin_api_error(

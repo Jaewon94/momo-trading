@@ -1,5 +1,6 @@
 """장 마감 후 포트폴리오 정산 — PENDING_CONFIRM 복구 + 계좌/DB 불일치 점검"""
 import contextlib
+from datetime import datetime, timedelta
 
 from loguru import logger
 from models.trade_result import TradeResult
@@ -39,6 +40,26 @@ async def portfolio_sync_job() -> None:
 
 
 PENDING_CONFIRM_CHUNK_SIZE = 5
+BUY_PENDING_CONFIRM_STALE_AFTER = timedelta(seconds=90)
+
+
+def _is_pending_confirm_stale(trade, *, now: datetime, stale_after: timedelta) -> bool:
+    created_at = getattr(trade, "created_at", None) or getattr(trade, "entry_at", None)
+    if not isinstance(created_at, datetime):
+        return False
+    comparable_now = now
+    if getattr(created_at, "tzinfo", None) is not None and getattr(comparable_now, "tzinfo", None) is None:
+        comparable_now = comparable_now.replace(tzinfo=created_at.tzinfo)
+    if getattr(created_at, "tzinfo", None) is None and getattr(comparable_now, "tzinfo", None) is not None:
+        comparable_now = comparable_now.replace(tzinfo=None)
+    return comparable_now - created_at >= stale_after
+
+
+def _mark_pending_confirm_failed(trade, *, reason: str) -> None:
+    trade.status = "CONFIRM_FAILED"
+    previous_notes = str(getattr(trade, "notes", "") or "").strip()
+    note = f"CONFIRM_FAILED: {reason}"
+    trade.notes = f"{note} | previous={previous_notes[:160]}" if previous_notes else note
 
 
 async def _recover_pending_confirms() -> dict[str, int | str]:
@@ -60,57 +81,68 @@ async def _recover_pending_confirms() -> dict[str, int | str]:
         from trading.broker_factory import get_broker_adapter
 
         async with AsyncSessionLocal() as session:
-            async with session.begin():
-                repo = TradeResultRepository(session)
-                pending = await repo.get_pending_confirms()
-                summary["pending_total"] = len(pending)
-                adapter = get_broker_adapter()
-                summary["provider"] = adapter.provider.value
+            repo = TradeResultRepository(session)
+            pending = await repo.get_pending_confirms()
+            pending_refs = [
+                (getattr(trade, "id", None), trade)
+                for trade in pending
+            ]
 
-                if not pending:
-                    return summary
+        summary["pending_total"] = len(pending_refs)
+        adapter = get_broker_adapter()
+        summary["provider"] = adapter.provider.value
 
-                logger.debug(
-                    "PENDING_CONFIRM 복구 대상: {}건 (chunk={}건)",
-                    len(pending), PENDING_CONFIRM_CHUNK_SIZE,
-                )
+        if not pending_refs:
+            return summary
 
-                pending_orders = await adapter.get_pending_orders()
-                holdings = await adapter.get_holdings()
-                order_map = {str(order.order_id): order for order in pending_orders if order.order_id}
-                holding_map = {
-                    normalize_krx_symbol(getattr(holding, "symbol", "")): holding
-                    for holding in holdings
-                    if int(getattr(holding, "quantity", 0) or 0) > 0
-                }
+        logger.debug(
+            "PENDING_CONFIRM 복구 대상: {}건 (chunk={}건)",
+            len(pending_refs), PENDING_CONFIRM_CHUNK_SIZE,
+        )
 
-                last_error: str | None = None
-                # no_autoflush: 루프 내부 SELECT가 누적 UPDATE를 자동 flush하지 않게 막아
-                # SQLite "database is locked" autoflush 충돌 방지
-                with _no_autoflush(session):
-                    for chunk_start in range(0, len(pending), PENDING_CONFIRM_CHUNK_SIZE):
-                        chunk = pending[chunk_start : chunk_start + PENDING_CONFIRM_CHUNK_SIZE]
-                        try:
-                            for tr in chunk:
+        pending_orders = await adapter.get_pending_orders()
+        holdings = await adapter.get_holdings()
+        order_map = {str(order.order_id): order for order in pending_orders if order.order_id}
+        holding_map = {
+            normalize_krx_symbol(getattr(holding, "symbol", "")): holding
+            for holding in holdings
+            if int(getattr(holding, "quantity", 0) or 0) > 0
+        }
+
+        last_error: str | None = None
+        for chunk_start in range(0, len(pending_refs), PENDING_CONFIRM_CHUNK_SIZE):
+            chunk = pending_refs[chunk_start : chunk_start + PENDING_CONFIRM_CHUNK_SIZE]
+            try:
+                async with AsyncSessionLocal() as session:
+                    async with session.begin():
+                        repo = TradeResultRepository(session)
+                        with _no_autoflush(session):
+                            for trade_id, pending_trade in chunk:
+                                tr = (
+                                    await repo.get_by_id(trade_id)
+                                    if trade_id is not None
+                                    else pending_trade
+                                )
                                 await _process_one_pending(
                                     tr, repo, session, adapter, order_map, holding_map, summary,
                                 )
-                            # chunk 단위 명시적 flush — 한 번에 큰 batch가 commit에 몰리지 않도록 분산
-                            await session.flush()
-                        except Exception as chunk_exc:
-                            last_error = str(chunk_exc)[:200]
-                            logger.error(
-                                "PENDING_CONFIRM 복구 chunk 실패 (offset={}): {} — 다음 chunk 계속",
-                                chunk_start, last_error,
-                            )
+                        flush = getattr(session, "flush", None)
+                        if flush is not None:
+                            await flush()
+            except Exception as chunk_exc:
+                last_error = str(chunk_exc)[:200]
+                logger.error(
+                    "PENDING_CONFIRM 복구 chunk 실패 (offset={}): {} — 다음 chunk 계속",
+                    chunk_start, last_error,
+                )
 
-                if last_error:
-                    summary["error"] = last_error
-                if int(summary["recovered"]) or int(summary["failed"]):
-                    logger.debug(
-                        "PENDING_CONFIRM 복구 결과: 성공 {}건, 실패 {}건, 보류 {}건",
-                        summary["recovered"], summary["failed"], summary["skipped"],
-                    )
+        if last_error:
+            summary["error"] = last_error
+        if int(summary["recovered"]) or int(summary["failed"]):
+            logger.debug(
+                "PENDING_CONFIRM 복구 결과: 성공 {}건, 실패 {}건, 보류 {}건",
+                summary["recovered"], summary["failed"], summary["skipped"],
+            )
     except Exception as e:
         logger.error("PENDING_CONFIRM 복구 오류: {}", str(e))
         summary["error"] = str(e)[:200]
@@ -243,11 +275,24 @@ async def _process_one_pending(tr, repo, session, adapter, order_map, holding_ma
                 summary["recovered"] = int(summary["recovered"]) + 1
                 return
         if adapter.provider == BrokerProvider.KIWOOM:
-            logger.warning(
-                "PENDING 복구 보류: {} {} 주문번호={} — 키움 보유/미체결 매칭 없음",
-                tr.stock_symbol, tr.side, tr.order_id,
-            )
-            summary["skipped"] = int(summary["skipped"]) + 1
+            if _is_pending_confirm_stale(
+                tr,
+                now=now_kst(),
+                stale_after=BUY_PENDING_CONFIRM_STALE_AFTER,
+            ):
+                reason = "키움 보유/미체결 매칭 없음 (stale BUY pending)"
+                _mark_pending_confirm_failed(tr, reason=reason)
+                logger.warning(
+                    "PENDING 복구 실패 처리: {} {} 주문번호={} — {}",
+                    tr.stock_symbol, tr.side, tr.order_id, reason,
+                )
+                summary["failed"] = int(summary["failed"]) + 1
+            else:
+                logger.warning(
+                    "PENDING 복구 보류: {} {} 주문번호={} — 키움 보유/미체결 매칭 없음",
+                    tr.stock_symbol, tr.side, tr.order_id,
+                )
+                summary["skipped"] = int(summary["skipped"]) + 1
             return
     elif adapter.provider == BrokerProvider.KIWOOM:
         logger.warning(
