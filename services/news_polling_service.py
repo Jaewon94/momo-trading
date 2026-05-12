@@ -62,10 +62,10 @@ class NewsPollingService:
                 mode=runtime_mode,
                 message=summary["reason"],
             )
-            await self._log_news_activity(
-                "🛰 뉴스 자동 수집 스킵 · NEWS_POLL_ENABLED 비활성",
-                detail={"mode": runtime_mode, "reason": summary["reason"]},
-            )
+            summary["activity_log"] = {
+                "summary": "🛰 뉴스 자동 수집 스킵 · NEWS_POLL_ENABLED 비활성",
+                "detail": {"mode": runtime_mode, "reason": summary["reason"]},
+            }
             summary["metric_payload"] = self._build_metric_payload(
                 status="SKIPPED",
                 elapsed_ms=int((time.time() - started_at) * 1000),
@@ -132,19 +132,21 @@ class NewsPollingService:
                 "message": runtime_message,
             })
 
-        await self._log_news_activity(
-            "🛰 뉴스 자동 수집 완료 · "
-            f"신규 {int(summary.get('created') or 0)}건 · "
-            f"중복 {int(summary.get('duplicates') or 0)}건 · "
-            f"스킵 {int(summary.get('skipped') or 0)}건",
-            detail={
+        activity_log = {
+            "summary": (
+                "🛰 뉴스 자동 수집 완료 · "
+                f"신규 {int(summary.get('created') or 0)}건 · "
+                f"중복 {int(summary.get('duplicates') or 0)}건 · "
+                f"스킵 {int(summary.get('skipped') or 0)}건"
+            ),
+            "detail": {
                 "mode": runtime_mode,
                 "market_hours": market_hours,
                 "summary": summary,
                 "published_events": published_events,
                 "sources": source_briefs,
             },
-        )
+        }
         source_error_count = sum(1 for result in source_results.values() if result.status == "ERROR")
         news_runtime_service.record_overall_result(
             status=self._resolve_overall_status(summary, source_error_count=source_error_count),
@@ -172,7 +174,21 @@ class NewsPollingService:
             "published_events": published_events,
             "market_hours": market_hours,
             "metric_payload": metric_payload,
+            "activity_log": activity_log,
         }
+
+    async def log_activity_from_summary(self, poll_summary: dict[str, Any]) -> None:
+        activity_log = poll_summary.get("activity_log")
+        if not isinstance(activity_log, dict):
+            return
+        summary = str(activity_log.get("summary") or "").strip()
+        if not summary:
+            return
+        detail = activity_log.get("detail")
+        await self._log_news_activity(
+            summary,
+            detail=detail if isinstance(detail, dict) else None,
+        )
 
     async def _log_news_activity(self, summary: str, *, detail: dict[str, Any] | None = None) -> None:
         try:

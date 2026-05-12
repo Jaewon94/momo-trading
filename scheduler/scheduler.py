@@ -960,6 +960,7 @@ class TradingScheduler:
                         mode=runtime_mode,
                     )
                     await session.commit()
+                await news_polling_service.log_activity_from_summary(summary)
                 metric_payload = summary.get("metric_payload")
                 if isinstance(metric_payload, dict):
                     await observability_service.record_news_poll(**metric_payload)
