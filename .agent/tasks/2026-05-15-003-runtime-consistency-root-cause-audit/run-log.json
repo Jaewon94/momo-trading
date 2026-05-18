@@ -1,0 +1,96 @@
+{
+  "schema_version": "momo.run-log.v1",
+  "task_id": "2026-05-15-003-runtime-consistency-root-cause-audit",
+  "events": [
+    {
+      "at": "2026-05-15T12:40:02+09:00",
+      "type": "task_started",
+      "status": "created",
+      "summary": "Task artifact created."
+    },
+    {
+      "at": "2026-05-15T12:56:39+09:00",
+      "type": "runtime_audit",
+      "status": "blocked",
+      "summary": "Code/reporting false positives corrected; runtime restarted and healthy. Remaining integrity failures require protected broker/runtime DB approval: cancel broker-only pending order 0067887 and neutral-close 30 stale DB BUY lots across 20 symbols."
+    },
+    {
+      "at": "2026-05-15T13:06:30+09:00",
+      "type": "runtime_audit",
+      "status": "approval_required",
+      "summary": "Added detection for broker holdings exceeding DB open BUY quantity. Runtime now also flags 066430 broker quantity 53 vs DB open quantity 52. Latest cycle completed with analysis 8, recommendation 1, executed 0; focused tests passed 57."
+    },
+    {
+      "at": "2026-05-15T13:09:20+09:00",
+      "type": "verification_run",
+      "status": "blocked_env",
+      "summary": "Standard task_harness verification reached harness_tests but the tool used system Python 3.14 without pytest installed. Focused .venv313 tests still passed; runtime integrity remains blocked only on protected live-state repairs."
+    },
+    {
+      "at": "2026-05-15T13:11:02+09:00",
+      "type": "runtime_audit",
+      "status": "approval_required",
+      "summary": "Health OK, AUTONOMOUS/FULL enabled, scheduler and agent running. Runtime integrity still fails on broker-only pending order 0067887, 20 broker-missing DB open BUY symbols, and 066430 broker quantity 53 vs DB open quantity 52."
+    },
+    {
+      "at": "2026-05-15T13:12:30+09:00",
+      "type": "verification_rerun",
+      "status": "passed_with_protected_blockers",
+      "summary": "Strict task harness passed and focused .venv313 pytest suite passed 57 tests. Holdings reconciliation dry-run found 0 backfill candidates while 0067887 is pending, 0 zero-price repairs, and 30 missing-close candidates across 20 symbols."
+    },
+    {
+      "at": "2026-05-15T13:13:45+09:00",
+      "type": "runtime_cycle_check",
+      "status": "running",
+      "summary": "Recent admin cycles include 2026-05-15T13:10:00+09:00 to 13:12:01+09:00. System status last_cycle_time is 2026-05-15T13:12:01+09:00 with scheduler_running=true and agent_running=true."
+    },
+    {
+      "at": "2026-05-15T13:14:20+09:00",
+      "type": "trade_decision_check",
+      "status": "risk_guard_blocked_order",
+      "summary": "Latest cycle analyzed 8 symbols and produced 1 BUY signal for 354200, but executed 0 orders because risk guard blocked account equity drawdown -0.59% <= -0.50%."
+    },
+    {
+      "at": "2026-05-15T16:08:00+09:00",
+      "type": "root_cause_update",
+      "status": "identified",
+      "summary": "Order 0067887 was submitted for 3250 shares, first recorded as CONFIRMED after an 8-share partial fill, and the DB lost the remaining pending linkage. Broker now reports filled 60 / remaining 3190 while DB open BUY for 066430 remains 52, so the broker-over-DB gap increased to 8."
+    },
+    {
+      "at": "2026-05-15T16:42:00+09:00",
+      "type": "runtime_restart_and_gate",
+      "status": "approval_required",
+      "summary": "Applied code safeguards/classification, restarted runtime in tmux session momo-api-verify, and verified health OK. Runtime integrity still fails on protected live-state drift: broker pending 0067887 linked to a CONFIRMED DB row, 30 stale DB open BUY rows across 20 symbols, and 066430 broker holding 60 vs DB open 52."
+    },
+    {
+      "at": "2026-05-18T09:13:53+09:00",
+      "type": "protected_runtime_repair",
+      "status": "applied",
+      "summary": "User approved full consistency repair. Applied RECONCILE_HOLDINGS_TRADES with MISSING_CLOSES: neutral-closed 30 stale DB open BUY rows across 20 symbols; no broker orders were open."
+    },
+    {
+      "at": "2026-05-18T09:16:40+09:00",
+      "type": "code_and_restart",
+      "status": "passed",
+      "summary": "Added 24-hour recency window for order error operations status, restarted runtime in tmux session momo-api-0518, and verified health/system status OK."
+    },
+    {
+      "at": "2026-05-18T09:19:25+09:00",
+      "type": "final_runtime_verification",
+      "status": "passed",
+      "summary": "After restart and one live cycle, runtime integrity passed: system OK, settings OK, order reconciliation OK, lifecycle OK. Current holdings are 027360 750 shares and 066430 17 shares; pending orders and DB pending confirms are both 0."
+    },
+    {
+      "at": "2026-05-18T09:41:45+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-18T09:42:48+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    }
+  ]
+}

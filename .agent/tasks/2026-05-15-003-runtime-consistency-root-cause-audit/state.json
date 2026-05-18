@@ -1,0 +1,45 @@
+{
+  "schema_version": "momo.task.v1",
+  "task_id": "2026-05-15-003-runtime-consistency-root-cause-audit",
+  "status": "testing",
+  "title": "Runtime consistency root cause audit",
+  "repo": "momo-trading",
+  "risk_level": "high",
+  "task_type": "engineering",
+  "priority": "normal",
+  "primary_runtime": "codex",
+  "created_at": "2026-05-15T12:40:02+09:00",
+  "updated_at": "2026-05-18T09:42:48+09:00",
+  "approval": {
+    "required": true,
+    "status": "applied",
+    "reason": "User approved full consistency repair; runtime DB MISSING_CLOSES reconciliation applied. No broker cancellation was required because pending orders were already clear."
+  },
+  "checks": {
+    "focused_pytest": "58 passed",
+    "task_harness_strict": "passed",
+    "runtime_health": "passed",
+    "runtime_integrity": "passed",
+    "system_status": "passed",
+    "order_reconciliation": "passed",
+    "lifecycle_integrity": "passed",
+    "post_restart_cycle": "passed",
+    "diff_check": "passed",
+    "py_compile": "passed",
+    "secret_scan": "passed",
+    "task_harness": "passed",
+    "markdown_links": "passed",
+    "docs_consistency": "passed",
+    "harness_tests": "passed"
+  },
+  "artifacts": {
+    "brief": ".agent/tasks/2026-05-15-003-runtime-consistency-root-cause-audit/brief.md",
+    "state": ".agent/tasks/2026-05-15-003-runtime-consistency-root-cause-audit/state.json",
+    "run_log": ".agent/tasks/2026-05-15-003-runtime-consistency-root-cause-audit/run-log.json",
+    "test_plan": ".agent/tasks/2026-05-15-003-runtime-consistency-root-cause-audit/test-plan.md",
+    "decision_record": ".agent/tasks/2026-05-15-003-runtime-consistency-root-cause-audit/decision-record.md",
+    "quality_scorecard": ".agent/tasks/2026-05-15-003-runtime-consistency-root-cause-audit/quality-scorecard.md",
+    "final_report": ".agent/tasks/2026-05-15-003-runtime-consistency-root-cause-audit/final-report.md"
+  },
+  "errors": []
+}

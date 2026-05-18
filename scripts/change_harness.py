@@ -12,6 +12,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+RUNTIME_INTEGRITY_CHECK = "python scripts/check_runtime_integrity.py --days 7"
 
 
 @dataclass(frozen=True)
@@ -34,15 +35,15 @@ class ChangeClassification:
 
 RISK_ORDER = {"low": 0, "medium": 1, "high": 2, "blocked": 3}
 RULES: tuple[Rule, ...] = (
-    Rule("agent/", "high", ("trading-strategist", "qa-engineer", "code-reviewer"), ("tests/agent",), "trading decision logic"),
-    Rule("strategy/", "high", ("trading-strategist", "risk-manager", "qa-engineer"), ("tests/strategy",), "risk or strategy logic"),
-    Rule("trading/", "high", ("broker-integrator", "qa-engineer", "code-reviewer"), ("tests/trading",), "broker integration"),
-    Rule("repositories/", "high", ("database-reviewer", "qa-engineer"), ("tests/repositories",), "persistence layer"),
-    Rule("models/", "high", ("database-reviewer", "qa-engineer"), ("tests",), "data model"),
+    Rule("agent/", "high", ("trading-strategist", "qa-engineer", "code-reviewer"), ("tests/agent", RUNTIME_INTEGRITY_CHECK), "trading decision logic"),
+    Rule("strategy/", "high", ("trading-strategist", "risk-manager", "qa-engineer"), ("tests/strategy", RUNTIME_INTEGRITY_CHECK), "risk or strategy logic"),
+    Rule("trading/", "high", ("broker-integrator", "qa-engineer", "code-reviewer"), ("tests/trading", RUNTIME_INTEGRITY_CHECK), "broker integration"),
+    Rule("repositories/", "high", ("database-reviewer", "qa-engineer"), ("tests/repositories", RUNTIME_INTEGRITY_CHECK), "persistence layer"),
+    Rule("models/", "high", ("database-reviewer", "qa-engineer"), ("tests", RUNTIME_INTEGRITY_CHECK), "data model"),
     Rule("alembic/", "high", ("database-reviewer", "release-manager"), ("migration review",), "database migration"),
-    Rule("scheduler/", "medium", ("backend-engineer", "qa-engineer"), ("tests/scheduler",), "scheduled job"),
-    Rule("services/", "medium", ("backend-engineer", "qa-engineer"), ("tests/services",), "business service"),
-    Rule("api/", "medium", ("api-integrator", "qa-engineer"), ("tests/api",), "API contract"),
+    Rule("scheduler/", "medium", ("backend-engineer", "qa-engineer"), ("tests/scheduler", RUNTIME_INTEGRITY_CHECK), "scheduled job"),
+    Rule("services/", "medium", ("backend-engineer", "qa-engineer"), ("tests/services", RUNTIME_INTEGRITY_CHECK), "business service"),
+    Rule("api/", "medium", ("api-integrator", "qa-engineer"), ("tests/api", RUNTIME_INTEGRITY_CHECK), "API contract"),
     Rule("admin/static/js/", "medium", ("frontend-engineer", "qa-engineer"), ("tests/frontend",), "admin UI state"),
     Rule("analysis/", "medium", ("llm-runtime-reviewer", "qa-engineer"), ("tests/analysis",), "analysis or LLM provider"),
     Rule("core/config.py", "high", ("security-reviewer", "release-manager"), ("config review",), "runtime config"),

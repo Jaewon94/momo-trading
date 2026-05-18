@@ -1,0 +1,72 @@
+{
+  "schema_version": "momo.run-log.v1",
+  "task_id": "2026-05-15-002-align-runtime-order-risk-contracts",
+  "events": [
+    {
+      "at": "2026-05-15T10:29:15+09:00",
+      "type": "task_started",
+      "status": "created",
+      "summary": "Task artifact created."
+    },
+    {
+      "at": "2026-05-15T10:32:00+09:00",
+      "type": "analysis",
+      "status": "completed",
+      "summary": "Confirmed two code-contract gaps: partial fills with remaining broker quantity were being settled as CONFIRMED, and daily risk count was sourced from the legacy orders table."
+    },
+    {
+      "at": "2026-05-15T10:36:00+09:00",
+      "type": "implementation",
+      "status": "completed",
+      "summary": "Updated decision maker and portfolio sync to keep partial fills pending; updated trading agent risk count to use trade_results; updated risk manager to expose effective dynamic limits."
+    },
+    {
+      "at": "2026-05-15T10:38:00+09:00",
+      "type": "verification",
+      "status": "passed",
+      "summary": ".venv313/bin/python -m pytest tests/agent/test_decision_maker.py tests/scheduler/test_portfolio_sync_job.py tests/agent/test_trading_agent_market_data.py tests/strategy/test_cash_ratio_units.py -> 83 passed."
+    },
+    {
+      "at": "2026-05-15T10:39:33+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-15T10:39:56+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-15T10:40:18+09:00",
+      "type": "verification_note",
+      "status": "testing",
+      "summary": "Retrying harness verification with .venv313 because system python lacks pytest."
+    },
+    {
+      "at": "2026-05-15T10:40:25+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-15T10:48:01+09:00",
+      "type": "runtime_restart",
+      "status": "passed",
+      "summary": "Restarted in tmux session momo-trading-api; health is healthy, scheduler and agent are running, and the first post-restart cycle completed with 8 analyses and 0 orders."
+    },
+    {
+      "at": "2026-05-15T10:48:30+09:00",
+      "type": "runtime_integrity",
+      "status": "blocked",
+      "summary": "Read-only integrity remains FAIL due existing protected live-state drift: broker-only pending order 0067887 for 066430 and historical lifecycle mismatches. No broker action or runtime DB repair was performed without explicit approval."
+    },
+    {
+      "at": "2026-05-15T10:49:02+09:00",
+      "type": "final_report",
+      "status": "blocked",
+      "summary": "Code and restart verification are complete; full live-state alignment is blocked on approval for broker/runtime DB remediation."
+    }
+  ]
+}

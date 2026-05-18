@@ -25,6 +25,7 @@ def test_strategy_change_is_high_risk_with_required_reviewers() -> None:
     assert result.protected
     assert "risk-manager" in result.reviewers
     assert "tests/strategy" in result.checks
+    assert module.RUNTIME_INTEGRITY_CHECK in result.checks
 
 
 def test_admin_ui_change_is_medium_risk_frontend_work() -> None:
@@ -36,6 +37,16 @@ def test_admin_ui_change_is_medium_risk_frontend_work() -> None:
     assert not result.protected
     assert "frontend-engineer" in result.reviewers
     assert "tests/frontend" in result.checks
+    assert module.RUNTIME_INTEGRITY_CHECK not in result.checks
+
+
+def test_scheduler_change_requires_runtime_integrity_gate() -> None:
+    module = _load_module()
+
+    result = module.classify_paths(["scheduler/scheduler.py"])
+
+    assert result.risk == "medium"
+    assert module.RUNTIME_INTEGRITY_CHECK in result.checks
 
 
 def test_secret_file_change_is_blocked() -> None:

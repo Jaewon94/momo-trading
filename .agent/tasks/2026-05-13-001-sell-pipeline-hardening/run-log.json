@@ -1,0 +1,48 @@
+{
+  "schema_version": "momo.run-log.v1",
+  "task_id": "2026-05-13-001-sell-pipeline-hardening",
+  "events": [
+    {
+      "at": "2026-05-13T12:21:46+09:00",
+      "type": "task_started",
+      "status": "created",
+      "summary": "Task artifact created."
+    },
+    {
+      "at": "2026-05-13T12:26:50+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-13T12:27:24+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-13T12:28:40+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-13T12:34:17+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-14T09:58:13+09:00",
+      "type": "runtime_check",
+      "status": "passed",
+      "summary": "Started momo-trading in tmux background session `momo-trading-api`; health, system status, balance, holdings, and pending-orders APIs responded successfully. Runtime reported KIWOOM broker OK, scheduler running, trading_enabled=true, autonomy_mode=AUTONOMOUS, effective_order_submission_mode=FULL. No new orders or trade_results were recorded after session start during verification."
+    },
+    {
+      "at": "2026-05-14T10:45:23+09:00",
+      "type": "runtime_check",
+      "status": "failed",
+      "summary": "Follow-up live runtime check: server, broker, scheduler, health, news polling, and account snapshot were OK, and actual trading activity was present. Today showed 9 opened trades, 5 sell executions, 7 completed lots, 0 pending confirmations, and approximately +240,597 KRW realized PnL on closed BUY lots. However lifecycle-integrity API returned FAIL with confirm_failed_count=43, unpaired_sell_count=12, broker_missing_open_buy_count=8, and mismatches on currently monitored lots. Today included CONFIRM_FAILED rows for BUY 048770 and SELL 052900/232680/469750 due to zero filled quantity/order cancellation."
+    }
+  ]
+}

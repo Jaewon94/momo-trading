@@ -1,0 +1,78 @@
+{
+  "schema_version": "momo.run-log.v1",
+  "task_id": "2026-05-14-003-additional-consistency-restart-validation",
+  "events": [
+    {
+      "at": "2026-05-14T11:56:45+09:00",
+      "type": "task_started",
+      "status": "created",
+      "summary": "Task artifact created."
+    },
+    {
+      "at": "2026-05-14T12:01:24+09:00",
+      "type": "finding",
+      "status": "in_progress",
+      "summary": "Found remaining unguarded admin side-effect routes: runtime setting writes, LLM API key writes, scheduler start/stop, and manual agent trigger. Generic /orders route is DB-only and does not submit broker orders."
+    },
+    {
+      "at": "2026-05-14T12:01:43+09:00",
+      "type": "finding",
+      "status": "implementing",
+      "summary": "Found remaining unguarded admin side-effect routes: runtime setting writes, LLM API key writes, scheduler start/stop, and manual agent trigger. Generic /orders route is DB-only and does not submit broker orders."
+    },
+    {
+      "at": "2026-05-14T12:07:51+09:00",
+      "type": "verification",
+      "status": "testing",
+      "summary": "Pre-restart checks passed: tests/api 129 passed; runtime script/change harness tests 13 passed; scheduler/decision/portfolio tests 145 passed; pnpm test:ui 142 passed; docs consistency and strict-current passed."
+    },
+    {
+      "at": "2026-05-14T12:07:57+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-14T12:08:12+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-14T12:08:22+09:00",
+      "type": "verification",
+      "status": "testing",
+      "summary": "Initial verify attempt failed because system Python lacked pytest, then left task in failed state before final-report. Resetting task to testing and rerunning with .venv313 interpreter."
+    },
+    {
+      "at": "2026-05-14T12:08:29+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-14T12:08:33+09:00",
+      "type": "verification",
+      "status": "testing",
+      "summary": "Task harness verify passed with .venv313 interpreter."
+    },
+    {
+      "at": "2026-05-14T12:11:18+09:00",
+      "type": "verification",
+      "status": "reporting",
+      "summary": "Restarted under tmux session momo-trading-api. Health OK, system/settings/order reconciliation OK, OpenAPI/static JS include new confirmation contracts. Runtime integrity remains FAIL only on lifecycle data drift: confirm_failed=55, unpaired_sells=16, broker_missing_open_buys=13, broker_mismatch_qty=8."
+    },
+    {
+      "at": "2026-05-14T12:11:45+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-14T12:11:50+09:00",
+      "type": "completion",
+      "status": "completed",
+      "summary": "Completed additional consistency sweep, restart, and post-restart read-only validation. Remaining lifecycle drift documented for a separate repair task."
+    }
+  ]
+}
