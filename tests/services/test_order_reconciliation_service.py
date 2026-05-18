@@ -34,6 +34,7 @@ def _db_trade(
     order_id: str | None,
     side: str = "BUY",
     quantity: int = 10,
+    status: str = "PENDING_CONFIRM",
     created_at: datetime | None = None,
 ):
     return SimpleNamespace(
@@ -43,7 +44,7 @@ def _db_trade(
         stock_name=f"{symbol} db",
         side=side,
         quantity=quantity,
-        status="PENDING_CONFIRM",
+        status=status,
         created_at=created_at or datetime(2026, 4, 22, 9, 0),
         entry_at=created_at or datetime(2026, 4, 22, 9, 0),
     )
@@ -54,6 +55,7 @@ def test_order_reconciliation_classifies_broker_and_db_pending_drift():
     report = service.build_report(
         broker_pending_orders=[
             _broker_order("B-ONLY", "005930", order_qty=3),
+            _broker_order("CONFIRMED-LINK", "066430", order_qty=3250, filled_qty=60, remaining_qty=3190),
             _broker_order("MATCH", "000660", order_qty=10),
             _broker_order("QTY", "035420", order_qty=8),
             _broker_order("PARTIAL", "051910", order_qty=10, filled_qty=4, remaining_qty=6),
@@ -64,19 +66,25 @@ def test_order_reconciliation_classifies_broker_and_db_pending_drift():
             _db_trade("db-qty", "035420", order_id="QTY", quantity=5),
             _db_trade("db-partial", "051910", order_id="PARTIAL", quantity=10),
         ],
+        db_order_linked_trades=[
+            _db_trade("db-confirmed-link", "066430", order_id="CONFIRMED-LINK", quantity=8, status="CONFIRMED"),
+        ],
         now=datetime(2026, 4, 22, 10, 0),
     )
 
     assert report["summary"] == {
-        "broker_pending_count": 4,
+        "broker_pending_count": 5,
         "db_pending_count": 4,
         "matched_count": 1,
         "broker_only_count": 1,
+        "broker_linked_non_pending_count": 1,
         "db_only_stale_count": 1,
         "quantity_mismatch_count": 1,
         "partial_fill_pending_count": 1,
     }
     assert report["broker_only"][0]["order_id"] == "B-ONLY"
+    assert report["broker_linked_non_pending"][0]["order_id"] == "CONFIRMED-LINK"
+    assert report["broker_linked_non_pending"][0]["db_status"] == "CONFIRMED"
     assert report["db_only_stale"][0]["trade_id"] == "db-stale"
     assert report["quantity_mismatch"][0]["order_id"] == "QTY"
     assert report["quantity_mismatch"][0]["broker_order_qty"] == 8

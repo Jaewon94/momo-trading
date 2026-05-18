@@ -364,7 +364,16 @@ async def test_admin_manual_sell_route_delegates_to_service(client, monkeypatch)
         fake_sell_position,
     )
 
-    response = await client.post("/api/v1/admin/account/holdings/005930/sell")
+    challenge_response = await client.post(
+        "/api/v1/admin/actions/confirmations",
+        json={"action": "SELL_HOLDING", "resource_id": "005930", "quantity": "ALL"},
+    )
+    token = challenge_response.json()["data"]["confirmation_token"]
+
+    response = await client.post(
+        "/api/v1/admin/account/holdings/005930/sell",
+        json={"confirmation_token": token},
+    )
 
     assert response.status_code == 200
     assert observed == {"symbol": "005930"}
@@ -373,7 +382,7 @@ async def test_admin_manual_sell_route_delegates_to_service(client, monkeypatch)
     assert "즉시 매도" in payload["message"]
 
 
-async def test_admin_manual_sell_route_requires_confirmation_when_enabled(client, monkeypatch):
+async def test_admin_manual_sell_route_requires_confirmation(client, monkeypatch):
     called = False
 
     async def fake_sell_position(_symbol: str):
@@ -381,7 +390,6 @@ async def test_admin_manual_sell_route_requires_confirmation_when_enabled(client
         called = True
         return {}
 
-    monkeypatch.setattr("api.routes.admin.settings.ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED", True, raising=False)
     monkeypatch.setattr("api.routes.admin.manual_trade_service.sell_position", fake_sell_position)
 
     response = await client.post("/api/v1/admin/account/holdings/005930/sell")
@@ -390,7 +398,7 @@ async def test_admin_manual_sell_route_requires_confirmation_when_enabled(client
     assert called is False
 
 
-async def test_admin_manual_sell_route_accepts_confirmation_token_when_enabled(client, monkeypatch):
+async def test_admin_manual_sell_route_accepts_confirmation_token(client, monkeypatch):
     observed = {}
 
     async def fake_sell_position(symbol: str):
@@ -402,7 +410,6 @@ async def test_admin_manual_sell_route_accepts_confirmation_token_when_enabled(c
             "message": "즉시 매도 주문 접수",
         }
 
-    monkeypatch.setattr("api.routes.admin.settings.ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED", True, raising=False)
     monkeypatch.setattr("api.routes.admin.manual_trade_service.sell_position", fake_sell_position)
 
     challenge_response = await client.post(
@@ -436,7 +443,16 @@ async def test_admin_pending_buy_cancel_route_delegates_to_service(client, monke
         fake_cancel_pending_buy,
     )
 
-    response = await client.post("/api/v1/admin/account/pending-orders/1001/cancel-buy")
+    challenge_response = await client.post(
+        "/api/v1/admin/actions/confirmations",
+        json={"action": "CANCEL_PENDING_BUY", "resource_id": "1001", "quantity": "ALL"},
+    )
+    token = challenge_response.json()["data"]["confirmation_token"]
+
+    response = await client.post(
+        "/api/v1/admin/account/pending-orders/1001/cancel-buy",
+        json={"confirmation_token": token},
+    )
 
     assert response.status_code == 200
     assert observed == {"order_id": "1001"}
@@ -463,7 +479,16 @@ async def test_admin_pending_sell_replace_route_delegates_to_service(client, mon
         fake_replace_pending_sell,
     )
 
-    response = await client.post("/api/v1/admin/account/pending-orders/2001/cancel-and-sell")
+    challenge_response = await client.post(
+        "/api/v1/admin/actions/confirmations",
+        json={"action": "CANCEL_AND_SELL_PENDING", "resource_id": "2001", "quantity": "ALL"},
+    )
+    token = challenge_response.json()["data"]["confirmation_token"]
+
+    response = await client.post(
+        "/api/v1/admin/account/pending-orders/2001/cancel-and-sell",
+        json={"confirmation_token": token},
+    )
 
     assert response.status_code == 200
     assert observed == {"order_id": "2001"}
@@ -472,7 +497,7 @@ async def test_admin_pending_sell_replace_route_delegates_to_service(client, mon
     assert "취소 후 즉시 매도" in payload["message"]
 
 
-async def test_admin_pending_sell_replace_route_requires_confirmation_when_enabled(client, monkeypatch):
+async def test_admin_pending_sell_replace_route_requires_confirmation(client, monkeypatch):
     called = False
 
     async def fake_replace_pending_sell(_order_id: str):
@@ -480,7 +505,6 @@ async def test_admin_pending_sell_replace_route_requires_confirmation_when_enabl
         called = True
         return {}
 
-    monkeypatch.setattr("api.routes.admin.settings.ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED", True, raising=False)
     monkeypatch.setattr(
         "api.routes.admin.manual_trade_service.replace_pending_sell_with_market_order",
         fake_replace_pending_sell,

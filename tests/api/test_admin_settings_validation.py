@@ -1,6 +1,27 @@
 import pytest
 
 
+async def _admin_confirmation_token(client, action: str, resource_id: str, quantity: str = "ALL") -> str:
+    response = await client.post(
+        "/api/v1/admin/actions/confirmations",
+        json={"action": action, "resource_id": resource_id, "quantity": quantity},
+    )
+    assert response.status_code == 200
+    return response.json()["data"]["confirmation_token"]
+
+
+async def _confirmed_runtime_settings_payload(client, payload: dict) -> dict:
+    confirmed = dict(payload)
+    token = await _admin_confirmation_token(
+        client,
+        "APPLY_RUNTIME_SETTINGS",
+        "RUNTIME_SETTINGS",
+        ",".join(sorted(confirmed)),
+    )
+    confirmed["confirmation_token"] = token
+    return confirmed
+
+
 @pytest.mark.asyncio
 async def test_admin_settings_ignores_unknown_keys(client):
     response = await client.put(
@@ -146,6 +167,12 @@ async def test_llm_api_key_registry_adds_masks_counts_and_deletes_api_workers(cl
         fake_llm_usage_snapshot,
     )
     secret = "sk-ant-test-secret-123456"
+    create_token = await _admin_confirmation_token(
+        client,
+        "UPDATE_LLM_API_KEY",
+        "CLAUDE_API",
+        "SECRET",
+    )
 
     create_response = await client.post(
         "/api/v1/admin/llm/api-keys",
@@ -153,6 +180,7 @@ async def test_llm_api_key_registry_adds_masks_counts_and_deletes_api_workers(cl
             "provider": "CLAUDE_API",
             "label": "claude-fast-worker",
             "api_key": secret,
+            "confirmation_token": create_token,
         },
     )
 
@@ -176,7 +204,17 @@ async def test_llm_api_key_registry_adds_masks_counts_and_deletes_api_workers(cl
     assert status["items"][0]["id"] == created["id"]
     assert secret not in str(status_response.json())
 
-    delete_response = await client.delete(f"/api/v1/admin/llm/api-keys/{created['id']}")
+    delete_token = await _admin_confirmation_token(
+        client,
+        "DELETE_LLM_API_KEY",
+        created["id"],
+        "SECRET",
+    )
+    delete_response = await client.request(
+        "DELETE",
+        f"/api/v1/admin/llm/api-keys/{created['id']}",
+        json={"confirmation_token": delete_token},
+    )
 
     assert delete_response.status_code == 200
 
@@ -190,9 +228,13 @@ async def test_llm_api_key_registry_adds_masks_counts_and_deletes_api_workers(cl
 
 @pytest.mark.asyncio
 async def test_admin_settings_accepts_account_equity_drawdown_guard_mode(client):
+    payload = await _confirmed_runtime_settings_payload(
+        client,
+        {"ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE": "block_buy"},
+    )
     response = await client.put(
         "/api/v1/admin/settings",
-        json={"ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE": "block_buy"},
+        json=payload,
     )
 
     assert response.status_code == 200
@@ -207,10 +249,14 @@ async def test_admin_settings_accepts_account_equity_drawdown_guard_mode(client)
 @pytest.mark.asyncio
 async def test_admin_settings_rejects_invalid_account_equity_drawdown_guard_mode(client, monkeypatch):
     monkeypatch.setattr("api.routes.admin.settings.ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE", "REPORT_ONLY")
+    payload = await _confirmed_runtime_settings_payload(
+        client,
+        {"ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE": "INVALID"},
+    )
 
     response = await client.put(
         "/api/v1/admin/settings",
-        json={"ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE": "INVALID"},
+        json=payload,
     )
 
     assert response.status_code == 200
@@ -224,12 +270,16 @@ async def test_admin_settings_rejects_invalid_account_equity_drawdown_guard_mode
 
 @pytest.mark.asyncio
 async def test_admin_settings_accepts_account_equity_drawdown_thresholds(client):
-    response = await client.put(
-        "/api/v1/admin/settings",
-        json={
+    payload = await _confirmed_runtime_settings_payload(
+        client,
+        {
             "ACCOUNT_EQUITY_DRAWDOWN_BLOCK_BUY_PCT": "0.5",
             "ACCOUNT_EQUITY_DRAWDOWN_KILL_SWITCH_PCT": "1.0",
         },
+    )
+    response = await client.put(
+        "/api/v1/admin/settings",
+        json=payload,
     )
 
     assert response.status_code == 200
@@ -240,9 +290,13 @@ async def test_admin_settings_accepts_account_equity_drawdown_thresholds(client)
 
 @pytest.mark.asyncio
 async def test_admin_settings_rejects_invalid_account_equity_drawdown_threshold(client):
+    payload = await _confirmed_runtime_settings_payload(
+        client,
+        {"ACCOUNT_EQUITY_DRAWDOWN_BLOCK_BUY_PCT": -0.1},
+    )
     response = await client.put(
         "/api/v1/admin/settings",
-        json={"ACCOUNT_EQUITY_DRAWDOWN_BLOCK_BUY_PCT": -0.1},
+        json=payload,
     )
 
     assert response.status_code == 400
@@ -251,14 +305,18 @@ async def test_admin_settings_rejects_invalid_account_equity_drawdown_threshold(
 
 @pytest.mark.asyncio
 async def test_admin_settings_accepts_loss_streak_recovery_mode(client):
-    response = await client.put(
-        "/api/v1/admin/settings",
-        json={
+    payload = await _confirmed_runtime_settings_payload(
+        client,
+        {
             "LOSS_STREAK_RECOVERY_MODE": "probation",
             "LOSS_STREAK_RECOVERY_MAX_DAILY_BUYS": "1",
             "LOSS_STREAK_RECOVERY_MAX_ORDER_KRW": "1000000",
             "LOSS_STREAK_RECOVERY_SIZE_MULTIPLIER": "0.2",
         },
+    )
+    response = await client.put(
+        "/api/v1/admin/settings",
+        json=payload,
     )
 
     assert response.status_code == 200
@@ -271,9 +329,13 @@ async def test_admin_settings_accepts_loss_streak_recovery_mode(client):
 
 @pytest.mark.asyncio
 async def test_admin_settings_rejects_invalid_loss_streak_recovery_multiplier(client):
+    payload = await _confirmed_runtime_settings_payload(
+        client,
+        {"LOSS_STREAK_RECOVERY_SIZE_MULTIPLIER": 1.5},
+    )
     response = await client.put(
         "/api/v1/admin/settings",
-        json={"LOSS_STREAK_RECOVERY_SIZE_MULTIPLIER": 1.5},
+        json=payload,
     )
 
     assert response.status_code == 400

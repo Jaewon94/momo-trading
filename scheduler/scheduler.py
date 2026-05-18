@@ -53,6 +53,7 @@ class TradingScheduler:
         self._last_event_news_poll_at = 0.0
         self._last_event_news_poll_by_symbol: dict[str, float] = {}
         self._soft_stop_observations: dict[str, dict[str, object]] = {}
+        self._position_price_peaks: dict[str, dict[str, float]] = {}
         self._event_handlers_registered = False
         self._register_news_event_handlers()
 
@@ -184,6 +185,49 @@ class TradingScheduler:
             return float(getattr(settings, "BREAKEVEN_TRIGGER_PCT_LONG", 2.0) or 2.0)
         return float(getattr(settings, "BREAKEVEN_TRIGGER_PCT_MID", 1.5) or 1.5)
 
+    @staticmethod
+    def _default_stop_loss_pct(horizon: str) -> float:
+        key = str(horizon or TradeHorizon.MID).upper()
+        if key == TradeHorizon.SHORT:
+            return float(getattr(settings, "DEFAULT_STOP_LOSS_PCT_SHORT", -3.0) or -3.0)
+        if key == TradeHorizon.LONG:
+            return float(getattr(settings, "DEFAULT_STOP_LOSS_PCT_LONG", -6.0) or -6.0)
+        return float(getattr(settings, "DEFAULT_STOP_LOSS_PCT_MID", -4.0) or -4.0)
+
+    @staticmethod
+    def _default_take_profit_pct(horizon: str) -> float:
+        key = str(horizon or TradeHorizon.MID).upper()
+        if key == TradeHorizon.SHORT:
+            return float(getattr(settings, "DEFAULT_TAKE_PROFIT_PCT_SHORT", 5.0) or 5.0)
+        if key == TradeHorizon.LONG:
+            return float(getattr(settings, "DEFAULT_TAKE_PROFIT_PCT_LONG", 12.0) or 12.0)
+        return float(getattr(settings, "DEFAULT_TAKE_PROFIT_PCT_MID", 8.0) or 8.0)
+
+    @staticmethod
+    def _trailing_profit_activate_pct(horizon: str) -> float:
+        key = str(horizon or TradeHorizon.MID).upper()
+        if key == TradeHorizon.SHORT:
+            return float(getattr(settings, "TRAILING_PROFIT_ACTIVATE_PCT_SHORT", 2.0) or 2.0)
+        if key == TradeHorizon.LONG:
+            return float(getattr(settings, "TRAILING_PROFIT_ACTIVATE_PCT_LONG", 5.0) or 5.0)
+        return float(getattr(settings, "TRAILING_PROFIT_ACTIVATE_PCT_MID", 3.0) or 3.0)
+
+    @staticmethod
+    def _trailing_profit_drawdown_pct(horizon: str) -> float:
+        key = str(horizon or TradeHorizon.MID).upper()
+        if key == TradeHorizon.SHORT:
+            base = float(getattr(settings, "TRAILING_PROFIT_DRAWDOWN_PCT_SHORT", 1.0) or 1.0)
+        elif key == TradeHorizon.LONG:
+            base = float(getattr(settings, "TRAILING_PROFIT_DRAWDOWN_PCT_LONG", 3.0) or 3.0)
+        else:
+            base = float(getattr(settings, "TRAILING_PROFIT_DRAWDOWN_PCT_MID", 1.8) or 1.8)
+        appetite = str(getattr(settings, "RISK_APPETITE", "CONSERVATIVE") or "CONSERVATIVE").upper()
+        if appetite == "AGGRESSIVE":
+            return base + 0.4
+        if appetite == "MODERATE":
+            return base + 0.2
+        return max(base - 0.1, 0.5)
+
     def _partial_take_profit_quantity(self, *, holding_quantity: int, horizon: str) -> int:
         if not bool(getattr(settings, "PARTIAL_TAKE_PROFIT_ENABLED", True)):
             return 0
@@ -223,6 +267,55 @@ class TradingScheduler:
             return None
         buffer_bps = max(int(getattr(settings, "BREAKEVEN_BUFFER_BPS", 10) or 0), 0)
         return avg_buy_price * (1 + buffer_bps / 10000.0)
+
+    def _evaluate_trailing_profit_guard(
+        self,
+        *,
+        symbol: str,
+        avg_buy_price: float,
+        current_price: float,
+        pnl_rate: float,
+        tr,
+    ) -> tuple[bool, str, dict]:
+        if not bool(getattr(settings, "POSITION_EXIT_MANAGEMENT_ENABLED", True)):
+            return False, "", {}
+        if not bool(getattr(settings, "TRAILING_PROFIT_GUARD_ENABLED", True)):
+            return False, "", {}
+        if not tr or avg_buy_price <= 0 or current_price <= 0:
+            return False, "", {}
+
+        normalized = normalize_krx_symbol(symbol)
+        horizon = self._trade_horizon_from_result(tr)
+        peak = self._position_price_peaks.get(normalized, {})
+        peak_price = max(float(peak.get("peak_price", 0.0) or 0.0), float(current_price))
+        peak_pnl_rate = (peak_price - avg_buy_price) / avg_buy_price * 100
+        self._position_price_peaks[normalized] = {
+            "peak_price": peak_price,
+            "peak_pnl_rate": peak_pnl_rate,
+        }
+
+        activate_pct = self._trailing_profit_activate_pct(horizon)
+        drawdown_limit = self._trailing_profit_drawdown_pct(horizon)
+        drawdown_pct = peak_pnl_rate - pnl_rate
+        detail = {
+            "horizon": horizon,
+            "peak_price": peak_price,
+            "peak_pnl_rate": peak_pnl_rate,
+            "pnl_rate": pnl_rate,
+            "activate_pct": activate_pct,
+            "drawdown_pct": drawdown_pct,
+            "drawdown_limit": drawdown_limit,
+        }
+        if peak_pnl_rate < activate_pct:
+            return False, "", detail
+        if drawdown_pct < drawdown_limit:
+            return False, "", detail
+        return (
+            True,
+            f"{horizon} 트레일링 수익보호 "
+            f"(고점 {peak_pnl_rate:+.1f}% → 현재 {pnl_rate:+.1f}%, 되돌림 {drawdown_pct:.1f}%p)",
+            detail,
+        )
 
     def _scale_in_candidate_reason(
         self,
@@ -588,6 +681,16 @@ class TradingScheduler:
                 name="계좌 자산 스냅샷",
                 misfire_grace_time=300,
             )
+
+            if bool(getattr(settings, "FAST_HOLDINGS_GUARD_ENABLED", True)):
+                self.scheduler.add_job(
+                    self._fast_holdings_guard,
+                    "interval",
+                    minutes=max(int(getattr(settings, "FAST_HOLDINGS_GUARD_INTERVAL_MIN", 3) or 3), 1),
+                    id="fast_holdings_guard",
+                    name="빠른 보유 가격 가드",
+                    misfire_grace_time=120,
+                )
 
             # ── 장중 보유종목 점검 (1시간 간격, 09:00~15:00) — WebSocket 보완용 안전망 ──
             self.scheduler.add_job(
@@ -1091,12 +1194,13 @@ class TradingScheduler:
                 from realtime.event_detector import event_detector
                 th = event_detector.get_thresholds(symbol)
                 tr = open_map.get(symbol)
+                horizon = self._trade_horizon_from_result(tr) if tr else TradeHorizon.MID
 
                 if th.stop_loss <= 0 and th.take_profit <= 0:
                     alerts.append(f"⚠️ {h.name}({symbol}): AI 손절/익절 미설정 — 기본값 적용 중")
 
-                stop_loss_pct = -3.0  # 기본값
-                take_profit_pct = 5.0
+                stop_loss_pct = self._default_stop_loss_pct(horizon)
+                take_profit_pct = self._default_take_profit_pct(horizon)
                 if th.stop_loss > 0 and h.avg_buy_price > 0:
                     stop_loss_pct = ((th.stop_loss - h.avg_buy_price) / h.avg_buy_price) * 100
                 if th.take_profit > 0 and h.avg_buy_price > 0:
@@ -1139,6 +1243,29 @@ class TradingScheduler:
                         sell_quantity = partial_qty
                         exit_reason = "PARTIAL_TAKE_PROFIT"
                         reason = partial_reason
+
+                if not should_sell and tr:
+                    trail_sell, trail_reason, trail_detail = self._evaluate_trailing_profit_guard(
+                        symbol=symbol,
+                        avg_buy_price=float(h.avg_buy_price),
+                        current_price=current,
+                        pnl_rate=pnl_rate,
+                        tr=tr,
+                    )
+                    if trail_sell:
+                        should_sell = True
+                        exit_reason = "TRAILING_PROFIT_GUARD"
+                        reason = trail_reason
+                        await activity_logger.log(
+                            ActivityType.HOLDINGS_CHECK,
+                            ActivityPhase.PROGRESS,
+                            f"🧭 {h.name}({symbol}) 트레일링 수익보호 발동: {trail_reason}",
+                            symbol=symbol,
+                            detail={
+                                "action": "TRAILING_PROFIT_GUARD",
+                                **trail_detail,
+                            },
+                        )
 
                 # 손절/익절
                 if not should_sell and pnl_rate <= stop_loss_pct:
@@ -1209,18 +1336,17 @@ class TradingScheduler:
                         continue
                     try:
                         sell_resp = await self._place_market_sell(symbol, sell_quantity)
-                        status = "성공" if sell_resp.success else f"실패: {sell_resp.error or ''}"
-                        alerts.append(
-                            f"\U0001f6a8 {h.name}({symbol}): {reason} → 매도 {status}"
-                        )
                         if sell_resp.success:
+                            alerts.append(
+                                f"\U0001f6a8 {h.name}({symbol}): {reason} → 매도 주문 접수"
+                            )
                             await activity_logger.log(
                                 ActivityType.ORDER, ActivityPhase.PROGRESS,
                                 f"🚨 보유점검 매도 주문 접수: {h.name}({symbol}) "
                                 f"{sell_quantity}주 — {reason} — 체결 확인 대기",
                                 symbol=symbol,
                             )
-                            await self._track_scheduler_sell_confirmation(
+                            confirmed = await self._track_scheduler_sell_confirmation(
                                 holding=h,
                                 response=sell_resp,
                                 symbol=symbol,
@@ -1228,17 +1354,43 @@ class TradingScheduler:
                                 expected_price=current,
                                 exit_reason=exit_reason,
                             )
-                            await activity_logger.log(
-                                ActivityType.ORDER, ActivityPhase.COMPLETE,
-                                f"📉 보유점검 매도 완료: {h.name}({symbol}) "
-                                f"{sell_quantity}주 — {reason} — 체결 확인 완료",
-                                symbol=symbol,
+                            if confirmed:
+                                alerts.append(
+                                    f"✅ {h.name}({symbol}): {reason} → 매도 체결 확인 완료"
+                                )
+                                await activity_logger.log(
+                                    ActivityType.ORDER, ActivityPhase.COMPLETE,
+                                    f"📉 보유점검 매도 완료: {h.name}({symbol}) "
+                                    f"{sell_quantity}주 — {reason} — 체결 확인 완료",
+                                    symbol=symbol,
+                                )
+                                if sell_quantity >= int(h.quantity):
+                                    event_detector.remove_levels(symbol)
+                                    # 매도 성공 → 재스캔 트리거
+                                    import asyncio
+                                    asyncio.create_task(self._trigger_rescan_after_sell())
+                            else:
+                                alerts.append(
+                                    f"⚠️ {h.name}({symbol}): {reason} → 매도 체결 확인 실패/취소"
+                                )
+                                await activity_logger.log(
+                                    ActivityType.ORDER, ActivityPhase.ERROR,
+                                    f"⚠️ 보유점검 매도 체결 확인 실패: {h.name}({symbol}) "
+                                    f"{sell_quantity}주 — {reason}",
+                                    symbol=symbol,
+                                    detail={
+                                        "action": "SELL_CONFIRM_FAILED",
+                                        "source": "HOLDINGS_CHECK",
+                                        "quantity": int(sell_quantity),
+                                        "price": current,
+                                        "order_id": getattr(sell_resp, "order_id", None),
+                                        "exit_reason": exit_reason,
+                                    },
+                                )
+                        else:
+                            alerts.append(
+                                f"\U0001f6a8 {h.name}({symbol}): {reason} → 매도 실패: {sell_resp.error or ''}"
                             )
-                            if sell_quantity >= int(h.quantity):
-                                event_detector.remove_levels(symbol)
-                                # 매도 성공 → 재스캔 트리거
-                                import asyncio
-                                asyncio.create_task(self._trigger_rescan_after_sell())
                     except Exception as e:
                         alerts.append(
                             f"\u274c {h.name}({symbol}): {reason} → 매도 오류: {str(e)[:50]}"
@@ -1258,6 +1410,14 @@ class TradingScheduler:
                 )
         except Exception as e:
             logger.warning("보유종목 점검 오류: {}", str(e))
+
+    async def _fast_holdings_guard(self) -> None:
+        """Short-cycle holdings guard for price-based sell protection.
+
+        This intentionally reuses `_holdings_check` so broker order submission,
+        duplicate-sell locking, and fill confirmation stay on the existing path.
+        """
+        await self._holdings_check()
 
     async def _post_market(self) -> None:
         """장 마감 성과 리뷰 (15:40, KRX 종가 기반)"""
@@ -1490,8 +1650,8 @@ class TradingScheduler:
                 f"\u274c 장마감 보유 심사 오류: {str(e)[:100]}",
             )
 
-    async def _record_liquidation_sell(self, holding, response, *, exit_reason: str = "FORCE_LIQUIDATION") -> None:
-        await self._track_scheduler_sell_confirmation(
+    async def _record_liquidation_sell(self, holding, response, *, exit_reason: str = "FORCE_LIQUIDATION") -> bool:
+        return await self._track_scheduler_sell_confirmation(
             holding=holding,
             response=response,
             symbol=getattr(holding, "symbol", ""),
@@ -1509,7 +1669,7 @@ class TradingScheduler:
         quantity: int,
         expected_price: float,
         exit_reason: str,
-    ) -> None:
+    ) -> bool:
         order_id = str(getattr(response, "order_id", "") or "")
         if not order_id:
             logger.error(
@@ -1517,7 +1677,7 @@ class TradingScheduler:
                 getattr(holding, "name", ""),
                 symbol,
             )
-            return
+            return False
 
         from agent.decision_maker import decision_maker
         pending_record_id = await decision_maker._create_pending_record(
@@ -1532,7 +1692,7 @@ class TradingScheduler:
                 "ai_recommendation": "SELL",
             },
         )
-        await decision_maker.confirm_and_record(
+        confirmed = await decision_maker.confirm_and_record(
             symbol=symbol,
             side="SELL",
             order_id=order_id,
@@ -1541,6 +1701,7 @@ class TradingScheduler:
             exit_reason=exit_reason,
             pending_record_id=pending_record_id,
         )
+        return True if confirmed is None else bool(confirmed)
 
     async def _collect_holdings_data(
         self, sellable: list,
@@ -2219,26 +2380,39 @@ class TradingScheduler:
                             exit_reason = "PARTIAL_TAKE_PROFIT"
                         sell_resp = await self._place_market_sell(symbol, sell_quantity)
                         if sell_resp.success:
-                            if action == "SELL" or sell_quantity >= int(h.quantity):
-                                event_detector.remove_levels(symbol)
-                            await decision_maker.confirm_and_record(
+                            confirmed = await decision_maker.confirm_and_record(
                                 symbol=symbol, side="SELL",
                                 order_id=str(getattr(sell_resp, "order_id", "") or ""), quantity=sell_quantity,
                                 expected_price=current_price,
                                 exit_reason=exit_reason,
                             )
-                            # UI에 개별 매도 표시
-                            await activity_logger.log(
-                                ActivityType.ORDER, ActivityPhase.COMPLETE,
-                                f"🔄 장중 재평가 매도: {stock_name}({symbol}) {sell_quantity}주 — {reason}",
-                                symbol=symbol,
-                            )
-                            log_lines.append(
-                                f"  - {stock_name}({symbol}): {action} 매도 성공 ({sell_quantity}주) — {reason} "
-                                f"(AI {conf:.2f})"
-                            )
-                            # 매도 성공 → 재스캔 트리거
-                            asyncio.create_task(self._trigger_rescan_after_sell())
+                            confirmed = True if confirmed is None else bool(confirmed)
+                            if confirmed:
+                                if action == "SELL" or sell_quantity >= int(h.quantity):
+                                    event_detector.remove_levels(symbol)
+                                # UI에 개별 매도 표시
+                                await activity_logger.log(
+                                    ActivityType.ORDER, ActivityPhase.COMPLETE,
+                                    f"🔄 장중 재평가 매도: {stock_name}({symbol}) {sell_quantity}주 — {reason}",
+                                    symbol=symbol,
+                                )
+                                log_lines.append(
+                                    f"  - {stock_name}({symbol}): {action} 매도 성공 ({sell_quantity}주) — {reason} "
+                                    f"(AI {conf:.2f})"
+                                )
+                                # 매도 성공 → 재스캔 트리거
+                                asyncio.create_task(self._trigger_rescan_after_sell())
+                            else:
+                                await activity_logger.log(
+                                    ActivityType.ORDER, ActivityPhase.ERROR,
+                                    f"⚠️ 장중 재평가 매도 체결 확인 실패: {stock_name}({symbol}) "
+                                    f"{sell_quantity}주 — {reason}",
+                                    symbol=symbol,
+                                )
+                                log_lines.append(
+                                    f"  - {stock_name}({symbol}): {action} 매도 체결 확인 실패/취소 "
+                                    f"({sell_quantity}주) — {reason} (AI {conf:.2f})"
+                                )
                         else:
                             log_lines.append(
                                 f"  - {stock_name}({symbol}): {action} 매도 실패 — "
@@ -2468,6 +2642,15 @@ class TradingScheduler:
             if not holdings:
                 return
 
+            current_dt = now_kst()
+            opening_gap_window = current_dt.hour == 9 and current_dt.minute <= 20
+            if not opening_gap_window:
+                logger.debug(
+                    "오버나이트 갭 체크 스킵: 장 시작 확인 윈도우 아님 ({})",
+                    current_dt.strftime("%H:%M"),
+                )
+                return
+
             async with AsyncSessionLocal() as session:
                 repo = TradeResultRepository(session)
                 open_positions = await repo.get_all_open()
@@ -2480,14 +2663,12 @@ class TradingScheduler:
             }
 
             alerts = []
-            current_dt = now_kst()
             close_time = current_dt.replace(
                 hour=settings.FORCE_LIQUIDATION_HOUR,
                 minute=settings.FORCE_LIQUIDATION_MINUTE,
                 second=0, microsecond=0,
             )
             minutes_left = max(0, int((close_time - current_dt).total_seconds() / 60))
-            opening_gap_window = current_dt.hour == 9 and current_dt.minute <= 20
             for h in holdings:
                 if h.quantity <= 0:
                     continue
@@ -2548,29 +2729,9 @@ class TradingScheduler:
                         continue
                     try:
                         sell_resp = await self._place_market_sell(symbol, h.quantity)
-                        status = "성공" if sell_resp.success else f"실패: {sell_resp.error or ''}"
-                        alerts.append(f"\U0001f6a8 {h.name}({symbol}): {reason} → 매도 {status}")
                         if sell_resp.success:
-                            from realtime.event_detector import event_detector
-                            event_detector.remove_levels(symbol)
-                            await activity_logger.log(
-                                ActivityType.ORDER,
-                                ActivityPhase.COMPLETE,
-                                (
-                                    f"📉 [{h.name}] 갭 체크 매도 완료: "
-                                    f"{reason} — {int(h.quantity)}주 체결"
-                                ),
-                                symbol=symbol,
-                                detail={
-                                    "action": "SELL",
-                                    "source": "GAP_CHECK",
-                                    "reason": reason,
-                                    "quantity": int(h.quantity),
-                                    "price": current,
-                                    "order_id": getattr(sell_resp, "order_id", None),
-                                },
-                            )
-                            await self._track_scheduler_sell_confirmation(
+                            alerts.append(f"\U0001f6a8 {h.name}({symbol}): {reason} → 매도 주문 접수")
+                            confirmed = await self._track_scheduler_sell_confirmation(
                                 holding=h,
                                 response=sell_resp,
                                 symbol=symbol,
@@ -2578,7 +2739,48 @@ class TradingScheduler:
                                 expected_price=current,
                                 exit_reason="GAP_CHECK",
                             )
+                            if confirmed:
+                                alerts.append(f"✅ {h.name}({symbol}): {reason} → 매도 체결 확인 완료")
+                                from realtime.event_detector import event_detector
+                                event_detector.remove_levels(symbol)
+                                await activity_logger.log(
+                                    ActivityType.ORDER,
+                                    ActivityPhase.COMPLETE,
+                                    (
+                                        f"📉 [{h.name}] 갭 체크 매도 완료: "
+                                        f"{reason} — {int(h.quantity)}주 체결"
+                                    ),
+                                    symbol=symbol,
+                                    detail={
+                                        "action": "SELL",
+                                        "source": "GAP_CHECK",
+                                        "reason": reason,
+                                        "quantity": int(h.quantity),
+                                        "price": current,
+                                        "order_id": getattr(sell_resp, "order_id", None),
+                                    },
+                                )
+                            else:
+                                alerts.append(f"⚠️ {h.name}({symbol}): {reason} → 매도 체결 확인 실패/취소")
+                                await activity_logger.log(
+                                    ActivityType.ORDER,
+                                    ActivityPhase.ERROR,
+                                    (
+                                        f"⚠️ [{h.name}] 갭 체크 매도 체결 확인 실패: "
+                                        f"{reason} — {int(h.quantity)}주"
+                                    ),
+                                    symbol=symbol,
+                                    detail={
+                                        "action": "SELL_CONFIRM_FAILED",
+                                        "source": "GAP_CHECK",
+                                        "reason": reason,
+                                        "quantity": int(h.quantity),
+                                        "price": current,
+                                        "order_id": getattr(sell_resp, "order_id", None),
+                                    },
+                                )
                         else:
+                            alerts.append(f"\U0001f6a8 {h.name}({symbol}): {reason} → 매도 실패: {sell_resp.error or ''}")
                             await activity_logger.log(
                                 ActivityType.ORDER,
                                 ActivityPhase.ERROR,

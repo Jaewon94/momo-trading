@@ -1201,7 +1201,7 @@ async def test_decision_maker_confirms_fill_via_broker_adapter(monkeypatch) -> N
     monkeypatch.setattr("agent.decision_maker.asyncio.sleep", fake_sleep)
     monkeypatch.setattr(decision_maker, "_record_trade_result", fake_record_trade_result)
 
-    await decision_maker.confirm_and_record(
+    result = await decision_maker.confirm_and_record(
         symbol="005930",
         side="BUY",
         order_id="ORD-2",
@@ -1211,6 +1211,7 @@ async def test_decision_maker_confirms_fill_via_broker_adapter(monkeypatch) -> N
         cycle_id="cycle-3",
     )
 
+    assert result is True
     assert adapter.queried_order_ids == ["ORD-2"]
     assert adapter.cache_invalidated is True
     assert recorded["filled_qty"] == 3
@@ -1247,7 +1248,7 @@ async def test_decision_maker_updates_pending_record_when_id_is_provided(monkeyp
     monkeypatch.setattr("agent.decision_maker.asyncio.sleep", fake_sleep)
     monkeypatch.setattr(decision_maker, "_confirm_pending_record", fake_confirm_pending_record)
 
-    await decision_maker.confirm_and_record(
+    result = await decision_maker.confirm_and_record(
         symbol="005930",
         side="BUY",
         order_id="ORD-PENDING",
@@ -1257,11 +1258,87 @@ async def test_decision_maker_updates_pending_record_when_id_is_provided(monkeyp
         on_settled=fake_on_settled,
     )
 
+    assert result is True
     assert confirmed["pending_record_id"] == "pending-1"
     assert confirmed["filled_qty"] == 1
     assert confirmed["filled_price"] == 70_100
     assert adapter.cache_invalidated is True
     assert settled == [("ORD-PENDING", True)]
+
+
+@pytest.mark.asyncio
+async def test_decision_maker_keeps_partial_fill_pending_until_remaining_settles(monkeypatch) -> None:
+    adapter = FakeBrokerAdapter(
+        OrderResult(success=True, order_id="ORD-PARTIAL", message="주문 접수")
+    )
+    adapter.order_status = OrderStatusInfo(
+        order_id="ORD-PARTIAL",
+        symbol="066430",
+        filled_qty=25,
+        filled_price=3_080,
+        remaining_qty=3_225,
+        order_price=3_080,
+    )
+    decision_maker = DecisionMaker(broker_adapter=adapter)
+    confirmed: list[dict] = []
+    recorded: list[dict] = []
+    failed_marks: list[tuple[str | None, str]] = []
+    partial_marks: list[dict] = []
+    settled: list[tuple[str, bool]] = []
+    cancelled: list[tuple[str, str]] = []
+
+    async def fake_sleep(_: float) -> None:
+        return None
+
+    async def fake_confirm_pending_record(**kwargs) -> None:
+        confirmed.append(kwargs)
+
+    async def fake_record_trade_result(**kwargs) -> None:
+        recorded.append(kwargs)
+
+    async def fake_mark_pending_failed(pending_record_id: str | None, reason: str) -> None:
+        failed_marks.append((pending_record_id, reason))
+
+    async def fake_mark_pending_partially_filled(**kwargs) -> None:
+        partial_marks.append(kwargs)
+
+    async def fake_cancel(order_id: str, symbol: str) -> None:
+        cancelled.append((order_id, symbol))
+
+    async def fake_on_settled(order_id: str, success: bool) -> None:
+        settled.append((order_id, success))
+
+    monkeypatch.setattr("agent.decision_maker.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr(decision_maker, "_confirm_pending_record", fake_confirm_pending_record)
+    monkeypatch.setattr(decision_maker, "_record_trade_result", fake_record_trade_result)
+    monkeypatch.setattr(decision_maker, "_mark_pending_failed", fake_mark_pending_failed)
+    monkeypatch.setattr(decision_maker, "_mark_pending_partially_filled", fake_mark_pending_partially_filled)
+    monkeypatch.setattr(decision_maker, "_cancel_unfilled_order", fake_cancel)
+
+    result = await decision_maker.confirm_and_record(
+        symbol="066430",
+        side="BUY",
+        order_id="ORD-PARTIAL",
+        quantity=3_250,
+        expected_price=3_080,
+        pending_record_id="pending-partial",
+        on_settled=fake_on_settled,
+    )
+
+    assert result is False
+    assert confirmed == []
+    assert recorded == []
+    assert failed_marks == []
+    assert cancelled == []
+    assert settled == []
+    assert partial_marks == [{
+        "pending_record_id": "pending-partial",
+        "symbol": "066430",
+        "filled_qty": 25,
+        "remaining_qty": 3_225,
+        "filled_price": 3_080,
+    }]
+    assert adapter.cache_invalidated is True
 
 
 @pytest.mark.asyncio
@@ -1297,7 +1374,7 @@ async def test_decision_maker_marks_pending_failed_when_confirm_record_raises(mo
     monkeypatch.setattr(decision_maker, "_confirm_pending_record", fake_confirm_pending_record)
     monkeypatch.setattr(decision_maker, "_mark_pending_failed", fake_mark_pending_failed)
 
-    await decision_maker.confirm_and_record(
+    result = await decision_maker.confirm_and_record(
         symbol="005930",
         side="BUY",
         order_id="ORD-ERR",
@@ -1307,6 +1384,7 @@ async def test_decision_maker_marks_pending_failed_when_confirm_record_raises(mo
         on_settled=fake_on_settled,
     )
 
+    assert result is False
     assert failed_marks == [("pending-err", "db write failed")]
     assert settled == [("ORD-ERR", False)]
     assert adapter.cache_invalidated is False
@@ -1333,7 +1411,7 @@ async def test_decision_maker_cancels_when_order_status_is_missing(monkeypatch) 
     monkeypatch.setattr("agent.decision_maker.asyncio.sleep", fake_sleep)
     monkeypatch.setattr(decision_maker, "_cancel_unfilled_order", fake_cancel)
 
-    await decision_maker.confirm_and_record(
+    result = await decision_maker.confirm_and_record(
         symbol="005930",
         side="BUY",
         order_id="ORD-3",
@@ -1342,6 +1420,7 @@ async def test_decision_maker_cancels_when_order_status_is_missing(monkeypatch) 
         on_settled=fake_on_settled,
     )
 
+    assert result is False
     assert adapter.queried_order_ids == ["ORD-3"]
     assert cancelled == [("ORD-3", "005930")]
     assert settled == [("ORD-3", False)]
@@ -1374,7 +1453,7 @@ async def test_decision_maker_marks_pending_failed_when_order_status_times_out(m
     monkeypatch.setattr("agent.decision_maker.asyncio.sleep", fake_sleep)
     monkeypatch.setattr(decision_maker, "_mark_pending_failed", fake_mark_pending_failed)
 
-    await decision_maker.confirm_and_record(
+    result = await decision_maker.confirm_and_record(
         symbol="005930",
         side="BUY",
         order_id="ORD-TIMEOUT",
@@ -1384,6 +1463,7 @@ async def test_decision_maker_marks_pending_failed_when_order_status_times_out(m
         on_settled=fake_on_settled,
     )
 
+    assert result is False
     assert adapter.queried_order_ids == ["ORD-TIMEOUT"]
     assert failed_marks == [("pending-timeout", "체결 확인 타임아웃 (15초)")]
     assert settled == [("ORD-TIMEOUT", False)]
@@ -1462,7 +1542,7 @@ async def test_decision_maker_infers_sell_fill_when_status_missing_but_holding_d
     monkeypatch.setattr(decision_maker, "_record_trade_result", fake_record_trade_result)
     monkeypatch.setattr(decision_maker, "_cancel_unfilled_order", fake_cancel)
 
-    await decision_maker.confirm_and_record(
+    result = await decision_maker.confirm_and_record(
         symbol="001780",
         side="SELL",
         order_id="ORD-SELL",
@@ -1472,6 +1552,7 @@ async def test_decision_maker_infers_sell_fill_when_status_missing_but_holding_d
         on_settled=fake_on_settled,
     )
 
+    assert result is True
     assert adapter.queried_order_ids == ["ORD-SELL"]
     assert cancelled == []
     assert adapter.cache_invalidated is True
@@ -1512,7 +1593,7 @@ async def test_decision_maker_cancels_when_filled_quantity_is_zero(monkeypatch) 
     monkeypatch.setattr("agent.decision_maker.asyncio.sleep", fake_sleep)
     monkeypatch.setattr(decision_maker, "_cancel_unfilled_order", fake_cancel)
 
-    await decision_maker.confirm_and_record(
+    result = await decision_maker.confirm_and_record(
         symbol="005930",
         side="BUY",
         order_id="ORD-4",
@@ -1521,6 +1602,7 @@ async def test_decision_maker_cancels_when_filled_quantity_is_zero(monkeypatch) 
         on_settled=fake_on_settled,
     )
 
+    assert result is False
     assert adapter.queried_order_ids == ["ORD-4"]
     assert cancelled == [("ORD-4", "005930")]
     assert settled == [("ORD-4", False)]

@@ -1,9 +1,13 @@
+from datetime import timedelta
+
 import pytest
 
 from agent.trading_agent import TradingAgent
+from models.trade_result import TradeResult
 from strategy.signal import TradeSignal
 from trading.enums import Market, OrderSide, OrderType, SignalAction
 from trading.models import AccountBalance, Candle, CurrentPrice, HoldingInfo, OrderRequest, OrderResult
+from util.time_util import now_kst
 
 
 class FakeBrokerAdapter:
@@ -223,6 +227,61 @@ async def test_trading_agent_builds_portfolio_snapshot_from_broker_adapter(monke
         "holding_quantities": {"005930": 4},
     }
     assert agent._available_cash == 1_200_000
+
+
+@pytest.mark.asyncio
+async def test_trading_agent_counts_today_trade_results_for_risk_limit() -> None:
+    from tests.conftest import TestAsyncSessionLocal
+
+    now = now_kst()
+    yesterday = now - timedelta(days=1)
+
+    def trade(
+        order_id: str | None,
+        *,
+        side: str = "BUY",
+        status: str = "CONFIRMED",
+        strategy_type: str = "AGGRESSIVE_SHORT",
+        entry_at=None,
+        notes: str | None = None,
+    ) -> TradeResult:
+        return TradeResult(
+            order_id=order_id,
+            stock_symbol="005930",
+            stock_name="삼성전자",
+            side=side,
+            strategy_type=strategy_type,
+            entry_price=70_000,
+            exit_price=0.0 if side == "BUY" else 70_500,
+            quantity=1,
+            pnl=0.0,
+            return_pct=0.0,
+            is_win=False,
+            hold_days=0,
+            exit_reason="",
+            ai_recommendation="BUY",
+            ai_confidence=0.7,
+            market_regime="NORMAL",
+            status=status,
+            entry_at=entry_at or now,
+            exit_at=now if side == "SELL" else None,
+            notes=notes,
+        )
+
+    async with TestAsyncSessionLocal() as session:
+        session.add_all([
+            trade("BUY-1", status="CONFIRMED"),
+            trade("BUY-2", status="PENDING_CONFIRM"),
+            trade("BUY-3", status="CONFIRM_FAILED"),
+            trade(None, strategy_type="HOLDING_SYNC", notes="HOLDING_SYNC_BACKFILL"),
+            trade("SELL-1", side="SELL"),
+            trade("OLD-1", entry_at=yesterday),
+        ])
+        await session.commit()
+
+    agent = TradingAgent(broker_adapter=FakePortfolioBrokerAdapter())
+
+    assert await agent._get_today_trade_count() == 3
 
 
 @pytest.mark.asyncio

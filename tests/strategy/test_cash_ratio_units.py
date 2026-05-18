@@ -43,13 +43,17 @@ def test_ai_risk_tuner_replaces_unlimited_values_with_absolute_caps(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_risk_manager_accepts_percent_style_dynamic_cash_ratio(monkeypatch) -> None:
+    class AllowGuard:
+        async def evaluate_buy_guard(self, strategy_type: str, portfolio_budget: float, **kwargs) -> dict:
+            return {"approved": True, "reason": "통과", "trigger": "", "warnings": []}
+
     async def fake_log(*args, **kwargs) -> None:
         return None
 
     monkeypatch.setattr("strategy.risk_manager.activity_logger.log", fake_log)
     monkeypatch.setattr("strategy.risk_manager.settings.TRADING_ENABLED", True)
 
-    manager = RiskManager()
+    manager = RiskManager(trading_guard=AllowGuard())
     signal = TradeSignal(
         symbol="050890",
         stock_id="050890",
@@ -79,3 +83,5 @@ async def test_risk_manager_accepts_percent_style_dynamic_cash_ratio(monkeypatch
 
     assert result["approved"] is True
     assert result["reason"] == "리스크 검사 통과"
+    assert result["effective_max_daily_trades"] == 15
+    assert result["effective_max_single_order_krw"] == 75_000_000

@@ -162,6 +162,22 @@ async def _process_one_pending(tr, repo, session, adapter, order_map, holding_ma
     if matched:
         filled_qty = int(getattr(matched, "filled_qty", 0) or 0)
         if filled_qty > 0:
+            remaining_qty = int(getattr(matched, "remaining_qty", 0) or 0)
+            if remaining_qty > 0:
+                tr.notes = (
+                    "PENDING_CONFIRM_PARTIAL: "
+                    f"filled_qty={filled_qty}, remaining_qty={remaining_qty}"
+                )
+                logger.warning(
+                    "PENDING 복구 보류: {} {} 주문번호={} — 부분체결 {}주 / 잔량 {}주",
+                    tr.stock_symbol,
+                    tr.side,
+                    tr.order_id,
+                    filled_qty,
+                    remaining_qty,
+                )
+                summary["skipped"] = int(summary["skipped"]) + 1
+                return
             tr.status = OrderConfirmStatus.CONFIRMED.value
             tr.quantity = filled_qty
             filled_price = float(getattr(matched, "order_price", 0.0) or 0.0)
@@ -261,7 +277,14 @@ async def _process_one_pending(tr, repo, session, adapter, order_map, holding_ma
     elif tr.side == "BUY":
         holding = holding_map.get(symbol)
         if holding is not None:
-            inferred_qty = min(int(holding.quantity), int(tr.quantity or holding.quantity))
+            open_buys = await repo.get_all_open_buys(symbol)
+            confirmed_open_qty = sum(
+                int(getattr(open_buy, "quantity", 0) or 0)
+                for open_buy in open_buys
+            )
+            holding_qty = int(getattr(holding, "quantity", 0) or 0)
+            requested_qty = int(getattr(tr, "quantity", 0) or 0)
+            inferred_qty = min(max(holding_qty - confirmed_open_qty, 0), requested_qty or holding_qty)
             if inferred_qty > 0:
                 tr.status = OrderConfirmStatus.CONFIRMED.value
                 tr.quantity = inferred_qty
@@ -269,8 +292,8 @@ async def _process_one_pending(tr, repo, session, adapter, order_map, holding_ma
                     tr.entry_price = float(holding.avg_buy_price)
                 tr.notes = None
                 logger.debug(
-                    "PENDING 복구(보유수량 추론): {} {} {}주 → CONFIRMED",
-                    tr.stock_symbol, tr.side, inferred_qty,
+                    "PENDING 복구(보유수량 델타 추론): {} {} {}주 → CONFIRMED (계좌 {}주 / DB open {}주)",
+                    tr.stock_symbol, tr.side, inferred_qty, holding_qty, confirmed_open_qty,
                 )
                 summary["recovered"] = int(summary["recovered"]) + 1
                 return
@@ -314,9 +337,10 @@ async def _process_one_pending(tr, repo, session, adapter, order_map, holding_ma
         await _cancel_unfilled_order(str(tr.order_id), tr.stock_symbol)
 
 
-async def _repair_confirmed_zero_entry_prices() -> dict[str, int | str]:
+async def _repair_confirmed_zero_entry_prices(*, dry_run: bool = False) -> dict[str, int | str]:
     """미청산 CONFIRMED BUY 중 0원 체결가를 안전하게 복구"""
     summary: dict[str, int | str] = {
+        "mode": "dry_run" if dry_run else "apply",
         "provider": "UNKNOWN",
         "candidates": 0,
         "repaired": 0,
@@ -401,6 +425,13 @@ async def _repair_confirmed_zero_entry_prices() -> dict[str, int | str]:
                         summary["skipped"] = int(summary["skipped"]) + len(trades)
                         continue
 
+                    if dry_run:
+                        logger.info(
+                            "0원 체결가 복구 dry-run: {} {}건 → @{:.2f}원",
+                            symbol, len(trades), repaired_price,
+                        )
+                        continue
+
                     for trade in trades:
                         trade.entry_price = float(repaired_price)
                     logger.info(
@@ -414,10 +445,12 @@ async def _repair_confirmed_zero_entry_prices() -> dict[str, int | str]:
     return summary
 
 
-async def _backfill_missing_open_buys_from_holdings() -> dict[str, int | str]:
+async def _backfill_missing_open_buys_from_holdings(*, dry_run: bool = False) -> dict[str, int | str]:
     """계좌 보유수량이 DB 미청산수량보다 많을 때 합성 BUY 레코드로 메움"""
     summary: dict[str, int | str] = {
+        "mode": "dry_run" if dry_run else "apply",
         "provider": "UNKNOWN",
+        "candidate_count": 0,
         "backfilled": 0,
         "skipped": 0,
     }
@@ -433,6 +466,11 @@ async def _backfill_missing_open_buys_from_holdings() -> dict[str, int | str]:
                 adapter = get_broker_adapter()
                 summary["provider"] = adapter.provider.value
                 holdings = await adapter.get_holdings()
+                broker_pending_symbols = {
+                    normalize_krx_symbol(getattr(order, "symbol", ""))
+                    for order in await adapter.get_pending_orders()
+                    if int(getattr(order, "remaining_qty", 0) or 0) > 0
+                }
                 pending_symbols = {
                     normalize_krx_symbol(getattr(tr, "stock_symbol", ""))
                     for tr in await repo.get_pending_confirms()
@@ -445,8 +483,9 @@ async def _backfill_missing_open_buys_from_holdings() -> dict[str, int | str]:
                     holding_qty = int(getattr(holding, "quantity", 0) or 0)
                     if not symbol or holding_qty <= 0:
                         continue
-                    if symbol in pending_symbols:
-                        logger.warning("보유 백필 보류: {} — pending confirm 존재", symbol)
+                    if symbol in pending_symbols or symbol in broker_pending_symbols:
+                        reason = "pending confirm 존재" if symbol in pending_symbols else "브로커 미체결 주문 존재"
+                        logger.warning("보유 백필 보류: {} — {}", symbol, reason)
                         summary["skipped"] = int(summary["skipped"]) + 1
                         continue
 
@@ -489,6 +528,9 @@ async def _backfill_missing_open_buys_from_holdings() -> dict[str, int | str]:
                         "보유 백필 생성: {} {}주 @{:.2f}원 (계좌 {}주 / DB {}주)",
                         symbol, missing_qty, avg_buy_price, holding_qty, open_qty,
                     )
+                summary["candidate_count"] = len(backfill_rows)
+                if dry_run:
+                    return summary
                 if backfill_rows:
                     for row in backfill_rows:
                         session.add(row)

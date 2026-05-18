@@ -9,6 +9,7 @@ from services.trade_close_reconciliation_service import TradeCloseReconciliation
 
 def _trade(
     *,
+    order_id: str | None = None,
     symbol: str,
     side: str,
     quantity: int,
@@ -16,9 +17,11 @@ def _trade(
     exit_price: float = 0.0,
     entry_at: datetime,
     exit_at: datetime | None = None,
+    exit_reason: str | None = None,
     notes: str | None = None,
 ) -> TradeResult:
     return TradeResult(
+        order_id=order_id,
         stock_symbol=symbol,
         stock_name=symbol,
         side=side,
@@ -30,7 +33,7 @@ def _trade(
         return_pct=0.0,
         is_win=False,
         hold_days=0,
-        exit_reason="HOLDINGS_CHECK" if side == "SELL" else "",
+        exit_reason=exit_reason if exit_reason is not None else ("HOLDINGS_CHECK" if side == "SELL" else ""),
         ai_recommendation="BUY",
         ai_confidence=0.7,
         market="KRX",
@@ -105,6 +108,94 @@ async def test_close_reconciliation_reports_unmatched_sell_quantity():
     assert report["summary"]["unmatched_sell_count"] == 1
     assert report["summary"]["unmatched_sell_quantity"] == 850
     assert report["unmatched_sells"][0]["sell_symbol"] == "047040"
+
+
+@pytest.mark.asyncio
+async def test_close_reconciliation_ignores_sell_already_reflected_in_buy_lot():
+    from tests.conftest import TestAsyncSessionLocal
+
+    now = datetime.now()
+    closed_at = now - timedelta(minutes=30)
+    async with TestAsyncSessionLocal() as session:
+        session.add(_trade(
+            symbol="090710",
+            side="BUY",
+            quantity=160,
+            entry_price=13_790,
+            exit_price=14_160,
+            entry_at=now - timedelta(hours=2),
+            exit_at=closed_at,
+            exit_reason="PARTIAL_TAKE_PROFIT",
+        ))
+        session.add(_trade(
+            symbol="090710",
+            side="SELL",
+            quantity=160,
+            entry_price=0,
+            exit_price=14_160,
+            entry_at=closed_at,
+            exit_at=closed_at,
+            exit_reason="PARTIAL_TAKE_PROFIT",
+        ))
+        await session.commit()
+
+        report = await TradeCloseReconciliationService().build_dry_run(session, days=1)
+
+    assert report["summary"]["raw_sell_execution_count"] == 1
+    assert report["summary"]["sell_execution_count"] == 0
+    assert report["summary"]["reflected_sell_count"] == 1
+    assert report["summary"]["reflected_sell_quantity"] == 160
+    assert report["summary"]["unmatched_sell_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_close_reconciliation_ignores_sell_reflected_by_repair_note():
+    from tests.conftest import TestAsyncSessionLocal
+
+    now = datetime.now()
+    sell_at = now - timedelta(minutes=30)
+    async with TestAsyncSessionLocal() as session:
+        session.add(_trade(
+            symbol="048770",
+            side="BUY",
+            quantity=450,
+            entry_price=5_540,
+            exit_price=6_930,
+            entry_at=now - timedelta(days=1),
+            exit_at=sell_at + timedelta(minutes=2),
+            exit_reason="GAP_CHECK",
+            notes="CLOSE_RECONCILIATION_APPLY: repaired from broker-confirmed sell order 0051955",
+        ))
+        session.add(_trade(
+            symbol="048770",
+            side="BUY",
+            quantity=1710,
+            entry_price=5_540,
+            exit_price=6_930,
+            entry_at=now - timedelta(days=1),
+            exit_at=sell_at,
+            exit_reason="GAP_CHECK",
+        ))
+        session.add(_trade(
+            order_id="0051955",
+            symbol="048770",
+            side="SELL",
+            quantity=2160,
+            entry_price=0,
+            exit_price=6_930,
+            entry_at=sell_at,
+            exit_at=sell_at,
+            exit_reason="GAP_CHECK",
+        ))
+        await session.commit()
+
+        report = await TradeCloseReconciliationService().build_dry_run(session, days=2)
+
+    assert report["summary"]["raw_sell_execution_count"] == 1
+    assert report["summary"]["sell_execution_count"] == 0
+    assert report["summary"]["reflected_sell_count"] == 1
+    assert report["summary"]["reflected_sell_quantity"] == 2160
+    assert report["summary"]["unmatched_sell_count"] == 0
 
 
 @pytest.mark.asyncio

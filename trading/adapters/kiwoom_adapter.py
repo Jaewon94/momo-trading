@@ -229,11 +229,12 @@ class KiwoomBrokerAdapter(BrokerAdapter):
             filled_price = order.order_price if order.filled_qty > 0 else 0.0
             if filled_price <= 0:
                 submitted = self._submitted_orders.get(str(order_id))
-                holding = await self._get_holding(order.symbol)
-                if holding is not None and holding.avg_buy_price > 0:
-                    filled_price = holding.avg_buy_price
-                elif submitted is not None and submitted.order_price > 0:
+                if submitted is not None and submitted.order_price > 0:
                     filled_price = submitted.order_price
+                elif submitted is None or submitted.side == OrderSide.BUY.value:
+                    holding = await self._get_holding(order.symbol)
+                    if holding is not None and holding.avg_buy_price > 0:
+                        filled_price = holding.avg_buy_price
             return OrderStatusInfo(
                 order_id=order.order_id,
                 symbol=order.symbol,
@@ -259,7 +260,7 @@ class KiwoomBrokerAdapter(BrokerAdapter):
             return None
 
         filled_price = submitted.order_price
-        if filled_price <= 0 and holding is not None:
+        if filled_price <= 0 and submitted.side == OrderSide.BUY.value and holding is not None:
             filled_price = holding.avg_buy_price
 
         return OrderStatusInfo(

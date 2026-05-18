@@ -66,7 +66,20 @@ async def test_admin_reconcile_pending_trades_route_returns_summary(client, monk
         fake_recover_pending_confirms,
     )
 
-    response = await client.post("/api/v1/admin/trades/reconcile-pending")
+    challenge_response = await client.post(
+        "/api/v1/admin/actions/confirmations",
+        json={
+            "action": "RECOVER_PENDING_CONFIRMS",
+            "resource_id": "TRADE_RECONCILIATION",
+            "quantity": "ALL",
+        },
+    )
+    token = challenge_response.json()["data"]["confirmation_token"]
+
+    response = await client.post(
+        "/api/v1/admin/trades/reconcile-pending",
+        json={"confirmation_token": token},
+    )
 
     assert response.status_code == 200
     payload = response.json()
@@ -111,6 +124,9 @@ async def test_admin_trade_reconciliation_route_returns_read_only_report(client,
 
         async def get_pending_confirms(self):
             return db_pending
+
+        async def get_by_order_ids(self, _order_ids):
+            return []
 
     monkeypatch.setattr("api.routes.admin.TradeResultRepository", FakeRepo, raising=False)
     monkeypatch.setattr(
@@ -335,20 +351,23 @@ async def test_admin_trade_reconciliation_cleanup_apply_requires_confirmation_wh
 async def test_admin_reconcile_holdings_trades_route_returns_summary(client, monkeypatch):
     captured = {}
 
-    async def fake_backfill():
-        captured["backfill"] = True
+    async def fake_backfill(*, dry_run: bool = False):
+        captured["backfill_dry_run"] = dry_run
         return {
+            "mode": "dry_run" if dry_run else "apply",
             "provider": "KIWOOM",
-            "backfilled": 2,
+            "candidate_count": 2,
+            "backfilled": 0 if dry_run else 2,
             "skipped": 1,
         }
 
-    async def fake_repair():
-        captured["repair"] = True
+    async def fake_repair(*, dry_run: bool = False):
+        captured["repair_dry_run"] = dry_run
         return {
+            "mode": "dry_run" if dry_run else "apply",
             "provider": "KIWOOM",
             "candidates": 2,
-            "repaired": 1,
+            "repaired": 0 if dry_run else 1,
             "skipped": 1,
         }
 
@@ -381,20 +400,26 @@ async def test_admin_reconcile_holdings_trades_route_returns_summary(client, mon
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["data"]["backfill"]["backfilled"] == 2
-    assert payload["data"]["repair"]["repaired"] == 1
+    assert payload["data"]["backfill"]["mode"] == "dry_run"
+    assert payload["data"]["backfill"]["backfilled"] == 0
+    assert payload["data"]["repair"]["mode"] == "dry_run"
+    assert payload["data"]["repair"]["repaired"] == 0
     assert payload["data"]["missing_closes"]["summary"]["mode"] == "dry_run"
-    assert captured == {"backfill": True, "repair": True, "close_missing_dry_run": True}
+    assert captured == {
+        "backfill_dry_run": True,
+        "repair_dry_run": True,
+        "close_missing_dry_run": True,
+    }
 
 
 @pytest.mark.asyncio
 async def test_admin_reconcile_holdings_trades_apply_missing_requires_confirmation_when_enabled(client, monkeypatch):
     called = False
 
-    async def fake_backfill():
+    async def fake_backfill(*, dry_run: bool = False):
         return {"provider": "KIWOOM", "backfilled": 0, "skipped": 0}
 
-    async def fake_repair():
+    async def fake_repair(*, dry_run: bool = False):
         return {"provider": "KIWOOM", "candidates": 0, "repaired": 0, "skipped": 0}
 
     async def fake_close_missing(*, dry_run: bool = True):
@@ -461,10 +486,10 @@ async def test_admin_reset_operational_baseline_route_returns_summary(client, mo
     observed = {"reset": 0}
     service = AccountEquityService(session_factory=TestAsyncSessionLocal)
 
-    async def fake_backfill():
+    async def fake_backfill(*, dry_run: bool = False):
         return {"provider": "KIWOOM", "backfilled": 2, "skipped": 0}
 
-    async def fake_repair():
+    async def fake_repair(*, dry_run: bool = False):
         return {"provider": "KIWOOM", "candidates": 0, "repaired": 0, "skipped": 0}
 
     async def fake_log(*args, **kwargs):
@@ -508,7 +533,20 @@ async def test_admin_reset_operational_baseline_route_returns_summary(client, mo
     monkeypatch.setattr("api.routes.admin.news_runtime_service.reset", lambda: observed.__setitem__("reset", observed["reset"] + 1))
     monkeypatch.setattr("api.routes.admin.activity_logger.log", fake_log)
 
-    response = await client.post("/api/v1/admin/system/reset-operational-baseline")
+    challenge_response = await client.post(
+        "/api/v1/admin/actions/confirmations",
+        json={
+            "action": "RESET_OPERATIONAL_BASELINE",
+            "resource_id": "OPERATIONAL_BASELINE",
+            "quantity": "ALL",
+        },
+    )
+    token = challenge_response.json()["data"]["confirmation_token"]
+
+    response = await client.post(
+        "/api/v1/admin/system/reset-operational-baseline",
+        json={"confirmation_token": token},
+    )
 
     assert response.status_code == 200
     payload = response.json()

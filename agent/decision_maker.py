@@ -796,13 +796,14 @@ class DecisionMaker:
         exit_reason: str = "",
         pending_record_id: str | None = None,
         on_settled: Callable[[str, bool], Any] | None = None,
-    ) -> None:
+    ) -> bool:
         """주문 접수 후 체결 확인 → TradeResult 기록
 
         pending_record_id가 있으면 기존 PENDING_CONFIRM 레코드를 UPDATE.
         없으면 기존 방식(새 레코드 생성)으로 폴백.
         주문 성격에 맞게 대기 → 브로커 어댑터로 체결 확인 → 체결 시 기록.
         on_settled: 체결 확인 완료 시 호출되는 콜백 (order_id, success)
+        Returns True only when a fill was confirmed or safely inferred.
         """
         try:
             await asyncio.sleep(self._order_confirm_wait_sec(side))
@@ -821,7 +822,7 @@ class DecisionMaker:
                 await self._mark_pending_failed(pending_record_id, reason)
                 if on_settled:
                     await on_settled(order_id, False)
-                return
+                return False
             if not order_status:
                 if side == "SELL":
                     inferred = await self._infer_and_record_sell_fill_from_holdings(
@@ -837,7 +838,7 @@ class DecisionMaker:
                         self._broker_adapter.invalidate_cache()
                         if on_settled:
                             await on_settled(order_id, True)
-                        return
+                        return True
 
                 logger.info("[{}] 주문 {} 미체결 (체결내역에서 미발견)", symbol, order_id)
                 await self._cancel_unfilled_order(order_id, symbol)
@@ -846,7 +847,7 @@ class DecisionMaker:
                 )
                 if on_settled:
                     await on_settled(order_id, False)
-                return
+                return False
 
             filled_qty = (
                 quantity if order_status.filled_qty is None else order_status.filled_qty
@@ -865,7 +866,27 @@ class DecisionMaker:
                 )
                 if on_settled:
                     await on_settled(order_id, False)
-                return
+                return False
+
+            remaining_qty = int(getattr(order_status, "remaining_qty", 0) or 0)
+            if remaining_qty > 0:
+                logger.warning(
+                    "[체결확인] {} {} 주문 {} 부분체결 보류: 체결 {}주 / 잔량 {}주",
+                    symbol,
+                    side,
+                    order_id,
+                    filled_qty,
+                    remaining_qty,
+                )
+                await self._mark_pending_partially_filled(
+                    pending_record_id=pending_record_id,
+                    symbol=symbol,
+                    filled_qty=filled_qty,
+                    remaining_qty=remaining_qty,
+                    filled_price=filled_price,
+                )
+                self._broker_adapter.invalidate_cache()
+                return False
 
             logger.info(
                 "[체결확인] {} {} {}주 @{:,.0f}원 체결 완료 (주문번호: {})",
@@ -904,6 +925,7 @@ class DecisionMaker:
             # 체결 성공 콜백 → 예약 금액 해제
             if on_settled:
                 await on_settled(order_id, True)
+            return True
 
         except asyncio.CancelledError:
             logger.warning(
@@ -917,6 +939,7 @@ class DecisionMaker:
             # 체결 실패 콜백 → 예약 환불
             if on_settled:
                 await on_settled(order_id, False)
+            return False
 
     @staticmethod
     def _order_confirm_wait_sec(side: str) -> float:
@@ -1224,6 +1247,42 @@ class DecisionMaker:
                 await activity_logger.log(**activity_log)
         except Exception as e:
             logger.error("[{}] PENDING→CONFIRMED 업데이트 실패: {}", symbol, str(e))
+
+    async def _mark_pending_partially_filled(
+        self,
+        *,
+        pending_record_id: str | None,
+        symbol: str,
+        filled_qty: int,
+        remaining_qty: int,
+        filled_price: float,
+    ) -> None:
+        """부분체결 주문은 잔량이 정리될 때까지 PENDING_CONFIRM로 유지한다."""
+        if not pending_record_id:
+            return
+        try:
+            async with AsyncSessionLocal() as session:
+                async with session.begin():
+                    repo = TradeResultRepository(session)
+                    tr = await repo.filter_by_one(id=pending_record_id)
+                    if not tr:
+                        return
+                    if tr.status != OrderConfirmStatus.PENDING_CONFIRM.value:
+                        logger.warning(
+                            "[{}] 부분체결 표시 스킵: pending 레코드 {} 상태={}",
+                            symbol,
+                            pending_record_id,
+                            tr.status,
+                        )
+                        return
+                    tr.notes = (
+                        "PENDING_CONFIRM_PARTIAL: "
+                        f"filled_qty={int(filled_qty or 0)}, "
+                        f"remaining_qty={int(remaining_qty or 0)}, "
+                        f"filled_price={float(filled_price or 0.0):.2f}"
+                    )
+        except Exception as e:
+            logger.warning("[{}] 부분체결 PENDING 표시 실패: {}", symbol, str(e))
 
     async def _mark_pending_failed(self, pending_record_id: str | None, reason: str) -> None:
         """PENDING_CONFIRM → CONFIRM_FAILED 마킹"""

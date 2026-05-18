@@ -44,6 +44,9 @@ async def test_recover_pending_confirms_uses_kiwoom_holdings_for_filled_buy(monk
         async def get_pending_confirms(self):
             return [pending_trade]
 
+        async def get_all_open_buys(self, _symbol):
+            return []
+
     class FakeBrokerAdapter:
         provider = BrokerProvider.KIWOOM
 
@@ -73,6 +76,135 @@ async def test_recover_pending_confirms_uses_kiwoom_holdings_for_filled_buy(monk
     assert pending_trade.quantity == 7800
     assert pending_trade.entry_price == 1895.0
     assert pending_trade.notes is None
+
+
+@pytest.mark.asyncio
+async def test_recover_pending_confirms_uses_holding_delta_for_cancelled_partial_buy(monkeypatch) -> None:
+    pending_trade = SimpleNamespace(
+        order_id="0067887",
+        stock_symbol="066430",
+        side="BUY",
+        quantity=3250,
+        entry_price=3080.0,
+        exit_price=0.0,
+        notes="PENDING_CONFIRM_PARTIAL: filled_qty=60, remaining_qty=3190, filled_price=3080.00",
+        status=OrderConfirmStatus.PENDING_CONFIRM.value,
+    )
+    existing_open = [
+        SimpleNamespace(quantity=52),
+    ]
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def begin(self):
+            return self
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_pending_confirms(self):
+            return [pending_trade]
+
+        async def get_all_open_buys(self, symbol):
+            assert symbol == "066430"
+            return existing_open
+
+    class FakeBrokerAdapter:
+        provider = BrokerProvider.KIWOOM
+
+        async def get_pending_orders(self):
+            return []
+
+        async def get_holdings(self):
+            return [
+                HoldingInfo(
+                    symbol="066430",
+                    name="아이로보틱스",
+                    quantity=60,
+                    avg_buy_price=3080.0,
+                    current_price=3080.0,
+                    pnl=-1649.0,
+                    pnl_rate=-0.89,
+                )
+            ]
+
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("trading.broker_factory.get_broker_adapter", lambda: FakeBrokerAdapter())
+
+    summary = await _recover_pending_confirms()
+
+    assert summary["recovered"] == 1
+    assert pending_trade.status == OrderConfirmStatus.CONFIRMED.value
+    assert pending_trade.quantity == 8
+    assert pending_trade.entry_price == 3080.0
+    assert pending_trade.notes is None
+
+
+@pytest.mark.asyncio
+async def test_recover_pending_confirms_keeps_partial_broker_order_pending(monkeypatch) -> None:
+    pending_trade = SimpleNamespace(
+        order_id="0067887",
+        stock_symbol="066430",
+        side="BUY",
+        quantity=3250,
+        entry_price=3080.0,
+        exit_price=0.0,
+        notes="PENDING_CONFIRM",
+        status=OrderConfirmStatus.PENDING_CONFIRM.value,
+    )
+    broker_order = SimpleNamespace(
+        order_id="0067887",
+        symbol="066430",
+        filled_qty=25,
+        remaining_qty=3225,
+        order_price=3080.0,
+    )
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def begin(self):
+            return self
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_pending_confirms(self):
+            return [pending_trade]
+
+    class FakeBrokerAdapter:
+        provider = BrokerProvider.KIWOOM
+
+        async def get_pending_orders(self):
+            return [broker_order]
+
+        async def get_holdings(self):
+            return []
+
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("trading.broker_factory.get_broker_adapter", lambda: FakeBrokerAdapter())
+
+    summary = await _recover_pending_confirms()
+
+    assert summary["skipped"] == 1
+    assert summary["recovered"] == 0
+    assert pending_trade.status == OrderConfirmStatus.PENDING_CONFIRM.value
+    assert pending_trade.quantity == 3250
+    assert "PENDING_CONFIRM_PARTIAL" in pending_trade.notes
+    assert "remaining_qty=3225" in pending_trade.notes
 
 
 @pytest.mark.asyncio
@@ -345,6 +477,9 @@ async def test_close_open_buys_missing_from_holdings_skips_pending_symbols(monke
 
         async def get_pending_confirms(self):
             return [pending_trade]
+
+        async def get_all_open_buys(self, _symbol):
+            return []
 
     class FakeBrokerAdapter:
         provider = BrokerProvider.KIWOOM
@@ -676,6 +811,9 @@ async def test_recover_pending_confirms_normalizes_a_prefixed_kiwoom_holdings(mo
         async def get_pending_confirms(self):
             return [pending_trade]
 
+        async def get_all_open_buys(self, _symbol):
+            return []
+
     class FakeBrokerAdapter:
         provider = BrokerProvider.KIWOOM
 
@@ -694,6 +832,9 @@ async def test_recover_pending_confirms_normalizes_a_prefixed_kiwoom_holdings(mo
                     pnl_rate=9.4,
                 )
             ]
+
+        async def get_pending_orders(self):
+            return []
 
     monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
     monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
@@ -1162,6 +1303,9 @@ async def test_backfill_missing_open_buys_from_holdings_creates_synthetic_trade(
                 )
             ]
 
+        async def get_pending_orders(self):
+            return []
+
     class FakeTradeResult:
         def __init__(self, **kwargs) -> None:
             self.__dict__.update(kwargs)
@@ -1229,6 +1373,66 @@ async def test_backfill_missing_open_buys_from_holdings_skips_symbol_with_pendin
                     pnl_rate=9.4,
                 )
             ]
+
+        async def get_pending_orders(self):
+            return []
+
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("trading.broker_factory.get_broker_adapter", lambda: FakeBrokerAdapter())
+
+    summary = await _backfill_missing_open_buys_from_holdings()
+
+    assert summary["backfilled"] == 0
+    assert summary["skipped"] == 1
+    assert created == []
+
+
+@pytest.mark.asyncio
+async def test_backfill_missing_open_buys_from_holdings_skips_symbol_with_broker_pending(monkeypatch) -> None:
+    created = []
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def begin(self):
+            return self
+
+        def add(self, obj):
+            created.append(obj)
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_pending_confirms(self):
+            return []
+
+        async def get_all_open_buys(self, symbol):
+            return []
+
+    class FakeBrokerAdapter:
+        provider = BrokerProvider.KIWOOM
+
+        async def get_holdings(self):
+            return [
+                HoldingInfo(
+                    symbol="A003280",
+                    name="흥아해운",
+                    quantity=140,
+                    avg_buy_price=3926.0,
+                    current_price=4295.0,
+                    pnl=51660.0,
+                    pnl_rate=9.4,
+                )
+            ]
+
+        async def get_pending_orders(self):
+            return [SimpleNamespace(symbol="003280", remaining_qty=20)]
 
     monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
     monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)

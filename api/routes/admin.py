@@ -5,7 +5,7 @@ import time as _time
 from datetime import date, datetime, time
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from fastapi.responses import StreamingResponse
 from loguru import logger
@@ -89,6 +89,7 @@ from scheduler.scheduler import trading_scheduler
 router = APIRouter(prefix="/admin", tags=["admin"])
 POSITION_DETAIL_HOLDING_TIMEOUT_SEC = 2.0
 POSITION_DETAIL_HOLDING_CACHE_TTL_SEC = 15.0
+ORDER_ERROR_RECENT_WINDOW_HOURS = 24
 _position_holdings_cache = {"items": None, "fetched_at": 0.0}
 
 
@@ -107,6 +108,53 @@ class LLMApiKeyUpdateRequest(BaseModel):
     api_key: str
     label: str | None = None
     enabled: bool = True
+    confirmation_token: str | None = None
+
+
+_RUNTIME_SETTINGS_CONFIRMATION_ACTION = "APPLY_RUNTIME_SETTINGS"
+_RUNTIME_SETTINGS_CONFIRMATION_RESOURCE = "RUNTIME_SETTINGS"
+_PROTECTED_RUNTIME_SETTING_KEYS = {
+    "TRADING_ENABLED",
+    "ORDER_SUBMISSION_MODE",
+    "AUTONOMY_MODE",
+    "ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED",
+    "ADMIN_ACTION_CONFIRMATION_TTL_SEC",
+    "POST_LIQUIDATION_BUY_BLOCK_ENABLED",
+    "DAY_TRADING_ONLY",
+    "SCHEDULER_ENABLED",
+    "BUY_ORDER_EXECUTION_MODE",
+    "BUY_SLIPPAGE_GUARD_BPS",
+    "SELL_ORDER_CONFIRM_WAIT_SEC",
+    "ORDER_CONFIRM_STATUS_TIMEOUT_SEC",
+    "AUTO_RISK_KILL_SWITCH_ENABLED",
+    "MAX_DAILY_DRAWDOWN_PCT",
+    "ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE",
+    "ACCOUNT_EQUITY_DRAWDOWN_BLOCK_BUY_PCT",
+    "ACCOUNT_EQUITY_DRAWDOWN_KILL_SWITCH_PCT",
+    "RISK_APPETITE",
+    "RISK_PER_TRADE_PCT",
+    "POSITION_EXIT_MANAGEMENT_ENABLED",
+}
+_PROTECTED_RUNTIME_SETTING_PREFIXES = (
+    "BUY_ORDER_CONFIRM_WAIT_SEC_",
+    "LOSS_STREAK_RECOVERY_",
+    "MIN_STRATEGY_EXPECTANCY",
+    "EXPECTANCY_",
+    "STRATEGY_EXPECTANCY_",
+    "NEGATIVE_EXPECTANCY_",
+    "VOLATILITY_POSITION_SIZING_",
+    "RISK_MULTIPLIER_",
+    "FAST_HOLDINGS_GUARD_",
+    "PARTIAL_TAKE_PROFIT_",
+    "BREAKEVEN_",
+    "TRAILING_PROFIT_",
+    "DEFAULT_STOP_LOSS_",
+    "DEFAULT_TAKE_PROFIT_",
+    "SCALE_IN_",
+    "COST_GATE_",
+    "ESTIMATED_",
+    "MIN_EDGE_TO_COST_RATIO_",
+)
 
 
 _LLM_API_KEY_SETTINGS = {
@@ -254,8 +302,9 @@ def _require_admin_action_confirmation(
     action: str,
     resource_id: str,
     quantity: str | int | None = None,
+    always: bool = False,
 ) -> None:
-    if not bool(getattr(settings, "ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED", False)):
+    if not always and not bool(getattr(settings, "ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED", False)):
         return
     try:
         admin_action_confirmation_service.verify_token(
@@ -274,6 +323,40 @@ def _require_admin_action_confirmation(
                 "resource_id": str(resource_id),
             },
         ) from exc
+
+
+def _split_confirmation_token(payload: dict | None) -> tuple[dict, str | None]:
+    updates = dict(payload or {})
+    token = updates.pop("confirmation_token", None)
+    return updates, token
+
+
+def _protected_runtime_setting_keys(updates: dict) -> list[str]:
+    protected: list[str] = []
+    mutable_keys = set(MUTABLE_SETTINGS)
+    for key in updates:
+        if key not in mutable_keys:
+            continue
+        if key in _PROTECTED_RUNTIME_SETTING_KEYS or key.startswith(_PROTECTED_RUNTIME_SETTING_PREFIXES):
+            protected.append(key)
+    return sorted(protected)
+
+
+def _runtime_settings_confirmation_quantity(keys: list[str]) -> str:
+    return ",".join(keys) if keys else "NONE"
+
+
+def _require_runtime_settings_confirmation(updates: dict, token: str | None) -> None:
+    protected_keys = _protected_runtime_setting_keys(updates)
+    if not protected_keys:
+        return
+    _require_admin_action_confirmation(
+        AdminActionConfirmationVerifyRequest(confirmation_token=token),
+        action=_RUNTIME_SETTINGS_CONFIRMATION_ACTION,
+        resource_id=_RUNTIME_SETTINGS_CONFIRMATION_RESOURCE,
+        quantity=_runtime_settings_confirmation_quantity(protected_keys),
+        always=True,
+    )
 
 
 def _extract_latest_signal(trades, activities):
@@ -518,7 +601,14 @@ def _build_position_timeline(trades, activities):
         has_exit = getattr(trade, "exit_at", None) is not None or (side == "BUY" and status == "CONFIRMED" and exit_price > 0)
 
         if side == "SELL":
-            if status == "PENDING_CONFIRM":
+            if status == "CONFIRM_FAILED":
+                title = "매도 미체결"
+                kind_label = "매도 미체결"
+                badge = status or "CONFIRM_FAILED"
+                tone = "pending"
+                icon = "미체결"
+                detail_label = "체결 실패 또는 주문 취소"
+            elif status == "PENDING_CONFIRM":
                 title = "매도 대기중"
                 kind_label = "매도 대기중"
                 badge = status or "SELL"
@@ -538,7 +628,7 @@ def _build_position_timeline(trades, activities):
                 badge = status or "SELL"
                 tone = "sell"
                 icon = "매도"
-                detail_label = "전체 수량 청산 완료"
+                detail_label = ""
         else:
             if status == "PENDING_CONFIRM":
                 title = "매수 대기중"
@@ -555,12 +645,12 @@ def _build_position_timeline(trades, activities):
                 icon = "부분"
                 detail_label = f"잔량 {remaining_open_quantity}주 보유 중" if remaining_open_quantity > 0 else ""
             elif has_exit:
-                title = "최종 청산 lot"
-                kind_label = "최종 청산 lot"
+                title = "매도 완료"
+                kind_label = "매도 완료"
                 badge = "FINAL_EXIT"
                 tone = "sell"
-                icon = "청산"
-                detail_label = "전체 수량 청산 완료"
+                icon = "매도"
+                detail_label = ""
             else:
                 title = "매수 완료"
                 kind_label = "매수 완료"
@@ -1035,8 +1125,15 @@ async def get_trades(
 
 
 @router.post("/trades/reconcile-pending")
-async def reconcile_pending_trades():
+async def reconcile_pending_trades(confirmation: AdminActionConfirmationVerifyRequest | None = None):
     """PENDING_CONFIRM 거래를 수동으로 복구 시도"""
+    _require_admin_action_confirmation(
+        confirmation,
+        action="RECOVER_PENDING_CONFIRMS",
+        resource_id="TRADE_RECONCILIATION",
+        quantity="ALL",
+        always=True,
+    )
     summary = await portfolio_sync_job._recover_pending_confirms()
     await activity_logger.log(
         ActivityType.EVENT,
@@ -1055,10 +1152,16 @@ async def reconcile_pending_trades():
 async def get_trade_reconciliation_report(db: AsyncSession = Depends(get_async_db)):
     """브로커 미체결과 DB PENDING_CONFIRM 간 read-only 대사 리포트"""
     broker_pending_orders = await get_broker_adapter().get_pending_orders()
-    db_pending_confirms = await TradeResultRepository(db).get_pending_confirms()
+    repo = TradeResultRepository(db)
+    db_pending_confirms = await repo.get_pending_confirms()
+    db_order_linked_trades = await repo.get_by_order_ids([
+        str(getattr(order, "order_id", "") or "")
+        for order in broker_pending_orders
+    ])
     report = order_reconciliation_service.build_report(
         broker_pending_orders=broker_pending_orders,
         db_pending_confirms=db_pending_confirms,
+        db_order_linked_trades=db_order_linked_trades,
     )
     return SuccessResponse(data=report, message="주문 대사 리포트 조회 완료")
 
@@ -1172,6 +1275,7 @@ async def cleanup_stale_pending_trades(
             action="CLEANUP_STALE_PENDING",
             resource_id="TRADE_RECONCILIATION",
             quantity="ALL",
+            always=True,
         )
     broker_pending_orders = await get_broker_adapter().get_pending_orders()
     db_pending_confirms = await TradeResultRepository(db).get_pending_confirms()
@@ -1202,19 +1306,36 @@ async def cleanup_stale_pending_trades(
 
 @router.post("/trades/reconcile-holdings")
 async def reconcile_holdings_trades(
+    apply_backfill: bool = Query(False, description="true일 때 브로커 보유 기반 누락 open BUY 백필을 적용"),
+    apply_zero_price_repair: bool = Query(False, description="true일 때 0원 진입가 복구를 적용"),
     apply_missing_closes: bool = Query(False, description="true일 때 브로커 미보유 DB open BUY를 중립 종료"),
     confirmation: AdminActionConfirmationVerifyRequest | None = None,
 ):
     """계좌 보유수량 기준으로 누락 BUY lot/0원 체결가 복구 및 stale open BUY 정리"""
-    if apply_missing_closes:
+    apply_any = apply_backfill or apply_zero_price_repair or apply_missing_closes
+    if apply_any:
+        quantity = ",".join(
+            label
+            for label, enabled in (
+                ("BACKFILL", apply_backfill),
+                ("ZERO_PRICE_REPAIR", apply_zero_price_repair),
+                ("MISSING_CLOSES", apply_missing_closes),
+            )
+            if enabled
+        )
         _require_admin_action_confirmation(
             confirmation,
-            action="RECONCILE_HOLDINGS_MISSING_CLOSES",
+            action="RECONCILE_HOLDINGS_TRADES",
             resource_id="TRADE_RECONCILIATION",
-            quantity="ALL",
+            quantity=quantity or "ALL",
+            always=True,
         )
-    backfill = await portfolio_sync_job._backfill_missing_open_buys_from_holdings()
-    repaired = await portfolio_sync_job._repair_confirmed_zero_entry_prices()
+    backfill = await portfolio_sync_job._backfill_missing_open_buys_from_holdings(
+        dry_run=not apply_backfill,
+    )
+    repaired = await portfolio_sync_job._repair_confirmed_zero_entry_prices(
+        dry_run=not apply_zero_price_repair,
+    )
     missing_closes = await portfolio_sync_job._close_open_buys_missing_from_holdings(
         dry_run=not apply_missing_closes,
     )
@@ -1230,11 +1351,11 @@ async def reconcile_holdings_trades(
     await activity_logger.log(
         ActivityType.EVENT,
         ActivityPhase.PROGRESS,
-        "🧩 보유수량 기반 TradeResult 정합성 복구 실행",
+        "🧩 보유수량 기반 TradeResult 정합성 점검/복구 실행",
         detail=summary,
     )
     message = (
-        f"정합성 복구 완료 · 백필 {backfill.get('backfilled', 0)}건 / "
+        f"정합성 {'복구' if apply_any else '점검'} 완료 · 백필 {backfill.get('backfilled', 0)}건 / "
         f"체결가 복구 {repaired.get('repaired', 0)}건 / "
         f"미보유 정리 {missing_closes['summary'].get('closed_count', 0)}건 / "
         f"수량초과 정리 {quantity_closes['summary'].get('closed_count', 0)}건"
@@ -1250,6 +1371,7 @@ async def reset_operational_baseline(confirmation: AdminActionConfirmationVerify
         action="RESET_OPERATIONAL_BASELINE",
         resource_id="OPERATIONAL_BASELINE",
         quantity="ALL",
+        always=True,
     )
     backup = runtime_backup_service.create_database_backup(reason="before-reset")
     deleted: dict[str, int] = {}
@@ -1513,6 +1635,7 @@ async def sell_account_holding(symbol: str, confirmation: AdminActionConfirmatio
         action="SELL_HOLDING",
         resource_id=normalized_symbol,
         quantity="ALL",
+        always=True,
     )
     result = await manual_trade_service.sell_position(symbol)
     return SuccessResponse(data=result, message=f"{result['symbol']} 즉시 매도 주문 접수")
@@ -1525,6 +1648,7 @@ async def cancel_pending_buy_order(order_id: str, confirmation: AdminActionConfi
         action="CANCEL_PENDING_BUY",
         resource_id=order_id,
         quantity="ALL",
+        always=True,
     )
     result = await manual_trade_service.cancel_pending_buy(order_id)
     return SuccessResponse(data=result, message="미체결 매수 주문 취소 완료")
@@ -1537,6 +1661,7 @@ async def cancel_pending_sell_and_resubmit(order_id: str, confirmation: AdminAct
         action="CANCEL_AND_SELL_PENDING",
         resource_id=order_id,
         quantity="ALL",
+        always=True,
     )
     result = await manual_trade_service.replace_pending_sell_with_market_order(order_id)
     return SuccessResponse(data=result, message="취소 후 즉시 매도 주문 접수")
@@ -2087,6 +2212,8 @@ async def get_settings():
 @router.put("/settings")
 async def update_settings(updates: dict):
     """런타임 설정 변경 (재시작 불필요)"""
+    updates, confirmation_token = _split_confirmation_token(updates)
+    _require_runtime_settings_confirmation(updates, confirmation_token)
     changed = await runtime_settings_service.update_settings(updates)
 
     if changed:
@@ -2102,6 +2229,8 @@ async def update_settings(updates: dict):
 @router.post("/settings/apply")
 async def apply_settings(updates: dict):
     """런타임 설정 배치 적용 — 신규 작업을 멈추고 현재 작업이 끝난 뒤 반영"""
+    updates, confirmation_token = _split_confirmation_token(updates)
+    _require_runtime_settings_confirmation(updates, confirmation_token)
     result = await runtime_reconfiguration_service.apply_settings(updates)
     changed = result.get("changed", {})
     return SuccessResponse(
@@ -2152,6 +2281,13 @@ async def update_llm_api_key(payload: LLMApiKeyUpdateRequest):
     api_key = str(payload.api_key or "").strip()
     if not api_key:
         raise HTTPException(status_code=400, detail="API 키를 입력하세요")
+    _require_admin_action_confirmation(
+        AdminActionConfirmationVerifyRequest(confirmation_token=payload.confirmation_token),
+        action="UPDATE_LLM_API_KEY",
+        resource_id=requested_provider,
+        quantity="SECRET",
+        always=True,
+    )
 
     if requested_provider in _LLM_API_PROVIDERS:
         items = _load_llm_api_key_registry()
@@ -2211,10 +2347,20 @@ async def update_llm_api_key(payload: LLMApiKeyUpdateRequest):
 
 
 @router.delete("/llm/api-keys/{provider}")
-async def clear_llm_api_key(provider: str):
+async def clear_llm_api_key(
+    provider: str,
+    payload: AdminActionConfirmationVerifyRequest | None = Body(default=None),
+):
     """LLM API 키를 비활성화한다."""
     requested = str(provider or "").strip()
     normalized_requested = requested.upper()
+    _require_admin_action_confirmation(
+        payload,
+        action="DELETE_LLM_API_KEY",
+        resource_id=requested,
+        quantity="SECRET",
+        always=True,
+    )
 
     if normalized_requested not in _LLM_API_KEY_SETTINGS:
         items = _load_llm_api_key_registry()
@@ -2438,13 +2584,29 @@ async def get_system_status(db: AsyncSession = Depends(get_async_db)):
             "last_run_at": None,
         }
 
-    if latest_order_error is not None:
+    latest_order_error_at = getattr(latest_order_error, "created_at", None) if latest_order_error is not None else None
+    latest_order_error_recent = latest_order_error is not None
+    if latest_order_error_at is not None:
+        latest_order_error_recent = (
+            now_kst() - ensure_kst(latest_order_error_at)
+        ).total_seconds() <= ORDER_ERROR_RECENT_WINDOW_HOURS * 3600
+
+    if latest_order_error is not None and latest_order_error_recent:
         order_ops = {
             "status": "WARN",
             "label": "최근 주문 오류",
             "message": latest_order_error.error_message or latest_order_error.summary,
             "symbol": latest_order_error.symbol,
             "created_at": latest_order_error.created_at.isoformat() if latest_order_error.created_at else None,
+        }
+    elif latest_order_error is not None:
+        order_ops = {
+            "status": "OK",
+            "label": "주문 오류 없음",
+            "message": f"최근 {ORDER_ERROR_RECENT_WINDOW_HOURS}시간 주문 오류 로그가 없습니다.",
+            "symbol": None,
+            "created_at": None,
+            "last_error_at": latest_order_error_at.isoformat() if latest_order_error_at else None,
         }
     else:
         order_ops = {
@@ -2606,8 +2768,17 @@ async def reconnect_mcp():
 
 
 @router.post("/scheduler/start")
-async def start_scheduler():
+async def start_scheduler(
+    payload: AdminActionConfirmationVerifyRequest | None = Body(default=None),
+):
     """런타임 스케줄러 시작"""
+    _require_admin_action_confirmation(
+        payload,
+        action="START_SCHEDULER",
+        resource_id="SCHEDULER",
+        quantity="ALL",
+        always=True,
+    )
     await runtime_settings_service.update_settings({"SCHEDULER_ENABLED": True})
     await trading_scheduler.start()
     await activity_logger.log(
@@ -2622,8 +2793,17 @@ async def start_scheduler():
 
 
 @router.post("/scheduler/stop")
-async def stop_scheduler():
+async def stop_scheduler(
+    payload: AdminActionConfirmationVerifyRequest | None = Body(default=None),
+):
     """런타임 스케줄러 중지"""
+    _require_admin_action_confirmation(
+        payload,
+        action="STOP_SCHEDULER",
+        resource_id="SCHEDULER",
+        quantity="ALL",
+        always=True,
+    )
     await runtime_settings_service.update_settings({"SCHEDULER_ENABLED": False})
     await trading_scheduler.stop()
     await activity_logger.log(
@@ -2639,9 +2819,19 @@ async def stop_scheduler():
 
 # ── 수동 사이클 트리거 ──
 @router.post("/agent/trigger")
-async def trigger_agent_cycle():
+async def trigger_agent_cycle(
+    payload: AdminActionConfirmationVerifyRequest | None = Body(default=None),
+):
     """수동으로 에이전트 사이클 실행"""
     from agent.trading_agent import trading_agent
+
+    _require_admin_action_confirmation(
+        payload,
+        action="TRIGGER_AGENT_CYCLE",
+        resource_id="TRADING_AGENT",
+        quantity="ALL",
+        always=True,
+    )
 
     await activity_logger.log(
         ActivityType.EVENT, ActivityPhase.PROGRESS,

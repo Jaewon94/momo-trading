@@ -1,6 +1,7 @@
 """Read-only reconciliation between SELL executions and BUY close lots."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -11,10 +12,20 @@ from models.trade_result import TradeResult
 from trading.symbols import normalize_krx_symbol
 
 
+REPAIRED_FROM_SELL_ORDER_PATTERN = re.compile(r"repaired from broker-confirmed sell order\s+([A-Za-z0-9_-]+)")
+
+
 @dataclass
 class _BuyCandidate:
     row: TradeResult
     remaining_qty: int
+
+
+@dataclass
+class _SellReflectionFilterResult:
+    sells: list[TradeResult]
+    reflected_count: int
+    reflected_quantity: int
 
 
 class TradeCloseReconciliationService:
@@ -28,7 +39,10 @@ class TradeCloseReconciliationService:
     ) -> dict:
         to_dt = datetime.now()
         from_dt = to_dt - timedelta(days=max(int(days), 1))
-        sells = await self._fetch_sell_executions(session, from_dt=from_dt, to_dt=to_dt)
+        raw_sells = await self._fetch_sell_executions(session, from_dt=from_dt, to_dt=to_dt)
+        reflected_buy_closes = await self._fetch_reflected_buy_closes(session, from_dt=from_dt, to_dt=to_dt)
+        reflection_filter = self._filter_already_reflected_sells(raw_sells, reflected_buy_closes)
+        sells = reflection_filter.sells
         buy_candidates = await self._fetch_buy_candidates(session, from_dt=from_dt, to_dt=to_dt)
 
         grouped_buys: dict[str, list[_BuyCandidate]] = {}
@@ -125,7 +139,10 @@ class TradeCloseReconciliationService:
                 "days": max(int(days), 1),
             },
             "summary": {
+                "raw_sell_execution_count": len(raw_sells),
                 "sell_execution_count": len(sells),
+                "reflected_sell_count": reflection_filter.reflected_count,
+                "reflected_sell_quantity": reflection_filter.reflected_quantity,
                 "buy_candidate_count": len(buy_candidates),
                 "matched_sell_count": len(matches),
                 "unmatched_sell_count": len(unmatched_sells),
@@ -298,6 +315,35 @@ class TradeCloseReconciliationService:
         )
         return list((await session.execute(stmt)).scalars().all())
 
+    async def _fetch_reflected_buy_closes(
+        self,
+        session: AsyncSession,
+        *,
+        from_dt: datetime,
+        to_dt: datetime,
+    ) -> list[TradeResult]:
+        """Fetch BUY lots already closed by the live SELL confirmation path.
+
+        Neutral holding reconciliation closes stay out of this set because those
+        rows are intentionally candidates for later SELL-to-BUY reconciliation.
+        """
+        stmt = (
+            select(TradeResult)
+            .where(and_(
+                TradeResult.side == "BUY",
+                TradeResult.status == "CONFIRMED",
+                TradeResult.exit_at.isnot(None),
+                TradeResult.exit_at >= from_dt,
+                TradeResult.exit_at <= to_dt,
+                or_(
+                    TradeResult.notes.is_(None),
+                    ~TradeResult.notes.like("%HOLDING_RECONCILIATION_CLOSE%"),
+                ),
+            ))
+            .order_by(TradeResult.exit_at.asc(), TradeResult.created_at.asc())
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
     async def _fetch_buy_candidates(
         self,
         session: AsyncSession,
@@ -325,6 +371,73 @@ class TradeCloseReconciliationService:
             .order_by(TradeResult.stock_symbol.asc(), TradeResult.entry_at.asc(), TradeResult.created_at.asc())
         )
         return list((await session.execute(stmt)).scalars().all())
+
+    @classmethod
+    def _filter_already_reflected_sells(
+        cls,
+        sells: list[TradeResult],
+        reflected_buy_closes: list[TradeResult],
+    ) -> _SellReflectionFilterResult:
+        reflected_qty_by_key: dict[tuple[str, datetime, float, str], int] = {}
+        reflected_qty_by_order_id: dict[str, int] = {}
+        for buy in reflected_buy_closes:
+            key = cls._reflection_key(buy)
+            buy_qty = max(int(getattr(buy, "quantity", 0) or 0), 0)
+            if key is None:
+                order_id = cls._repaired_sell_order_id(buy)
+                if order_id:
+                    reflected_qty_by_order_id[order_id] = reflected_qty_by_order_id.get(order_id, 0) + buy_qty
+                continue
+            reflected_qty_by_key[key] = reflected_qty_by_key.get(key, 0) + buy_qty
+            order_id = cls._repaired_sell_order_id(buy)
+            if order_id:
+                reflected_qty_by_order_id[order_id] = reflected_qty_by_order_id.get(order_id, 0) + buy_qty
+
+        actionable_sells: list[TradeResult] = []
+        reflected_count = 0
+        reflected_quantity = 0
+        for sell in sells:
+            sell_qty = max(int(getattr(sell, "quantity", 0) or 0), 0)
+            key = cls._reflection_key(sell)
+            order_id = str(getattr(sell, "order_id", "") or "")
+            key_qty = reflected_qty_by_key.get(key, 0) if key is not None else 0
+            order_qty = reflected_qty_by_order_id.get(order_id, 0) if order_id else 0
+            if sell_qty > 0 and key_qty + order_qty >= sell_qty:
+                remaining = sell_qty
+                if key is not None:
+                    used_key_qty = min(reflected_qty_by_key.get(key, 0), remaining)
+                    reflected_qty_by_key[key] = reflected_qty_by_key.get(key, 0) - used_key_qty
+                    remaining -= used_key_qty
+                if order_id and remaining > 0:
+                    reflected_qty_by_order_id[order_id] = reflected_qty_by_order_id.get(order_id, 0) - remaining
+                reflected_count += 1
+                reflected_quantity += sell_qty
+                continue
+            actionable_sells.append(sell)
+
+        return _SellReflectionFilterResult(
+            sells=actionable_sells,
+            reflected_count=reflected_count,
+            reflected_quantity=reflected_quantity,
+        )
+
+    @staticmethod
+    def _reflection_key(row: TradeResult) -> tuple[str, datetime, float, str] | None:
+        exit_at = getattr(row, "exit_at", None)
+        if not isinstance(exit_at, datetime):
+            return None
+        symbol = normalize_krx_symbol(getattr(row, "stock_symbol", ""))
+        if not symbol:
+            return None
+        price = round(float(getattr(row, "exit_price", 0.0) or 0.0), 6)
+        reason = str(getattr(row, "exit_reason", "") or "")
+        return (symbol, exit_at, price, reason)
+
+    @staticmethod
+    def _repaired_sell_order_id(row: TradeResult) -> str:
+        notes = str(getattr(row, "notes", "") or "")
+        match = REPAIRED_FROM_SELL_ORDER_PATTERN.search(notes)
+        return match.group(1) if match else ""
 
     @staticmethod
     def _clone_buy_for_close(source: TradeResult, *, close_qty: int) -> TradeResult:

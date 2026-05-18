@@ -4,6 +4,7 @@ import asyncio
 
 from core.events import Event, EventType
 from scheduler.scheduler import TradingScheduler
+from strategy.trade_horizon import TradeHorizon
 from trading.enums import ActivityPhase, ActivityType, Market, OrderSide, OrderType
 from trading.models import CurrentPrice, OrderResult
 
@@ -374,6 +375,7 @@ def test_scheduler_setup_jobs_registers_expected_job_ids() -> None:
         "observability_maintenance",
         "forward_return_label",
         "account_equity_snapshot",
+        "fast_holdings_guard",
         "holdings_check",
         "intraday_holdings_review",
         "force_liquidation",
@@ -506,6 +508,82 @@ def test_breakeven_and_scale_in_are_horizon_aware(monkeypatch) -> None:
         current_price=9_850,
         active_stop_loss=9_600,
     ) is None
+
+
+def test_default_exit_thresholds_are_horizon_aware(monkeypatch) -> None:
+    monkeypatch.setattr("scheduler.scheduler.settings.DEFAULT_STOP_LOSS_PCT_SHORT", -3.0)
+    monkeypatch.setattr("scheduler.scheduler.settings.DEFAULT_STOP_LOSS_PCT_MID", -4.0)
+    monkeypatch.setattr("scheduler.scheduler.settings.DEFAULT_STOP_LOSS_PCT_LONG", -6.0)
+    monkeypatch.setattr("scheduler.scheduler.settings.DEFAULT_TAKE_PROFIT_PCT_SHORT", 5.0)
+    monkeypatch.setattr("scheduler.scheduler.settings.DEFAULT_TAKE_PROFIT_PCT_MID", 8.0)
+    monkeypatch.setattr("scheduler.scheduler.settings.DEFAULT_TAKE_PROFIT_PCT_LONG", 12.0)
+
+    assert TradingScheduler._default_stop_loss_pct(TradeHorizon.SHORT) == pytest.approx(-3.0)
+    assert TradingScheduler._default_stop_loss_pct(TradeHorizon.MID) == pytest.approx(-4.0)
+    assert TradingScheduler._default_stop_loss_pct(TradeHorizon.LONG) == pytest.approx(-6.0)
+    assert TradingScheduler._default_take_profit_pct(TradeHorizon.SHORT) == pytest.approx(5.0)
+    assert TradingScheduler._default_take_profit_pct(TradeHorizon.MID) == pytest.approx(8.0)
+    assert TradingScheduler._default_take_profit_pct(TradeHorizon.LONG) == pytest.approx(12.0)
+
+
+def test_trailing_profit_guard_waits_for_activation_then_sells_on_drawdown(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    trade_result = SimpleNamespace(strategy_type="AGGRESSIVE_SHORT", notes='{"trade_horizon":"SHORT"}')
+
+    monkeypatch.setattr("scheduler.scheduler.settings.POSITION_EXIT_MANAGEMENT_ENABLED", True)
+    monkeypatch.setattr("scheduler.scheduler.settings.TRAILING_PROFIT_GUARD_ENABLED", True)
+    monkeypatch.setattr("scheduler.scheduler.settings.TRAILING_PROFIT_ACTIVATE_PCT_SHORT", 2.0)
+    monkeypatch.setattr("scheduler.scheduler.settings.TRAILING_PROFIT_DRAWDOWN_PCT_SHORT", 1.0)
+    monkeypatch.setattr("scheduler.scheduler.settings.RISK_APPETITE", "CONSERVATIVE")
+
+    should_sell, reason, detail = scheduler._evaluate_trailing_profit_guard(
+        symbol="005930",
+        avg_buy_price=10_000,
+        current_price=10_250,
+        pnl_rate=2.5,
+        tr=trade_result,
+    )
+    assert should_sell is False
+    assert detail["peak_pnl_rate"] == pytest.approx(2.5)
+
+    should_sell, reason, detail = scheduler._evaluate_trailing_profit_guard(
+        symbol="005930",
+        avg_buy_price=10_000,
+        current_price=10_120,
+        pnl_rate=1.2,
+        tr=trade_result,
+    )
+    assert should_sell is True
+    assert "트레일링 수익보호" in reason
+    assert detail["drawdown_pct"] == pytest.approx(1.3)
+
+
+def test_trailing_profit_guard_is_wider_for_long_horizon(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    trade_result = SimpleNamespace(strategy_type="STABLE_SHORT", notes='{"trade_horizon":"LONG"}')
+
+    monkeypatch.setattr("scheduler.scheduler.settings.TRAILING_PROFIT_GUARD_ENABLED", True)
+    monkeypatch.setattr("scheduler.scheduler.settings.TRAILING_PROFIT_ACTIVATE_PCT_LONG", 5.0)
+    monkeypatch.setattr("scheduler.scheduler.settings.TRAILING_PROFIT_DRAWDOWN_PCT_LONG", 3.0)
+    monkeypatch.setattr("scheduler.scheduler.settings.RISK_APPETITE", "CONSERVATIVE")
+
+    scheduler._evaluate_trailing_profit_guard(
+        symbol="005930",
+        avg_buy_price=10_000,
+        current_price=10_600,
+        pnl_rate=6.0,
+        tr=trade_result,
+    )
+    should_sell, _, detail = scheduler._evaluate_trailing_profit_guard(
+        symbol="005930",
+        avg_buy_price=10_000,
+        current_price=10_350,
+        pnl_rate=3.5,
+        tr=trade_result,
+    )
+
+    assert should_sell is False
+    assert detail["drawdown_pct"] == pytest.approx(2.5)
 
 
 @pytest.mark.asyncio
@@ -1287,7 +1365,83 @@ async def test_holdings_check_executes_sell_and_triggers_rescan(monkeypatch) -> 
         for task in created_tasks
     )
     assert any("보유점검 매도" in message for message in logs)
-    assert any("매도 성공" in message for message in logs)
+    assert any("체결 확인 완료" in message for message in logs)
+
+
+@pytest.mark.asyncio
+async def test_holdings_check_does_not_complete_when_sell_confirmation_fails(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    logs: list[str] = []
+    removed_levels: list[str] = []
+    released: list[str] = []
+    rescans: list[bool] = []
+    confirmed_orders: list[dict] = []
+    holding = SimpleNamespace(symbol="005930", name="삼성전자", quantity=2, avg_buy_price=70_000)
+
+    async def fake_update_realtime_subscriptions() -> None:
+        return None
+
+    async def fake_get_holdings() -> list:
+        return [holding]
+
+    class FakeBrokerAdapter:
+        async def get_current_price(self, symbol, market):
+            return CurrentPrice(
+                symbol=symbol,
+                market=market,
+                price=73_000,
+                change=0.0,
+                change_rate=0.0,
+                volume=0,
+                timestamp=__import__("datetime").datetime.now(),
+            )
+
+        async def place_order(self, request):
+            return OrderResult(success=True, order_id="SELL-HOLDING-FAIL", message="ok")
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append(args[2])
+
+    async def fake_acquire_sell(_symbol: str) -> bool:
+        return True
+
+    async def fake_create_pending_record(**kwargs) -> str:
+        return "pending-sell-fail"
+
+    async def fake_confirm_and_record(**kwargs) -> bool:
+        confirmed_orders.append(kwargs)
+        return False
+
+    async def fake_trigger_rescan_after_sell() -> None:
+        rescans.append(True)
+
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
+    monkeypatch.setattr(scheduler, "_update_realtime_subscriptions", fake_update_realtime_subscriptions)
+    monkeypatch.setattr("util.time_util.now_kst", lambda: __import__("datetime").datetime(2026, 4, 2, 14, 0))
+    monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
+    monkeypatch.setattr(
+        "realtime.event_detector.event_detector.get_thresholds",
+        lambda _symbol: SimpleNamespace(stop_loss=68_000, take_profit=72_000),
+    )
+    monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.trading_agent.trading_agent._acquire_sell", fake_acquire_sell)
+    monkeypatch.setattr("agent.trading_agent.trading_agent._release_sell", released.append)
+    monkeypatch.setattr("realtime.event_detector.event_detector.remove_levels", removed_levels.append)
+    monkeypatch.setattr("agent.decision_maker.decision_maker._create_pending_record", fake_create_pending_record)
+    monkeypatch.setattr("agent.decision_maker.decision_maker.confirm_and_record", fake_confirm_and_record)
+    monkeypatch.setattr(scheduler, "_trigger_rescan_after_sell", fake_trigger_rescan_after_sell)
+
+    await scheduler._holdings_check()
+    await asyncio.sleep(0)
+
+    assert confirmed_orders[0]["order_id"] == "SELL-HOLDING-FAIL"
+    assert removed_levels == []
+    assert released == ["005930"]
+    assert rescans == []
+    assert any("체결 확인 실패" in message for message in logs)
+    assert not any("보유점검 매도 완료" in message for message in logs)
 
 
 @pytest.mark.asyncio
@@ -2795,6 +2949,11 @@ async def test_intraday_holdings_review_uses_cache_without_llm(monkeypatch) -> N
             "pnl_rate": 2.857,
             "hold_days": 1,
             "max_hold_days": 5,
+            "news_context_available": None,
+            "news_context_tone": None,
+            "news_context_negative_pressure": None,
+            "news_context_item_count": None,
+            "news_context_source_codes": None,
         },
     }]
 
@@ -3068,6 +3227,10 @@ async def test_check_overnight_gap_executes_sell_on_stop_loss(monkeypatch) -> No
     monkeypatch.setattr("agent.trading_agent.trading_agent._release_sell", released.append)
     monkeypatch.setattr("realtime.event_detector.event_detector.remove_levels", removed_levels.append)
     monkeypatch.setattr("agent.decision_maker.decision_maker.confirm_and_record", fake_confirm_and_record)
+    monkeypatch.setattr(
+        "util.time_util.now_kst",
+        lambda: __import__("datetime").datetime(2026, 5, 13, 9, 5),
+    )
 
     await scheduler._check_overnight_gap()
 
@@ -3130,11 +3293,61 @@ async def test_check_overnight_gap_logs_disabled_target_profit_sell(monkeypatch)
     monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
     monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
     monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", False)
+    monkeypatch.setattr(
+        "util.time_util.now_kst",
+        lambda: __import__("datetime").datetime(2026, 5, 13, 9, 5),
+    )
 
     await scheduler._check_overnight_gap()
 
     assert "갭 상승 익절" in logs[0]
     assert "TRADING_ENABLED=false" in logs[0]
+
+
+@pytest.mark.asyncio
+async def test_check_overnight_gap_skips_outside_opening_window(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    repo_calls = 0
+    price_calls = 0
+    holding = SimpleNamespace(symbol="005930", name="삼성전자", quantity=2)
+
+    class FakeSession:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_all_open(self):
+            nonlocal repo_calls
+            repo_calls += 1
+            return []
+
+    async def fake_get_holdings() -> list:
+        return [holding]
+
+    async def fake_fetch_current_price(_symbol: str) -> float:
+        nonlocal price_calls
+        price_calls += 1
+        return 70_000.0
+
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
+    monkeypatch.setattr(scheduler, "_fetch_current_price", fake_fetch_current_price)
+    monkeypatch.setattr(
+        "util.time_util.now_kst",
+        lambda: __import__("datetime").datetime(2026, 5, 13, 12, 31),
+    )
+
+    await scheduler._check_overnight_gap()
+
+    assert repo_calls == 0
+    assert price_calls == 0
 
 
 @pytest.mark.asyncio
@@ -3348,6 +3561,10 @@ async def test_check_overnight_gap_uses_broker_adapter_for_kiwoom_sell_path(monk
     monkeypatch.setattr("realtime.event_detector.event_detector.remove_levels", lambda _symbol: None)
     monkeypatch.setattr("agent.decision_maker.decision_maker._create_pending_record", fake_create_pending_record)
     monkeypatch.setattr("agent.decision_maker.decision_maker.confirm_and_record", fake_confirm_and_record)
+    monkeypatch.setattr(
+        "util.time_util.now_kst",
+        lambda: __import__("datetime").datetime(2026, 5, 13, 9, 5),
+    )
 
     await scheduler._check_overnight_gap()
 

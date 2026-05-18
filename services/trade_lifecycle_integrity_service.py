@@ -31,6 +31,7 @@ class TradeLifecycleIntegrityService:
         status_counts = await self._fetch_status_counts(session, from_dt=from_dt, to_dt=to_dt)
         open_buy_positions = await self._fetch_open_buy_positions(session)
         open_buy_count = len(open_buy_positions)
+        pending_confirm_symbols = await self._fetch_pending_confirm_symbols(session)
         pending_count = await self._count_pending_confirms(session, from_dt=from_dt, to_dt=to_dt)
         failed_count = await self._count_confirm_failed(session, from_dt=from_dt, to_dt=to_dt)
         data_quality = await performance_reporting_service._fetch_closed_trade_data_quality(
@@ -45,6 +46,7 @@ class TradeLifecycleIntegrityService:
         repairable_sell_count = int((close_reconciliation.get("summary") or {}).get("matched_sell_count") or 0)
         broker_position_check = self._build_broker_position_check(
             open_buy_positions,
+            pending_confirm_symbols=pending_confirm_symbols,
             broker_position_snapshot=broker_position_snapshot,
         )
 
@@ -72,10 +74,11 @@ class TradeLifecycleIntegrityService:
             },
             {
                 "key": "confirm_failed",
-                "label": "체결 확인 실패",
-                "status": "OK" if failed_count == 0 else "WARN",
+                "label": "체결 확인 실패 기록",
+                "status": "OK",
                 "actual": failed_count,
                 "target": 0,
+                "note": "CONFIRM_FAILED는 취소/무체결/복구 종료 상태이며 현재 미해결 불일치는 pending/order reconciliation/open BUY 대사에서 판정합니다.",
             },
             {
                 "key": "unpaired_sells",
@@ -96,6 +99,15 @@ class TradeLifecycleIntegrityService:
                 "details": broker_position_check["details"],
             },
             {
+                "key": "broker_untracked_holdings",
+                "label": "DB 미반영 브로커 보유",
+                "status": broker_position_check["extra_status"],
+                "actual": broker_position_check["extra_count"],
+                "target": 0,
+                "extra_quantity": broker_position_check["extra_quantity"],
+                "details": broker_position_check["extra_details"],
+            },
+            {
                 "key": "repairable_sells",
                 "label": "청산 대사 후보",
                 "status": "OK" if repairable_sell_count == 0 else "WARN",
@@ -105,9 +117,10 @@ class TradeLifecycleIntegrityService:
             {
                 "key": "neutral_closes",
                 "label": "중립 종료 제외",
-                "status": "OK" if int(data_quality.get("excluded_reconciliation_close_rows") or 0) == 0 else "WARN",
+                "status": "OK",
                 "actual": int(data_quality.get("excluded_reconciliation_close_rows") or 0),
                 "target": 0,
+                "note": "중립 종료 행은 운영 보정 이력이며 성과 계산에서 제외됩니다. 현재 미해결 보유 불일치는 broker_missing_open_buys에서 판정합니다.",
             },
         ]
         overall_status = self._overall_status(checks)
@@ -137,6 +150,8 @@ class TradeLifecycleIntegrityService:
                 "broker_missing_open_buy_count": broker_position_check["missing_count"],
                 "broker_missing_open_buy_quantity": broker_position_check["missing_quantity"],
                 "broker_mismatched_open_buy_quantity": broker_position_check["mismatched_quantity"],
+                "broker_untracked_holding_count": broker_position_check["extra_count"],
+                "broker_untracked_holding_quantity": broker_position_check["extra_quantity"],
             },
             "status_counts": status_counts,
             "checks": checks,
@@ -204,10 +219,16 @@ class TradeLifecycleIntegrityService:
         )).order_by(TradeResult.entry_at.asc(), TradeResult.created_at.asc())
         return list((await session.execute(stmt)).scalars().all())
 
+    async def _fetch_pending_confirm_symbols(self, session: AsyncSession) -> set[str]:
+        stmt = select(TradeResult.stock_symbol).where(TradeResult.status == "PENDING_CONFIRM")
+        rows = (await session.execute(stmt)).scalars().all()
+        return {normalize_krx_symbol(symbol) for symbol in rows if normalize_krx_symbol(symbol)}
+
     @staticmethod
     def _build_broker_position_check(
         open_buy_positions: list[TradeResult],
         *,
+        pending_confirm_symbols: set[str] | None = None,
         broker_position_snapshot: dict | None,
     ) -> dict:
         if broker_position_snapshot is None:
@@ -217,7 +238,11 @@ class TradeLifecycleIntegrityService:
                 "missing_count": 0,
                 "missing_quantity": 0,
                 "mismatched_quantity": 0,
+                "extra_status": "OK",
+                "extra_count": 0,
+                "extra_quantity": 0,
                 "details": [],
+                "extra_details": [],
             }
 
         if broker_position_snapshot.get("error"):
@@ -227,7 +252,11 @@ class TradeLifecycleIntegrityService:
                 "missing_count": 0,
                 "missing_quantity": 0,
                 "mismatched_quantity": 0,
+                "extra_status": "WARN",
+                "extra_count": 0,
+                "extra_quantity": 0,
                 "details": [{"reason": "broker_snapshot_error", "error": broker_position_snapshot.get("error")}],
+                "extra_details": [],
             }
 
         holding_quantities = {
@@ -238,6 +267,7 @@ class TradeLifecycleIntegrityService:
             normalize_krx_symbol(symbol)
             for symbol in (broker_position_snapshot.get("pending_symbols") or [])
         }
+        db_pending_symbols = set(pending_confirm_symbols or set())
 
         open_by_symbol: dict[str, dict] = {}
         for trade in open_buy_positions:
@@ -259,6 +289,9 @@ class TradeLifecycleIntegrityService:
         missing_count = 0
         missing_quantity = 0
         mismatched_quantity = 0
+        extra_details = []
+        extra_count = 0
+        extra_quantity = 0
         for symbol, item in open_by_symbol.items():
             db_qty = int(item["db_open_quantity"] or 0)
             broker_qty = int(holding_quantities.get(symbol, 0) or 0)
@@ -275,13 +308,43 @@ class TradeLifecycleIntegrityService:
             missing_quantity += gap if broker_qty <= 0 else 0
             mismatched_quantity += gap if broker_qty > 0 else 0
 
+        for symbol, broker_qty in sorted(holding_quantities.items()):
+            if broker_qty <= 0:
+                continue
+            db_qty = int((open_by_symbol.get(symbol) or {}).get("db_open_quantity", 0) or 0)
+            if broker_qty <= db_qty:
+                continue
+            if symbol in pending_symbols and symbol in db_pending_symbols:
+                continue
+            gap = broker_qty - db_qty
+            base = open_by_symbol.get(symbol) or {
+                "stock_symbol": symbol,
+                "stock_name": symbol,
+                "trade_ids": [],
+            }
+            extra_details.append({
+                **base,
+                "db_open_quantity": db_qty,
+                "broker_holding_quantity": broker_qty,
+                "broker_pending_order_exists": symbol in pending_symbols,
+                "db_pending_confirm_exists": symbol in db_pending_symbols,
+                "extra_quantity": gap,
+                "reason": "broker_holding_exceeds_db_open",
+            })
+            extra_count += 1
+            extra_quantity += gap
+
         return {
             "available": True,
             "status": "FAIL" if details else "OK",
             "missing_count": missing_count,
             "missing_quantity": missing_quantity,
             "mismatched_quantity": mismatched_quantity,
+            "extra_status": "FAIL" if extra_details else "OK",
+            "extra_count": extra_count,
+            "extra_quantity": extra_quantity,
             "details": details,
+            "extra_details": extra_details,
         }
 
     async def _count_pending_confirms(self, session: AsyncSession, *, from_dt: datetime, to_dt: datetime) -> int:

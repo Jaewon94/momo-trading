@@ -222,6 +222,19 @@ class TradeResultRepository(AsyncBaseRepository[TradeResult]):
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_order_ids(self, order_ids: list[str]) -> list[TradeResult]:
+        """주문번호 목록으로 TradeResult 조회"""
+        normalized_ids = [str(order_id) for order_id in order_ids if str(order_id or "")]
+        if not normalized_ids:
+            return []
+        stmt = (
+            select(TradeResult)
+            .where(TradeResult.order_id.in_(normalized_ids))
+            .order_by(TradeResult.created_at.asc())
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
     async def get_pending_confirms(self) -> list[TradeResult]:
         """PENDING_CONFIRM 상태 레코드 조회 (복구용)"""
         stmt = (

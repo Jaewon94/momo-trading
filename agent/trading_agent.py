@@ -2611,18 +2611,48 @@ class TradingAgent:
         )
 
     async def _get_today_trade_count(self) -> int:
-        """당일 체결 건수 조회"""
+        """당일 BUY 주문 시도 건수 조회.
+
+        실시간 주문 경로는 legacy orders 테이블이 아니라 trade_results에
+        PENDING_CONFIRM/CONFIRMED/CONFIRM_FAILED 생명주기로 기록된다.
+        """
         try:
-            from models.order import Order
-            from sqlalchemy import select, func
-            from util.time_util import now_kst
+            from datetime import datetime, time
+
+            from models.trade_result import TradeResult
+            from sqlalchemy import and_, func, or_, select
+            from util.time_util import KST, now_kst
 
             today = now_kst().date()
+            start = datetime.combine(today, time.min, tzinfo=KST)
+            end = datetime.combine(today, time.max, tzinfo=KST)
             async with AsyncSessionLocal() as session:
                 result = await session.execute(
-                    select(func.count(Order.id)).where(
-                        func.date(Order.created_at) == today,
-                        Order.status == "FILLED",
+                    select(func.count(TradeResult.id)).where(
+                        TradeResult.side == "BUY",
+                        TradeResult.status.in_(
+                            ["PENDING_CONFIRM", "CONFIRMED", "CONFIRM_FAILED"]
+                        ),
+                        or_(
+                            and_(
+                                TradeResult.entry_at.isnot(None),
+                                TradeResult.entry_at >= start,
+                                TradeResult.entry_at <= end,
+                            ),
+                            and_(
+                                TradeResult.entry_at.is_(None),
+                                TradeResult.created_at >= start,
+                                TradeResult.created_at <= end,
+                            ),
+                        ),
+                        or_(
+                            TradeResult.strategy_type.is_(None),
+                            TradeResult.strategy_type != "HOLDING_SYNC",
+                        ),
+                        or_(
+                            TradeResult.notes.is_(None),
+                            ~TradeResult.notes.like("HOLDING_SYNC_BACKFILL%"),
+                        ),
                     )
                 )
                 return result.scalar() or 0

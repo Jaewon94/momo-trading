@@ -420,10 +420,85 @@ async def test_admin_position_detail_route_treats_buy_with_exit_price_only_as_fi
 
     assert response.status_code == 200
     payload = response.json()["data"]
-    assert payload["timeline"][0]["title"] == "최종 청산 lot"
-    assert payload["timeline"][0]["detail"]["trade_state_kind_label"] == "최종 청산 lot"
+    assert payload["timeline"][0]["title"] == "매도 완료"
+    assert payload["timeline"][0]["detail"]["trade_state_kind_label"] == "매도 완료"
     assert payload["timeline"][0]["detail"]["trade_state_badge"] == "FINAL_EXIT"
-    assert payload["timeline"][0]["detail"]["trade_state_detail_label"] == "전체 수량 청산 완료"
+    assert payload["timeline"][0]["detail"]["trade_state_detail_label"] == ""
+
+
+@pytest.mark.asyncio
+async def test_admin_position_detail_route_labels_failed_sell_as_unfilled(client, monkeypatch):
+    trade = SimpleNamespace(
+        id="t-failed-sell",
+        stock_symbol="011930",
+        stock_name="신성이엔지",
+        side="SELL",
+        strategy_type="SWING",
+        entry_price=0.0,
+        exit_price=1574.0,
+        quantity=1,
+        pnl=0.0,
+        return_pct=0.0,
+        is_win=False,
+        hold_days=0,
+        exit_reason="",
+        ai_recommendation="SELL",
+        ai_confidence=0.0,
+        ai_target_price=None,
+        ai_stop_loss_price=None,
+        entry_rsi=None,
+        entry_pattern=None,
+        market_regime="",
+        notes="CONFIRM_FAILED: 체결수량 0 (주문 취소됨)",
+        status="CONFIRM_FAILED",
+        entry_at=None,
+        exit_at=datetime(2026, 4, 3, 10, 25),
+        created_at=datetime(2026, 4, 3, 10, 25),
+    )
+
+    class FakeTradeRepo:
+        def __init__(self, _db) -> None:
+            pass
+
+        async def get_by_symbol(self, symbol, limit=50):
+            assert symbol == "011930"
+            return [trade]
+
+        async def get_all_open_buys(self, symbol):
+            assert symbol == "011930"
+            return []
+
+    class FakeActivityRepo:
+        def __init__(self, _db) -> None:
+            pass
+
+        async def get_by_symbol(self, symbol, limit=50):
+            return []
+
+    class EmptyNewsRepo:
+        def __init__(self, _db) -> None:
+            pass
+
+        async def get_recent(self, *, limit=50, offset=0, symbol=None, source_code=None):
+            return []
+
+    class FakeBrokerAdapter:
+        async def get_holdings(self):
+            return []
+
+    monkeypatch.setattr("api.routes.admin.TradeResultRepository", FakeTradeRepo, raising=False)
+    monkeypatch.setattr("api.routes.admin.AgentActivityRepository", FakeActivityRepo, raising=False)
+    monkeypatch.setattr("api.routes.admin.NewsItemRepository", EmptyNewsRepo, raising=False)
+    monkeypatch.setattr("api.routes.admin.get_broker_adapter", lambda: FakeBrokerAdapter(), raising=False)
+
+    response = await client.get("/api/v1/admin/positions/011930")
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["timeline"][0]["title"] == "매도 미체결"
+    assert payload["timeline"][0]["detail"]["trade_state_kind_label"] == "매도 미체결"
+    assert payload["timeline"][0]["detail"]["trade_state_badge"] == "CONFIRM_FAILED"
+    assert payload["timeline"][0]["detail"]["trade_state_detail_label"] == "체결 실패 또는 주문 취소"
 
 
 @pytest.mark.asyncio

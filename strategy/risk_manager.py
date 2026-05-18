@@ -78,17 +78,23 @@ class RiskManager:
             )
             eff_max_pos_pct = dynamic_limits.get("max_position_pct", eff_max_pos_pct)
 
+        async def complete(result: dict) -> dict:
+            result.setdefault("effective_max_daily_trades", eff_max_daily)
+            result.setdefault("effective_max_single_order_krw", eff_max_order)
+            result.setdefault("effective_min_cash_ratio", eff_min_cash_ratio)
+            result.setdefault("effective_max_position_pct", eff_max_pos_pct)
+            await self._log_result(symbol, result, today_trade_count, cycle_id)
+            return result
+
         # 매도는 기본적으로 허용
         if signal.action == SignalAction.SELL:
             result = {"approved": True, "reason": "매도 주문", "adjusted_quantity": None}
-            await self._log_result(symbol, result, today_trade_count, cycle_id)
-            return result
+            return await complete(result)
 
         # 매매 비활성화 검사
         if not settings.TRADING_ENABLED:
             result = {"approved": False, "reason": "매매가 비활성화되어 있습니다"}
-            await self._log_result(symbol, result, today_trade_count, cycle_id)
-            return result
+            return await complete(result)
 
         # 자동 킬스위치 + 기대값 게이트 (매수만 적용)
         guard_result = await self._trading_guard.evaluate_buy_guard(
@@ -109,8 +115,7 @@ class RiskManager:
                 "trigger": guard_result.get("trigger", ""),
                 "adjusted_quantity": None,
             }
-            await self._log_result(symbol, result, today_trade_count, cycle_id)
-            return result
+            return await complete(result)
         guard_warnings = [
             warning for warning in guard_result.get("warnings", [])
             if isinstance(warning, dict)
@@ -127,16 +132,14 @@ class RiskManager:
         if eff_max_daily > 0 and today_trade_count >= eff_max_daily:
             logger.warning("일일 매매 한도 초과: {}/{}", today_trade_count, eff_max_daily)
             result = {"approved": False, "reason": f"일일 매매 한도 초과 ({eff_max_daily}회)"}
-            await self._log_result(symbol, result, today_trade_count, cycle_id)
-            return result
+            return await complete(result)
 
         # 주문 금액 계산
         price = signal.suggested_price or 0
         quantity = signal.suggested_quantity or 0
         if price <= 0 or quantity <= 0:
             result = {"approved": False, "reason": "가격 또는 수량이 유효하지 않습니다"}
-            await self._log_result(symbol, result, today_trade_count, cycle_id)
-            return result
+            return await complete(result)
 
         total_amount = price * quantity
 
@@ -155,8 +158,7 @@ class RiskManager:
                     "trigger": self._primary_warning_trigger(guard_warnings),
                     "warnings": guard_warnings,
                 }
-                await self._log_result(symbol, result, today_trade_count, cycle_id)
-                return result
+                return await complete(result)
             quantity = adjusted_qty
             total_amount = price * quantity
             signal.suggested_quantity = quantity
@@ -177,8 +179,7 @@ class RiskManager:
                         "trigger": self._primary_warning_trigger(guard_warnings),
                         "warnings": guard_warnings,
                     }
-                    await self._log_result(symbol, result, today_trade_count, cycle_id)
-                    return result
+                    return await complete(result)
                 quantity = adjusted_qty
                 total_amount = price * quantity
                 signal.suggested_quantity = quantity
@@ -200,8 +201,7 @@ class RiskManager:
                         "reason": f"리스크:보상 비율 부족 ({rr_ratio:.1f}:1, 최소 {min_rr}:1 필요)",
                         "adjusted_quantity": None,
                     }
-                    await self._log_result(symbol, result, today_trade_count, cycle_id)
-                    return result
+                    return await complete(result)
 
         # 변동성 기반 포지션 사이징 (손절 폭 기준 1회 손실 한도)
         if settings.VOLATILITY_POSITION_SIZING_ENABLED and stop > 0 and entry > 0:
@@ -216,51 +216,44 @@ class RiskManager:
                     sized_qty = int(risk_budget / risk_per_share)
                     if sized_qty < eff_min_qty:
                         result = {"approved": False, "reason": "변동성 사이징 후 최소 수량 미달"}
-                        await self._log_result(symbol, result, today_trade_count, cycle_id)
-                        return result
+                        return await complete(result)
                     if sized_qty < quantity:
                         result = {
                             "approved": True,
                             "reason": f"수량 조정 (변동성 리스크): {quantity} → {sized_qty}",
                             "adjusted_quantity": sized_qty,
                         }
-                        await self._log_result(symbol, result, today_trade_count, cycle_id)
-                        return result
+                        return await complete(result)
 
         # 단일 주문 금액 한도 (0이면 AI 자율 → 스킵)
         if eff_max_order > 0 and total_amount > eff_max_order:
             adjusted_qty = int(eff_max_order / price)
             if adjusted_qty < eff_min_qty:
                 result = {"approved": False, "reason": "단일 주문 한도 내에서 최소 수량 미달"}
-                await self._log_result(symbol, result, today_trade_count, cycle_id)
-                return result
+                return await complete(result)
             result = {
                 "approved": True,
                 "reason": f"수량 조정 (한도 초과): {quantity} → {adjusted_qty}",
                 "adjusted_quantity": adjusted_qty,
             }
-            await self._log_result(symbol, result, today_trade_count, cycle_id)
-            return result
+            return await complete(result)
 
         # 현금 부족 검사 (음수 현금 방어 포함)
         if portfolio_cash <= 0:
             result = {"approved": False, "reason": "가용 현금 없음"}
-            await self._log_result(symbol, result, today_trade_count, cycle_id)
-            return result
+            return await complete(result)
 
         if total_amount > portfolio_cash:
             adjusted_qty = int(portfolio_cash / price)
             if adjusted_qty < eff_min_qty:
                 result = {"approved": False, "reason": "현금 부족"}
-                await self._log_result(symbol, result, today_trade_count, cycle_id)
-                return result
+                return await complete(result)
             result = {
                 "approved": True,
                 "reason": f"수량 조정 (현금 부족): {quantity} → {adjusted_qty}",
                 "adjusted_quantity": adjusted_qty,
             }
-            await self._log_result(symbol, result, today_trade_count, cycle_id)
-            return result
+            return await complete(result)
 
         # 최소 현금 비중 검사
         cash_after = portfolio_cash - total_amount
@@ -268,20 +261,17 @@ class RiskManager:
             max_spend = portfolio_cash - (portfolio_budget * eff_min_cash_ratio)
             if max_spend <= 0:
                 result = {"approved": False, "reason": "현금 비중 최소 한도 미달"}
-                await self._log_result(symbol, result, today_trade_count, cycle_id)
-                return result
+                return await complete(result)
             adjusted_qty = int(max_spend / price)
             if adjusted_qty < eff_min_qty:
                 result = {"approved": False, "reason": "현금 비중 유지 후 최소 수량 미달"}
-                await self._log_result(symbol, result, today_trade_count, cycle_id)
-                return result
+                return await complete(result)
             result = {
                 "approved": True,
                 "reason": f"수량 조정 (현금 비중 유지): {quantity} → {adjusted_qty}",
                 "adjusted_quantity": adjusted_qty,
             }
-            await self._log_result(symbol, result, today_trade_count, cycle_id)
-            return result
+            return await complete(result)
 
         # 종목 비중 검사
         if portfolio_budget > 0:
@@ -290,19 +280,16 @@ class RiskManager:
                 adjusted_qty = int((portfolio_budget * eff_max_pos_pct / 100) / price)
                 if adjusted_qty < eff_min_qty:
                     result = {"approved": False, "reason": "비중 한도 내에서 최소 수량 미달"}
-                    await self._log_result(symbol, result, today_trade_count, cycle_id)
-                    return result
+                    return await complete(result)
                 result = {
                     "approved": True,
                     "reason": f"수량 조정 (비중 한도): {quantity} → {adjusted_qty}",
                     "adjusted_quantity": adjusted_qty,
                 }
-                await self._log_result(symbol, result, today_trade_count, cycle_id)
-                return result
+                return await complete(result)
 
         result = {"approved": True, "reason": "리스크 검사 통과", "adjusted_quantity": None}
-        await self._log_result(symbol, result, today_trade_count, cycle_id)
-        return result
+        return await complete(result)
 
     @staticmethod
     def _resolve_horizon_multiplier(signal: TradeSignal) -> float:

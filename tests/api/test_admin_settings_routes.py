@@ -1,3 +1,12 @@
+async def _admin_confirmation_token(client, action: str, resource_id: str, quantity: str = "ALL") -> str:
+    response = await client.post(
+        "/api/v1/admin/actions/confirmations",
+        json={"action": action, "resource_id": resource_id, "quantity": quantity},
+    )
+    assert response.status_code == 200
+    return response.json()["data"]["confirmation_token"]
+
+
 async def test_admin_settings_exposes_manual_llm_provider(client):
     response = await client.get("/api/v1/admin/settings")
 
@@ -285,13 +294,21 @@ async def test_admin_scheduler_routes_persist_enabled_flag(client, monkeypatch):
         monkeypatch.setattr("api.routes.admin.trading_scheduler.stop", fake_stop)
         monkeypatch.setattr("api.routes.admin.trading_scheduler._running", False)
 
-        stop_response = await client.post("/api/v1/admin/scheduler/stop")
+        stop_token = await _admin_confirmation_token(client, "STOP_SCHEDULER", "SCHEDULER")
+        stop_response = await client.post(
+            "/api/v1/admin/scheduler/stop",
+            json={"confirmation_token": stop_token},
+        )
         assert stop_response.status_code == 200
         settings.SCHEDULER_ENABLED = original
         await runtime_settings_service.apply_persisted_settings()
         assert settings.SCHEDULER_ENABLED is False
 
-        start_response = await client.post("/api/v1/admin/scheduler/start")
+        start_token = await _admin_confirmation_token(client, "START_SCHEDULER", "SCHEDULER")
+        start_response = await client.post(
+            "/api/v1/admin/scheduler/start",
+            json={"confirmation_token": start_token},
+        )
         assert start_response.status_code == 200
         settings.SCHEDULER_ENABLED = False
         await runtime_settings_service.apply_persisted_settings()
@@ -331,6 +348,28 @@ async def test_admin_settings_apply_route_returns_reconfiguration_summary(client
     assert captured["updates"] == {"LLM_TIER1_CONCURRENCY": 3}
     assert payload["changed"]["LLM_TIER1_CONCURRENCY"]["new"] == 3
     assert payload["reconfiguration"]["scheduler_restarted"] is True
+
+
+async def test_admin_settings_apply_requires_confirmation_for_trading_controls(client, monkeypatch):
+    called = False
+
+    async def fake_apply_settings(updates):
+        nonlocal called
+        called = True
+        return {"changed": {}, "reconfiguration": {}}
+
+    monkeypatch.setattr(
+        "api.routes.admin.runtime_reconfiguration_service.apply_settings",
+        fake_apply_settings,
+    )
+
+    response = await client.post(
+        "/api/v1/admin/settings/apply",
+        json={"TRADING_ENABLED": True},
+    )
+
+    assert response.status_code == 428
+    assert called is False
 
 
 async def test_llm_status_includes_manual_selection(client):

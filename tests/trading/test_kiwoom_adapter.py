@@ -406,6 +406,58 @@ async def test_kiwoom_adapter_uses_holding_avg_price_when_pending_fill_has_zero_
 
 
 @pytest.mark.asyncio
+async def test_kiwoom_adapter_does_not_use_holding_avg_price_for_pending_sell_fill() -> None:
+    account_client = MutableAccountClient(
+        holdings=[
+            HoldingInfo(
+                symbol="005930",
+                name="삼성전자",
+                quantity=2,
+                avg_buy_price=70_000,
+                current_price=73_000,
+                pnl=6_000,
+                pnl_rate=4.28,
+            )
+        ],
+        pending_orders=[
+            PendingOrderInfo(
+                order_id="K-1",
+                symbol="005930",
+                name="삼성전자",
+                side="매도",
+                order_qty=3,
+                filled_qty=3,
+                remaining_qty=0,
+                order_price=0,
+                order_time="100000",
+            )
+        ],
+    )
+    order_executor = FakeOrderExecutor()
+    adapter = KiwoomBrokerAdapter(
+        account_client=account_client,
+        market_data_client=FakeMarketDataClient(),
+        order_executor=order_executor,
+    )
+
+    result = await adapter.place_order(OrderRequest(
+        symbol="005930",
+        market=Market.KRX,
+        side=OrderSide.SELL,
+        order_type=OrderType.MARKET,
+        quantity=3,
+        price=73_000,
+    ))
+
+    status = await adapter.get_order_status(result.order_id or "")
+
+    assert status is not None
+    assert status.filled_qty == 3
+    assert status.filled_price == 0
+    assert status.order_price == 0
+
+
+@pytest.mark.asyncio
 async def test_kiwoom_adapter_returns_normalized_candles() -> None:
     adapter, _ = build_adapter()
 

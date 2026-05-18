@@ -441,6 +441,20 @@ AI 출력 제한:
 - 명확 HOLD skip은 기본 OFF로 시작
 - 손절/트레일링/강제청산은 AI provider timeout과 무관하게 실행되어야 한다.
 
+2026-05-13 1차 구현:
+
+- `FAST_HOLDINGS_GUARD_ENABLED`, `FAST_HOLDINGS_GUARD_INTERVAL_MIN` 설정을 추가했다.
+- 빠른 보유 가격 가드 job을 추가해 기존 15분 보유점검 사이에도 같은 주문/체결 확인 경로로 가격 기반 매도 안전망을 실행한다.
+- broker-native OCO/bracket 주문은 아직 사용하지 않고, 기존 `_place_market_sell → confirm_and_record` 경로를 유지한다.
+- 기본 손절/익절 기준을 단기/중기/장기별로 분리했다.
+  - 단기 기본값: 손절 -3%, 익절 +5%
+  - 중기 기본값: 손절 -4%, 익절 +8%
+  - 장기 기본값: 손절 -6%, 익절 +12%
+- `TRAILING_PROFIT_GUARD_*` 설정을 추가해 수익 구간 진입 후 고점 대비 되돌림이 커지면 deterministic 수익보호 매도를 실행할 수 있게 했다.
+- 트레일링 수익보호는 리스크 성향에 따라 되돌림 허용폭을 조정한다.
+- 기존 부분익절, 본전스탑, soft stop 2회 확인, 중장기 눌림 추가매수 후보 기록은 유지했다.
+- focused scheduler 테스트로 horizon별 기본 임계값, 트레일링 수익보호, 기존 보유점검/AI 재평가 흐름을 검증했다.
+
 ### Phase 5: 매도 AI 최종 판단 적용
 
 - `AI_REVIEW`, `SELL_CANDIDATE`, `PARTIAL_TAKE_PROFIT_CANDIDATE`만 AI 호출

@@ -18,6 +18,7 @@ class OrderReconciliationService:
         *,
         broker_pending_orders: list[Any],
         db_pending_confirms: list[Any],
+        db_order_linked_trades: list[Any] | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         current_time = now or datetime.now()
@@ -31,9 +32,16 @@ class OrderReconciliationService:
             for trade in db_pending_confirms
             if str(getattr(trade, "order_id", "") or "")
         }
+        linked_non_pending_by_order_id = {
+            str(getattr(trade, "order_id", "") or ""): trade
+            for trade in (db_order_linked_trades or [])
+            if str(getattr(trade, "order_id", "") or "")
+            and str(getattr(trade, "status", "") or "") != "PENDING_CONFIRM"
+        }
 
         matched: list[dict[str, Any]] = []
         broker_only: list[dict[str, Any]] = []
+        broker_linked_non_pending: list[dict[str, Any]] = []
         db_only_stale: list[dict[str, Any]] = []
         quantity_mismatch: list[dict[str, Any]] = []
         partial_fill_pending: list[dict[str, Any]] = []
@@ -64,6 +72,14 @@ class OrderReconciliationService:
 
         for order_id, broker_order in sorted(broker_by_order_id.items()):
             if order_id not in db_by_order_id:
+                linked_trade = linked_non_pending_by_order_id.get(order_id)
+                if linked_trade is not None:
+                    broker_linked_non_pending.append({
+                        **self._serialize_pair(order_id, broker_order, linked_trade),
+                        "reason": "broker_pending_order_linked_to_non_pending_db_trade",
+                        "db_status": str(getattr(linked_trade, "status", "") or ""),
+                    })
+                    continue
                 broker_only.append(self._serialize_broker_order(broker_order))
 
         for order_id, db_trade in sorted(db_by_order_id.items()):
@@ -76,12 +92,14 @@ class OrderReconciliationService:
                 "db_pending_count": len(db_pending_confirms),
                 "matched_count": len(matched),
                 "broker_only_count": len(broker_only),
+                "broker_linked_non_pending_count": len(broker_linked_non_pending),
                 "db_only_stale_count": len(db_only_stale),
                 "quantity_mismatch_count": len(quantity_mismatch),
                 "partial_fill_pending_count": len(partial_fill_pending),
             },
             "matched": matched,
             "broker_only": broker_only,
+            "broker_linked_non_pending": broker_linked_non_pending,
             "db_only_stale": db_only_stale,
             "quantity_mismatch": quantity_mismatch,
             "partial_fill_pending": partial_fill_pending,

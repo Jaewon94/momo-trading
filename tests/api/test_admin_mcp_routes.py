@@ -1,5 +1,9 @@
-import pytest
+from datetime import timedelta
 from types import SimpleNamespace
+
+import pytest
+
+from util.time_util import now_kst
 
 
 @pytest.mark.asyncio
@@ -137,6 +141,31 @@ async def test_system_status_includes_operations_summary(client, monkeypatch):
     assert operations["ollama"]["status"] == "WARN"
     assert operations["orders"]["status"] == "WARN"
     assert operations["orders"]["message"] == "주문 한도 초과"
+
+
+@pytest.mark.asyncio
+async def test_system_status_does_not_warn_for_stale_order_error(client, monkeypatch):
+    class FakeError:
+        summary = "❌ [005930] 주문 실패"
+        error_message = "오래된 주문 오류"
+        symbol = "005930"
+        created_at = now_kst() - timedelta(hours=25)
+
+    async def fake_latest_error(self, *, activity_type=None):
+        assert activity_type == "ORDER"
+        return FakeError()
+
+    monkeypatch.setattr(
+        "api.routes.admin.AgentActivityRepository.get_latest_error",
+        fake_latest_error,
+    )
+
+    response = await client.get("/api/v1/admin/system/status")
+
+    assert response.status_code == 200
+    order_ops = response.json()["data"]["operations"]["orders"]
+    assert order_ops["status"] == "OK"
+    assert order_ops["last_error_at"] == FakeError.created_at.isoformat()
 
 
 @pytest.mark.asyncio

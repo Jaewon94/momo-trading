@@ -65,9 +65,9 @@ class Settings(BaseSettings):
     LLM_FALLBACK_PROVIDER_TIER1: str = ""  # CLAUDE_CODE | CODEX | 빈값
     LLM_FALLBACK_PROVIDER_TIER2: str = ""  # CLAUDE_CODE | CODEX | 빈값
     LLM_EXECUTION_MODE_TIER1: str = "DISTRIBUTED"  # SINGLE | DISTRIBUTED | CONSENSUS
-    LLM_EXECUTION_MODE_TIER2: str = "SINGLE"
-    LLM_DISTRIBUTED_PROFILE_TIER1: str = "FAST"  # FAST excludes slow Claude Code CLI from distributed T1
-    LLM_DISTRIBUTED_PROFILE_TIER2: str = "FULL"  # FULL includes every available worker
+    LLM_EXECUTION_MODE_TIER2: str = "DISTRIBUTED"
+    LLM_DISTRIBUTED_PROFILE_TIER1: str = "FAST"  # FAST excludes slow Claude Code CLI from automated T1
+    LLM_DISTRIBUTED_PROFILE_TIER2: str = "FAST"  # FAST keeps automated review on Codex/API workers
     LLM_FALLBACK_MODEL_TIER1: str = DEFAULT_LLM_MODEL
     LLM_FALLBACK_MODEL_TIER2: str = DEFAULT_LLM_MODEL
 
@@ -76,9 +76,9 @@ class Settings(BaseSettings):
     CLAUDE_CODE_MODEL_TIER1: str = DEFAULT_LLM_MODEL  # Tier1 override
     CLAUDE_CODE_MODEL_TIER2: str = DEFAULT_LLM_MODEL  # Tier2 override
     CLAUDE_CODE_EFFORT_TIER1: str = "low"
-    CLAUDE_CODE_EFFORT_TIER2: str = "high"
+    CLAUDE_CODE_EFFORT_TIER2: str = "medium"
     CLAUDE_CODE_BARE_TIER1: bool = True
-    CLAUDE_CODE_BARE_TIER2: bool = False
+    CLAUDE_CODE_BARE_TIER2: bool = True
     CLAUDE_CODE_PATH: str = ""  # 비어있으면 자동 탐색 (예: /opt/homebrew/bin/claude)
 
     # Codex CLI
@@ -92,8 +92,8 @@ class Settings(BaseSettings):
     CODEX_PATH: str = ""  # 비어있으면 자동 탐색 (예: /opt/homebrew/bin/codex)
     LLM_SLOW_CALL_WARN_SEC: int = 30
     LLM_TIER1_CONCURRENCY: int = 2
-    LLM_TIER2_CONCURRENCY: int = 1
-    TIER1_LLM_TIMEOUT_SEC: int = 45
+    LLM_TIER2_CONCURRENCY: int = 3
+    TIER1_LLM_TIMEOUT_SEC: int = 90
     TIER1_ANALYSIS_CACHE_ENABLED: bool = True
     TIER1_ANALYSIS_CACHE_TTL_SEC: int = 180
     TIER1_ANALYSIS_CACHE_PRICE_BUCKET_BPS: int = 30
@@ -110,10 +110,10 @@ class Settings(BaseSettings):
     HOLDINGS_REVIEW_CACHE_TTL_SEC: int = 1800
     HOLDINGS_REVIEW_CACHE_MINUTES_LEFT_BUCKET_MIN: int = 15
     HOLDINGS_PRECHECK_SKIP_CLEAR_HOLD_ENABLED: bool = False
-    MANUAL_LLM_PROVIDER: str = "CLAUDE_CODE"  # CLAUDE_CODE | CODEX | OLLAMA
+    MANUAL_LLM_PROVIDER: str = "CODEX"  # CLAUDE_CODE | CLAUDE_API | CODEX | OLLAMA
     MANUAL_LLM_EXECUTION_MODE: str = "SINGLE"
     MANUAL_LLM_MODEL: str = DEFAULT_LLM_MODEL
-    MANUAL_LLM_FALLBACK_PROVIDER: str = ""
+    MANUAL_LLM_FALLBACK_PROVIDER: str = "CLAUDE_API"
     MANUAL_LLM_FALLBACK_MODEL: str = DEFAULT_LLM_MODEL
     NEWS_LLM_ENABLED: bool = True
     NEWS_LLM_PROVIDER: str = "CLAUDE_CODE"  # CLAUDE_CODE | CODEX | OLLAMA
@@ -172,7 +172,7 @@ class Settings(BaseSettings):
     # === Trading Safety ===
     TRADING_ENABLED: bool = True
     ORDER_SUBMISSION_MODE: str = "FULL"  # FULL | SELL_ONLY | READ_ONLY
-    ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED: bool = False
+    ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED: bool = True
     ADMIN_ACTION_CONFIRMATION_TTL_SEC: int = 120
     DAY_TRADING_ONLY: bool = False  # True=당일 청산 필수, False=스윙 (유망 종목 오버나이트 보유)
     BUY_CUTOFF_HOUR: int = 14  # 신규 매수 마감 시각 (14시 이후 매수 차단)
@@ -220,6 +220,8 @@ class Settings(BaseSettings):
     RISK_MULTIPLIER_MID: float = 1.0
     RISK_MULTIPLIER_LONG: float = 1.2
     POSITION_EXIT_MANAGEMENT_ENABLED: bool = True
+    FAST_HOLDINGS_GUARD_ENABLED: bool = True
+    FAST_HOLDINGS_GUARD_INTERVAL_MIN: int = 3
     PARTIAL_TAKE_PROFIT_ENABLED: bool = True
     PARTIAL_TAKE_PROFIT_PCT_SHORT: float = 1.5
     PARTIAL_TAKE_PROFIT_PCT_MID: float = 3.0
@@ -232,6 +234,19 @@ class Settings(BaseSettings):
     BREAKEVEN_TRIGGER_PCT_MID: float = 1.5
     BREAKEVEN_TRIGGER_PCT_LONG: float = 2.0
     BREAKEVEN_BUFFER_BPS: int = 10
+    TRAILING_PROFIT_GUARD_ENABLED: bool = True
+    TRAILING_PROFIT_ACTIVATE_PCT_SHORT: float = 2.0
+    TRAILING_PROFIT_ACTIVATE_PCT_MID: float = 3.0
+    TRAILING_PROFIT_ACTIVATE_PCT_LONG: float = 5.0
+    TRAILING_PROFIT_DRAWDOWN_PCT_SHORT: float = 1.0
+    TRAILING_PROFIT_DRAWDOWN_PCT_MID: float = 1.8
+    TRAILING_PROFIT_DRAWDOWN_PCT_LONG: float = 3.0
+    DEFAULT_STOP_LOSS_PCT_SHORT: float = -3.0
+    DEFAULT_STOP_LOSS_PCT_MID: float = -4.0
+    DEFAULT_STOP_LOSS_PCT_LONG: float = -6.0
+    DEFAULT_TAKE_PROFIT_PCT_SHORT: float = 5.0
+    DEFAULT_TAKE_PROFIT_PCT_MID: float = 8.0
+    DEFAULT_TAKE_PROFIT_PCT_LONG: float = 12.0
     SCALE_IN_CANDIDATE_ENABLED: bool = True
     SCALE_IN_MIN_PULLBACK_PCT_MID: float = -2.5
     SCALE_IN_MIN_PULLBACK_PCT_LONG: float = -4.0
