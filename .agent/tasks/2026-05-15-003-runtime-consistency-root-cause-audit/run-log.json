@@ -103,6 +103,18 @@
       "type": "verification_run",
       "status": "passed",
       "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-18T11:44:32+09:00",
+      "type": "runtime_followup_repair",
+      "status": "passed",
+      "summary": "Recovered one 011000 SELL PENDING_CONFIRM after broker holdings and broker pending orders were both empty. Kiwoom holding delta inferred a full 1188-share sell fill at 1073 and closed the remaining open BUY lot with -55,836 realized PnL. No broker order was submitted or cancelled."
+    },
+    {
+      "at": "2026-05-18T11:45:00+09:00",
+      "type": "runtime_integrity_rerun",
+      "status": "passed",
+      "summary": "Runtime integrity passed after repair: system OK, settings OK, order reconciliation OK with broker_pending=0/db_pending=0, lifecycle OK with broker_missing_open_buys=0 and broker_untracked_holdings=0. Account snapshot has no holdings and no pending orders."
     }
   ]
 }

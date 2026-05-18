@@ -12,6 +12,7 @@
 - Do not show an old order error as a current operations WARN forever; only order errors inside the last 24 hours should affect `/system/status` operations health.
 - When a Kiwoom SELL pending has no broker pending order and broker holding quantity is already greater than or equal to DB open BUY quantity, mark it as stale failed instead of falling through to a cancellation attempt.
 - Recheck Kiwoom SELL orders that initially report `filled_qty=0` with remaining quantity before cancellation; increase the default SELL confirmation wait from 3 seconds to 10 seconds.
+- If a Kiwoom SELL pending later disappears from broker pending orders and broker holdings fall below DB open BUY quantity, recover it by holding-delta inference before treating it as stale. This closes the matching BUY lot and prevents a false open position after the broker has already sold out.
 
 ## Rationale
 
@@ -27,6 +28,7 @@
 - The 2026-05-15 order error was historical after 2026-05-18 restart; keeping it as a current WARN made a healthy system look degraded after integrity was repaired.
 - The 2026-05-18 `011000` 1320-share SELL pending was already reflected in broker/DB holdings after later reconciliation and partial sell recording. A second cancellation attempt would not improve consistency and could add unnecessary broker side effects.
 - The 2026-05-18 `011000` 1188-share protective SELL failed because the confirmation path treated an early zero-fill/remaining-quantity status as terminal after only 3 seconds. A bounded retry keeps protective sells alive long enough for Kiwoom status/holding data to catch up while still cancelling if no fill appears.
+- The later 2026-05-18 `011000` 1188-share SELL was confirmed by broker state rather than direct order status: holdings and pending orders were both empty, so the remaining DB open lot was closed at the recorded SELL price of 1,073원 with -55,836원 realized PnL.
 
 ## Deferred
 
