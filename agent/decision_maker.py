@@ -857,6 +857,61 @@ class DecisionMaker:
                 if order_status.filled_price > 0
                 else (order_status.order_price or expected_price)
             )
+            remaining_qty = int(getattr(order_status, "remaining_qty", 0) or 0)
+
+            if filled_qty <= 0 and side == "SELL" and remaining_qty > 0:
+                for attempt in range(2):
+                    logger.warning(
+                        "[{}] SELL 주문 {} 체결수량 0 / 잔량 {}주 → 상태 재확인 {}/2",
+                        symbol,
+                        order_id,
+                        remaining_qty,
+                        attempt + 1,
+                    )
+                    await asyncio.sleep(self._order_confirm_wait_sec(side))
+                    try:
+                        retry_status = await asyncio.wait_for(
+                            self._broker_adapter.get_order_status(order_id),
+                            timeout=confirm_timeout_sec,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "[{}] SELL 주문 {} 재확인 타임아웃 ({:.0f}초)",
+                            symbol,
+                            order_id,
+                            confirm_timeout_sec,
+                        )
+                        break
+                    if retry_status is None:
+                        break
+                    order_status = retry_status
+                    filled_qty = (
+                        quantity if order_status.filled_qty is None else order_status.filled_qty
+                    )
+                    filled_price = (
+                        order_status.filled_price
+                        if order_status.filled_price > 0
+                        else (order_status.order_price or expected_price)
+                    )
+                    remaining_qty = int(getattr(order_status, "remaining_qty", 0) or 0)
+                    if filled_qty > 0 or remaining_qty <= 0:
+                        break
+
+                if filled_qty <= 0:
+                    inferred = await self._infer_and_record_sell_fill_from_holdings(
+                        symbol=symbol,
+                        order_id=order_id,
+                        requested_quantity=quantity,
+                        expected_price=expected_price,
+                        analysis_context=analysis_context,
+                        cycle_id=cycle_id,
+                        exit_reason=exit_reason,
+                    )
+                    if inferred:
+                        self._broker_adapter.invalidate_cache()
+                        if on_settled:
+                            await on_settled(order_id, True)
+                        return True
 
             if filled_qty <= 0:
                 logger.debug("[{}] 주문 {} 체결수량 0 → 미체결 → 취소 시도", symbol, order_id)
@@ -868,7 +923,6 @@ class DecisionMaker:
                     await on_settled(order_id, False)
                 return False
 
-            remaining_qty = int(getattr(order_status, "remaining_qty", 0) or 0)
             if remaining_qty > 0:
                 logger.warning(
                     "[체결확인] {} {} 주문 {} 부분체결 보류: 체결 {}주 / 잔량 {}주",

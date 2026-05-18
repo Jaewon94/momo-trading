@@ -91,6 +91,18 @@
       "type": "verification_run",
       "status": "passed",
       "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-18T10:09:37+09:00",
+      "type": "runtime_followup_repair",
+      "status": "passed",
+      "summary": "Cleared one stale 011000 SELL PENDING_CONFIRM without broker cancellation, added Kiwoom SELL zero-fill recheck and raised default SELL confirmation wait to 10s. Restarted runtime in tmux session momo-runtime-20260518b; health, runtime integrity, and order reconciliation passed. System status order WARN is the historical 10:01 failed sell log, not active broker/DB drift."
+    },
+    {
+      "at": "2026-05-18T10:10:44+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
     }
   ]
 }

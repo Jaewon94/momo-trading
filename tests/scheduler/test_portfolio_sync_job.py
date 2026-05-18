@@ -208,6 +208,85 @@ async def test_recover_pending_confirms_keeps_partial_broker_order_pending(monke
 
 
 @pytest.mark.asyncio
+async def test_recover_pending_confirms_marks_stale_kiwoom_sell_without_cancel(monkeypatch) -> None:
+    pending_trade = SimpleNamespace(
+        order_id="0050714",
+        stock_symbol="011000",
+        side="SELL",
+        quantity=1320,
+        entry_price=0.0,
+        exit_price=1122.0,
+        exit_at=__import__("datetime").datetime(2026, 5, 18, 9, 55, 32),
+        notes="PENDING_CONFIRM_PARTIAL: filled_qty=275, remaining_qty=1045, filled_price=1122.00",
+        status=OrderConfirmStatus.PENDING_CONFIRM.value,
+    )
+    existing_open = [
+        SimpleNamespace(quantity=1188, exit_at=None),
+    ]
+    cancel_calls = []
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def begin(self):
+            return self
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_pending_confirms(self):
+            return [pending_trade]
+
+        async def get_all_open_buys(self, symbol):
+            assert symbol == "011000"
+            return existing_open
+
+    class FakeBrokerAdapter:
+        provider = BrokerProvider.KIWOOM
+
+        async def get_pending_orders(self):
+            return []
+
+        async def get_holdings(self):
+            return [
+                HoldingInfo(
+                    symbol="011000",
+                    name="진원생명과학",
+                    quantity=1188,
+                    avg_buy_price=1100.0,
+                    current_price=1120.0,
+                    pnl=11880.0,
+                    pnl_rate=0.91,
+                )
+            ]
+
+    async def fake_cancel_unfilled_order(order_id, symbol):
+        cancel_calls.append((order_id, symbol))
+
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("trading.broker_factory.get_broker_adapter", lambda: FakeBrokerAdapter())
+    monkeypatch.setattr(
+        "scheduler.jobs.portfolio_sync_job._cancel_unfilled_order",
+        fake_cancel_unfilled_order,
+    )
+
+    summary = await _recover_pending_confirms()
+
+    assert summary["failed"] == 1
+    assert summary["recovered"] == 0
+    assert pending_trade.status == OrderConfirmStatus.CONFIRM_FAILED.value
+    assert pending_trade.quantity == 1320
+    assert "stale SELL pending" in pending_trade.notes
+    assert cancel_calls == []
+
+
+@pytest.mark.asyncio
 async def test_recover_pending_confirms_marks_stale_kiwoom_buy_without_broker_match_failed(monkeypatch) -> None:
     pending_trade = SimpleNamespace(
         order_id="0019413",

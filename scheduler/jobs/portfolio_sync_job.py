@@ -274,6 +274,19 @@ async def _process_one_pending(tr, repo, session, adapter, order_map, holding_ma
                 int(sell_fill["applied_quantity"] or 0),
             )
             return
+        if (
+            adapter.provider == BrokerProvider.KIWOOM
+            and total_open_qty > 0
+            and current_qty >= total_open_qty
+        ):
+            reason = "키움 보유수량 변화 없음 (stale SELL pending)"
+            _mark_pending_confirm_failed(tr, reason=reason)
+            logger.warning(
+                "PENDING 복구 실패 처리: {} {} 주문번호={} — {}",
+                tr.stock_symbol, tr.side, tr.order_id, reason,
+            )
+            summary["failed"] = int(summary["failed"]) + 1
+            return
     elif tr.side == "BUY":
         holding = holding_map.get(symbol)
         if holding is not None:

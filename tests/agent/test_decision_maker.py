@@ -1565,6 +1565,75 @@ async def test_decision_maker_infers_sell_fill_when_status_missing_but_holding_d
 
 
 @pytest.mark.asyncio
+async def test_decision_maker_rechecks_zero_fill_sell_before_cancel(monkeypatch) -> None:
+    class SequencedStatusBrokerAdapter(FakeBrokerAdapter):
+        def __init__(self, result: OrderResult, statuses: list[OrderStatusInfo | None]) -> None:
+            super().__init__(result)
+            self.statuses = list(statuses)
+
+        async def get_order_status(self, order_id: str) -> OrderStatusInfo | None:
+            self.queried_order_ids.append(order_id)
+            if self.statuses:
+                return self.statuses.pop(0)
+            return None
+
+    adapter = SequencedStatusBrokerAdapter(
+        OrderResult(success=True, order_id="ORD-SELL-RETRY", message="주문 접수"),
+        [
+            OrderStatusInfo(
+                order_id="ORD-SELL-RETRY",
+                symbol="011000",
+                filled_qty=0,
+                filled_price=0,
+                remaining_qty=1188,
+                order_price=1110,
+            ),
+            OrderStatusInfo(
+                order_id="ORD-SELL-RETRY",
+                symbol="011000",
+                filled_qty=1188,
+                filled_price=1108,
+                remaining_qty=0,
+                order_price=1108,
+            ),
+        ],
+    )
+    decision_maker = DecisionMaker(broker_adapter=adapter)
+    confirmed: dict = {}
+    cancelled: list[tuple[str, str]] = []
+
+    async def fake_sleep(_: float) -> None:
+        return None
+
+    async def fake_confirm_pending_record(**kwargs) -> None:
+        confirmed.update(kwargs)
+
+    async def fake_cancel(order_id: str, symbol: str) -> None:
+        cancelled.append((order_id, symbol))
+
+    monkeypatch.setattr("agent.decision_maker.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr(decision_maker, "_confirm_pending_record", fake_confirm_pending_record)
+    monkeypatch.setattr(decision_maker, "_cancel_unfilled_order", fake_cancel)
+
+    result = await decision_maker.confirm_and_record(
+        symbol="011000",
+        side="SELL",
+        order_id="ORD-SELL-RETRY",
+        quantity=1188,
+        expected_price=1110,
+        exit_reason="TRAILING_PROFIT_GUARD",
+        pending_record_id="pending-sell-retry",
+    )
+
+    assert result is True
+    assert adapter.queried_order_ids == ["ORD-SELL-RETRY", "ORD-SELL-RETRY"]
+    assert confirmed["pending_record_id"] == "pending-sell-retry"
+    assert confirmed["filled_qty"] == 1188
+    assert confirmed["filled_price"] == 1108
+    assert cancelled == []
+
+
+@pytest.mark.asyncio
 async def test_decision_maker_cancels_when_filled_quantity_is_zero(monkeypatch) -> None:
     adapter = FakeBrokerAdapter(
         OrderResult(success=True, order_id="ORD-4", message="주문 접수")

@@ -10,6 +10,8 @@
 - Classify broker pending orders that still match a non-pending DB trade by `order_id` as a dedicated FAIL (`broker_linked_non_pending`) instead of hiding them under generic broker-only drift.
 - When recovering a disappeared BUY pending from holdings, infer only the holding delta over already-confirmed DB open BUY quantity, capped by requested quantity.
 - Do not show an old order error as a current operations WARN forever; only order errors inside the last 24 hours should affect `/system/status` operations health.
+- When a Kiwoom SELL pending has no broker pending order and broker holding quantity is already greater than or equal to DB open BUY quantity, mark it as stale failed instead of falling through to a cancellation attempt.
+- Recheck Kiwoom SELL orders that initially report `filled_qty=0` with remaining quantity before cancellation; increase the default SELL confirmation wait from 3 seconds to 10 seconds.
 
 ## Rationale
 
@@ -23,6 +25,8 @@
 - The current runtime now correctly exposes `0067887` as `broker_pending_order_linked_to_non_pending_db_trade`: broker pending remains live, while the DB row with the same order id is already `CONFIRMED` for only 8 shares.
 - Delta-based BUY recovery avoids turning a partially filled/cancelled large order into a duplicate full holding when the symbol already has confirmed open lots.
 - The 2026-05-15 order error was historical after 2026-05-18 restart; keeping it as a current WARN made a healthy system look degraded after integrity was repaired.
+- The 2026-05-18 `011000` 1320-share SELL pending was already reflected in broker/DB holdings after later reconciliation and partial sell recording. A second cancellation attempt would not improve consistency and could add unnecessary broker side effects.
+- The 2026-05-18 `011000` 1188-share protective SELL failed because the confirmation path treated an early zero-fill/remaining-quantity status as terminal after only 3 seconds. A bounded retry keeps protective sells alive long enough for Kiwoom status/holding data to catch up while still cancelling if no fill appears.
 
 ## Deferred
 

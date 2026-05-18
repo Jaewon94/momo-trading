@@ -193,7 +193,8 @@ class Settings(BaseSettings):
     BUY_ORDER_CONFIRM_WAIT_SEC_CONSERVATIVE: int = 90
     BUY_ORDER_CONFIRM_WAIT_SEC_MODERATE: int = 60
     BUY_ORDER_CONFIRM_WAIT_SEC_AGGRESSIVE: int = 30
-    SELL_ORDER_CONFIRM_WAIT_SEC: int = 3
+    # Kiwoom sell status can lag several seconds after market order acceptance.
+    SELL_ORDER_CONFIRM_WAIT_SEC: int = 10
     ORDER_CONFIRM_STATUS_TIMEOUT_SEC: int = 15
     ORDER_RESERVATION_ENFORCEMENT: str = "SHADOW"  # SHADOW | ENFORCE
     AUTO_RISK_KILL_SWITCH_ENABLED: bool = True

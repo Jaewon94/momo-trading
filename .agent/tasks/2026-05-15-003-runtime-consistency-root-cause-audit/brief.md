@@ -47,6 +47,8 @@ Plan implications:
 
 - Adopt: Treat already-reflected SELL executions, terminal `CONFIRM_FAILED`, and neutral reconciliation closes as history/informational rather than active drift.
 - Adopt: Block future holdings backfill when a broker pending order exists, preventing synthetic rows while an order is still live.
+- Adopt: For Kiwoom SELL orders with `filled_qty=0` but broker-reported remaining quantity, recheck status before cancellation; the previous 3-second path could cancel protective sells before the broker status/feed caught up.
+- Adopt: Treat the 2026-05-18 `011000` stale SELL `PENDING_CONFIRM` as terminal failed when broker holdings and DB open quantity already match, without issuing another broker cancel.
 - Defer: Apply DB neutral-close for 30 stale open BUY lots until explicit approval.
 - Defer: Cancel broker pending buy order `0067887` or otherwise perform protected broker/order repair until explicit approval.
 - Reject: Hiding real broker/DB drift by downgrading `broker_only` or `broker_missing_open_buys` to OK.

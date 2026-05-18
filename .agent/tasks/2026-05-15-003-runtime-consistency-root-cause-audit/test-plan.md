@@ -49,3 +49,9 @@ curl -s -X POST http://127.0.0.1:9000/api/v1/admin/trades/reconcile-holdings
 - Focused API/scheduler/service/runtime-gate suite passed `58 passed` after the stale order-error status recency fix.
 - Latest cycle check confirmed cycle `2026-05-15T13:10:00+09:00` to `13:12:01+09:00`; system status `last_cycle_time` is `2026-05-15T13:12:01+09:00`.
 - Latest cycle analyzed `8`, produced `1` BUY signal, and executed `0`; the order was blocked by the account equity drawdown guard at `-0.59% <= -0.50%`.
+- 2026-05-18 follow-up found a stale `011000` SELL `PENDING_CONFIRM` with broker pending orders `0`, DB open quantity `1188`, and broker holding quantity `1188`; manual reconcile-pending marked it `CONFIRM_FAILED` without new broker cancellation.
+- `python scripts/check_runtime_integrity.py --days 7` passed after the stale pending cleanup: `order_reconciliation=OK`, `pending=0`, broker missing/untracked holdings `0`.
+- `python -m py_compile agent/decision_maker.py scheduler/jobs/portfolio_sync_job.py core/config.py` passed after SELL confirmation retry changes.
+- `.venv313/bin/python -m pytest tests/agent/test_decision_maker.py tests/scheduler/test_portfolio_sync_job.py -q` passed `70 passed`.
+- Runtime restarted in tmux session `momo-runtime-20260518b`; health returned `healthy`, PID `28370`, and `/admin/settings` reports `SELL_ORDER_CONFIRM_WAIT_SEC=10`.
+- Current order reconciliation is clean: broker pending `0`, DB pending `0`, broker-only `0`, quantity mismatch `0`, partial pending `0`. `system/status` still shows a recent historical order-error WARN from `2026-05-18T10:01:35+09:00`, not an active pending/order mismatch.
