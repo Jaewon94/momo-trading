@@ -202,15 +202,79 @@ async function createAdminActionConfirmationToken({ action, resourceId, quantity
 }
 
 async function buildDangerousActionRequestBody({ action, resourceId, quantity = 'ALL' }) {
-  if (!runtimeSettings?.ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED) {
-    return undefined;
-  }
   const token = await createAdminActionConfirmationToken({
     action,
     resourceId: normalizeConfirmationResourceId(action, resourceId),
     quantity,
   });
   return JSON.stringify({ confirmation_token: token });
+}
+
+const SETTINGS_CONFIRMATION_ACTION = 'APPLY_RUNTIME_SETTINGS';
+const SETTINGS_CONFIRMATION_RESOURCE = 'RUNTIME_SETTINGS';
+const PROTECTED_RUNTIME_SETTING_KEYS = new Set([
+  'TRADING_ENABLED',
+  'ORDER_SUBMISSION_MODE',
+  'AUTONOMY_MODE',
+  'ADMIN_DANGEROUS_ACTION_CONFIRMATION_REQUIRED',
+  'ADMIN_ACTION_CONFIRMATION_TTL_SEC',
+  'POST_LIQUIDATION_BUY_BLOCK_ENABLED',
+  'DAY_TRADING_ONLY',
+  'SCHEDULER_ENABLED',
+  'BUY_ORDER_EXECUTION_MODE',
+  'BUY_SLIPPAGE_GUARD_BPS',
+  'SELL_ORDER_CONFIRM_WAIT_SEC',
+  'ORDER_CONFIRM_STATUS_TIMEOUT_SEC',
+  'AUTO_RISK_KILL_SWITCH_ENABLED',
+  'MAX_DAILY_DRAWDOWN_PCT',
+  'ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE',
+  'ACCOUNT_EQUITY_DRAWDOWN_BLOCK_BUY_PCT',
+  'ACCOUNT_EQUITY_DRAWDOWN_KILL_SWITCH_PCT',
+  'RISK_APPETITE',
+  'RISK_PER_TRADE_PCT',
+  'POSITION_EXIT_MANAGEMENT_ENABLED',
+]);
+const PROTECTED_RUNTIME_SETTING_PREFIXES = [
+  'BUY_ORDER_CONFIRM_WAIT_SEC_',
+  'LOSS_STREAK_RECOVERY_',
+  'MIN_STRATEGY_EXPECTANCY',
+  'EXPECTANCY_',
+  'STRATEGY_EXPECTANCY_',
+  'NEGATIVE_EXPECTANCY_',
+  'VOLATILITY_POSITION_SIZING_',
+  'RISK_MULTIPLIER_',
+  'FAST_HOLDINGS_GUARD_',
+  'PARTIAL_TAKE_PROFIT_',
+  'BREAKEVEN_',
+  'TRAILING_PROFIT_',
+  'DEFAULT_STOP_LOSS_',
+  'DEFAULT_TAKE_PROFIT_',
+  'SCALE_IN_',
+  'COST_GATE_',
+  'ESTIMATED_',
+  'MIN_EDGE_TO_COST_RATIO_',
+];
+
+function getProtectedRuntimeSettingKeys(payload) {
+  return Object.keys(payload || {})
+    .filter((key) => {
+      return PROTECTED_RUNTIME_SETTING_KEYS.has(key)
+        || PROTECTED_RUNTIME_SETTING_PREFIXES.some((prefix) => key.startsWith(prefix));
+    })
+    .sort();
+}
+
+async function buildRuntimeSettingsRequestBody(payload) {
+  const body = { ...(payload || {}) };
+  const protectedKeys = getProtectedRuntimeSettingKeys(body);
+  if (protectedKeys.length) {
+    body.confirmation_token = await createAdminActionConfirmationToken({
+      action: SETTINGS_CONFIRMATION_ACTION,
+      resourceId: SETTINGS_CONFIRMATION_RESOURCE,
+      quantity: protectedKeys.join(','),
+    });
+  }
+  return JSON.stringify(body);
 }
 
 function normalizeConfirmationResourceId(action, resourceId) {
@@ -2101,7 +2165,7 @@ function renderTodayTrades(data) {
         <span class="text-green-300 font-semibold">${sellExecutions.length}건</span>
       </div>
       <div class="flex items-center justify-between mt-1">
-        <span class="text-gray-400">전량 매도 완료</span>
+        <span class="text-gray-400">매도 완료</span>
         <span class="text-green-300 font-semibold">${completed.length}건</span>
       </div>
       <div class="flex items-center justify-between mt-1">
@@ -2128,7 +2192,7 @@ function renderLiveExecutionStrip(data) {
   const sellRows = [];
   (Array.isArray(state.completed) ? state.completed : []).forEach((trade) => {
     sellSeen.add(buildTradeDedupeKey(trade, 'sell'));
-    sellRows.push({ trade, tone: 'sell', label: '전량 매도 완료', showPnl: true });
+    sellRows.push({ trade, tone: 'sell', label: '매도 완료', showPnl: true });
   });
   (Array.isArray(state.sellExecutions) ? state.sellExecutions : []).forEach((trade) => {
     const key = buildTradeDedupeKey(trade, 'sell');
@@ -2480,7 +2544,7 @@ function renderTradeCenterSection(state, tabKey) {
         : tabKey === 'sell-executions'
           ? '오늘 매도 체결이 없습니다.'
         : tabKey === 'completed'
-          ? '전량 매도 완료 거래가 없습니다.'
+          ? '매도 완료 거래가 없습니다.'
           : '현재 보유 포지션이 없습니다.'
   );
 
@@ -5524,7 +5588,12 @@ async function reconcilePendingTrades(triggerButton = null) {
       button.disabled = true;
       button.textContent = '복구 중...';
     }
-    await fetch(`${API}/trades/reconcile-pending`, { method: 'POST' });
+    const body = await buildDangerousActionRequestBody({
+      action: 'RECOVER_PENDING_CONFIRMS',
+      resourceId: 'TRADE_RECONCILIATION',
+      quantity: 'ALL',
+    });
+    await fetchJson(`${API}/trades/reconcile-pending`, dangerousActionFetchOptions(body), 30000);
     await loadAccountInfo();
   } catch (err) {
     console.error('Pending trade reconcile error:', err);
@@ -5647,10 +5716,11 @@ async function loadSettings() {
 
 async function updateSetting(key, value) {
   try {
+    const body = await buildRuntimeSettingsRequestBody({ [key]: value });
     const resp = await fetch(`${API}/settings`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ [key]: value }),
+      body,
     });
     if (!resp.ok) {
       throw new Error(`${key} 저장 실패`);
@@ -5697,10 +5767,11 @@ async function applySettingsDraft() {
   setStatus('runtime', '설정 적용 중... 새 작업을 멈추고 현재 작업 종료를 기다립니다.');
 
   try {
+    const body = await buildRuntimeSettingsRequestBody(draftPayload);
     const json = await fetchJson(`${API}/settings/apply`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(draftPayload),
+      body,
     }, SETTINGS_APPLY_TIMEOUT_MS);
 
     settingsDraft = {};
@@ -5856,7 +5927,12 @@ function renderSettingGuidance(settingsOverride = runtimeSettings) {
 function renderTierConcurrencyFields(settingsOverride = getSettingsFormSettings()) {
   const applyState = (tier) => {
     const provider = getTierProvider(tier, 'primary', settingsOverride);
-    const state = buildTierConcurrencyFieldState({ tier, provider });
+    const modeKey = tier === 'tier1' ? 'LLM_EXECUTION_MODE_TIER1' : 'LLM_EXECUTION_MODE_TIER2';
+    const modeEl = document.getElementById(
+      tier === 'tier1' ? 'set-llm-tier1-execution-mode' : 'set-llm-tier2-execution-mode',
+    );
+    const executionMode = modeEl?.value || settingsOverride?.[modeKey];
+    const state = buildTierConcurrencyFieldState({ tier, provider, executionMode });
     const inputEl = document.getElementById(
       tier === 'tier1' ? 'set-llm-tier1-concurrency' : 'set-llm-tier2-concurrency',
     );
@@ -6065,7 +6141,11 @@ async function setSchedulerRunning(shouldRun) {
   renderRuntimeControls();
   try {
     const endpoint = shouldRun ? 'start' : 'stop';
-    const resp = await fetch(`${API}/scheduler/${endpoint}`, { method: 'POST' });
+    const body = await buildDangerousActionRequestBody({
+      action: shouldRun ? 'START_SCHEDULER' : 'STOP_SCHEDULER',
+      resourceId: 'SCHEDULER',
+    });
+    const resp = await fetch(`${API}/scheduler/${endpoint}`, dangerousActionFetchOptions(body));
     if (!resp.ok) {
       throw new Error(`스케줄러 ${shouldRun ? '시작' : '중지'} 실패`);
     }
@@ -6095,7 +6175,11 @@ async function applyRuntimePreset(preset) {
 
   const applyScheduler = async (shouldRun) => {
     const endpoint = shouldRun ? 'start' : 'stop';
-    const resp = await fetch(`${API}/scheduler/${endpoint}`, { method: 'POST' });
+    const body = await buildDangerousActionRequestBody({
+      action: shouldRun ? 'START_SCHEDULER' : 'STOP_SCHEDULER',
+      resourceId: 'SCHEDULER',
+    });
+    const resp = await fetch(`${API}/scheduler/${endpoint}`, dangerousActionFetchOptions(body));
     if (!resp.ok) {
       throw new Error(`스케줄러 ${shouldRun ? '시작' : '중지'} 실패`);
     }
@@ -6525,8 +6609,11 @@ function renderLLMExecutionModeControls(settingsOverride = getSettingsFormSettin
       workerEl.className = `text-[11px] mt-1 ${state.warningText ? 'text-amber-300' : 'text-gray-500'}`;
     }
     if (profileHelpEl) {
-      profileHelpEl.textContent = `${state.profileText}. ${scope === 'tier1' ? '실시간 자동매매는 빠른 구성을 권장합니다.' : '정밀 검토는 전체 워커 구성을 선택할 수 있습니다.'}`;
-      profileHelpEl.className = `text-[11px] mt-1 ${state.distributedProfile === 'FULL' && scope === 'tier1' ? 'text-amber-300' : 'text-gray-500'}`;
+      const profileContext = state.distributedProfile === 'FULL'
+        ? '사용 가능한 provider를 모두 후보에 넣습니다. Claude Code는 느릴 수 있어 전체 타임아웃 여유가 필요합니다.'
+        : '응답 속도를 우선해 Claude Code CLI를 제외합니다.';
+      profileHelpEl.textContent = `${state.profileText}. ${profileContext}`;
+      profileHelpEl.className = 'text-[11px] mt-1 text-gray-500';
     }
     if (isTierScope && primaryLabelEl) {
       primaryLabelEl.textContent = isPoolMode
@@ -6535,7 +6622,7 @@ function renderLLMExecutionModeControls(settingsOverride = getSettingsFormSettin
     }
     if (isTierScope && primaryHelpEl) {
       primaryHelpEl.textContent = isPoolMode
-        ? '분산 모드에서는 이 provider부터 시작하고, 선택한 worker pool이 뒤따라 붙습니다. 풀백은 사용하지 않습니다.'
+        ? `${state.primarySelectionText} 분산/합의 모드에서는 fallback 섹션을 사용하지 않습니다.`
         : '';
       primaryHelpEl.className = 'text-[11px] text-gray-500 mt-1';
     }
@@ -6559,10 +6646,20 @@ async function addLLMApiKey() {
   }
 
   try {
+    const confirmationToken = await createAdminActionConfirmationToken({
+      action: 'UPDATE_LLM_API_KEY',
+      resourceId: provider,
+      quantity: 'SECRET',
+    });
     const resp = await fetch(`${API}/llm/api-keys`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, label, api_key: apiKey }),
+      body: JSON.stringify({
+        provider,
+        label,
+        api_key: apiKey,
+        confirmation_token: confirmationToken,
+      }),
     });
     const json = await resp.json().catch(() => ({}));
     if (!resp.ok) {
@@ -6580,8 +6677,15 @@ async function addLLMApiKey() {
 
 async function clearLLMApiKey(provider) {
   try {
+    const body = await buildDangerousActionRequestBody({
+      action: 'DELETE_LLM_API_KEY',
+      resourceId: provider,
+      quantity: 'SECRET',
+    });
     const resp = await fetch(`${API}/llm/api-keys/${encodeURIComponent(provider)}`, {
       method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body,
     });
     const json = await resp.json().catch(() => ({}));
     if (!resp.ok) {
@@ -6665,9 +6769,17 @@ async function triggerCycle() {
   if (triggerPending) return;
   triggerPending = true;
   try {
-    await fetch(`${API}/agent/trigger`, { method: 'POST' });
+    const body = await buildDangerousActionRequestBody({
+      action: 'TRIGGER_AGENT_CYCLE',
+      resourceId: 'TRADING_AGENT',
+    });
+    const resp = await fetch(`${API}/agent/trigger`, dangerousActionFetchOptions(body));
+    if (!resp.ok) {
+      throw new Error('에이전트 사이클 트리거 실패');
+    }
   } catch (err) {
     console.error('Trigger error:', err);
+    setStatus('error', err.message || '에이전트 사이클 트리거 실패');
   } finally {
     setTimeout(() => { triggerPending = false; }, 3000);
   }

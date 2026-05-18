@@ -29,6 +29,6 @@ describe("trade_history_state", () => {
 
     expect(viewModel.isPartialExit).toBe(false);
     expect(viewModel.executionStateLabel).toBe("매도 완료");
-    expect(viewModel.fillStatusLabel).toBe("최종 청산 lot · 전체 수량 청산 완료");
+    expect(viewModel.fillStatusLabel).toBe("");
   });
 });

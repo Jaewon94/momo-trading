@@ -9,11 +9,22 @@ const TIER_CONCURRENCY_COPY = {
   },
 };
 
-export function buildTierConcurrencyFieldState({ tier, provider }) {
+export function buildTierConcurrencyFieldState({ tier, provider, executionMode = 'SINGLE' }) {
   const normalizedTier = tier === 'tier2' ? 'tier2' : 'tier1';
   const normalizedProvider = String(provider || '').trim().toUpperCase();
-  const isCodex = normalizedProvider === 'CODEX';
+  const normalizedMode = String(executionMode || 'SINGLE').trim().toUpperCase();
+  const isWorkerPoolMode = normalizedMode === 'DISTRIBUTED' || normalizedMode === 'CONSENSUS';
+  const isCodex = normalizedProvider === 'CODEX' && !isWorkerPoolMode;
   const copy = TIER_CONCURRENCY_COPY[normalizedTier];
+
+  if (isWorkerPoolMode) {
+    const label = normalizedTier === 'tier1' ? 'Tier1' : 'Tier2';
+    return {
+      disabled: false,
+      helpText: `${label} 작업을 동시에 몇 개까지 worker pool에 보낼지 정합니다. CLI provider는 내부적으로 하나씩 순차 실행됩니다.`,
+      helpTone: 'neutral',
+    };
+  }
 
   return {
     disabled: isCodex,

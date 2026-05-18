@@ -81,7 +81,7 @@ export function buildTradeCenterState(payload = {}) {
     { key: "pending", label: "대기", count: pendingConfirms.length + pendingOrders.length },
     { key: "opened", label: "오늘 진입", count: opened.length },
     { key: "sell-executions", label: "매도 체결", count: sellExecutions.length },
-    { key: "completed", label: "전량 매도 완료", count: completed.length },
+    { key: "completed", label: "매도 완료", count: completed.length },
     { key: "positions", label: "현재 보유", count: openPositions.length },
   ];
 

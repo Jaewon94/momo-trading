@@ -187,8 +187,8 @@ describe("settings_form_state", () => {
 
     expect(root.elements["set-llm-tier1-execution-mode"].value).toBe("DISTRIBUTED");
     expect(root.elements["set-llm-tier1-distributed-profile"].value).toBe("FAST");
-    expect(root.elements["set-llm-tier2-execution-mode"].value).toBe("SINGLE");
-    expect(root.elements["set-llm-tier2-distributed-profile"].value).toBe("FULL");
+    expect(root.elements["set-llm-tier2-execution-mode"].value).toBe("DISTRIBUTED");
+    expect(root.elements["set-llm-tier2-distributed-profile"].value).toBe("FAST");
     expect(root.elements["set-manual-llm-execution-mode"].value).toBe("SINGLE");
     expect(root.elements["set-news-llm-execution-mode"].value).toBe("DISTRIBUTED");
   });

@@ -1459,7 +1459,7 @@
 
       <div class="pane-scroll">
         <div class="p-3 space-y-3">
-          <div class="account-overview-shell">
+          <div id="portfolio-quick-stats" class="account-overview-shell">
             <div class="account-overview-topline">
               <div>
                 <div class="account-overview-kicker">Account Ledger</div>
@@ -1970,9 +1970,9 @@
                 <div>
                   <div class="flex flex-wrap items-center gap-2">
                     <div class="text-sm font-medium text-white">분석용 AI (T1)</div>
-                    <span class="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] text-sky-200">추천: 빠르고 저비용인 분석형 모델</span>
+                    <span class="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] text-sky-200">기본: 빠른 워커 분산</span>
                   </div>
-                  <div class="text-[11px] text-gray-500 mt-1">시장 스캔, 선별, 빠른 분석 단계에 쓰는 기본 모델과 fallback을 설정합니다.</div>
+                  <div class="text-[11px] text-gray-500 mt-1">시장 스캔, 선별, 빠른 분석 단계에서 사용할 worker pool과 시작 provider를 설정합니다.</div>
                 </div>
                 <span class="settings-accordion-arrow">&#x25BC;</span>
               </summary>
@@ -2001,7 +2001,7 @@
                       <option value="FAST">빠른 자동매매용 · Claude Code 제외</option>
                       <option value="FULL">전체 워커 · Claude Code 포함</option>
                     </select>
-                    <div id="llm-tier1-distributed-profile-help" class="text-[11px] text-gray-500 mt-1">T1은 응답 지연이 매매 타이밍에 직접 영향을 줍니다.</div>
+                    <div id="llm-tier1-distributed-profile-help" class="text-[11px] text-gray-500 mt-1">빠른 구성은 실시간 자동매매 지연을 줄이기 위해 Claude Code CLI를 제외합니다.</div>
                   </div>
                 </div>
                 <div id="llm-tier1-primary-section">
@@ -2085,9 +2085,9 @@
                 <div>
                   <div class="flex flex-wrap items-center gap-2">
                     <div class="text-sm font-medium text-white">최종 검토용 AI (T2)</div>
-                    <span class="rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-[10px] text-violet-200">추천: 추론 품질이 높은 검토형 모델</span>
+                    <span class="rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-[10px] text-violet-200">기본: 빠른 워커 분산</span>
                   </div>
-                  <div class="text-[11px] text-gray-500 mt-1">최종 매매 판단, 더 무거운 검토, 정밀 분석 단계에 쓰는 모델을 설정합니다.</div>
+                  <div class="text-[11px] text-gray-500 mt-1">최종 매매 판단, 더 무거운 검토, 정밀 분석 단계에서 사용할 worker pool과 시작 provider를 설정합니다.</div>
                 </div>
                 <span class="settings-accordion-arrow">&#x25BC;</span>
               </summary>
@@ -2104,8 +2104,8 @@
                       </select>
                     </div>
                     <div>
-                      <div id="llm-tier2-execution-mode-title" class="text-sm text-gray-200">메인+풀백</div>
-                      <div id="llm-tier2-execution-mode-help" class="text-[11px] text-gray-500 mt-1">메인 provider를 먼저 쓰고 실패하면 fallback으로 넘깁니다.</div>
+                      <div id="llm-tier2-execution-mode-title" class="text-sm text-gray-200">분산 처리</div>
+                      <div id="llm-tier2-execution-mode-help" class="text-[11px] text-gray-500 mt-1">등록된 CLI/API worker를 후보 체인에 넣고 작업별로 나눠 처리합니다.</div>
                       <div id="llm-tier2-execution-mode-worker" class="text-[11px] text-gray-500 mt-1">worker 확인 중...</div>
                     </div>
                   </div>

@@ -74,10 +74,10 @@ describe("trade_status_state", () => {
     });
 
     expect(state.code).toBe("BUY_CLOSED");
-    expect(state.label).toBe("최종 청산 lot");
+    expect(state.label).toBe("매도 완료");
     expect(state.shortLabel).toBe("매도 완료");
     expect(state.badge).toBe("FINAL_EXIT");
-    expect(state.detailLabel).toBe("전체 수량 청산 완료");
+    expect(state.detailLabel).toBe("");
   });
 
   test("builds compact and supporting copy from execution state", () => {

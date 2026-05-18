@@ -25,7 +25,7 @@ describe("trade_center_state", () => {
       { key: "pending", label: "대기", count: 2 },
       { key: "opened", label: "오늘 진입", count: 1 },
       { key: "sell-executions", label: "매도 체결", count: 1 },
-      { key: "completed", label: "전량 매도 완료", count: 1 },
+      { key: "completed", label: "매도 완료", count: 1 },
       { key: "positions", label: "현재 보유", count: 1 },
     ]);
 

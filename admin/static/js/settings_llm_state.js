@@ -87,7 +87,7 @@ export function getLLMExecutionModeElementId(scope) {
 }
 
 export function getDefaultLLMExecutionMode(scope) {
-  if (scope === 'tier1' || scope === 'news') return 'DISTRIBUTED';
+  if (scope === 'tier1' || scope === 'tier2' || scope === 'news') return 'DISTRIBUTED';
   return 'SINGLE';
 }
 
@@ -100,7 +100,7 @@ export function normalizeLLMDistributedProfile(value, fallback = 'FAST') {
 }
 
 export function getDefaultLLMDistributedProfile(scope) {
-  return scope === 'tier2' ? 'FULL' : 'FAST';
+  return 'FAST';
 }
 
 export function buildLLMExecutionModeState({
@@ -129,12 +129,12 @@ export function buildLLMExecutionModeState({
   };
   const helpByMode = {
     SINGLE: '메인 provider를 먼저 쓰고 실패하면 fallback으로 넘깁니다.',
-    DISTRIBUTED: '등록된 CLI/API worker에 작업 큐를 나눠 처리합니다. 각 worker는 기본적으로 하나씩 순차 실행합니다.',
-    CONSENSUS: '중요 판단을 여러 worker로 검증하는 모드입니다. 속도보다 안정성을 우선합니다.',
+    DISTRIBUTED: '등록된 CLI/API worker를 후보 체인에 넣고 작업별로 나눠 처리합니다. CLI worker는 안정성을 위해 각 provider별로 하나씩 순차 실행됩니다.',
+    CONSENSUS: '중요 판단을 여러 worker로 교차 검증합니다. 속도보다 판단 안정성을 우선합니다.',
   };
   const recommendationByScope = {
     tier1: 'T1은 종목 수가 많아 분산 처리가 기본 추천입니다.',
-    tier2: 'T2는 최종 판단이라 메인+풀백 또는 합의 검증이 적합합니다.',
+    tier2: 'T2는 최종 판단이라 빠른 분산 또는 합의 검증이 적합합니다.',
     news: '뉴스 번역/요약은 독립 작업이 많아 분산 처리와 잘 맞습니다.',
     manual: '수동 Q&A와 리포트는 응답 일관성이 중요해 메인+풀백이 적합합니다.',
   };
@@ -158,5 +158,10 @@ export function buildLLMExecutionModeState({
     warningText: normalizedMode !== 'SINGLE' && totalSlots < 2
       ? '등록된 worker가 2개 미만이면 실제 효과는 메인+풀백과 비슷합니다.'
       : '',
+    primarySelectionText: normalizedMode === 'DISTRIBUTED'
+      ? '이 provider부터 시작하고, 선택한 worker 구성이 후보 체인으로 뒤따릅니다.'
+      : (normalizedMode === 'CONSENSUS'
+        ? '이 provider를 기준으로 여러 worker의 판단을 비교합니다.'
+        : '이 provider를 먼저 쓰고 실패하면 fallback으로 넘깁니다.'),
   };
 }

@@ -26,6 +26,16 @@ describe('settings_llm_concurrency_state', () => {
     });
   });
 
+  test('keeps concurrency editable for distributed worker pools even when codex starts first', () => {
+    expect(
+      buildTierConcurrencyFieldState({ tier: 'tier2', provider: 'CODEX', executionMode: 'DISTRIBUTED' }),
+    ).toEqual({
+      disabled: false,
+      helpText: 'Tier2 작업을 동시에 몇 개까지 worker pool에 보낼지 정합니다. CLI provider는 내부적으로 하나씩 순차 실행됩니다.',
+      helpTone: 'neutral',
+    });
+  });
+
   test('disables news translation concurrency for codex and ollama', () => {
     expect(
       buildNewsTranslationConcurrencyFieldState({ provider: 'CODEX' }),

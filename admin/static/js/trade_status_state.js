@@ -66,7 +66,7 @@ export function resolveTradeExecutionState({
       badge: normalizedStatus || "SELL",
       tone: "sell",
       remainingOpenQuantity,
-      detailLabel: "전체 수량 청산 완료",
+      detailLabel: "",
     };
   }
 
@@ -96,12 +96,12 @@ export function resolveTradeExecutionState({
     }
     return {
       code: normalizedSide === "SELL" ? "SELL_FILLED" : "BUY_CLOSED",
-      label: normalizedSide === "SELL" ? "매도 완료" : "최종 청산 lot",
+      label: "매도 완료",
       shortLabel: normalizedSide === "SELL" ? "매도 완료" : "매도 완료",
       badge: normalizedSide === "SELL" ? (normalizedStatus || "SELL") : "FINAL_EXIT",
       tone: "sell",
       remainingOpenQuantity,
-      detailLabel: "전체 수량 청산 완료",
+      detailLabel: "",
     };
   }
 

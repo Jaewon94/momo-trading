@@ -67,11 +67,11 @@ const SETTINGS_CONTROL_BINDINGS = [
   },
   {
     elementId: 'set-llm-tier2-execution-mode',
-    getValue: (settings) => settings.LLM_EXECUTION_MODE_TIER2 || 'SINGLE',
+    getValue: (settings) => settings.LLM_EXECUTION_MODE_TIER2 || 'DISTRIBUTED',
   },
   {
     elementId: 'set-llm-tier2-distributed-profile',
-    getValue: (settings) => settings.LLM_DISTRIBUTED_PROFILE_TIER2 || 'FULL',
+    getValue: (settings) => settings.LLM_DISTRIBUTED_PROFILE_TIER2 || 'FAST',
   },
   {
     elementId: 'set-llm-tier2-concurrency',

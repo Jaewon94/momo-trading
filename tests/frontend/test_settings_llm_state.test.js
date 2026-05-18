@@ -115,7 +115,7 @@ describe("settings_llm_state", () => {
   test("uses scope-specific execution mode defaults", () => {
     expect(getDefaultLLMExecutionMode("tier1")).toBe("DISTRIBUTED");
     expect(getDefaultLLMExecutionMode("news")).toBe("DISTRIBUTED");
-    expect(getDefaultLLMExecutionMode("tier2")).toBe("SINGLE");
+    expect(getDefaultLLMExecutionMode("tier2")).toBe("DISTRIBUTED");
     expect(getDefaultLLMExecutionMode("manual")).toBe("SINGLE");
   });
 
@@ -141,6 +141,8 @@ describe("settings_llm_state", () => {
       warningText: "",
     });
     expect(state.workerText).toContain("worker 5개");
+    expect(state.helpText).toContain("후보 체인");
+    expect(state.primarySelectionText).toContain("후보 체인");
   });
 
   test("fast distributed profile excludes Claude Code from effective worker count", () => {
@@ -164,7 +166,7 @@ describe("settings_llm_state", () => {
     expect(normalizeLLMDistributedProfile(" full ")).toBe("FULL");
     expect(normalizeLLMDistributedProfile("bad", "FAST")).toBe("FAST");
     expect(getDefaultLLMDistributedProfile("tier1")).toBe("FAST");
-    expect(getDefaultLLMDistributedProfile("tier2")).toBe("FULL");
+    expect(getDefaultLLMDistributedProfile("tier2")).toBe("FAST");
   });
 
   test("warns when pool modes have fewer than two workers", () => {
