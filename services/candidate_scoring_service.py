@@ -121,8 +121,11 @@ class CandidateScoringService:
         if news_pressure >= 0.5:
             return "STABLE_SHORT"
         if (
-            ("surge_data" in candidate.sources or candidate.change_rate >= 5.0)
-            and 5.0 <= abs(candidate.change_rate) <= 15.0
+            "surge_data" in candidate.sources
+            and "volume_rank" in candidate.sources
+            and 6.0 <= abs(candidate.change_rate) <= 10.0
+            and candidate.score >= 50.0
+            and news_pressure < 0.25
         ):
             return "AGGRESSIVE_SHORT"
         return "STABLE_SHORT"

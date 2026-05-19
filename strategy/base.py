@@ -23,12 +23,16 @@ class StrategyProfile:
     alpha_source: str
     execution_profile: str
     risk_profile: str
+    target_horizon_bias: str = "MID_LONG"
+    short_horizon_policy: str = "EXCEPTION_ONLY"
 
     def metadata(self) -> dict:
         return {
             "alpha_source": self.alpha_source,
             "execution_profile": self.execution_profile,
             "risk_profile": self.risk_profile,
+            "target_horizon_bias": self.target_horizon_bias,
+            "short_horizon_policy": self.short_horizon_policy,
         }
 
 

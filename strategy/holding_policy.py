@@ -5,6 +5,7 @@ LLM Tier1 판정 실패 시 폴백으로 사용된다.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -56,7 +57,7 @@ def evaluate_overnight_hold(
 
     # 2. 최대 보유일 초과 → SELL
     hold_days = _calc_hold_days(trade_result)
-    max_days = _get_max_hold_days(trade_result.strategy_type, config)
+    max_days = _get_max_hold_days_for_trade(trade_result, config)
     if hold_days >= max_days:
         return HoldDecision(
             "SELL",
@@ -104,8 +105,37 @@ def _calc_hold_days(trade_result) -> int:
     return max(0, (today - entry_date).days)
 
 
-def _get_max_hold_days(strategy_type: str, config) -> int:
-    """전략별 최대 보유일 반환"""
+def _get_max_hold_days_for_trade(trade_result, config) -> int:
+    """TradeResult notes의 horizon을 우선해 최대 보유일을 반환한다."""
+    strategy_type = getattr(trade_result, "strategy_type", "")
+    horizon = _extract_trade_horizon(trade_result)
+    if horizon:
+        return _get_max_hold_days(strategy_type, config, horizon)
+    return _get_max_hold_days(strategy_type, config)
+
+
+def _get_max_hold_days(strategy_type: str, config, horizon: str | None = None) -> int:
+    """호라이즌 우선, legacy 전략 타입 보조 기준으로 최대 보유일 반환."""
+    horizon_key = str(horizon or "").upper()
+    if horizon_key == "SHORT":
+        return int(getattr(config, "MAX_HOLD_DAYS_SHORT", 5) or 5)
+    if horizon_key == "MID":
+        return int(getattr(config, "MAX_HOLD_DAYS_MID", 15) or 15)
+    if horizon_key == "LONG":
+        return int(getattr(config, "MAX_HOLD_DAYS_LONG", 30) or 30)
+
     if "AGGRESSIVE" in (strategy_type or "").upper():
-        return config.MAX_HOLD_DAYS_AGGRESSIVE
-    return config.MAX_HOLD_DAYS_STABLE
+        return int(getattr(config, "MAX_HOLD_DAYS_AGGRESSIVE", 10) or 10)
+    return int(getattr(config, "MAX_HOLD_DAYS_STABLE", 15) or 15)
+
+
+def _extract_trade_horizon(trade_result) -> str | None:
+    notes = str(getattr(trade_result, "notes", "") or "").strip()
+    if not notes:
+        return None
+    try:
+        payload = json.loads(notes)
+    except json.JSONDecodeError:
+        return None
+    horizon = str(payload.get("trade_horizon") or "").upper()
+    return horizon if horizon in {"SHORT", "MID", "LONG"} else None

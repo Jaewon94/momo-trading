@@ -1780,7 +1780,7 @@ class TradingAgent:
                 try:
                     async with AsyncSessionLocal() as session:
                         from repositories.trade_result_repository import TradeResultRepository
-                        from strategy.holding_policy import _calc_hold_days, _get_max_hold_days
+                        from strategy.holding_policy import _calc_hold_days, _get_max_hold_days_for_trade
                         repo = TradeResultRepository(session)
                         open_positions = await repo.get_all_open()
                         if open_positions:
@@ -1827,7 +1827,7 @@ class TradingAgent:
                                     continue
 
                                 hold_days = _calc_hold_days(tr)
-                                max_days = _get_max_hold_days(tr.strategy_type, settings)
+                                max_days = _get_max_hold_days_for_trade(tr, settings)
                                 conf = tr.ai_confidence or 0.0
                                 target_pct = ""
                                 if tr.ai_target_price and tr.entry_price > 0:

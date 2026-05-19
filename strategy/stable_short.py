@@ -1,4 +1,4 @@
-"""안정형 단기 전략: 저변동 우량주, 타이트 손절, 소폭 수익 반복
+"""안정형 스윙 실행 프로파일: 저변동 우량주, 중기 보유, 과도한 추격 억제
 
 판단(BUY/SELL/HOLD)은 AI 분석 결과를 신뢰하고,
 전략은 실행 파라미터(손절/익절/긴급도)와 이유 텍스트를 제공한다.
@@ -10,26 +10,26 @@ from trading.enums import SignalAction, SignalUrgency
 
 class StableShortStrategy:
     """
-    안정형 단기 매매 전략 (STABLE_SHORT)
+    안정형 스윙 실행 프로파일 (legacy: STABLE_SHORT)
     - 대상: 대형 우량주, ETF (변동성 낮은 종목)
-    - 보유 기간: 1~5일
-    - 손절: -2.5%, 익절: +4% (기본값, 시장 국면별 동적 조정)
+    - 기본 보유 기간: 중기, 필요 시 장기
+    - 손절: -4%, 익절: +8% (기본값, 시장 국면별 동적 조정)
     - 판단: AI recommendation + confidence 기반
     """
 
     strategy_type = "STABLE_SHORT"
 
     REGIME_PARAMS = {
-        "BULL":  {"stop_loss_pct": -2.5, "take_profit_pct": 5.0},
-        "THEME": {"stop_loss_pct": -3.0, "take_profit_pct": 6.0},
-        "BEAR":  {"stop_loss_pct": -2.0, "take_profit_pct": 3.0},
+        "BULL":  {"stop_loss_pct": -4.0, "take_profit_pct": 10.0},
+        "THEME": {"stop_loss_pct": -5.0, "take_profit_pct": 12.0},
+        "BEAR":  {"stop_loss_pct": -3.5, "take_profit_pct": 6.0},
     }
 
     def __init__(
         self,
-        stop_loss_pct: float = -2.5,
-        take_profit_pct: float = 4.0,
-        min_confidence: float = 0.5,
+        stop_loss_pct: float = -4.0,
+        take_profit_pct: float = 8.0,
+        min_confidence: float = 0.58,
     ):
         self.stop_loss_pct = stop_loss_pct
         self.take_profit_pct = take_profit_pct

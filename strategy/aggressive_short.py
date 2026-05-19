@@ -1,4 +1,4 @@
-"""공격형 단기 전략: 모멘텀, 급등주, 고수익 추구
+"""전술형 모멘텀 실행 프로파일: 단기 추격은 예외, 기본은 중기 검증
 
 판단(BUY/SELL/HOLD)은 AI 분석 결과를 신뢰하고,
 전략은 실행 파라미터(손절/익절/긴급도)와 이유 텍스트를 제공한다.
@@ -10,26 +10,26 @@ from trading.enums import SignalAction, SignalUrgency
 
 class AggressiveShortStrategy:
     """
-    공격형 단기 매매 전략 (AGGRESSIVE_SHORT)
+    전술형 모멘텀 실행 프로파일 (legacy: AGGRESSIVE_SHORT)
     - 대상: 모멘텀 급등주, 거래량 급증 종목
-    - 보유 기간: 수시간~3일
-    - 손절: -4%, 익절: +8% (기본값, 시장 국면별 동적 조정)
+    - 기본 보유 기간: 중기, SHORT 호라이즌은 강한 전술 모멘텀 예외
+    - 손절: -5%, 익절: +10% (기본값, 시장 국면별 동적 조정)
     - 판단: AI recommendation + confidence 기반
     """
 
     strategy_type = "AGGRESSIVE_SHORT"
 
     REGIME_PARAMS = {
-        "BULL":  {"stop_loss_pct": -4.0, "take_profit_pct": 10.0},
-        "THEME": {"stop_loss_pct": -5.0, "take_profit_pct": 12.0},
-        "BEAR":  {"stop_loss_pct": -3.0, "take_profit_pct": 6.0},
+        "BULL":  {"stop_loss_pct": -5.0, "take_profit_pct": 12.0},
+        "THEME": {"stop_loss_pct": -6.0, "take_profit_pct": 14.0},
+        "BEAR":  {"stop_loss_pct": -4.0, "take_profit_pct": 8.0},
     }
 
     def __init__(
         self,
-        stop_loss_pct: float = -4.0,
-        take_profit_pct: float = 8.0,
-        min_confidence: float = 0.55,
+        stop_loss_pct: float = -5.0,
+        take_profit_pct: float = 10.0,
+        min_confidence: float = 0.68,
     ):
         self.stop_loss_pct = stop_loss_pct
         self.take_profit_pct = take_profit_pct

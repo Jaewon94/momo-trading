@@ -24,7 +24,7 @@ def test_candidate_scoring_service_ranks_buyable_candidates_and_marks_holdings()
 
     assert [item["symbol"] for item in result] == ["042700", "005930", "000660", "091990"]
     assert result[0]["buyable"] is True
-    assert result[0]["strategy_type_hint"] == "AGGRESSIVE_SHORT"
+    assert result[0]["strategy_type_hint"] == "STABLE_SHORT"
     assert "SURGE_RANK" in result[0]["reason_codes"]
     assert "급등 상위" in result[0]["reasons"]
     assert result[2]["hold_candidate"] is True
@@ -103,3 +103,22 @@ def test_candidate_scoring_service_keeps_overheated_surge_stable() -> None:
     )
 
     assert result[0]["strategy_type_hint"] == "STABLE_SHORT"
+
+
+def test_candidate_scoring_service_marks_only_confirmed_momentum_aggressive() -> None:
+    service = CandidateScoringService()
+
+    result = service.score_candidates(
+        volume_rank=[
+            {"symbol": "042700", "name": "한미반도체", "price": 110000, "change_rate": 7.2, "volume": 5000000},
+        ],
+        surge_data=[
+            {"symbol": "042700", "name": "한미반도체", "price": 110000, "change_rate": 7.2, "volume": 5000000},
+        ],
+        drop_data=[],
+        holdings=[],
+        available_cash=300000,
+        max_candidates=1,
+    )
+
+    assert result[0]["strategy_type_hint"] == "AGGRESSIVE_SHORT"

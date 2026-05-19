@@ -1,0 +1,43 @@
+{
+  "schema_version": "momo.task.v1",
+  "task_id": "2026-05-20-001-mid-long-bias",
+  "status": "completed",
+  "title": "Harden mid long horizon bias",
+  "repo": "momo-trading",
+  "risk_level": "high",
+  "task_type": "engineering",
+  "priority": "normal",
+  "primary_runtime": "codex",
+  "created_at": "2026-05-20T08:41:14+09:00",
+  "updated_at": "2026-05-20T08:54:20+09:00",
+  "approval": {
+    "required": true,
+    "status": "applied",
+    "reason": "User clarified that reducing ultra-short/short-term bias and moving the system toward mid/long horizons is the primary goal."
+  },
+  "checks": {
+    "change_harness": "high/protected",
+    "py_compile_changed_modules": "passed",
+    "focused_horizon_tests": "21 passed",
+    "agent_scheduler_regression_tests": "113 passed",
+    "runtime_restart": "passed",
+    "runtime_integrity_after_restart": "passed",
+    "runtime_hold_days": "SHORT=5 MID=15 LONG=30 STABLE=15 AGGRESSIVE=10",
+    "diff_check": "passed",
+    "py_compile": "passed",
+    "secret_scan": "passed",
+    "task_harness": "passed",
+    "markdown_links": "passed",
+    "docs_consistency": "passed",
+    "harness_tests": "passed"
+  },
+  "artifacts": {
+    "brief": ".agent/tasks/2026-05-20-001-mid-long-bias/brief.md",
+    "state": ".agent/tasks/2026-05-20-001-mid-long-bias/state.json",
+    "run_log": ".agent/tasks/2026-05-20-001-mid-long-bias/run-log.json",
+    "test_plan": ".agent/tasks/2026-05-20-001-mid-long-bias/test-plan.md",
+    "decision_record": ".agent/tasks/2026-05-20-001-mid-long-bias/decision-record.md",
+    "quality_scorecard": ".agent/tasks/2026-05-20-001-mid-long-bias/quality-scorecard.md"
+  },
+  "errors": []
+}

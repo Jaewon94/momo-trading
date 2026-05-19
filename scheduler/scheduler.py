@@ -1717,7 +1717,7 @@ class TradingScheduler:
         from core.database import AsyncSessionLocal
         from realtime.event_detector import event_detector
         from repositories.trade_result_repository import TradeResultRepository
-        from strategy.holding_policy import _calc_hold_days, _get_max_hold_days
+        from strategy.holding_policy import _calc_hold_days, _get_max_hold_days_for_trade
 
         holdings_data: list[dict] = []
         holdings_map: dict = {}
@@ -1771,7 +1771,7 @@ class TradingScheduler:
                     avg_price = h.avg_buy_price
                     pnl_rate = (current_price - avg_price) / avg_price * 100 if avg_price > 0 else 0.0
                     hold_days = _calc_hold_days(trade_result)
-                    max_hold_days = _get_max_hold_days(trade_result.strategy_type, settings)
+                    max_hold_days = _get_max_hold_days_for_trade(trade_result, settings)
 
                     # 현재 event_detector 활성 임계값
                     th = event_detector.get_thresholds(symbol)
@@ -2607,9 +2607,9 @@ class TradingScheduler:
                     restored += 1
 
                 # 최대 보유일 경고
-                from strategy.holding_policy import _calc_hold_days, _get_max_hold_days
+                from strategy.holding_policy import _calc_hold_days, _get_max_hold_days_for_trade
                 hold_days = _calc_hold_days(tr)
-                max_days = _get_max_hold_days(tr.strategy_type, settings)
+                max_days = _get_max_hold_days_for_trade(tr, settings)
                 if hold_days >= max_days:
                     warnings.append(
                         f"{tr.stock_name}({symbol or tr.stock_symbol}): 보유 {hold_days}일 ≥ 최대 {max_days}일"

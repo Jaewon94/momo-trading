@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from services.holdings_precheck_service import HoldingsPrecheckService
+from strategy.holding_policy import _get_max_hold_days_for_trade
 
 
 def test_holdings_precheck_service_keeps_llm_for_loss_sell_reason() -> None:
@@ -120,3 +121,25 @@ def test_holdings_precheck_service_keeps_llm_for_hold_near_target() -> None:
 
     assert decision.should_skip_llm is False
     assert decision.action == "HOLD"
+
+
+def test_holding_policy_uses_trade_horizon_for_max_hold_days() -> None:
+    settings = SimpleNamespace(
+        MAX_HOLD_DAYS_SHORT=5,
+        MAX_HOLD_DAYS_MID=15,
+        MAX_HOLD_DAYS_LONG=30,
+        MAX_HOLD_DAYS_STABLE=15,
+        MAX_HOLD_DAYS_AGGRESSIVE=10,
+    )
+
+    long_trade = SimpleNamespace(
+        strategy_type="AGGRESSIVE_SHORT",
+        notes='{"trade_horizon":"LONG"}',
+    )
+    missing_horizon = SimpleNamespace(
+        strategy_type="AGGRESSIVE_SHORT",
+        notes="",
+    )
+
+    assert _get_max_hold_days_for_trade(long_trade, settings) == 30
+    assert _get_max_hold_days_for_trade(missing_horizon, settings) == 10

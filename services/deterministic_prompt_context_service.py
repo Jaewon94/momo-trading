@@ -38,7 +38,8 @@ class DeterministicPromptContextService:
         lines = [
             f"- deterministic_stage: TIER1_PRECHECK",
             f"- strategy_type: {strategy_type}",
-            "- strategy_semantics: STABLE_SHORT/AGGRESSIVE_SHORT mean short-term cash equity trading horizons, not short-selling or inverse positioning.",
+            "- strategy_semantics: STABLE_SHORT/AGGRESSIVE_SHORT are legacy execution/risk profile names, not target holding horizons.",
+            "- horizon_policy: Prefer MID/LONG decisions; SHORT is only for rare, high-confidence tactical momentum exceptions.",
             "- allowed_scan_action: For non-held KRX cash equities, evaluate BUY or HOLD only; SELL only applies to already-held positions.",
             f"- market_regime: {str(market_regime or 'UNKNOWN').upper()}",
             f"- is_holding: {is_holding}",
@@ -90,7 +91,8 @@ class DeterministicPromptContextService:
         lines = [
             "- deterministic_stage: TIER2_PRECHECK",
             f"- strategy_type: {strategy_type}",
-            "- strategy_semantics: STABLE_SHORT/AGGRESSIVE_SHORT mean short-term cash equity trading horizons, not short-selling or inverse positioning.",
+            "- strategy_semantics: STABLE_SHORT/AGGRESSIVE_SHORT are legacy execution/risk profile names, not target holding horizons.",
+            "- horizon_policy: Prefer MID/LONG decisions; SHORT is only for rare, high-confidence tactical momentum exceptions.",
             "- allowed_scan_action: For non-held KRX cash equities, evaluate BUY or HOLD only; SELL only applies to already-held positions.",
             f"- market_regime: {str(market_regime or 'UNKNOWN').upper()}",
             f"- is_holding: {is_holding}",

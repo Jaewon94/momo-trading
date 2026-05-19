@@ -180,8 +180,11 @@ class Settings(BaseSettings):
     FORCE_LIQUIDATION_HOUR: int = 15  # 강제 청산 시각 (종가경매 전)
     FORCE_LIQUIDATION_MINUTE: int = 10
     POST_LIQUIDATION_BUY_BLOCK_ENABLED: bool = True
-    MAX_HOLD_DAYS_STABLE: int = 5  # STABLE_SHORT 최대 보유일
-    MAX_HOLD_DAYS_AGGRESSIVE: int = 3  # AGGRESSIVE_SHORT 최대 보유일
+    MAX_HOLD_DAYS_SHORT: int = 5  # SHORT 호라이즌 최대 보유일
+    MAX_HOLD_DAYS_MID: int = 15  # MID 호라이즌 최대 보유일
+    MAX_HOLD_DAYS_LONG: int = 30  # LONG 호라이즌 최대 보유일
+    MAX_HOLD_DAYS_STABLE: int = 15  # legacy STABLE_SHORT 기본 최대 보유일
+    MAX_HOLD_DAYS_AGGRESSIVE: int = 10  # legacy AGGRESSIVE_SHORT 기본 최대 보유일
     MAX_DAILY_TRADES: int = 0  # 0 = 무제한
     MAX_SINGLE_ORDER_KRW: int = 0  # 0 = AI 자율 결정 (시스템 하드 리밋 없음)
     MAX_SINGLE_ORDER_USD: int = 0  # 0 = AI 자율 결정

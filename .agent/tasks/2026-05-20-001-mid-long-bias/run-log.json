@@ -1,0 +1,72 @@
+{
+  "schema_version": "momo.run-log.v1",
+  "task_id": "2026-05-20-001-mid-long-bias",
+  "events": [
+    {
+      "at": "2026-05-20T08:41:14+09:00",
+      "type": "task_started",
+      "status": "created",
+      "summary": "Task artifact created."
+    },
+    {
+      "at": "2026-05-20T08:43:00+09:00",
+      "type": "scope_clarified",
+      "status": "implementing",
+      "summary": "User clarified that mid/long-horizon bias is the primary objective; loss-streak recovery was secondary."
+    },
+    {
+      "at": "2026-05-20T08:43:05+09:00",
+      "type": "change_classification",
+      "status": "high_protected",
+      "summary": "change_harness classified horizon, candidate scoring, strategy profile, holding policy, and config changes as high/protected trading behavior changes."
+    },
+    {
+      "at": "2026-05-20T08:46:30+09:00",
+      "type": "implementation",
+      "status": "completed",
+      "summary": "Hardened MID/LONG bias: stricter SHORT exception, stricter aggressive candidate hints, legacy profile semantics, wider fallback strategy thresholds, and horizon-aware holding policy."
+    },
+    {
+      "at": "2026-05-20T08:48:45+09:00",
+      "type": "focused_tests",
+      "status": "passed",
+      "summary": "Focused horizon/scoring/profile/holding tests passed: 21 passed."
+    },
+    {
+      "at": "2026-05-20T08:49:05+09:00",
+      "type": "regression_tests",
+      "status": "passed",
+      "summary": "Agent cycle and scheduler runtime path tests passed: 113 passed."
+    },
+    {
+      "at": "2026-05-20T08:51:50+09:00",
+      "type": "runtime_config_fix",
+      "status": "applied",
+      "summary": "Updated local .env hold-day overrides from STABLE=5/AGGRESSIVE=3 to SHORT=5/MID=15/LONG=30/STABLE=15/AGGRESSIVE=10; updated .env.example."
+    },
+    {
+      "at": "2026-05-20T08:52:30+09:00",
+      "type": "runtime_restart",
+      "status": "passed",
+      "summary": "Restarted app in tmux session momo-runtime-20260520b; PID 31799; health OK; runtime hold-day values confirmed as 5/15/30/15/10."
+    },
+    {
+      "at": "2026-05-20T08:52:35+09:00",
+      "type": "runtime_integrity",
+      "status": "passed",
+      "summary": "Runtime integrity passed after restart: system/settings/order_reconciliation/status OK; broker_pending=0, db_pending=0, qty_mismatch=0, broker_untracked_holdings=0."
+    },
+    {
+      "at": "2026-05-20T08:53:55+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-20T08:54:20+09:00",
+      "type": "task_completed",
+      "status": "completed",
+      "summary": "Mid/long horizon bias hardening completed and applied to the restarted runtime."
+    }
+  ]
+}

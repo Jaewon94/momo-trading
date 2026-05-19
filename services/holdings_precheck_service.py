@@ -101,10 +101,10 @@ class HoldingsPrecheckService:
             if target_gap_pct < 1.0:
                 return False
 
-        from strategy.holding_policy import _calc_hold_days, _get_max_hold_days
+        from strategy.holding_policy import _calc_hold_days, _get_max_hold_days_for_trade
 
         hold_days = _calc_hold_days(trade_result)
-        max_days = _get_max_hold_days(str(getattr(trade_result, "strategy_type", "")), settings)
+        max_days = _get_max_hold_days_for_trade(trade_result, settings)
         return hold_days < max(max_days - 1, 0)
 
 

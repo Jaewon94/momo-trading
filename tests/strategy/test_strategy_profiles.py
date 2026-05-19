@@ -12,10 +12,14 @@ def test_strategy_profile_separates_alpha_source_and_execution_profile() -> None
     assert stable.alpha_source == "LLM_DECISION_PIPELINE"
     assert stable.execution_profile == "STABLE_SHORT"
     assert stable.risk_profile == "STABLE"
+    assert stable.target_horizon_bias == "MID_LONG"
+    assert stable.short_horizon_policy == "EXCEPTION_ONLY"
 
     assert aggressive.alpha_source == "LLM_DECISION_PIPELINE"
     assert aggressive.execution_profile == "AGGRESSIVE_SHORT"
     assert aggressive.risk_profile == "AGGRESSIVE"
+    assert aggressive.target_horizon_bias == "MID_LONG"
+    assert aggressive.short_horizon_policy == "EXCEPTION_ONLY"
 
 
 @pytest.mark.asyncio
@@ -32,6 +36,8 @@ async def test_stable_short_signal_carries_profile_metadata() -> None:
     assert signal.metadata["alpha_source"] == "LLM_DECISION_PIPELINE"
     assert signal.metadata["execution_profile"] == "STABLE_SHORT"
     assert signal.metadata["risk_profile"] == "STABLE"
+    assert signal.metadata["target_horizon_bias"] == "MID_LONG"
+    assert signal.metadata["short_horizon_policy"] == "EXCEPTION_ONLY"
 
 
 @pytest.mark.asyncio
@@ -48,3 +54,5 @@ async def test_aggressive_short_signal_carries_profile_metadata() -> None:
     assert signal.metadata["alpha_source"] == "LLM_DECISION_PIPELINE"
     assert signal.metadata["execution_profile"] == "AGGRESSIVE_SHORT"
     assert signal.metadata["risk_profile"] == "AGGRESSIVE"
+    assert signal.metadata["target_horizon_bias"] == "MID_LONG"
+    assert signal.metadata["short_horizon_policy"] == "EXCEPTION_ONLY"
