@@ -155,9 +155,14 @@ class TradingGuard:
 
         if mode == "SHADOW":
             return {
-                "action": "BLOCK",
-                "trigger": "CONSECUTIVE_LOSSES_SHADOW",
-                "reason": f"{reason}, shadow 관측만 수행",
+                "action": "ALLOW",
+                "warning": {
+                    "trigger": "CONSECUTIVE_LOSSES_SHADOW",
+                    "reason": f"{reason}, shadow 관측만 수행",
+                    "recovery_mode": mode,
+                    "consecutive_losses": consecutive_losses,
+                    "max_losses": max_losses,
+                },
             }
 
         if mode == "BLOCK_BUY":

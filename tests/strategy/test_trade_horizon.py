@@ -32,3 +32,25 @@ def test_decide_trade_horizon_mid_as_default():
         market_regime="SIDEWAYS",
     )
     assert horizon == TradeHorizon.MID
+
+
+def test_decide_trade_horizon_mid_for_overheated_aggressive_move():
+    horizon = decide_trade_horizon(
+        strategy_type="AGGRESSIVE_SHORT",
+        trigger="PRICE_SURGE",
+        change_rate=22.0,
+        confidence=0.7,
+        market_regime="THEME",
+    )
+    assert horizon == TradeHorizon.MID
+
+
+def test_decide_trade_horizon_mid_for_aggressive_without_short_trigger():
+    horizon = decide_trade_horizon(
+        strategy_type="AGGRESSIVE_SHORT",
+        trigger="",
+        change_rate=4.0,
+        confidence=0.7,
+        market_regime="BULL",
+    )
+    assert horizon == TradeHorizon.MID

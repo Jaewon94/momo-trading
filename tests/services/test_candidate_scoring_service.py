@@ -86,3 +86,20 @@ def test_candidate_scoring_service_penalizes_negative_news_pressure_for_buy_cand
     assert "NEGATIVE_NEWS_PRESSURE" not in holding["reason_codes"]
     assert samsung["news_negative_pressure"] == 0.7
     assert holding["news_negative_pressure"] == 0.9
+
+
+def test_candidate_scoring_service_keeps_overheated_surge_stable() -> None:
+    service = CandidateScoringService()
+
+    result = service.score_candidates(
+        volume_rank=[],
+        surge_data=[
+            {"symbol": "011000", "name": "진원생명과학", "price": 1120, "change_rate": 29.9, "volume": 40000000},
+        ],
+        drop_data=[],
+        holdings=[],
+        available_cash=300000,
+        max_candidates=1,
+    )
+
+    assert result[0]["strategy_type_hint"] == "STABLE_SHORT"

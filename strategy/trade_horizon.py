@@ -20,15 +20,23 @@ def decide_trade_horizon(
     trigger_key = (trigger or "").upper()
     regime_key = (market_regime or "").upper()
 
+    confidence_value = float(confidence or 0.0)
+    abs_change = abs(float(change_rate or 0.0))
+    has_short_trigger = trigger_key in {"PRICE_SURGE", "PRICE_DROP", "VOLUME_SPIKE"}
+    is_aggressive = "AGGRESSIVE" in strategy_key
+
+    # AI/broker latency makes broad ultra-short chasing fragile. Prefer a longer
+    # horizon unless the candidate is a strong but not yet overheated momentum setup.
+    if regime_key in {"BULL", "THEME"} and confidence_value >= 0.78 and abs_change <= 12.0:
+        return TradeHorizon.LONG
+
     if (
-        "AGGRESSIVE" in strategy_key
-        or trigger_key in {"PRICE_SURGE", "PRICE_DROP", "VOLUME_SPIKE"}
-        or abs(float(change_rate or 0.0)) >= 6.0
+        is_aggressive
+        and has_short_trigger
+        and 5.0 <= abs_change <= 15.0
+        and confidence_value >= 0.62
     ):
         return TradeHorizon.SHORT
-
-    if regime_key in {"BULL", "THEME"} and float(confidence or 0.0) >= 0.78:
-        return TradeHorizon.LONG
 
     return TradeHorizon.MID
 

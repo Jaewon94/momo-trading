@@ -665,7 +665,7 @@ class TradingAgent:
 
         result = {"symbol": symbol, "signal": False, "executed": False}
 
-        # 피드백 하드 룰: 차단/관측 모드에서만 LLM 분석 전에 매수 후보를 보류한다.
+        # 피드백 하드 룰: 명시적 차단 모드에서만 LLM 분석 전에 매수 후보를 보류한다.
         try:
             async with AsyncSessionLocal() as session:
                 from analysis.feedback.performance_tracker import PerformanceTracker
@@ -682,7 +682,7 @@ class TradingAgent:
                         for item in (portfolio_snapshot or {}).get("holding_symbols", [])
                     ]
                     if direction != "SELL" and symbol not in snap_holdings:
-                        if recovery_mode in {"BLOCK_BUY", "SHADOW"}:
+                        if recovery_mode == "BLOCK_BUY":
                             logger.warning(
                                 "[손실 복구 가드] 연속 {}회 손실 → 매수 보류({}): {}",
                                 consecutive,

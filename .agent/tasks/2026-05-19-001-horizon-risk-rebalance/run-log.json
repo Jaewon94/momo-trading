@@ -1,0 +1,84 @@
+{
+  "schema_version": "momo.run-log.v1",
+  "task_id": "2026-05-19-001-horizon-risk-rebalance",
+  "events": [
+    {
+      "at": "2026-05-19T17:26:15+09:00",
+      "type": "task_started",
+      "status": "created",
+      "summary": "Task artifact created."
+    },
+    {
+      "at": "2026-05-19T17:27:58+09:00",
+      "type": "runtime_settings_change",
+      "status": "applied",
+      "summary": "Changed LOSS_STREAK_RECOVERY_MODE from SHADOW to PROBATION via admin settings confirmation. No broker order, liquidation, migration, or DB reset was performed."
+    },
+    {
+      "at": "2026-05-19T17:28:00+09:00",
+      "type": "change_classification",
+      "status": "high_protected",
+      "summary": "change_harness classified strategy/trading_guard.py, agent/trading_agent.py, strategy/trade_horizon.py, and core/config.py as high/protected trading behavior changes."
+    },
+    {
+      "at": "2026-05-19T17:30:30+09:00",
+      "type": "implementation",
+      "status": "completed",
+      "summary": "Implemented PROBATION defaults, SHADOW observation-only behavior, stricter SHORT horizon criteria, overheated-candidate MID fallback, and MID news gate evaluation."
+    },
+    {
+      "at": "2026-05-19T17:31:20+09:00",
+      "type": "focused_tests",
+      "status": "passed",
+      "summary": "py_compile passed for changed modules; focused pytest passed: trading_guard, trade_horizon, candidate_scoring_service, risk_manager_enhancements, and trading_agent_cycles."
+    },
+    {
+      "at": "2026-05-19T17:32:30+09:00",
+      "type": "restart_attempt",
+      "status": "failed",
+      "summary": "start.sh daemon mode briefly started PID 72539 but the process disappeared without a shutdown traceback; server health endpoints were unavailable."
+    },
+    {
+      "at": "2026-05-19T17:36:20+09:00",
+      "type": "runtime_restart",
+      "status": "passed",
+      "summary": "Started the app in tmux session momo-runtime-20260519 using bash start.sh; server is healthy on port 9000 with PID 74941."
+    },
+    {
+      "at": "2026-05-19T17:37:10+09:00",
+      "type": "runtime_integrity",
+      "status": "passed",
+      "summary": "Runtime integrity passed: system/settings/order_reconciliation/status OK; broker_pending=0, db_pending=0, broker_only=0, qty_mismatch=0, broker_missing_open_buys=0, broker_untracked_holdings=0."
+    },
+    {
+      "at": "2026-05-19T17:37:20+09:00",
+      "type": "residual_observation",
+      "status": "noted",
+      "summary": "System status reports news_polling ERROR for source INVESTING during off-hours poll; core health, scheduler, agent, settings, order reconciliation, holdings, and pending orders remain OK."
+    },
+    {
+      "at": "2026-05-19T17:38:29+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-19T17:38:39+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-19T17:39:16+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-19T17:40:10+09:00",
+      "type": "task_completed",
+      "status": "completed",
+      "summary": "Loss-streak recovery and horizon rebalance implementation completed with runtime health and reconciliation green."
+    }
+  ]
+}

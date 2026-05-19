@@ -442,7 +442,7 @@ class MarketScanner:
                     result = await news_signal_service.evaluate_gate(
                         session,
                         symbol=symbol,
-                        horizon="SHORT",
+                        horizon="MID",
                     )
                     pressure = float(result.get("negative_pressure") or 0.0)
                     if pressure > 0:

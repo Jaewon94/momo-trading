@@ -1,0 +1,46 @@
+{
+  "schema_version": "momo.task.v1",
+  "task_id": "2026-05-19-001-horizon-risk-rebalance",
+  "status": "completed",
+  "title": "Rebalance trading horizon and loss-streak recovery",
+  "repo": "momo-trading",
+  "risk_level": "high",
+  "task_type": "engineering",
+  "priority": "normal",
+  "primary_runtime": "codex",
+  "created_at": "2026-05-19T17:26:15+09:00",
+  "updated_at": "2026-05-19T17:40:10+09:00",
+  "approval": {
+    "required": true,
+    "status": "applied",
+    "reason": "User approved changing loss-streak recovery and reducing ultra-short chase bias. Runtime setting LOSS_STREAK_RECOVERY_MODE changed from SHADOW to PROBATION without broker order side effects."
+  },
+  "checks": {
+    "change_harness": "high/protected",
+    "py_compile_changed_modules": "passed",
+    "focused_strategy_service_tests": "passed",
+    "risk_agent_regression_tests": "passed",
+    "runtime_integrity_after_restart": "passed",
+    "runtime_settings_after_restart": "LOSS_STREAK_RECOVERY_MODE=PROBATION",
+    "pending_orders_after_restart": "0",
+    "broker_holdings_after_restart": "0",
+    "standard_harness_first_attempt": "failed_system_python_missing_pytest",
+    "standard_harness_second_attempt": "failed_due_prior_terminal_state",
+    "diff_check": "passed",
+    "py_compile": "passed",
+    "secret_scan": "passed",
+    "task_harness": "passed",
+    "markdown_links": "passed",
+    "docs_consistency": "passed",
+    "harness_tests": "passed"
+  },
+  "artifacts": {
+    "brief": ".agent/tasks/2026-05-19-001-horizon-risk-rebalance/brief.md",
+    "state": ".agent/tasks/2026-05-19-001-horizon-risk-rebalance/state.json",
+    "run_log": ".agent/tasks/2026-05-19-001-horizon-risk-rebalance/run-log.json",
+    "test_plan": ".agent/tasks/2026-05-19-001-horizon-risk-rebalance/test-plan.md",
+    "decision_record": ".agent/tasks/2026-05-19-001-horizon-risk-rebalance/decision-record.md",
+    "quality_scorecard": ".agent/tasks/2026-05-19-001-horizon-risk-rebalance/quality-scorecard.md"
+  },
+  "errors": []
+}
