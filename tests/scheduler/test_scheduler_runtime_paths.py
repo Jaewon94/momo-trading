@@ -234,6 +234,9 @@ async def test_scheduler_start_does_not_block_on_initial_news_poll(monkeypatch) 
 async def test_scheduler_start_is_idempotent_when_already_running(monkeypatch) -> None:
     scheduler = TradingScheduler()
     scheduler._running = True
+    scheduler._trading_jobs_registered = True
+    scheduler._news_jobs_registered = True
+    scheduler._common_jobs_registered = True
     startup_called = False
     setup_called = False
 
@@ -241,10 +244,12 @@ async def test_scheduler_start_is_idempotent_when_already_running(monkeypatch) -
         nonlocal startup_called
         startup_called = True
 
-    def fake_setup_jobs() -> None:
+    def fake_setup_jobs(**_kwargs) -> None:
         nonlocal setup_called
         setup_called = True
 
+    monkeypatch.setattr("scheduler.scheduler.settings.SCHEDULER_ENABLED", True)
+    monkeypatch.setattr("scheduler.scheduler.settings.NEWS_POLL_ENABLED", True)
     monkeypatch.setattr(scheduler, "_on_startup", fake_on_startup)
     monkeypatch.setattr(scheduler, "_setup_jobs", fake_setup_jobs)
 
@@ -253,6 +258,67 @@ async def test_scheduler_start_is_idempotent_when_already_running(monkeypatch) -
     assert scheduler.is_running is True
     assert setup_called is False
     assert startup_called is False
+
+
+@pytest.mark.asyncio
+async def test_scheduler_start_registers_trading_jobs_when_enabled_after_news_only_start(monkeypatch) -> None:
+    """뉴스 잡만 등록된 채로 실행 중일 때, SCHEDULER_ENABLED가 True로 바뀐 뒤 start()를 다시 호출하면 트레이딩 잡이 추가 등록되어야 한다."""
+    scheduler = TradingScheduler()
+    job_ids: list[str] = []
+    created_tasks: list[object] = []
+
+    async def fake_on_startup() -> None:
+        return None
+
+    async def fake_news_poll(*args, **kwargs) -> None:
+        return None
+
+    async def fake_news_translation_backfill() -> None:
+        return None
+
+    class FakeScheduler:
+        def start(self) -> None:
+            return None
+
+        def add_job(self, _func, _trigger, **kwargs) -> None:
+            job_ids.append(kwargs["id"])
+
+    class DummyTask:
+        pass
+
+    def fake_create_task(coro):
+        created_tasks.append(coro)
+        coro.close()
+        return DummyTask()
+
+    monkeypatch.setattr(scheduler, "_on_startup", fake_on_startup)
+    monkeypatch.setattr(scheduler, "_news_poll", fake_news_poll)
+    monkeypatch.setattr(scheduler, "_news_translation_backfill", fake_news_translation_backfill)
+    monkeypatch.setattr(scheduler, "_build_scheduler", lambda: FakeScheduler())
+    monkeypatch.setattr("asyncio.create_task", fake_create_task)
+
+    monkeypatch.setattr("scheduler.scheduler.settings.SCHEDULER_ENABLED", False)
+    monkeypatch.setattr("scheduler.scheduler.settings.NEWS_POLL_ENABLED", True)
+    await scheduler.start()
+    assert scheduler.is_running is True
+    assert scheduler._news_jobs_registered is True
+    assert scheduler._trading_jobs_registered is False
+    assert "news_poll_trading" in job_ids
+    assert "intraday_rescan" not in job_ids
+    assert "account_equity_snapshot" not in job_ids
+
+    job_ids.clear()
+    monkeypatch.setattr("scheduler.scheduler.settings.SCHEDULER_ENABLED", True)
+    await scheduler.start()
+
+    assert scheduler._trading_jobs_registered is True
+    assert "intraday_rescan" in job_ids
+    assert "intraday_rescan_interval" in job_ids
+    assert "account_equity_snapshot" in job_ids
+    assert "holdings_check" in job_ids
+    # common jobs(resource_snapshot 등)와 news 잡은 첫 start에서 등록됐으므로 중복 등록되지 않아야 한다.
+    assert "resource_snapshot" not in job_ids
+    assert "news_poll_trading" not in job_ids
 
 
 @pytest.mark.asyncio

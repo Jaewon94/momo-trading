@@ -48,6 +48,9 @@ class TradingScheduler:
     def __init__(self):
         self.scheduler = self._build_scheduler()
         self._running = False
+        self._trading_jobs_registered = False
+        self._news_jobs_registered = False
+        self._common_jobs_registered = False
         self._news_poll_lock = asyncio.Lock()
         self._background_tasks: set[asyncio.Task[object]] = set()
         self._last_event_news_poll_at = 0.0
@@ -484,15 +487,45 @@ class TradingScheduler:
         })()
 
     async def start(self) -> None:
-        if self._running:
-            logger.debug("스케줄러 이미 실행 중")
-            return
-
         trading_jobs_enabled = bool(settings.SCHEDULER_ENABLED)
         news_jobs_enabled = bool(settings.NEWS_POLL_ENABLED)
 
         if not trading_jobs_enabled and not news_jobs_enabled:
             logger.debug("스케줄러 비활성화 (SCHEDULER_ENABLED=false, NEWS_POLL_ENABLED=false)")
+            return
+
+        if self._running:
+            # 이미 실행 중이면 신규 활성화된 잡 그룹만 추가 등록한다.
+            add_trading = trading_jobs_enabled and not self._trading_jobs_registered
+            add_news = news_jobs_enabled and not self._news_jobs_registered
+            if not (add_trading or add_news):
+                logger.debug("스케줄러 이미 실행 중")
+                return
+
+            self._setup_jobs(
+                include_trading_jobs=add_trading,
+                include_news_jobs=add_news,
+                include_common_jobs=not self._common_jobs_registered,
+            )
+            self._common_jobs_registered = True
+            if add_trading:
+                self._trading_jobs_registered = True
+                logger.info("스케줄러 트레이딩 잡 등록 — 이후 사이클이 활성화됩니다")
+                self._spawn_background_task(
+                    self._on_startup(),
+                    task_name="trading_startup",
+                )
+            if add_news:
+                self._news_jobs_registered = True
+                logger.info("스케줄러 뉴스 잡 등록")
+                self._spawn_background_task(
+                    self._news_poll(),
+                    task_name="initial_news_poll",
+                )
+                self._spawn_background_task(
+                    self._news_translation_backfill(),
+                    task_name="initial_news_translation_backfill",
+                )
             return
 
         self.scheduler = self._build_scheduler()
@@ -502,6 +535,9 @@ class TradingScheduler:
         )
         self.scheduler.start()
         self._running = True
+        self._trading_jobs_registered = trading_jobs_enabled
+        self._news_jobs_registered = news_jobs_enabled
+        self._common_jobs_registered = True
         if trading_jobs_enabled:
             logger.info("스케줄러 시작 — 트레이딩 타임라인 활성화")
         else:
@@ -527,6 +563,9 @@ class TradingScheduler:
         if self._running:
             self.scheduler.shutdown(wait=False)
             self._running = False
+            self._trading_jobs_registered = False
+            self._news_jobs_registered = False
+            self._common_jobs_registered = False
             self.scheduler = self._build_scheduler()
             logger.info("스케줄러 중지")
 
@@ -614,6 +653,7 @@ class TradingScheduler:
         *,
         include_trading_jobs: bool = True,
         include_news_jobs: bool = True,
+        include_common_jobs: bool = True,
     ) -> None:
         from scheduler.jobs.portfolio_sync_job import portfolio_sync_job
         from scheduler.jobs.market_data_job import market_data_job
@@ -690,32 +730,33 @@ class TradingScheduler:
                 name="뉴스 번역 백로그 처리",
             )
 
-        if bool(getattr(settings, "METRICS_RESOURCE_SAMPLING_ENABLED", True)):
-            self.scheduler.add_job(
-                self._resource_snapshot,
-                "interval",
-                minutes=max(int(getattr(settings, "METRICS_RESOURCE_INTERVAL_MIN", 5) or 5), 1),
-                id="resource_snapshot",
-                name="리소스 스냅샷",
-            )
+        if include_common_jobs:
+            if bool(getattr(settings, "METRICS_RESOURCE_SAMPLING_ENABLED", True)):
+                self.scheduler.add_job(
+                    self._resource_snapshot,
+                    "interval",
+                    minutes=max(int(getattr(settings, "METRICS_RESOURCE_INTERVAL_MIN", 5) or 5), 1),
+                    id="resource_snapshot",
+                    name="리소스 스냅샷",
+                )
 
-        if bool(getattr(settings, "METRICS_MAINTENANCE_ENABLED", True)):
-            self.scheduler.add_job(
-                self._observability_maintenance,
-                "interval",
-                minutes=max(int(getattr(settings, "METRICS_MAINTENANCE_INTERVAL_MIN", 60) or 60), 1),
-                id="observability_maintenance",
-                name="운영 메트릭 롤업/정리",
-            )
+            if bool(getattr(settings, "METRICS_MAINTENANCE_ENABLED", True)):
+                self.scheduler.add_job(
+                    self._observability_maintenance,
+                    "interval",
+                    minutes=max(int(getattr(settings, "METRICS_MAINTENANCE_INTERVAL_MIN", 60) or 60), 1),
+                    id="observability_maintenance",
+                    name="운영 메트릭 롤업/정리",
+                )
 
-        if bool(getattr(settings, "FORWARD_RETURN_LABEL_ENABLED", True)):
-            self.scheduler.add_job(
-                self._forward_return_label,
-                "interval",
-                minutes=max(int(getattr(settings, "FORWARD_RETURN_LABEL_INTERVAL_MIN", 5) or 5), 1),
-                id="forward_return_label",
-                name="Decision forward return 라벨링",
-            )
+            if bool(getattr(settings, "FORWARD_RETURN_LABEL_ENABLED", True)):
+                self.scheduler.add_job(
+                    self._forward_return_label,
+                    "interval",
+                    minutes=max(int(getattr(settings, "FORWARD_RETURN_LABEL_INTERVAL_MIN", 5) or 5), 1),
+                    id="forward_return_label",
+                    name="Decision forward return 라벨링",
+                )
 
         if include_trading_jobs:
             self.scheduler.add_job(
