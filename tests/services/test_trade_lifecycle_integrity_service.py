@@ -288,3 +288,128 @@ async def test_lifecycle_integrity_allows_broker_extra_holding_with_matching_db_
     checks = {item["key"]: item for item in report["checks"]}
     assert checks["pending_confirms"]["status"] == "WARN"
     assert checks["broker_untracked_holdings"]["status"] == "OK"
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_integrity_allows_fresh_buy_pending_after_broker_pending_disappears():
+    from tests.conftest import TestAsyncSessionLocal
+
+    now = datetime.now()
+    async with TestAsyncSessionLocal() as session:
+        _seed_account_readiness(session, now=now)
+        session.add(_trade(
+            symbol="066430",
+            side="BUY",
+            quantity=52,
+            entry_price=3080,
+            entry_at=now - timedelta(hours=1),
+        ))
+        session.add(_trade(
+            symbol="066430",
+            side="BUY",
+            status="PENDING_CONFIRM",
+            quantity=1,
+            entry_price=3080,
+            entry_at=now - timedelta(seconds=30),
+        ))
+        await session.commit()
+
+        report = await TradeLifecycleIntegrityService().build_report(
+            session,
+            days=1,
+            broker_position_snapshot={
+                "provider": "KIWOOM",
+                "holding_quantities": {"066430": 53},
+                "pending_symbols": [],
+            },
+        )
+
+    assert report["status"] == "WARN"
+    assert report["summary"]["pending_confirm_count"] == 1
+    assert report["summary"]["broker_untracked_holding_count"] == 0
+    checks = {item["key"]: item for item in report["checks"]}
+    assert checks["pending_confirms"]["status"] == "WARN"
+    assert checks["broker_untracked_holdings"]["status"] == "OK"
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_integrity_fails_stale_buy_pending_after_broker_pending_disappears():
+    from tests.conftest import TestAsyncSessionLocal
+
+    now = datetime.now()
+    async with TestAsyncSessionLocal() as session:
+        _seed_account_readiness(session, now=now)
+        session.add(_trade(
+            symbol="066430",
+            side="BUY",
+            quantity=52,
+            entry_price=3080,
+            entry_at=now - timedelta(hours=1),
+        ))
+        session.add(_trade(
+            symbol="066430",
+            side="BUY",
+            status="PENDING_CONFIRM",
+            quantity=1,
+            entry_price=3080,
+            entry_at=now - timedelta(minutes=5),
+        ))
+        await session.commit()
+
+        report = await TradeLifecycleIntegrityService().build_report(
+            session,
+            days=1,
+            broker_position_snapshot={
+                "provider": "KIWOOM",
+                "holding_quantities": {"066430": 53},
+                "pending_symbols": [],
+            },
+        )
+
+    assert report["status"] == "FAIL"
+    assert report["summary"]["broker_untracked_holding_count"] == 1
+    checks = {item["key"]: item for item in report["checks"]}
+    assert checks["broker_untracked_holdings"]["status"] == "FAIL"
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_integrity_allows_fresh_sell_pending_after_broker_holding_drops():
+    from tests.conftest import TestAsyncSessionLocal
+
+    now = datetime.now()
+    async with TestAsyncSessionLocal() as session:
+        _seed_account_readiness(session, now=now)
+        session.add(_trade(
+            symbol="066430",
+            side="BUY",
+            quantity=100,
+            entry_price=3080,
+            entry_at=now - timedelta(hours=1),
+        ))
+        session.add(_trade(
+            symbol="066430",
+            side="SELL",
+            status="PENDING_CONFIRM",
+            quantity=40,
+            entry_price=0,
+            exit_price=3080,
+            entry_at=now - timedelta(seconds=10),
+        ))
+        await session.commit()
+
+        report = await TradeLifecycleIntegrityService().build_report(
+            session,
+            days=1,
+            broker_position_snapshot={
+                "provider": "KIWOOM",
+                "holding_quantities": {"066430": 60},
+                "pending_symbols": [],
+            },
+        )
+
+    assert report["status"] == "WARN"
+    assert report["summary"]["pending_confirm_count"] == 1
+    assert report["summary"]["broker_missing_open_buy_count"] == 0
+    checks = {item["key"]: item for item in report["checks"]}
+    assert checks["pending_confirms"]["status"] == "WARN"
+    assert checks["broker_missing_open_buys"]["status"] == "OK"

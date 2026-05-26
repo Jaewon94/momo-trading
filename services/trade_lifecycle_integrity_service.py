@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.config import settings
 from models.account_day_baseline import AccountDayBaseline
 from models.account_equity_snapshot import AccountEquitySnapshot
 from models.trade_result import TradeResult
@@ -31,7 +32,7 @@ class TradeLifecycleIntegrityService:
         status_counts = await self._fetch_status_counts(session, from_dt=from_dt, to_dt=to_dt)
         open_buy_positions = await self._fetch_open_buy_positions(session)
         open_buy_count = len(open_buy_positions)
-        pending_confirm_symbols = await self._fetch_pending_confirm_symbols(session)
+        pending_confirm_positions = await self._fetch_pending_confirm_positions(session, now=to_dt)
         pending_count = await self._count_pending_confirms(session, from_dt=from_dt, to_dt=to_dt)
         failed_count = await self._count_confirm_failed(session, from_dt=from_dt, to_dt=to_dt)
         data_quality = await performance_reporting_service._fetch_closed_trade_data_quality(
@@ -46,7 +47,7 @@ class TradeLifecycleIntegrityService:
         repairable_sell_count = int((close_reconciliation.get("summary") or {}).get("matched_sell_count") or 0)
         broker_position_check = self._build_broker_position_check(
             open_buy_positions,
-            pending_confirm_symbols=pending_confirm_symbols,
+            pending_confirm_positions=pending_confirm_positions,
             broker_position_snapshot=broker_position_snapshot,
         )
 
@@ -219,16 +220,88 @@ class TradeLifecycleIntegrityService:
         )).order_by(TradeResult.entry_at.asc(), TradeResult.created_at.asc())
         return list((await session.execute(stmt)).scalars().all())
 
-    async def _fetch_pending_confirm_symbols(self, session: AsyncSession) -> set[str]:
-        stmt = select(TradeResult.stock_symbol).where(TradeResult.status == "PENDING_CONFIRM")
-        rows = (await session.execute(stmt)).scalars().all()
-        return {normalize_krx_symbol(symbol) for symbol in rows if normalize_krx_symbol(symbol)}
+    async def _fetch_pending_confirm_positions(self, session: AsyncSession, *, now: datetime) -> dict[str, dict]:
+        stmt = select(TradeResult).where(TradeResult.status == "PENDING_CONFIRM")
+        rows = list((await session.execute(stmt)).scalars().all())
+        pending_by_symbol: dict[str, dict] = {}
+        for trade in rows:
+            symbol = normalize_krx_symbol(getattr(trade, "stock_symbol", ""))
+            if not symbol:
+                continue
+            side = str(getattr(trade, "side", "") or "").upper()
+            quantity = int(getattr(trade, "quantity", 0) or 0)
+            if quantity <= 0:
+                continue
+            event_at = (
+                getattr(trade, "entry_at", None)
+                or getattr(trade, "exit_at", None)
+                or getattr(trade, "created_at", None)
+            )
+            is_fresh = self._is_fresh_pending_confirm(event_at, side=side, now=now)
+            bucket = pending_by_symbol.setdefault(symbol, {
+                "stock_symbol": symbol,
+                "stock_name": getattr(trade, "stock_name", symbol),
+                "total_quantity": 0,
+                "fresh_buy_quantity": 0,
+                "fresh_sell_quantity": 0,
+                "fresh_order_ids": [],
+                "stale_order_ids": [],
+                "latest_at": None,
+            })
+            bucket["total_quantity"] += quantity
+            if side == "SELL" and is_fresh:
+                bucket["fresh_sell_quantity"] += quantity
+            elif side == "BUY" and is_fresh:
+                bucket["fresh_buy_quantity"] += quantity
+
+            order_id = getattr(trade, "order_id", None)
+            if order_id:
+                key = "fresh_order_ids" if is_fresh else "stale_order_ids"
+                bucket[key].append(str(order_id))
+            normalized_event_at = self._normalize_datetime(event_at)
+            if normalized_event_at and (
+                bucket["latest_at"] is None or normalized_event_at > bucket["latest_at"]
+            ):
+                bucket["latest_at"] = normalized_event_at
+        return pending_by_symbol
+
+    @staticmethod
+    def _is_fresh_pending_confirm(event_at: datetime | None, *, side: str, now: datetime) -> bool:
+        event_at = TradeLifecycleIntegrityService._normalize_datetime(event_at)
+        now = TradeLifecycleIntegrityService._normalize_datetime(now)
+        if event_at is None:
+            return False
+        age_sec = (now - event_at).total_seconds()
+        return age_sec >= 0 and age_sec <= TradeLifecycleIntegrityService._pending_confirm_grace_sec(side)
+
+    @staticmethod
+    def _normalize_datetime(value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is not None:
+            return value.replace(tzinfo=None)
+        return value
+
+    @staticmethod
+    def _pending_confirm_grace_sec(side: str) -> float:
+        confirm_timeout_sec = float(getattr(settings, "ORDER_CONFIRM_STATUS_TIMEOUT_SEC", 15) or 15)
+        buffer_sec = 15.0
+        if str(side or "").upper() == "SELL":
+            wait_sec = float(getattr(settings, "SELL_ORDER_CONFIRM_WAIT_SEC", 3) or 3)
+            return wait_sec + confirm_timeout_sec + buffer_sec
+
+        buy_waits = [
+            float(getattr(settings, "BUY_ORDER_CONFIRM_WAIT_SEC_CONSERVATIVE", 90) or 90),
+            float(getattr(settings, "BUY_ORDER_CONFIRM_WAIT_SEC_MODERATE", 60) or 60),
+            float(getattr(settings, "BUY_ORDER_CONFIRM_WAIT_SEC_AGGRESSIVE", 30) or 30),
+        ]
+        return max(buy_waits) + confirm_timeout_sec + buffer_sec
 
     @staticmethod
     def _build_broker_position_check(
         open_buy_positions: list[TradeResult],
         *,
-        pending_confirm_symbols: set[str] | None = None,
+        pending_confirm_positions: dict[str, dict] | None = None,
         broker_position_snapshot: dict | None,
     ) -> dict:
         if broker_position_snapshot is None:
@@ -267,7 +340,8 @@ class TradeLifecycleIntegrityService:
             normalize_krx_symbol(symbol)
             for symbol in (broker_position_snapshot.get("pending_symbols") or [])
         }
-        db_pending_symbols = set(pending_confirm_symbols or set())
+        db_pending_by_symbol = pending_confirm_positions or {}
+        db_pending_symbols = set(db_pending_by_symbol.keys())
 
         open_by_symbol: dict[str, dict] = {}
         for trade in open_buy_positions:
@@ -296,11 +370,14 @@ class TradeLifecycleIntegrityService:
             db_qty = int(item["db_open_quantity"] or 0)
             broker_qty = int(holding_quantities.get(symbol, 0) or 0)
             pending = symbol in pending_symbols
-            if pending or broker_qty >= db_qty:
+            db_pending = db_pending_by_symbol.get(symbol) or {}
+            fresh_sell_qty = int(db_pending.get("fresh_sell_quantity") or 0)
+            if pending or broker_qty >= db_qty or (fresh_sell_qty > 0 and broker_qty + fresh_sell_qty >= db_qty):
                 continue
             gap = db_qty - broker_qty
             item["broker_holding_quantity"] = broker_qty
             item["pending_order_exists"] = pending
+            item["fresh_db_pending_sell_quantity"] = fresh_sell_qty
             item["missing_quantity"] = gap
             item["reason"] = "broker_holding_missing" if broker_qty <= 0 else "broker_holding_quantity_mismatch"
             details.append(item)
@@ -314,7 +391,11 @@ class TradeLifecycleIntegrityService:
             db_qty = int((open_by_symbol.get(symbol) or {}).get("db_open_quantity", 0) or 0)
             if broker_qty <= db_qty:
                 continue
+            db_pending = db_pending_by_symbol.get(symbol) or {}
+            fresh_buy_qty = int(db_pending.get("fresh_buy_quantity") or 0)
             if symbol in pending_symbols and symbol in db_pending_symbols:
+                continue
+            if fresh_buy_qty > 0 and broker_qty <= db_qty + fresh_buy_qty:
                 continue
             gap = broker_qty - db_qty
             base = open_by_symbol.get(symbol) or {
@@ -328,6 +409,7 @@ class TradeLifecycleIntegrityService:
                 "broker_holding_quantity": broker_qty,
                 "broker_pending_order_exists": symbol in pending_symbols,
                 "db_pending_confirm_exists": symbol in db_pending_symbols,
+                "fresh_db_pending_buy_quantity": fresh_buy_qty,
                 "extra_quantity": gap,
                 "reason": "broker_holding_exceeds_db_open",
             })
