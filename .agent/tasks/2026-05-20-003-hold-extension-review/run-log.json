@@ -1,0 +1,60 @@
+{
+  "schema_version": "momo.run-log.v1",
+  "task_id": "2026-05-20-003-hold-extension-review",
+  "events": [
+    {
+      "at": "2026-05-20T17:09:38+09:00",
+      "type": "task_started",
+      "status": "created",
+      "summary": "Task artifact created."
+    },
+    {
+      "at": "2026-05-20T17:18:00+09:00",
+      "type": "design",
+      "status": "in_progress",
+      "summary": "Planned AI-reviewed EXTEND path: MID promotes to LONG, LONG extends in 15-day review windows, deterministic fallback still sells on LLM failure or total-cap exhaustion."
+    },
+    {
+      "at": "2026-05-20T17:21:00+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-20T17:21:14+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-20T17:21:51+09:00",
+      "type": "verification_note",
+      "status": "testing",
+      "summary": "Default python lacks pytest; resetting task status from failed to testing before rerunning verify with .venv313."
+    },
+    {
+      "at": "2026-05-20T17:21:58+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-20T17:27:26+09:00",
+      "type": "verification_note",
+      "status": "completed",
+      "summary": "Implemented EXTEND path, tests passed, runtime restarted in tmux momo-runtime, health/status/runtime-integrity OK."
+    },
+    {
+      "at": "2026-05-20T17:27:54+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-20T17:28:07+09:00",
+      "type": "completion_note",
+      "status": "completed",
+      "summary": "Final verify passed after final-report; task completed."
+    }
+  ]
+}

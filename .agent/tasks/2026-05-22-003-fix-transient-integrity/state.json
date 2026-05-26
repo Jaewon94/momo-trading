@@ -1,0 +1,46 @@
+{
+  "schema_version": "momo.task.v1",
+  "task_id": "2026-05-22-003-fix-transient-integrity",
+  "status": "testing",
+  "title": "Fix transient order integrity checks",
+  "repo": "momo-trading",
+  "risk_level": "medium",
+  "task_type": "engineering",
+  "priority": "normal",
+  "primary_runtime": "codex",
+  "created_at": "2026-05-22T13:25:54+09:00",
+  "updated_at": "2026-05-22T13:32:20+09:00",
+  "approval": {
+    "required": false,
+    "status": "not_required"
+  },
+  "checks": {
+    "change_harness": "medium",
+    "service_tests": "passed",
+    "runtime_integrity_tests": "passed",
+    "runtime_restart": "ok",
+    "final_runtime_integrity": "ok",
+    "final_scheduler_state": "stopped",
+    "diff_check": "passed",
+    "py_compile": "passed",
+    "secret_scan": "passed",
+    "task_harness": "passed",
+    "markdown_links": "passed",
+    "docs_consistency": "passed",
+    "harness_tests": "passed"
+  },
+  "artifacts": {
+    "brief": ".agent/tasks/2026-05-22-003-fix-transient-integrity/brief.md",
+    "state": ".agent/tasks/2026-05-22-003-fix-transient-integrity/state.json",
+    "run_log": ".agent/tasks/2026-05-22-003-fix-transient-integrity/run-log.json",
+    "test_plan": ".agent/tasks/2026-05-22-003-fix-transient-integrity/test-plan.md",
+    "decision_record": ".agent/tasks/2026-05-22-003-fix-transient-integrity/decision-record.md",
+    "quality_scorecard": ".agent/tasks/2026-05-22-003-fix-transient-integrity/quality-scorecard.md"
+  },
+  "errors": [
+    {
+      "at": "2026-05-22T13:29:00+09:00",
+      "summary": "Observed scheduler_running=true after restart because NEWS_POLL_ENABLED was still true; order submission remained disabled. Scheduler was explicitly stopped after verification."
+    }
+  ]
+}

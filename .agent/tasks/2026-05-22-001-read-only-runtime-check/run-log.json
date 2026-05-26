@@ -1,0 +1,42 @@
+{
+  "schema_version": "momo.run-log.v1",
+  "task_id": "2026-05-22-001-read-only-runtime-check",
+  "events": [
+    {
+      "at": "2026-05-22T10:37:32+09:00",
+      "type": "task_started",
+      "status": "created",
+      "summary": "Task artifact created."
+    },
+    {
+      "at": "2026-05-22T10:42:38+09:00",
+      "type": "operational_check",
+      "status": "implementing",
+      "summary": "Confirmed no server on port 9000; persisted runtime settings had autonomous/full trading enabled before safety update."
+    },
+    {
+      "at": "2026-05-22T10:42:38+09:00",
+      "type": "operational_change",
+      "status": "testing",
+      "summary": "Created DB backup app-cli-20260522-103754.db and set runtime controls to read-only mode before startup."
+    },
+    {
+      "at": "2026-05-22T10:42:38+09:00",
+      "type": "verification",
+      "status": "testing",
+      "summary": "Started normal runtime in tmux session momo-readonly-runtime and verified health, admin UI, settings, system status, holdings, and runtime integrity OK."
+    },
+    {
+      "at": "2026-05-22T10:42:59+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-22T10:43:17+09:00",
+      "type": "task_completed",
+      "status": "completed",
+      "summary": "Read-only runtime startup check completed; server remains running in tmux session momo-readonly-runtime with order submission disabled."
+    }
+  ]
+}

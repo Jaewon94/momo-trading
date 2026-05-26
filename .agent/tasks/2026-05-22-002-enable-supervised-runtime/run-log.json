@@ -1,0 +1,66 @@
+{
+  "schema_version": "momo.run-log.v1",
+  "task_id": "2026-05-22-002-enable-supervised-runtime",
+  "events": [
+    {
+      "at": "2026-05-22T10:46:03+09:00",
+      "type": "task_started",
+      "status": "created",
+      "summary": "Task artifact created."
+    },
+    {
+      "at": "2026-05-22T10:48:12+09:00",
+      "type": "preflight",
+      "status": "ok",
+      "summary": "Account snapshot refreshed; preflight broker/news/observability checks passed except news was disabled before enable."
+    },
+    {
+      "at": "2026-05-22T10:49:32+09:00",
+      "type": "runtime_settings_apply",
+      "status": "ok",
+      "summary": "Enabled TRADING_ENABLED, ORDER_SUBMISSION_MODE=FULL, AUTONOMY_MODE=AUTONOMOUS, SCHEDULER_ENABLED, and NEWS_POLL_ENABLED."
+    },
+    {
+      "at": "2026-05-22T10:50:05+09:00",
+      "type": "live_scan",
+      "status": "ok",
+      "summary": "First live scan selected 5 candidates and began Tier1/Tier2 analysis."
+    },
+    {
+      "at": "2026-05-22T10:52:45+09:00",
+      "type": "trade_observed",
+      "status": "ok",
+      "summary": "487240 partial take-profit sell confirmed: 39 shares at 55,690 KRW; realized lot PnL recorded as +94,224 KRW."
+    },
+    {
+      "at": "2026-05-22T10:54:02+09:00",
+      "type": "trade_observed",
+      "status": "ok",
+      "summary": "307180 buy confirmed: 300 shares at 9,238 KRW."
+    },
+    {
+      "at": "2026-05-22T10:54:35+09:00",
+      "type": "safety_fallback",
+      "status": "applied",
+      "summary": "Runtime integrity temporarily reported FAIL with broker_untracked_holding_count=1; set trading disabled, order mode read-only, autonomy semi-auto, and scheduler setting false."
+    },
+    {
+      "at": "2026-05-22T10:55:32+09:00",
+      "type": "scheduler_stop",
+      "status": "ok",
+      "summary": "Explicit scheduler stop returned enabled=false and running=false."
+    },
+    {
+      "at": "2026-05-22T10:57:00+09:00",
+      "type": "final_runtime_integrity",
+      "status": "ok",
+      "summary": "Final runtime integrity OK: trading disabled, effective order mode disabled, scheduler false, pending 0, broker pending 0, DB pending 0, untracked holdings 0."
+    },
+    {
+      "at": "2026-05-22T10:58:34+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    }
+  ]
+}

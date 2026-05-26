@@ -1,6 +1,6 @@
 {
-  "task_id": "2026-05-20-001-mid-long-bias",
-  "status": "completed",
-  "path": ".agent/tasks/2026-05-20-001-mid-long-bias",
-  "updated_at": "2026-05-20T08:54:20+09:00"
+  "task_id": "2026-05-22-003-fix-transient-integrity",
+  "status": "created",
+  "path": ".agent/tasks/2026-05-22-003-fix-transient-integrity",
+  "updated_at": "2026-05-22T13:25:54+09:00"
 }

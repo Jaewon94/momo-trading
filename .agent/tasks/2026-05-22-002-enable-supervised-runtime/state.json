@@ -1,0 +1,46 @@
+{
+  "schema_version": "momo.task.v1",
+  "task_id": "2026-05-22-002-enable-supervised-runtime",
+  "status": "testing",
+  "title": "Enable supervised trading runtime",
+  "repo": "momo-trading",
+  "risk_level": "medium",
+  "task_type": "engineering",
+  "priority": "normal",
+  "primary_runtime": "codex",
+  "created_at": "2026-05-22T10:46:03+09:00",
+  "updated_at": "2026-05-22T10:58:34+09:00",
+  "approval": {
+    "required": false,
+    "status": "not_required"
+  },
+  "checks": {
+    "preflight": "ok",
+    "runtime_enable": "ok",
+    "live_monitoring": "ok",
+    "safety_fallback": "applied",
+    "final_runtime_integrity": "ok",
+    "scheduler_final_state": "stopped",
+    "diff_check": "passed",
+    "py_compile": "passed",
+    "secret_scan": "passed",
+    "task_harness": "passed",
+    "markdown_links": "passed",
+    "docs_consistency": "passed",
+    "harness_tests": "passed"
+  },
+  "artifacts": {
+    "brief": ".agent/tasks/2026-05-22-002-enable-supervised-runtime/brief.md",
+    "state": ".agent/tasks/2026-05-22-002-enable-supervised-runtime/state.json",
+    "run_log": ".agent/tasks/2026-05-22-002-enable-supervised-runtime/run-log.json",
+    "test_plan": ".agent/tasks/2026-05-22-002-enable-supervised-runtime/test-plan.md",
+    "decision_record": ".agent/tasks/2026-05-22-002-enable-supervised-runtime/decision-record.md",
+    "quality_scorecard": ".agent/tasks/2026-05-22-002-enable-supervised-runtime/quality-scorecard.md"
+  },
+  "errors": [
+    {
+      "at": "2026-05-22T10:53:00+09:00",
+      "summary": "Transient runtime integrity FAIL observed during live order confirmation window: broker_untracked_holding_count=1. Final checks recovered to OK after confirmation settled."
+    }
+  ]
+}

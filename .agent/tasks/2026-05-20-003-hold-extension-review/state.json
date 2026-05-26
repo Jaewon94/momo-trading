@@ -1,0 +1,35 @@
+{
+  "schema_version": "momo.task.v1",
+  "task_id": "2026-05-20-003-hold-extension-review",
+  "status": "completed",
+  "title": "Add AI hold extension review",
+  "repo": "momo-trading",
+  "risk_level": "medium",
+  "task_type": "engineering",
+  "priority": "normal",
+  "primary_runtime": "codex",
+  "created_at": "2026-05-20T17:09:38+09:00",
+  "updated_at": "2026-05-20T17:28:07+09:00",
+  "approval": {
+    "required": false,
+    "status": "not_required"
+  },
+  "checks": {
+    "diff_check": "passed",
+    "py_compile": "passed",
+    "secret_scan": "passed",
+    "task_harness": "passed",
+    "markdown_links": "passed",
+    "docs_consistency": "passed",
+    "harness_tests": "passed"
+  },
+  "artifacts": {
+    "brief": ".agent/tasks/2026-05-20-003-hold-extension-review/brief.md",
+    "state": ".agent/tasks/2026-05-20-003-hold-extension-review/state.json",
+    "run_log": ".agent/tasks/2026-05-20-003-hold-extension-review/run-log.json",
+    "test_plan": ".agent/tasks/2026-05-20-003-hold-extension-review/test-plan.md",
+    "decision_record": ".agent/tasks/2026-05-20-003-hold-extension-review/decision-record.md",
+    "quality_scorecard": ".agent/tasks/2026-05-20-003-hold-extension-review/quality-scorecard.md"
+  },
+  "errors": []
+}

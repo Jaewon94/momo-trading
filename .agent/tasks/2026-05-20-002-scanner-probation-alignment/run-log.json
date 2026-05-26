@@ -1,0 +1,162 @@
+{
+  "schema_version": "momo.run-log.v1",
+  "task_id": "2026-05-20-002-scanner-probation-alignment",
+  "events": [
+    {
+      "at": "2026-05-20T10:10:45+09:00",
+      "type": "task_started",
+      "status": "created",
+      "summary": "Task artifact created."
+    },
+    {
+      "at": "2026-05-20T10:12:34+09:00",
+      "type": "analysis",
+      "status": "in_progress",
+      "summary": "Root cause confirmed: market scan prompt still asks for 1-5 day short-term candidates and AGGRESSIVE_SHORT expansion, while loss-streak PROBATION allows only 2-10% recovery buys. Candidate scoring also still rewards raw positive change rate strongly, so overheated movers can rank above probation-compatible candidates."
+    },
+    {
+      "at": "2026-05-20T10:12:43+09:00",
+      "type": "analysis",
+      "status": "researching",
+      "summary": "Root cause confirmed: market scan prompt still asks for 1-5 day short-term candidates and AGGRESSIVE_SHORT expansion, while loss-streak PROBATION allows only 2-10% recovery buys. Candidate scoring also still rewards raw positive change rate strongly, so overheated movers can rank above probation-compatible candidates."
+    },
+    {
+      "at": "2026-05-20T10:18:29+09:00",
+      "type": "implementation",
+      "status": "testing",
+      "summary": "Implemented scanner policy alignment: mid/long-biased market scan prompt, candidate scoring policy change band, LLM selection post-filter for active PROBATION, and deterministic fallback analysis candidates when LLM-selected buys are filtered as overheated."
+    },
+    {
+      "at": "2026-05-20T10:18:52+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-20T10:27:31+09:00",
+      "type": "runtime_verification",
+      "status": "reporting",
+      "summary": "Post-restart verification passed: tmux-backed runtime is running, health/system status OK, scheduler and agent running in AUTONOMOUS/FULL mode, latest scan logged active PROBATION policy with 2-10% preferred change band and policy_eligible candidates, KIWOOM buy order 0069525 for 376930 was accepted and confirmed, broker pending orders empty, runtime integrity OK."
+    },
+    {
+      "at": "2026-05-20T10:27:53+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-20T10:28:04+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-20T10:28:55+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-20T10:29:20+09:00",
+      "type": "task_completed",
+      "status": "completed",
+      "summary": "Scanner probation and mid/long bias alignment completed; verification and post-restart runtime checks passed."
+    },
+    {
+      "at": "2026-05-20T10:44:43+09:00",
+      "type": "runtime_db_reconciliation",
+      "status": "testing",
+      "summary": "Approved runtime DB reconciliation applied for order 0069525: trade_results entry_price aligned from 1093.0 to broker holding average 1086.0 for 376930, quantity 360, status CONFIRMED; note added to trade metadata."
+    },
+    {
+      "at": "2026-05-20T10:46:56+09:00",
+      "type": "analysis",
+      "status": "implementing",
+      "summary": "Loss-streak probation reviewed after user concern: current implementation is too sticky because it only exits when a closed winning BUY resets consecutive losses, and PROBATION also blocks while any holding exists, blocks UPTREND pattern outright, and blocks on any single weak intraday signal. Plan is to keep the guard as a risk-control but make PROBATION a reduced-size recovery lane rather than a near-hard lock."
+    },
+    {
+      "at": "2026-05-20T10:55:06+09:00",
+      "type": "implementation",
+      "status": "testing",
+      "summary": "Loss-streak PROBATION softened into a reduced-size recovery lane while preserving daily cap, 2-10% change band, and compound weak intraday hard blocks; focused strategy guard and broader related test suites passed."
+    },
+    {
+      "at": "2026-05-20T10:55:25+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-20T10:55:37+09:00",
+      "type": "task_completed",
+      "status": "completed",
+      "summary": "Scanner/probation alignment, Kiwoom fill-price consistency, and softened consecutive-loss PROBATION recovery lane completed; tests, task harness verification, and runtime integrity checks passed."
+    },
+    {
+      "at": "2026-05-20T11:01:01+09:00",
+      "type": "runtime_verification",
+      "status": "completed",
+      "summary": "Final restart verified in tmux session momo-runtime-20260520e PID 64897: health OK, scheduler/agent OK, AUTONOMOUS/FULL, latest cycle 2026-05-20T10:59:11+09:00, pending orders 0, runtime integrity OK; open 376930 position remains unrealized negative."
+    },
+    {
+      "at": "2026-05-20T11:01:13+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-20T11:04:20+09:00",
+      "type": "runtime_verification",
+      "status": "blocked",
+      "summary": "11:00 cycle verified code path and scanner alignment: Tier2 approved BUY for 084650, but live persisted LOSS_STREAK_RECOVERY_MAX_DAILY_BUYS=1 blocked it as 1/1 after today's first buy; protected runtime setting approval is needed to align live cap with code default 2."
+    },
+    {
+      "at": "2026-05-20T14:52:59+09:00",
+      "type": "implementation",
+      "status": "implementing",
+      "summary": "User approved cleanup and live setting reset: remove remaining short-term wording from Tier1 stock analysis prompt and align live LOSS_STREAK_RECOVERY_MAX_DAILY_BUYS with code default."
+    },
+    {
+      "at": "2026-05-20T15:02:21+09:00",
+      "type": "runtime_verification",
+      "status": "completed",
+      "summary": "Live setting reset aligned LOSS_STREAK_RECOVERY_MAX_DAILY_BUYS=2, runtime restarted, new mid/long Tier1 prompt observed in live LLM activity, 084650 BUY order 0149110 confirmed 73 shares at 1363 KRW, pending/reconciliation/integrity checks OK."
+    },
+    {
+      "at": "2026-05-20T15:02:44+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-20T15:02:59+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-20T15:03:27+09:00",
+      "type": "task_completed",
+      "status": "completed",
+      "summary": "Completed live-setting alignment, prompt cleanup, runtime restart, confirmed 084650 buy execution, runtime integrity OK, focused tests and venv task-harness verification passed."
+    },
+    {
+      "at": "2026-05-20T15:08:06+09:00",
+      "type": "implementation",
+      "status": "implementing",
+      "summary": "Fixed remaining restart/runtime consistency gap: holdings check now restores persisted AI stop/take/trailing thresholds from confirmed open trades into in-memory event_detector after intraday restart, preventing fallback-to-default warnings for existing MID holdings."
+    },
+    {
+      "at": "2026-05-20T15:12:01+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-05-20T15:12:13+09:00",
+      "type": "task_completed",
+      "status": "completed",
+      "summary": "Completed scanner/probation alignment, live cap reset, mid-long prompt cleanup, intraday threshold restore, restarts and runtime verification; tests and task harness passed."
+    }
+  ]
+}
