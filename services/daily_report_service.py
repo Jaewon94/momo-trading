@@ -8,6 +8,7 @@ from analysis.llm.llm_factory import llm_factory
 from core.json_utils import parse_llm_json
 from core.database import AsyncSessionLocal
 from models.daily_report import DailyReport
+from repositories.account_equity_snapshot_repository import AccountEquitySnapshotRepository
 from repositories.agent_activity_repository import AgentActivityRepository
 from repositories.daily_report_repository import DailyReportRepository
 from repositories.trade_result_repository import TradeResultRepository
@@ -140,6 +141,30 @@ class DailyReportService:
                     if open_position_count == 0 and all_open:
                         # 종목 수 기준 (같은 종목 여러 BUY는 1종목)
                         open_position_count = len({t.stock_symbol for t in all_open})
+
+                    # 브로커 응답이 0/실패였더라도 그날의 마지막 account_equity_snapshot으로 보완.
+                    snapshot = None
+                    if self._needs_snapshot_fallback(
+                        unrealized_pnl=unrealized_pnl,
+                        open_position_count=open_position_count,
+                        total_asset=total_asset,
+                    ):
+                        snapshot_repo = AccountEquitySnapshotRepository(session)
+                        snapshot = await snapshot_repo.get_latest_by_trading_date(report_date)
+                    (
+                        unrealized_pnl,
+                        total_asset,
+                        cash,
+                        stock_value,
+                        open_position_count,
+                    ) = self._apply_snapshot_fallback(
+                        unrealized_pnl=unrealized_pnl,
+                        total_asset=total_asset,
+                        cash=cash,
+                        stock_value=stock_value,
+                        open_position_count=open_position_count,
+                        snapshot=snapshot,
+                    )
 
                     # LLM으로 리포트 생성
                     recent_summaries = "\n".join(
@@ -291,6 +316,38 @@ class DailyReportService:
             f"활동 {activity_count}건, 매수 {buy_count}건, 매도 {sell_count}건이 기록됐고 "
             f"현재 보유는 {open_position_count}종목입니다."
         )
+
+    @staticmethod
+    def _needs_snapshot_fallback(
+        *,
+        unrealized_pnl: float,
+        open_position_count: int,
+        total_asset: float,
+    ) -> bool:
+        if unrealized_pnl != 0.0:
+            return False
+        return open_position_count > 0 or total_asset == 0.0
+
+    @staticmethod
+    def _apply_snapshot_fallback(
+        *,
+        unrealized_pnl: float,
+        total_asset: float,
+        cash: float,
+        stock_value: float,
+        open_position_count: int,
+        snapshot,
+    ) -> tuple[float, float, float, float, int]:
+        if snapshot is None or unrealized_pnl != 0.0:
+            return unrealized_pnl, total_asset, cash, stock_value, open_position_count
+        unrealized_pnl = float(getattr(snapshot, "total_unrealized_pnl", 0.0) or 0.0)
+        if total_asset == 0.0:
+            total_asset = float(getattr(snapshot, "total_asset", 0.0) or 0.0)
+            cash = float(getattr(snapshot, "cash", 0.0) or 0.0)
+            stock_value = float(getattr(snapshot, "stock_value", 0.0) or 0.0)
+        if open_position_count == 0:
+            open_position_count = int(getattr(snapshot, "holding_count", 0) or 0)
+        return unrealized_pnl, total_asset, cash, stock_value, open_position_count
 
     def _build_strategy_stats_payload(
         self,
