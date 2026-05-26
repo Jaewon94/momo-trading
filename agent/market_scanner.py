@@ -8,6 +8,7 @@ from sqlalchemy import and_, select
 from analysis.feedback.performance_tracker import PerformanceTracker
 from analysis.llm.llm_factory import llm_factory
 from analysis.llm.prompts.market_scan import MARKET_SCAN_PROMPT, MARKET_SCAN_SYSTEM
+from core.config import settings
 from core.database import AsyncSessionLocal
 from models.decision_event import DecisionEvent
 from services.activity_logger import activity_logger
@@ -20,6 +21,8 @@ from trading.enums import ActivityPhase, ActivityType
 
 # 모의투자 매매불가 종목 필터 키워드
 _EXCLUDE_NAME_KEYWORDS = ("ETN", "스팩", "SPAC")
+_MID_LONG_PREFERRED_MAX_CHANGE_PCT = 12.0
+_POLICY_FALLBACK_BUY_TARGET = 3
 
 
 class MarketScanner:
@@ -196,6 +199,7 @@ class MarketScanner:
 
         data_elapsed = activity_logger.elapsed_ms(timer)
         logger.debug("MCP 데이터 수집 완료: {}ms", data_elapsed)
+        scanner_policy = await self._build_scanner_policy()
 
         scored_candidates = candidate_scoring_service.score_candidates(
             volume_rank=volume_rank,
@@ -205,6 +209,8 @@ class MarketScanner:
             available_cash=available_cash,
             max_candidates=8,
             cooldown_symbols=cooldown_symbols,
+            preferred_change_min_pct=scanner_policy.get("preferred_change_min_pct"),
+            preferred_change_max_pct=scanner_policy.get("preferred_change_max_pct"),
         )
         news_pressure_by_symbol = await self._get_candidate_news_pressures(scored_candidates)
         if news_pressure_by_symbol:
@@ -217,6 +223,8 @@ class MarketScanner:
                 max_candidates=8,
                 cooldown_symbols=cooldown_symbols,
                 news_pressure_by_symbol=news_pressure_by_symbol,
+                preferred_change_min_pct=scanner_policy.get("preferred_change_min_pct"),
+                preferred_change_max_pct=scanner_policy.get("preferred_change_max_pct"),
             )
         await self._record_scored_candidate_events(
             cycle_id=cycle_id,
@@ -226,12 +234,11 @@ class MarketScanner:
 
         # 2. AI 시장 분석 + 종목 선별 (통합 1회 호출)
         from util.time_util import now_kst
-        from core.config import settings as _settings
 
         now = now_kst()
         cutoff_time = now.replace(
-            hour=_settings.BUY_CUTOFF_HOUR,
-            minute=_settings.BUY_CUTOFF_MINUTE,
+            hour=settings.BUY_CUTOFF_HOUR,
+            minute=settings.BUY_CUTOFF_MINUTE,
             second=0, microsecond=0,
         )
         minutes_until_cutoff = max(0, int((cutoff_time - now).total_seconds() / 60))
@@ -249,6 +256,7 @@ class MarketScanner:
             holdings_data=self._format_holdings(holdings),
             holding_count=len(holdings),
             performance_summary=performance_summary,
+            scanner_policy=self._format_scanner_policy(scanner_policy),
             scored_candidates=self._format_scored_candidates(scored_candidates),
         )
 
@@ -266,7 +274,7 @@ class MarketScanner:
                 before = len(selected)
                 selected = [
                     s for s in selected
-                    if s.get("direction") != "BUY"
+                    if str(s.get("direction") or "BUY").upper() != "BUY"
                     or price_lookup.get(s.get("symbol", ""), 0) <= 0
                     or price_lookup[s["symbol"]] <= available_cash
                 ]
@@ -286,6 +294,18 @@ class MarketScanner:
                     continue
                 for key, value in market_data.items():
                     item.setdefault(key, value)
+
+            selected, policy_adjustments = self._apply_selection_policy(
+                selected,
+                scored_candidates,
+                scanner_policy=scanner_policy,
+            )
+            selected, fallback_adjustments = self._fill_policy_candidates(
+                selected,
+                scored_candidates,
+                scanner_policy=scanner_policy,
+            )
+            policy_adjustments.extend(fallback_adjustments)
 
             monitor_candidates = self._build_realtime_monitor_candidates(
                 selected,
@@ -328,6 +348,8 @@ class MarketScanner:
                     "scored_candidates": scored_candidates,
                     "cooldown_symbols": sorted(cooldown_symbols),
                     "news_pressure_by_symbol": news_pressure_by_symbol,
+                    "scanner_policy": scanner_policy,
+                    "selection_policy_adjustments": policy_adjustments,
                     "market_regime": parsed.get("market_regime", ""),
                     "market_analysis": market_analysis,
                     "available_cash": available_cash,
@@ -345,6 +367,8 @@ class MarketScanner:
                 "market_analysis": parsed.get("market_analysis", ""),
                 "leading_sectors": parsed.get("leading_sectors", []),
                 "scored_candidates": scored_candidates,
+                "scanner_policy": scanner_policy,
+                "selection_policy_adjustments": policy_adjustments,
                 "available_cash": available_cash,
                 "max_per_stock": max_per_stock,
                 "provider": provider,
@@ -361,6 +385,210 @@ class MarketScanner:
                 execution_time_ms=elapsed,
             )
             return {"selected": [], "market_summary": "스캔 실패", "available_cash": available_cash}
+
+    async def _build_scanner_policy(self) -> dict:
+        """현재 손실 복구/중장기 운용 방향을 스캐너 후보 정책으로 변환한다."""
+        consecutive_losses = await self._get_consecutive_losses()
+        max_losses = int(getattr(settings, "MAX_CONSECUTIVE_LOSSES", 0) or 0)
+        recovery_mode = str(
+            getattr(settings, "LOSS_STREAK_RECOVERY_MODE", "BLOCK_BUY") or "BLOCK_BUY"
+        ).upper()
+        probation_active = (
+            recovery_mode == "PROBATION"
+            and max_losses > 0
+            and consecutive_losses >= max_losses
+        )
+
+        probation_min = self._to_float(getattr(settings, "LOSS_STREAK_RECOVERY_MIN_CHANGE_PCT", 0.0))
+        probation_max = self._to_float(getattr(settings, "LOSS_STREAK_RECOVERY_MAX_CHANGE_PCT", 0.0))
+        preferred_min = probation_min if probation_active and probation_min > 0 else None
+        preferred_max = (
+            probation_max
+            if probation_active and probation_max > 0
+            else _MID_LONG_PREFERRED_MAX_CHANGE_PCT
+        )
+
+        return {
+            "mid_long_bias": True,
+            "recovery_mode": recovery_mode,
+            "probation_active": probation_active,
+            "consecutive_losses": consecutive_losses,
+            "max_consecutive_losses": max_losses,
+            "preferred_change_min_pct": preferred_min,
+            "preferred_change_max_pct": preferred_max,
+            "probation_min_change_pct": probation_min,
+            "probation_max_change_pct": probation_max,
+        }
+
+    async def _get_consecutive_losses(self) -> int:
+        try:
+            async with AsyncSessionLocal() as session:
+                tracker = PerformanceTracker(session)
+                return await tracker.get_consecutive_losses()
+        except Exception as exc:
+            logger.debug("연속 손실 조회 실패: {}", str(exc))
+            return 0
+
+    def _apply_selection_policy(
+        self,
+        selected: list[dict],
+        scored_candidates: list[dict],
+        *,
+        scanner_policy: dict,
+    ) -> tuple[list[dict], list[dict]]:
+        """LLM 선정 결과를 deterministic scanner policy에 맞춘다."""
+        scored_by_symbol = {
+            str(item.get("symbol") or "").strip(): item
+            for item in scored_candidates
+            if str(item.get("symbol") or "").strip()
+        }
+        preferred_min = scanner_policy.get("preferred_change_min_pct")
+        preferred_max = scanner_policy.get("preferred_change_max_pct")
+        probation_active = bool(scanner_policy.get("probation_active"))
+        filtered: list[dict] = []
+        adjustments: list[dict] = []
+        seen: set[str] = set()
+
+        for raw in selected:
+            item = dict(raw)
+            symbol = str(item.get("symbol") or "").strip()
+            if not symbol or symbol in seen:
+                continue
+            seen.add(symbol)
+            direction = str(item.get("direction") or "BUY").upper()
+            item["direction"] = direction
+            scored = scored_by_symbol.get(symbol) or {}
+
+            if direction == "BUY" and scored:
+                hinted_strategy = str(scored.get("strategy_type_hint") or "").strip()
+                if hinted_strategy:
+                    original_strategy = str(item.get("strategy_type") or "").strip()
+                    if original_strategy != hinted_strategy:
+                        item["strategy_type"] = hinted_strategy
+                        item["strategy_alignment"] = "DETERMINISTIC_HINT"
+                        adjustments.append(
+                            {
+                                "symbol": symbol,
+                                "action": "strategy_aligned",
+                                "from": original_strategy,
+                                "to": hinted_strategy,
+                            }
+                        )
+                item.setdefault("policy_buy_eligible", scored.get("policy_buy_eligible"))
+
+            if direction == "BUY" and probation_active:
+                change_rate = self._candidate_change_rate(item, scored)
+                if preferred_min is not None and change_rate < float(preferred_min):
+                    adjustments.append(
+                        {
+                            "symbol": symbol,
+                            "action": "buy_filtered",
+                            "reason": "PROBATION_CHANGE_BELOW_MIN",
+                            "change_rate": change_rate,
+                            "min_change_pct": preferred_min,
+                        }
+                    )
+                    continue
+                if preferred_max is not None and change_rate > float(preferred_max):
+                    adjustments.append(
+                        {
+                            "symbol": symbol,
+                            "action": "buy_filtered",
+                            "reason": "PROBATION_CHANGE_OVER_MAX",
+                            "change_rate": change_rate,
+                            "max_change_pct": preferred_max,
+                        }
+                    )
+                    continue
+                item["policy_buy_eligible"] = True
+
+            filtered.append(item)
+
+        return filtered, adjustments
+
+    def _fill_policy_candidates(
+        self,
+        selected: list[dict],
+        scored_candidates: list[dict],
+        *,
+        scanner_policy: dict,
+    ) -> tuple[list[dict], list[dict]]:
+        """PROBATION 중 LLM 선정이 모두 과열로 탈락하면 정책 적합 후보를 분석 대상으로 보강한다."""
+        if not bool(scanner_policy.get("probation_active")):
+            return selected, []
+
+        selected_items = list(selected)
+        selected_symbols = {
+            str(item.get("symbol") or "").strip()
+            for item in selected_items
+            if str(item.get("symbol") or "").strip()
+        }
+        buy_count = sum(
+            1
+            for item in selected_items
+            if str(item.get("direction") or "BUY").upper() == "BUY"
+        )
+        adjustments: list[dict] = []
+        preferred_min = scanner_policy.get("preferred_change_min_pct")
+        preferred_max = scanner_policy.get("preferred_change_max_pct")
+
+        for scored in scored_candidates:
+            if buy_count >= _POLICY_FALLBACK_BUY_TARGET:
+                break
+            symbol = str(scored.get("symbol") or "").strip()
+            if not symbol or symbol in selected_symbols:
+                continue
+            if scored.get("hold_candidate") or not scored.get("buyable", True):
+                continue
+            if scored.get("policy_buy_eligible") is False:
+                continue
+            change_rate = self._candidate_change_rate(scored, scored)
+            if preferred_min is not None and change_rate < float(preferred_min):
+                continue
+            if preferred_max is not None and change_rate > float(preferred_max):
+                continue
+
+            selected_symbols.add(symbol)
+            buy_count += 1
+            selected_items.append(
+                {
+                    "symbol": symbol,
+                    "name": scored.get("name", symbol),
+                    "strategy_type": scored.get("strategy_type_hint") or "STABLE_SHORT",
+                    "reason": "정책 적합 deterministic 후보 보강",
+                    "direction": "BUY",
+                    "price": scored.get("price"),
+                    "change_rate": scored.get("change_rate"),
+                    "volume": scored.get("volume"),
+                    "scanner_score": scored.get("score"),
+                    "scanner_sources": scored.get("sources", []),
+                    "scanner_reason_codes": scored.get("reason_codes", []),
+                    "news_negative_pressure": scored.get("news_negative_pressure"),
+                    "policy_buy_eligible": True,
+                    "strategy_alignment": "DETERMINISTIC_FALLBACK",
+                }
+            )
+            adjustments.append(
+                {
+                    "symbol": symbol,
+                    "action": "buy_fallback_added",
+                    "reason": "PROBATION_POLICY_ELIGIBLE",
+                    "change_rate": change_rate,
+                    "scanner_score": scored.get("score"),
+                }
+            )
+
+        return selected_items, adjustments
+
+    @staticmethod
+    def _candidate_change_rate(item: dict, scored: dict | None = None) -> float:
+        for source in (item, scored or {}):
+            value = source.get("change_rate")
+            try:
+                return float(str(value).replace(",", ""))
+            except (TypeError, ValueError):
+                continue
+        return 0.0
 
     async def _get_performance_summary(self) -> str:
         """과거 매매 성과 요약 텍스트 생성"""
@@ -484,6 +712,30 @@ class MarketScanner:
             )
         return "\n".join(lines)
 
+    def _format_scanner_policy(self, policy: dict) -> str:
+        lines = [
+            "운용 방향: 초단기/단기 비중 축소, MID/LONG 심층 분석 우선",
+            "전략 의미: STABLE_SHORT/AGGRESSIVE_SHORT는 legacy 실행·위험 프로파일이며 보유기간 자체가 아님",
+            f"선호 등락률 상한: +{float(policy.get('preferred_change_max_pct') or 0.0):.2f}%",
+            "AGGRESSIVE_SHORT 사용: Deterministic 후보 점수의 strategy=AGGRESSIVE_SHORT인 경우만 허용",
+        ]
+        if bool(policy.get("probation_active")):
+            min_change = policy.get("preferred_change_min_pct")
+            max_change = policy.get("preferred_change_max_pct")
+            lines.append(
+                "현재 상태: 연속 손실 PROBATION 활성 "
+                f"({policy.get('consecutive_losses')}회 >= {policy.get('max_consecutive_losses')}회)"
+            )
+            lines.append(
+                f"BUY 후보 필수 조건: 전일대비 +{float(min_change or 0.0):.2f}%"
+                f"~+{float(max_change or 0.0):.2f}% 범위만 선택"
+            )
+        else:
+            lines.append(
+                "현재 상태: PROBATION 비활성, 그래도 과열 급등 추격보다 중기·장기 후보 우선"
+            )
+        return "\n".join(f"- {line}" for line in lines)
+
     def _format_scored_candidates(self, candidates: list[dict]) -> str:
         if not candidates:
             return "후보 없음"
@@ -495,12 +747,20 @@ class MarketScanner:
                 f"{index}. {item.get('name')}({item.get('symbol')}) "
                 f"score={item.get('score')} price={item.get('price')} "
                 f"chg={item.get('change_rate')}% buyable={item.get('buyable')} "
+                f"policy_eligible={item.get('policy_buy_eligible')} "
                 f"strategy={item.get('strategy_type_hint', '')} "
                 f"sources={','.join(item.get('sources', []))} "
                 f"codes={reason_codes} "
                 f"reasons={reasons}"
             )
         return "\n".join(lines)
+
+    @staticmethod
+    def _to_float(value) -> float:
+        try:
+            return float(str(value).replace(",", ""))
+        except (TypeError, ValueError):
+            return 0.0
 
     def _parse_json_response(self, text: str) -> dict:
         from core.json_utils import parse_llm_json

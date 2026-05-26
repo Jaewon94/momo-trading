@@ -105,6 +105,34 @@ def test_candidate_scoring_service_keeps_overheated_surge_stable() -> None:
     assert result[0]["strategy_type_hint"] == "STABLE_SHORT"
 
 
+def test_candidate_scoring_service_prioritizes_policy_eligible_moderate_momentum() -> None:
+    service = CandidateScoringService()
+
+    result = service.score_candidates(
+        volume_rank=[
+            {"symbol": "011000", "name": "진원생명과학", "price": 1120, "change_rate": 21.2, "volume": 40000000},
+            {"symbol": "005930", "name": "삼성전자", "price": 71000, "change_rate": 5.2, "volume": 5000000},
+        ],
+        surge_data=[
+            {"symbol": "011000", "name": "진원생명과학", "price": 1120, "change_rate": 21.2, "volume": 40000000},
+        ],
+        drop_data=[],
+        holdings=[],
+        available_cash=300000,
+        max_candidates=2,
+        preferred_change_min_pct=2.0,
+        preferred_change_max_pct=10.0,
+    )
+
+    assert result[0]["symbol"] == "005930"
+    assert result[0]["policy_buy_eligible"] is True
+    assert "POLICY_CHANGE_WINDOW" in result[0]["reason_codes"]
+    overheated = next(item for item in result if item["symbol"] == "011000")
+    assert overheated["policy_buy_eligible"] is False
+    assert "POLICY_CHANGE_OVER_MAX" in overheated["reason_codes"]
+    assert overheated["strategy_type_hint"] == "STABLE_SHORT"
+
+
 def test_candidate_scoring_service_marks_only_confirmed_momentum_aggressive() -> None:
     service = CandidateScoringService()
 

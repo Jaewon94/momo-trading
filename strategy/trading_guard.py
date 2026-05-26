@@ -141,6 +141,7 @@ class TradingGuard:
     ) -> dict:
         mode = str(getattr(settings, "LOSS_STREAK_RECOVERY_MODE", "BLOCK_BUY") or "BLOCK_BUY").upper()
         reason = f"연속 손실 한도 도달 ({consecutive_losses}회 >= {max_losses}회)"
+        probation_cautions: list[dict] = []
 
         if mode == "OFF":
             return {
@@ -186,12 +187,6 @@ class TradingGuard:
                     "trigger": "CONSECUTIVE_LOSSES_PROBATION",
                     "reason": f"{reason}, probation 일일 매수 한도 도달 ({today_trade_count}/{max_daily_buys})",
                 }
-            if current_holding_count > 0:
-                return {
-                    "action": "BLOCK",
-                    "trigger": "CONSECUTIVE_LOSSES_PROBATION",
-                    "reason": f"{reason}, probation은 무보유 상태에서만 허용",
-                }
 
             min_change = float(getattr(settings, "LOSS_STREAK_RECOVERY_MIN_CHANGE_PCT", 0.0) or 0.0)
             max_change = float(getattr(settings, "LOSS_STREAK_RECOVERY_MAX_CHANGE_PCT", 0.0) or 0.0)
@@ -211,50 +206,54 @@ class TradingGuard:
 
             pattern = str(candidate_pattern or "").upper()
             if "UPTREND" in pattern:
-                return {
-                    "action": "BLOCK",
-                    "trigger": "CONSECUTIVE_LOSSES_PROBATION",
-                    "reason": f"{reason}, probation 최근 손실 반복 패턴 제외 ({candidate_pattern})",
-                }
+                probation_cautions.append({
+                    "code": "RECENT_LOSS_PATTERN",
+                    "reason": f"최근 손실 반복 패턴 주의 ({candidate_pattern})",
+                })
 
             intra_direction = str(intraday_direction or "").upper()
             vwap_position = str(intraday_vwap_position or "").upper()
             volume_trend = str(intraday_volume_trend or "").upper()
-            weak_intraday = (
-                intra_direction == "BEARISH"
-                or vwap_position == "BELOW_VWAP"
-                or volume_trend == "DECREASING"
-            )
-            if weak_intraday:
-                weak_parts = [
-                    part for part in [
-                        f"분봉 {intra_direction}" if intra_direction else "",
-                        vwap_position if vwap_position else "",
-                        f"거래량 {volume_trend}" if volume_trend else "",
-                    ]
-                    if part
+            weak_parts = [
+                part for part in [
+                    f"분봉 {intra_direction}" if intra_direction == "BEARISH" else "",
+                    vwap_position if vwap_position == "BELOW_VWAP" else "",
+                    f"거래량 {volume_trend}" if volume_trend == "DECREASING" else "",
                 ]
+                if part
+            ]
+            if len(weak_parts) >= 2:
                 return {
                     "action": "BLOCK",
                     "trigger": "CONSECUTIVE_LOSSES_PROBATION",
                     "reason": f"{reason}, probation 장중 확인 부족 ({', '.join(weak_parts)})",
                 }
+            if weak_parts:
+                probation_cautions.append({
+                    "code": "WEAK_INTRADAY_COMPONENT",
+                    "reason": f"장중 확인 일부 약함 ({', '.join(weak_parts)})",
+                })
 
         multiplier = min(
             max(float(getattr(settings, "LOSS_STREAK_RECOVERY_SIZE_MULTIPLIER", 0.2) or 0.2), 0.01),
             1.0,
         )
+        caution_text = ""
+        if mode == "PROBATION" and probation_cautions:
+            caution_text = " · " + " / ".join(item["reason"] for item in probation_cautions)
         return {
             "action": "ALLOW",
             "warning": {
                 "trigger": "CONSECUTIVE_LOSSES",
-                "reason": f"{reason}, {mode} 복구 모드로 축소 진입",
+                "reason": f"{reason}, {mode} 복구 모드로 축소 진입{caution_text}",
                 "recovery_mode": mode,
                 "consecutive_losses": consecutive_losses,
                 "max_losses": max_losses,
                 "position_size_multiplier": multiplier,
                 "max_order_krw": int(getattr(settings, "LOSS_STREAK_RECOVERY_MAX_ORDER_KRW", 0) or 0),
                 "max_position_pct": float(getattr(settings, "LOSS_STREAK_RECOVERY_MAX_POSITION_PCT", 0.0) or 0.0),
+                "current_holding_count": current_holding_count,
+                "probation_cautions": probation_cautions if mode == "PROBATION" else [],
                 "candidate_change_rate": candidate_change_rate,
                 "candidate_pattern": candidate_pattern,
                 "intraday_direction": intraday_direction,

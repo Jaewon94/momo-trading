@@ -1,6 +1,7 @@
 import pytest
 from types import SimpleNamespace
 import asyncio
+import json
 
 from core.events import Event, EventType
 from scheduler.scheduler import TradingScheduler
@@ -1277,6 +1278,80 @@ async def test_holdings_check_returns_early_when_no_holdings_exist(monkeypatch) 
 
 
 @pytest.mark.asyncio
+async def test_holdings_check_restores_persisted_ai_exit_thresholds_after_restart(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    logs: list[str] = []
+    restored: list[tuple[str, dict]] = []
+    holding = SimpleNamespace(symbol="005930", name="삼성전자", quantity=2, avg_buy_price=70_000)
+    trade_result = SimpleNamespace(
+        stock_symbol="005930",
+        strategy_type="STABLE_SHORT",
+        ai_stop_loss_price=68_000,
+        ai_target_price=75_000,
+        notes='{"trade_horizon":"MID","active_trailing_stop_pct":4.5}',
+    )
+    threshold_state = {
+        "005930": SimpleNamespace(stop_loss=0.0, take_profit=0.0, trailing_stop_pct=0.0)
+    }
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_all_open(self):
+            return [trade_result]
+
+    async def fake_get_holdings() -> list:
+        return [holding]
+
+    async def fake_update_realtime_subscriptions() -> None:
+        return None
+
+    async def fake_fetch_current_price(_symbol: str) -> float:
+        return 71_000
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append(args[2])
+
+    def fake_get_thresholds(symbol: str):
+        return threshold_state[symbol]
+
+    def fake_set_thresholds(symbol: str, **kwargs) -> None:
+        restored.append((symbol, kwargs))
+        th = threshold_state[symbol]
+        for key, value in kwargs.items():
+            setattr(th, key, value)
+
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_automated_trading_session", lambda *_args: True)
+    monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
+    monkeypatch.setattr(scheduler, "_update_realtime_subscriptions", fake_update_realtime_subscriptions)
+    monkeypatch.setattr(scheduler, "_fetch_current_price", fake_fetch_current_price)
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("util.time_util.now_kst", lambda: __import__("datetime").datetime(2026, 4, 2, 14, 0))
+    monkeypatch.setattr("realtime.event_detector.event_detector.get_thresholds", fake_get_thresholds)
+    monkeypatch.setattr("realtime.event_detector.event_detector.set_thresholds", fake_set_thresholds)
+    monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
+
+    await scheduler._holdings_check()
+
+    assert restored == [
+        ("005930", {"stop_loss": 68_000.0, "take_profit": 75_000.0, "trailing_stop_pct": 4.5})
+    ]
+    assert threshold_state["005930"].stop_loss == 68_000.0
+    assert threshold_state["005930"].take_profit == 75_000.0
+    assert any("AI 손절/익절 임계값 복원" in message for message in logs)
+    assert all("AI 손절/익절 미설정" not in message for message in logs)
+
+
+@pytest.mark.asyncio
 async def test_holdings_check_executes_sell_and_triggers_rescan(monkeypatch) -> None:
     scheduler = TradingScheduler()
     logs: list[str] = []
@@ -2410,6 +2485,157 @@ async def test_smart_liquidation_respects_explicit_llm_sell_decision(monkeypatch
     assert to_sell == [holding]
     assert to_hold == []
     assert "SELL" in logs[0]
+
+
+@pytest.mark.asyncio
+async def test_smart_liquidation_treats_llm_extend_as_hold_and_updates_notes(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    logs: list[str] = []
+    holding = SimpleNamespace(symbol="005930", name="삼성전자", quantity=2, avg_buy_price=70_000)
+    trade_result = SimpleNamespace(
+        stock_name="삼성전자",
+        strategy_type="STABLE_SHORT",
+        ai_confidence=0.82,
+        ai_target_price=82_000,
+        ai_stop_loss_price=66_000,
+        entry_at=None,
+        created_at=None,
+        notes='{"trade_horizon":"MID"}',
+    )
+
+    async def fake_collect_holdings_data(_sellable):
+        return (
+            [{
+                "symbol": "005930",
+                "stock_name": "삼성전자",
+                "strategy_type": "STABLE_SHORT",
+                "pnl_rate": 4.2,
+                "hold_days": 15,
+                "max_hold_days": 15,
+                "confidence": 0.82,
+                "target_price": 82_000,
+                "stop_loss_price": 66_000,
+            }],
+            {"005930": (holding, trade_result, 73_000)},
+            [],
+        )
+
+    async def fake_generate_tier1(prompt, system_prompt=None):
+        return (
+            '{"decisions":[{"symbol":"005930","action":"EXTEND","reason":"추세와 목표가 여유 유지","confidence":0.81}]}',
+            "CODEX",
+        )
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append(args[2])
+
+    async def fake_apply_extension(*, symbol, trade_result, decision, hold_days):
+        from strategy.holding_policy import apply_hold_extension_decision
+
+        update = apply_hold_extension_decision(
+            trade_result,
+            decision=decision,
+            hold_days=hold_days,
+            config=SimpleNamespace(
+                MAX_HOLD_DAYS_SHORT=5,
+                MAX_HOLD_DAYS_MID=15,
+                MAX_HOLD_DAYS_LONG=30,
+                MAX_HOLD_EXTENSION_DAYS=15,
+                MAX_HOLD_TOTAL_DAYS=60,
+                MAX_HOLD_DAYS_STABLE=15,
+                MAX_HOLD_DAYS_AGGRESSIVE=10,
+            ),
+        )
+        if update:
+            trade_result.notes = update.updated_notes
+        return update
+
+    monkeypatch.setattr(scheduler, "_collect_holdings_data", fake_collect_holdings_data)
+    monkeypatch.setattr(scheduler, "_apply_hold_extension_decision", fake_apply_extension)
+    monkeypatch.setattr("analysis.llm.prompts.overnight_hold.build_overnight_prompt", lambda data, regime: "prompt")
+    monkeypatch.setattr("analysis.llm.llm_factory.llm_factory.generate_tier1", fake_generate_tier1)
+    monkeypatch.setattr(
+        "core.json_utils.parse_llm_json",
+        lambda text: {"decisions": [{"symbol": "005930", "action": "EXTEND", "reason": "추세와 목표가 여유 유지", "confidence": 0.81}]},
+    )
+    monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.trading_agent.trading_agent._market_regime", "BULL")
+
+    to_sell, to_hold = await scheduler._smart_liquidation([holding])
+
+    payload = json.loads(trade_result.notes)
+    assert to_sell == []
+    assert to_hold == [holding]
+    assert payload["trade_horizon"] == "LONG"
+    assert payload["hold_extension_until_days"] == 30
+    assert payload["hold_extension_count"] == 1
+    assert "EXTEND→HOLD" in logs[0]
+    assert "다음 심사 30일" in logs[0]
+
+
+@pytest.mark.asyncio
+async def test_smart_liquidation_rejects_extend_when_hard_exit_condition_exists(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    logs: list[str] = []
+    holding = SimpleNamespace(symbol="005930", name="삼성전자", quantity=2, avg_buy_price=70_000)
+    trade_result = SimpleNamespace(
+        stock_name="삼성전자",
+        strategy_type="STABLE_SHORT",
+        ai_confidence=0.82,
+        ai_target_price=73_000,
+        ai_stop_loss_price=66_000,
+        entry_at=None,
+        created_at=None,
+        notes='{"trade_horizon":"MID"}',
+    )
+
+    async def fake_collect_holdings_data(_sellable):
+        return (
+            [{
+                "symbol": "005930",
+                "stock_name": "삼성전자",
+                "strategy_type": "STABLE_SHORT",
+                "pnl_rate": 4.2,
+                "hold_days": 15,
+                "max_hold_days": 15,
+                "confidence": 0.82,
+                "target_price": 73_000,
+                "stop_loss_price": 66_000,
+            }],
+            {"005930": (holding, trade_result, 73_000)},
+            [],
+        )
+
+    async def fake_generate_tier1(prompt, system_prompt=None):
+        return (
+            '{"decisions":[{"symbol":"005930","action":"EXTEND","reason":"더 상승 가능","confidence":0.81}]}',
+            "CODEX",
+        )
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append(args[2])
+
+    async def fail_apply_extension(**kwargs):
+        raise AssertionError("hard reject should not persist extension")
+
+    monkeypatch.setattr(scheduler, "_collect_holdings_data", fake_collect_holdings_data)
+    monkeypatch.setattr(scheduler, "_apply_hold_extension_decision", fail_apply_extension)
+    monkeypatch.setattr("analysis.llm.prompts.overnight_hold.build_overnight_prompt", lambda data, regime: "prompt")
+    monkeypatch.setattr("analysis.llm.llm_factory.llm_factory.generate_tier1", fake_generate_tier1)
+    monkeypatch.setattr(
+        "core.json_utils.parse_llm_json",
+        lambda text: {"decisions": [{"symbol": "005930", "action": "EXTEND", "reason": "더 상승 가능", "confidence": 0.81}]},
+    )
+    monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.trading_agent.trading_agent._market_regime", "BULL")
+
+    to_sell, to_hold = await scheduler._smart_liquidation([holding])
+
+    assert to_sell == [holding]
+    assert to_hold == []
+    assert "연장 거부" in logs[0]
+    assert "목표가" in logs[0]
+    assert trade_result.notes == '{"trade_horizon":"MID"}'
 
 
 @pytest.mark.asyncio

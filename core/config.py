@@ -183,6 +183,8 @@ class Settings(BaseSettings):
     MAX_HOLD_DAYS_SHORT: int = 5  # SHORT 호라이즌 최대 보유일
     MAX_HOLD_DAYS_MID: int = 15  # MID 호라이즌 최대 보유일
     MAX_HOLD_DAYS_LONG: int = 30  # LONG 호라이즌 최대 보유일
+    MAX_HOLD_EXTENSION_DAYS: int = 15  # LONG 최대 도달 후 AI 연장심사 단위
+    MAX_HOLD_TOTAL_DAYS: int = 60  # AI 연장을 포함한 총 보유 상한
     MAX_HOLD_DAYS_STABLE: int = 15  # legacy STABLE_SHORT 기본 최대 보유일
     MAX_HOLD_DAYS_AGGRESSIVE: int = 10  # legacy AGGRESSIVE_SHORT 기본 최대 보유일
     MAX_DAILY_TRADES: int = 0  # 0 = 무제한
@@ -208,7 +210,7 @@ class Settings(BaseSettings):
     BUY_GUARD_LLM_RUNTIME_BLOCK_ENABLED: bool = True
     MAX_CONSECUTIVE_LOSSES: int = 4
     LOSS_STREAK_RECOVERY_MODE: str = "PROBATION"  # OFF | BLOCK_BUY | SHADOW | REDUCE_SIZE | PROBATION
-    LOSS_STREAK_RECOVERY_MAX_DAILY_BUYS: int = 1
+    LOSS_STREAK_RECOVERY_MAX_DAILY_BUYS: int = 2
     LOSS_STREAK_RECOVERY_MAX_ORDER_KRW: int = 1_000_000
     LOSS_STREAK_RECOVERY_MAX_POSITION_PCT: float = 0.5
     LOSS_STREAK_RECOVERY_SIZE_MULTIPLIER: float = 0.2

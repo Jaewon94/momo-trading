@@ -139,12 +139,59 @@ class TradingScheduler:
         return True, "first_observation"
 
     @staticmethod
-    def _trade_horizon_from_result(tr) -> str:
+    def _trade_notes_dict(tr) -> dict:
         notes = str(getattr(tr, "notes", "") or "")
         try:
             parsed = json.loads(notes)
         except (TypeError, ValueError):
-            parsed = {}
+            try:
+                parsed, _end_index = json.JSONDecoder().raw_decode(notes.strip())
+            except (TypeError, ValueError):
+                return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    @staticmethod
+    def _positive_float(value) -> float | None:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
+
+    @classmethod
+    def _persisted_threshold_kwargs(cls, tr, *, current_thresholds=None) -> dict[str, float]:
+        """Restore persisted AI exit thresholds after an intraday restart.
+
+        `event_detector` is in-memory, while open-position AI stop/take values are
+        persisted on TradeResult rows. A restart during market hours should not
+        downgrade those positions to default stop/take rules until premarket restore.
+        """
+        if tr is None:
+            return {}
+
+        kwargs: dict[str, float] = {}
+        current_stop = float(getattr(current_thresholds, "stop_loss", 0.0) or 0.0)
+        current_take = float(getattr(current_thresholds, "take_profit", 0.0) or 0.0)
+        current_trailing = float(getattr(current_thresholds, "trailing_stop_pct", 0.0) or 0.0)
+
+        stop_loss = cls._positive_float(getattr(tr, "ai_stop_loss_price", None))
+        if current_stop <= 0 and stop_loss is not None:
+            kwargs["stop_loss"] = stop_loss
+
+        take_profit = cls._positive_float(getattr(tr, "ai_target_price", None))
+        if current_take <= 0 and take_profit is not None:
+            kwargs["take_profit"] = take_profit
+
+        notes = cls._trade_notes_dict(tr)
+        trailing_stop = cls._positive_float(notes.get("active_trailing_stop_pct"))
+        if current_trailing <= 0 and trailing_stop is not None:
+            kwargs["trailing_stop_pct"] = trailing_stop
+
+        return kwargs
+
+    @staticmethod
+    def _trade_horizon_from_result(tr) -> str:
+        parsed = TradingScheduler._trade_notes_dict(tr)
         if isinstance(parsed, dict):
             horizon = str(parsed.get("trade_horizon") or "").upper()
             if horizon in {TradeHorizon.SHORT, TradeHorizon.MID, TradeHorizon.LONG}:
@@ -1195,6 +1242,23 @@ class TradingScheduler:
                 th = event_detector.get_thresholds(symbol)
                 tr = open_map.get(symbol)
                 horizon = self._trade_horizon_from_result(tr) if tr else TradeHorizon.MID
+                restored_thresholds = self._persisted_threshold_kwargs(
+                    tr,
+                    current_thresholds=th,
+                )
+                if restored_thresholds:
+                    event_detector.set_thresholds(symbol, **restored_thresholds)
+                    th = event_detector.get_thresholds(symbol)
+                    await activity_logger.log(
+                        ActivityType.HOLDINGS_CHECK,
+                        ActivityPhase.PROGRESS,
+                        f"♻️ {h.name}({symbol}) AI 손절/익절 임계값 복원",
+                        symbol=symbol,
+                        detail={
+                            "action": "RESTORE_AI_EXIT_THRESHOLDS",
+                            **restored_thresholds,
+                        },
+                    )
 
                 if th.stop_loss <= 0 and th.take_profit <= 0:
                     alerts.append(f"⚠️ {h.name}({symbol}): AI 손절/익절 미설정 — 기본값 적용 중")
@@ -1717,7 +1781,11 @@ class TradingScheduler:
         from core.database import AsyncSessionLocal
         from realtime.event_detector import event_detector
         from repositories.trade_result_repository import TradeResultRepository
-        from strategy.holding_policy import _calc_hold_days, _get_max_hold_days_for_trade
+        from strategy.holding_policy import (
+            _calc_hold_days,
+            _get_max_hold_days_for_trade,
+            get_hold_extension_status,
+        )
 
         holdings_data: list[dict] = []
         holdings_map: dict = {}
@@ -1772,6 +1840,7 @@ class TradingScheduler:
                     pnl_rate = (current_price - avg_price) / avg_price * 100 if avg_price > 0 else 0.0
                     hold_days = _calc_hold_days(trade_result)
                     max_hold_days = _get_max_hold_days_for_trade(trade_result, settings)
+                    hold_extension_status = get_hold_extension_status(trade_result, settings)
 
                     # 현재 event_detector 활성 임계값
                     th = event_detector.get_thresholds(symbol)
@@ -1794,6 +1863,7 @@ class TradingScheduler:
                         "target_price": trade_result.ai_target_price,
                         "stop_loss_price": trade_result.ai_stop_loss_price,
                         "strategy_type": trade_result.strategy_type or "N/A",
+                        **hold_extension_status,
                         "active_stop_loss": th.stop_loss,
                         "active_take_profit": th.take_profit,
                         **news_context,
@@ -1945,6 +2015,73 @@ class TradingScheduler:
         except Exception as exc:
             logger.debug("보유 재평가 decision event 기록 실패 (무시): {}", str(exc))
 
+    @staticmethod
+    def _hold_extension_hard_reject_reason(data: dict, current_price: float) -> str:
+        pnl_rate = float(data.get("pnl_rate") or 0.0)
+        if pnl_rate < -3.0:
+            return f"손실 과대 ({pnl_rate:+.1f}% < -3%)"
+
+        confidence = float(data.get("confidence") or 0.0)
+        if confidence < 0.45:
+            return f"AI 신뢰도 부족 ({confidence:.2f} < 0.45)"
+
+        for key, label in (
+            ("stop_loss_price", "AI 손절가"),
+            ("active_stop_loss", "활성 손절가"),
+        ):
+            stop_price = float(data.get(key) or 0.0)
+            if stop_price > 0 and current_price <= stop_price:
+                return f"{label} 돌파/근접 (현재 {current_price:,.0f} ≤ {stop_price:,.0f})"
+
+        for key, label in (
+            ("target_price", "AI 목표가"),
+            ("active_take_profit", "활성 익절가"),
+        ):
+            target_price = float(data.get(key) or 0.0)
+            if target_price > 0 and current_price >= target_price:
+                return f"{label} 도달 (현재 {current_price:,.0f} ≥ {target_price:,.0f})"
+
+        return ""
+
+    async def _apply_hold_extension_decision(
+        self,
+        *,
+        symbol: str,
+        trade_result,
+        decision: dict,
+        hold_days: int,
+    ):
+        from strategy.holding_policy import apply_hold_extension_decision
+        from util.time_util import now_kst
+
+        update = apply_hold_extension_decision(
+            trade_result,
+            decision=decision,
+            hold_days=hold_days,
+            config=settings,
+            source="LLM",
+            reviewed_at=now_kst(),
+        )
+        if update is None:
+            return None
+
+        trade_result.notes = update.updated_notes
+        try:
+            from core.database import AsyncSessionLocal
+            from repositories.trade_result_repository import TradeResultRepository
+
+            async with AsyncSessionLocal() as session:
+                repo = TradeResultRepository(session)
+                open_buy = await repo.get_open_buy(symbol)
+                if open_buy:
+                    open_buy.notes = update.updated_notes
+                    await session.flush()
+                    await session.commit()
+        except Exception as exc:
+            logger.warning("보유 연장 notes DB 반영 오류 {}: {}", symbol, str(exc))
+
+        return update
+
     async def _smart_liquidation(self, sellable: list) -> tuple[list, list]:
         """스윙 모드: LLM Tier1 기반 종목별 HOLD/SELL 판정
 
@@ -2047,6 +2184,8 @@ class TradingScheduler:
                                 "action": d.get("action", "SELL").upper(),
                                 "reason": d.get("reason", ""),
                                 "confidence": d.get("confidence", 0.0),
+                                "extend_horizon": d.get("extend_horizon"),
+                                "extension_days": d.get("extension_days"),
                             }
 
             logger.info(
@@ -2104,6 +2243,44 @@ class TradingScheduler:
                         f"  - {stock_name}({symbol}): HOLD — {reason} "
                         f"(AI 신뢰도: {conf:.2f})"
                     )
+                elif action == "EXTEND":
+                    hard_reject = self._hold_extension_hard_reject_reason(data, current_price)
+                    if hard_reject:
+                        to_sell.append(h)
+                        log_lines.append(
+                            f"  - {stock_name}({symbol}): SELL — 연장 거부: {hard_reject} "
+                            f"(AI 신뢰도: {conf:.2f})"
+                        )
+                        logger.info("스마트 청산 EXTEND 하드가드 거부 → SELL: {} — {}", symbol, hard_reject)
+                        continue
+
+                    try:
+                        update = await self._apply_hold_extension_decision(
+                            symbol=symbol,
+                            trade_result=trade_result,
+                            decision=decision,
+                            hold_days=int(data.get("hold_days") or 0),
+                        )
+                    except ValueError as exc:
+                        to_sell.append(h)
+                        log_lines.append(
+                            f"  - {stock_name}({symbol}): SELL — 연장 불가: {str(exc)} "
+                            f"(AI 신뢰도: {conf:.2f})"
+                        )
+                        logger.info("스마트 청산 EXTEND 거부 → SELL: {} — {}", symbol, str(exc))
+                    else:
+                        to_hold.append(h)
+                        if update is None:
+                            log_lines.append(
+                                f"  - {stock_name}({symbol}): EXTEND→HOLD — {reason} "
+                                f"(아직 연장 기록 시점 아님, AI 신뢰도: {conf:.2f})"
+                            )
+                        else:
+                            log_lines.append(
+                                f"  - {stock_name}({symbol}): EXTEND→HOLD — {reason} "
+                                f"({update.current_horizon}→{update.next_horizon}, "
+                                f"다음 심사 {update.extension_until_days}일, AI 신뢰도: {conf:.2f})"
+                            )
                 else:
                     to_sell.append(h)
                     log_lines.append(

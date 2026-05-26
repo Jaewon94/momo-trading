@@ -309,7 +309,7 @@ async def test_kiwoom_adapter_rounds_krx_sell_limit_price_down_to_tick() -> None
 
 
 @pytest.mark.asyncio
-async def test_kiwoom_adapter_infers_filled_buy_from_holdings_when_order_leaves_pending_book() -> None:
+async def test_kiwoom_adapter_infers_buy_fill_price_from_holdings_when_order_leaves_pending_book() -> None:
     account_client = MutableAccountClient(
         holdings=[],
         pending_orders=[],
@@ -349,7 +349,59 @@ async def test_kiwoom_adapter_infers_filled_buy_from_holdings_when_order_leaves_
     assert status.symbol == "005930"
     assert status.filled_qty == 3
     assert status.remaining_qty == 0
-    assert status.filled_price == 72_500
+    assert status.filled_price == 72_400
+
+
+@pytest.mark.asyncio
+async def test_kiwoom_adapter_infers_scale_in_fill_price_from_blended_holding_average() -> None:
+    account_client = MutableAccountClient(
+        holdings=[
+            HoldingInfo(
+                symbol="005930",
+                name="삼성전자",
+                quantity=5,
+                avg_buy_price=70_000,
+                current_price=70_000,
+                pnl=0,
+                pnl_rate=0,
+            )
+        ],
+        pending_orders=[],
+    )
+    order_executor = FakeOrderExecutor()
+    adapter = KiwoomBrokerAdapter(
+        account_client=account_client,
+        market_data_client=FakeMarketDataClient(),
+        order_executor=order_executor,
+    )
+    request = OrderRequest(
+        symbol="005930",
+        market=Market.KRX,
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        quantity=3,
+        price=72_500,
+    )
+
+    result = await adapter.place_order(request)
+    account_client.holdings = [
+        HoldingInfo(
+            symbol="005930",
+            name="삼성전자",
+            quantity=8,
+            avg_buy_price=70_900,
+            current_price=70_900,
+            pnl=0,
+            pnl_rate=0,
+        )
+    ]
+
+    status = await adapter.get_order_status(result.order_id or "")
+
+    assert status is not None
+    assert status.filled_qty == 3
+    assert status.remaining_qty == 0
+    assert status.filled_price == 72_400
 
 
 @pytest.mark.asyncio

@@ -18,6 +18,7 @@ class _Candidate:
     sources: set[str] = field(default_factory=set)
     hold_candidate: bool = False
     buyable: bool = True
+    policy_buy_eligible: bool = True
 
 
 class CandidateScoringService:
@@ -32,6 +33,8 @@ class CandidateScoringService:
         max_candidates: int = 8,
         cooldown_symbols: set[str] | None = None,
         news_pressure_by_symbol: dict[str, float] | None = None,
+        preferred_change_min_pct: float | None = None,
+        preferred_change_max_pct: float | None = None,
     ) -> list[dict[str, Any]]:
         candidates: dict[str, _Candidate] = {}
         cooldown_set = {str(symbol).strip() for symbol in (cooldown_symbols or set()) if str(symbol).strip()}
@@ -40,6 +43,8 @@ class CandidateScoringService:
             for symbol, value in (news_pressure_by_symbol or {}).items()
             if str(symbol).strip()
         }
+        preferred_min = self._positive_or_none(preferred_change_min_pct)
+        preferred_max = self._positive_or_none(preferred_change_max_pct)
 
         self._merge_rows(candidates, volume_rank or [], source="volume_rank")
         self._merge_rows(candidates, surge_data or [], source="surge_data")
@@ -66,9 +71,16 @@ class CandidateScoringService:
 
             candidate.score += min(max(candidate.change_rate, -30.0), 30.0)
             candidate.score += min(candidate.volume / 1_000_000, 20.0)
+            if not candidate.hold_candidate:
+                self._apply_policy_change_band(
+                    candidate,
+                    preferred_min=preferred_min,
+                    preferred_max=preferred_max,
+                )
 
             if candidate.price > 0 and available_cash > 0 and candidate.price > available_cash:
                 candidate.buyable = False
+                candidate.policy_buy_eligible = False
                 candidate.score -= 100.0
                 candidate.reasons.append("1주 매수 불가")
                 candidate.reason_codes.add("NOT_BUYABLE")
@@ -106,6 +118,7 @@ class CandidateScoringService:
                     "sources": sorted(item.sources),
                     "buyable": item.buyable,
                     "hold_candidate": item.hold_candidate,
+                    "policy_buy_eligible": item.policy_buy_eligible,
                     "strategy_type_hint": self._strategy_type_hint(item, pressure),
                     "reason_codes": sorted(item.reason_codes),
                     "news_negative_pressure": pressure,
@@ -129,6 +142,35 @@ class CandidateScoringService:
         ):
             return "AGGRESSIVE_SHORT"
         return "STABLE_SHORT"
+
+    @staticmethod
+    def _apply_policy_change_band(
+        candidate: _Candidate,
+        *,
+        preferred_min: float | None,
+        preferred_max: float | None,
+    ) -> None:
+        if preferred_min is not None and candidate.change_rate < preferred_min:
+            gap = preferred_min - candidate.change_rate
+            candidate.policy_buy_eligible = False
+            candidate.score -= min(35.0, 8.0 + gap * 2.0)
+            candidate.reasons.append(f"정책 모멘텀 부족 ({candidate.change_rate:.2f}% < {preferred_min:.2f}%)")
+            candidate.reason_codes.add("POLICY_CHANGE_BELOW_MIN")
+        if preferred_max is not None and candidate.change_rate > preferred_max:
+            excess = candidate.change_rate - preferred_max
+            candidate.policy_buy_eligible = False
+            candidate.score -= min(70.0, 18.0 + excess * 3.0)
+            candidate.reasons.append(f"정책 과열 제외 ({candidate.change_rate:.2f}% > {preferred_max:.2f}%)")
+            candidate.reason_codes.add("POLICY_CHANGE_OVER_MAX")
+        if (
+            candidate.policy_buy_eligible
+            and preferred_min is not None
+            and preferred_max is not None
+            and preferred_min <= candidate.change_rate <= preferred_max
+        ):
+            candidate.score += 8.0
+            candidate.reasons.append("정책 적합 모멘텀")
+            candidate.reason_codes.add("POLICY_CHANGE_WINDOW")
 
     @staticmethod
     def _merge_rows(candidates: dict[str, _Candidate], rows: list[dict], *, source: str) -> None:
@@ -190,6 +232,14 @@ class CandidateScoringService:
             return int(float(str(value).replace(",", "")))
         except (TypeError, ValueError):
             return 0
+
+    @staticmethod
+    def _positive_or_none(value: float | int | str | None) -> float | None:
+        try:
+            parsed = float(str(value).replace(",", ""))
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
 
 
 candidate_scoring_service = CandidateScoringService()

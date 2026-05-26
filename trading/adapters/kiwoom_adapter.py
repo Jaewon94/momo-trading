@@ -132,7 +132,13 @@ class KiwoomBrokerAdapter(BrokerAdapter):
 
     async def place_order(self, request: OrderRequest) -> OrderResult:
         normalized_symbol = normalize_krx_symbol(request.symbol)
-        baseline_qty = await self._get_holding_quantity(normalized_symbol)
+        baseline_holding = await self._get_holding(normalized_symbol)
+        baseline_qty = baseline_holding.quantity if baseline_holding is not None else 0
+        baseline_avg_price = (
+            float(baseline_holding.avg_buy_price or 0.0)
+            if baseline_holding is not None
+            else 0.0
+        )
         normalized_price = self._normalize_limit_price(request)
         normalized_request = request.model_copy(
             update={"symbol": normalized_symbol, "price": normalized_price}
@@ -145,6 +151,7 @@ class KiwoomBrokerAdapter(BrokerAdapter):
                 quantity=request.quantity,
                 order_price=float(normalized_price or 0.0),
                 baseline_qty=baseline_qty,
+                baseline_avg_price=baseline_avg_price,
             )
         return result
 
@@ -260,8 +267,15 @@ class KiwoomBrokerAdapter(BrokerAdapter):
             return None
 
         filled_price = submitted.order_price
-        if filled_price <= 0 and submitted.side == OrderSide.BUY.value and holding is not None:
-            filled_price = holding.avg_buy_price
+        if submitted.side == OrderSide.BUY.value:
+            holding_fill_price = self._infer_buy_fill_price_from_holding(
+                submitted,
+                holding,
+                filled_qty=filled_qty,
+                current_qty=current_qty,
+            )
+            if holding_fill_price > 0:
+                filled_price = holding_fill_price
 
         return OrderStatusInfo(
             order_id=str(order_id),
@@ -299,9 +313,28 @@ class KiwoomBrokerAdapter(BrokerAdapter):
                 return holding
         return None
 
-    async def _get_holding_quantity(self, symbol: str) -> int:
-        holding = await self._get_holding(symbol)
-        return holding.quantity if holding is not None else 0
+    @staticmethod
+    def _infer_buy_fill_price_from_holding(
+        submitted: "_SubmittedOrderMeta",
+        holding: HoldingInfo | None,
+        *,
+        filled_qty: int,
+        current_qty: int,
+    ) -> float:
+        if holding is None or filled_qty <= 0 or current_qty <= 0:
+            return 0.0
+        current_avg_price = float(holding.avg_buy_price or 0.0)
+        if current_avg_price <= 0:
+            return 0.0
+        if submitted.baseline_qty <= 0:
+            return current_avg_price
+        if submitted.baseline_avg_price <= 0:
+            return 0.0
+
+        current_cost = current_avg_price * current_qty
+        baseline_cost = submitted.baseline_avg_price * submitted.baseline_qty
+        inferred_price = (current_cost - baseline_cost) / filled_qty
+        return inferred_price if inferred_price > 0 else 0.0
 
     async def _find_pending_order(self, order_id: str) -> PendingOrderInfo | None:
         pending_orders = await self.get_pending_orders()
@@ -340,3 +373,4 @@ class _SubmittedOrderMeta:
     quantity: int
     order_price: float
     baseline_qty: int
+    baseline_avg_price: float

@@ -59,6 +59,63 @@ class FakeScannerBrokerAdapter:
         ]
 
 
+class ProbationScannerBrokerAdapter(FakeScannerBrokerAdapter):
+    async def get_balance(self) -> AccountBalance:
+        self.calls.append(("balance", ""))
+        return AccountBalance(
+            total_asset=1_500_000,
+            cash=900_000,
+            stock_value=0,
+            total_pnl=-80_000,
+            total_pnl_rate=-5.1,
+        )
+
+    async def get_holdings(self) -> list[HoldingInfo]:
+        self.calls.append(("holdings", ""))
+        return []
+
+    async def get_volume_rank(self, market: str = "KRX") -> list[dict]:
+        self.calls.append(("volume", market))
+        return [
+            {
+                "symbol": "011000",
+                "name": "진원생명과학",
+                "price": 1120,
+                "change_rate": 21.2,
+                "volume": 40000000,
+            },
+            {
+                "symbol": "005930",
+                "name": "삼성전자",
+                "price": 71000,
+                "change_rate": 5.2,
+                "volume": 5000000,
+            },
+        ]
+
+    async def get_fluctuation_rank(self, sort: str, market: str = "KRX") -> list[dict]:
+        self.calls.append((sort, market))
+        if sort == "top":
+            return [
+                {
+                    "symbol": "011000",
+                    "name": "진원생명과학",
+                    "price": 1120,
+                    "change_rate": 21.2,
+                    "volume": 40000000,
+                }
+            ]
+        return [
+            {
+                "symbol": "000660",
+                "name": "SK하이닉스",
+                "price": 180000,
+                "change_rate": -2.1,
+                "volume": 777777,
+            }
+        ]
+
+
 @pytest.mark.asyncio
 async def test_market_scanner_uses_broker_adapter_for_scan(monkeypatch) -> None:
     scanner = MarketScanner(broker_adapter=FakeScannerBrokerAdapter())
@@ -143,6 +200,80 @@ async def test_market_scanner_uses_broker_adapter_for_scan(monkeypatch) -> None:
         ("top", "KRX"),
         ("bottom", "KRX"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_market_scanner_filters_probation_overheat_and_adds_policy_candidate(monkeypatch) -> None:
+    scanner = MarketScanner(broker_adapter=ProbationScannerBrokerAdapter())
+    logs = []
+    captured_prompt: dict[str, str] = {}
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append((args, kwargs))
+
+    async def fake_record_event(**kwargs) -> None:
+        return None
+
+    async def fake_generate_tier1(*args, **kwargs) -> tuple[str, str]:
+        captured_prompt["prompt"] = args[0]
+        return (
+            """
+            {
+              "selected": [
+                {
+                  "symbol": "011000",
+                  "name": "진원생명과학",
+                  "strategy_type": "AGGRESSIVE_SHORT",
+                  "reason": "급등 거래량",
+                  "direction": "BUY"
+                }
+              ],
+              "market_analysis": "급등주 중심의 과열 흐름",
+              "market_regime": "THEME"
+            }
+            """,
+            "fake-provider",
+        )
+
+    async def fake_performance_summary() -> str:
+        return "총 5거래, 최근 5회 연속 손실"
+
+    async def fake_cooldown_symbols() -> set[str]:
+        return set()
+
+    async def fake_news_pressures(candidates) -> dict[str, float]:
+        return {}
+
+    async def fake_consecutive_losses() -> int:
+        return 5
+
+    monkeypatch.setattr("agent.market_scanner.settings.MAX_CONSECUTIVE_LOSSES", 4)
+    monkeypatch.setattr("agent.market_scanner.settings.LOSS_STREAK_RECOVERY_MODE", "PROBATION")
+    monkeypatch.setattr("agent.market_scanner.settings.LOSS_STREAK_RECOVERY_MIN_CHANGE_PCT", 2.0)
+    monkeypatch.setattr("agent.market_scanner.settings.LOSS_STREAK_RECOVERY_MAX_CHANGE_PCT", 10.0)
+    monkeypatch.setattr("agent.market_scanner.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.market_scanner.llm_factory.generate_tier1", fake_generate_tier1)
+    monkeypatch.setattr("agent.market_scanner.decision_event_service.record_event", fake_record_event)
+    monkeypatch.setattr(scanner, "_get_performance_summary", fake_performance_summary)
+    monkeypatch.setattr(scanner, "_get_recent_candidate_cooldown_symbols", fake_cooldown_symbols)
+    monkeypatch.setattr(scanner, "_get_candidate_news_pressures", fake_news_pressures)
+    monkeypatch.setattr(scanner, "_get_consecutive_losses", fake_consecutive_losses)
+
+    result = await scanner.scan(cycle_id="cycle-probation")
+
+    assert "BUY 후보 필수 조건: 전일대비 +2.00%~+10.00%" in captured_prompt["prompt"]
+    assert [item["symbol"] for item in result["selected"]] == ["005930"]
+    assert result["selected"][0]["strategy_type"] == "STABLE_SHORT"
+    assert result["selected"][0]["strategy_alignment"] == "DETERMINISTIC_FALLBACK"
+    assert result["scanner_policy"]["probation_active"] is True
+    assert "011000" not in [item["symbol"] for item in result["selected"]]
+    actions = [item["action"] for item in result["selection_policy_adjustments"]]
+    assert "strategy_aligned" in actions
+    assert "buy_filtered" in actions
+    assert "buy_fallback_added" in actions
+    overheat = next(item for item in result["scored_candidates"] if item["symbol"] == "011000")
+    assert overheat["policy_buy_eligible"] is False
+    assert "POLICY_CHANGE_OVER_MAX" in overheat["reason_codes"]
 
 
 def test_market_data_lookup_includes_raw_rank_rows() -> None:
