@@ -871,6 +871,11 @@ class TradingScheduler:
                 logger.info("서버 기동: 장중이지만 TRADING_ENABLED=false → startup 시장 스캔 스킵")
                 return
             logger.debug("서버 기동: 장중 → 즉시 시장 스캔 + 매매 시작")
+            # 매매 사이클 전에 스냅샷을 한 번 새로 잡아 STALE 가드가 신규 매수를 차단하지 않도록 한다.
+            try:
+                await self._account_equity_snapshot()
+            except Exception as exc:
+                logger.warning("기동 시 계좌 스냅샷 갱신 실패: {}", str(exc))
             asyncio.create_task(self._market_open_scan())
         else:
             next_open = market_calendar.next_krx_open()

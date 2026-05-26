@@ -326,12 +326,17 @@ async def test_scheduler_on_startup_schedules_market_open_scan_during_trading_ho
     scheduler = TradingScheduler()
     sleep_calls: list[float] = []
     created_tasks: list[object] = []
+    snapshot_calls = 0
 
     async def fake_sleep(seconds: float) -> None:
         sleep_calls.append(seconds)
 
     async def fake_market_open_scan() -> None:
         return None
+
+    async def fake_account_equity_snapshot() -> None:
+        nonlocal snapshot_calls
+        snapshot_calls += 1
 
     class DummyTask:
         pass
@@ -346,10 +351,73 @@ async def test_scheduler_on_startup_schedules_market_open_scan_during_trading_ho
     monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_trading_hours", lambda: True)
     monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
     monkeypatch.setattr(scheduler, "_market_open_scan", fake_market_open_scan)
+    monkeypatch.setattr(scheduler, "_account_equity_snapshot", fake_account_equity_snapshot)
 
     await scheduler._on_startup()
 
     assert sleep_calls == [3]
+    assert snapshot_calls == 1
+    assert any(
+        getattr(task, "cr_code", None) and task.cr_code.co_name == "fake_market_open_scan"
+        for task in created_tasks
+    )
+
+
+@pytest.mark.asyncio
+async def test_scheduler_on_startup_skips_snapshot_refresh_when_trading_disabled(monkeypatch) -> None:
+    """TRADING_ENABLED=False면 스냅샷 갱신도 건너뛴다 (불필요한 브로커 호출 차단)."""
+    scheduler = TradingScheduler()
+    snapshot_calls = 0
+
+    async def fake_sleep(_seconds: float) -> None:
+        return None
+
+    async def fake_account_equity_snapshot() -> None:
+        nonlocal snapshot_calls
+        snapshot_calls += 1
+
+    monkeypatch.setattr("asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", False)
+    monkeypatch.setattr(scheduler, "_account_equity_snapshot", fake_account_equity_snapshot)
+
+    await scheduler._on_startup()
+
+    assert snapshot_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_scheduler_on_startup_continues_after_snapshot_refresh_failure(monkeypatch) -> None:
+    """스냅샷 갱신이 실패해도 market_open_scan은 예약되어야 한다."""
+    scheduler = TradingScheduler()
+    created_tasks: list[object] = []
+
+    async def fake_sleep(_seconds: float) -> None:
+        return None
+
+    async def fake_market_open_scan() -> None:
+        return None
+
+    async def failing_account_equity_snapshot() -> None:
+        raise RuntimeError("simulated broker timeout")
+
+    class DummyTask:
+        pass
+
+    def fake_create_task(coro):
+        created_tasks.append(coro)
+        coro.close()
+        return DummyTask()
+
+    monkeypatch.setattr("asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("asyncio.create_task", fake_create_task)
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr(scheduler, "_market_open_scan", fake_market_open_scan)
+    monkeypatch.setattr(scheduler, "_account_equity_snapshot", failing_account_equity_snapshot)
+
+    await scheduler._on_startup()
+
     assert any(
         getattr(task, "cr_code", None) and task.cr_code.co_name == "fake_market_open_scan"
         for task in created_tasks
