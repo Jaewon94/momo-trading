@@ -72,10 +72,12 @@ def evaluate_overnight_hold(
     pnl_rate = (current_price - avg_price) / avg_price * 100
 
     # 1. 큰 손실 → SELL (소폭 손실은 스윙에서 정상 변동)
-    if pnl_rate < -3.0:
+    # horizon별 임계값을 사용해 mid-long 매매가 일중 단기 변동에 일찍 청산되지 않도록 한다.
+    loss_threshold = _overnight_loss_threshold_pct(trade_result, config)
+    if pnl_rate < loss_threshold:
         return HoldDecision(
             "SELL",
-            f"손실 과대 ({pnl_rate:+.1f}% < -3%) — 손절 수준 도달",
+            f"손실 과대 ({pnl_rate:+.1f}% < {loss_threshold:.1f}%) — 손절 수준 도달",
         )
 
     # 2. 최대 보유일 초과 → SELL
@@ -126,6 +128,22 @@ def _calc_hold_days(trade_result) -> int:
     today = now_kst().date()
     entry_date = entry_at.date() if isinstance(entry_at, datetime) else entry_at
     return max(0, (today - entry_date).days)
+
+
+def _overnight_loss_threshold_pct(trade_result, config) -> float:
+    """오버나이트 보유 심사용 손절 임계값을 horizon별로 반환한다.
+
+    이전에는 -3.0%로 하드코딩돼 있어 MID/LONG 매매도 단기 변동에 강제 청산
+    되는 문제가 있었다. DEFAULT_STOP_LOSS_PCT_{SHORT,MID,LONG}을 그대로
+    사용해 horizon별로 다른 한도를 적용한다.
+    """
+    horizon = _extract_trade_horizon(trade_result) or _infer_trade_horizon(trade_result)
+    horizon_key = str(horizon or "").upper()
+    if horizon_key == "SHORT":
+        return float(getattr(config, "DEFAULT_STOP_LOSS_PCT_SHORT", -3.0) or -3.0)
+    if horizon_key == "LONG":
+        return float(getattr(config, "DEFAULT_STOP_LOSS_PCT_LONG", -6.0) or -6.0)
+    return float(getattr(config, "DEFAULT_STOP_LOSS_PCT_MID", -4.0) or -4.0)
 
 
 def _get_max_hold_days_for_trade(trade_result, config) -> int:
