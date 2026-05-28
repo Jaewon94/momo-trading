@@ -495,11 +495,11 @@ export function buildPositionDetailState(payload) {
       body: signal ? [signal.reason || "최근 분석 이유 없음"] : ["최근 AI 분석 요약 없음"],
     },
     {
-      title: "거래 통계",
-      eyebrow: "Execution Flow",
-      accent: "sell",
-      hero: `${formatInt(stats.total_trades)}건`,
-      heroMeta: "누적 거래 이벤트",
+      title: "이 종목 전체 손익",
+      eyebrow: "All-Time P&L",
+      accent: Number(stats.total_pnl) >= 0 ? "buy" : "sell",
+      hero: formatSignedKrW(stats.total_pnl),
+      heroMeta: `실현 ${formatSignedKrW(stats.realized_pnl)} + 미실현 ${formatSignedKrW(stats.unrealized_pnl)}`,
       metrics: [
         {
           label: "승률",
@@ -507,12 +507,11 @@ export function buildPositionDetailState(payload) {
             ? `${(Number(stats.win_rate) * 100).toFixed(0)}% (${formatInt(stats.win_count)}/${formatInt(stats.win_count + stats.loss_count)})`
             : "-",
         },
-        { label: "실현손익", value: formatSignedKrW(stats.realized_pnl) },
-        { label: "총 손익", value: formatSignedKrW(stats.total_pnl) },
+        { label: "평균 익절", value: formatPercent(stats.avg_win_return_pct) },
+        { label: "평균 손절", value: formatPercent(stats.avg_loss_return_pct) },
       ],
       body: [
-        `보유 ${formatInt(stats.open_buy_count)}건 · 청산 ${formatInt(stats.completed_count)}건 · 미실현 ${formatSignedKrW(stats.unrealized_pnl)}`,
-        `평균 익절 ${formatPercent(stats.avg_win_return_pct)} / 평균 손절 ${formatPercent(stats.avg_loss_return_pct)}`,
+        `누적 거래 ${formatInt(stats.total_trades)}건 · 청산 ${formatInt(stats.completed_count)}건 · 현재 보유 ${formatInt(stats.open_buy_count)}건`,
       ],
     },
   ];
