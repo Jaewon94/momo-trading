@@ -141,16 +141,16 @@ describe("trade_state", () => {
       pnlLabel: "-2,704,805원",
       pnlTone: "negative",
     });
-    // 메인 카드는 핵심 3개 row만 노출하고 정산 잔차 같은 진단 지표는 빼야 한다.
-    expect(overview.rows).toHaveLength(3);
+    // 메인 카드는 현금/주식/평가손익/오늘 실현 손익까지만 노출하고 정산 잔차 같은 진단 지표는 시스템 탭으로 분리한다.
     expect(overview.rows.map((row) => row.label)).toEqual([
       "현금",
       "주식 평가액",
       "평가손익",
+      "오늘 실현 손익",
     ]);
     expect(overview.rows.map((row) => row.label)).not.toContain("현금/스냅샷 차이");
+    expect(overview.rows.map((row) => row.label)).not.toContain("정산 잔차");
     expect(overview.rows.map((row) => row.label)).not.toContain("보유");
-    expect(overview.rows.map((row) => row.label)).not.toContain("당일 실현손익");
   });
 
   test("uses session metrics for day-session asset and unrealized movement", () => {

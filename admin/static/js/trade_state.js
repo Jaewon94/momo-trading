@@ -169,16 +169,23 @@ export function buildAccountOverviewModel(stats = {}) {
         meta: formatPercent(stats?.unrealizedPnlRate, { digits: 2 }),
         tone: pnlTone,
       },
+      ...(stats?.assetDeltaAvailable
+        ? [{
+            label: "오늘 실현 손익",
+            value: formatWon(stats?.realizedTodayPnl, { signed: true }),
+            meta: "오늘 청산된 거래 합",
+            tone: toneFromNumber(stats?.realizedTodayPnl),
+          }]
+        : []),
     ],
   };
 }
 
 /**
- * 오늘 자산 변화의 세부 분해를 별도 카드용 모델로 정리한다.
+ * 시스템 설정 탭의 진단 카드용 모델.
  *
- * 메인 잔고 카드는 사용자가 바로 확인해야 할 핵심 수치(총자산·현금·주식·평가손익)만
- * 표시하고, "장시작 대비"를 매매(실현+미실현)와 정산/스냅샷 잔차로 분해한
- * 진단성 데이터는 이 모델을 통해 보조 카드에 노출한다.
+ * 메인 잔고 카드는 핵심 KPI만 노출하고, 장시작 대비 자산 변화를 매매(실현+미실현)와
+ * 정산 잔차로 분해한 데이터는 이 모델을 통해 별도 페이지에 노출한다.
  */
 export function buildAccountSessionDetailModel(stats = {}) {
   if (!stats?.assetDeltaAvailable) {
@@ -206,7 +213,7 @@ export function buildAccountSessionDetailModel(stats = {}) {
   return {
     available: true,
     title: "오늘 자산 변화 분석",
-    caption: stats?.riskMessage || "장시작 대비 자산 변화를 매매와 정산 잔차로 분해한 참고 지표입니다.",
+    caption: stats?.riskMessage || "장시작 대비 자산 변화를 매매와 잔차로 분해한 참고 지표입니다.",
     baselineMeta,
     rows: [
       {
@@ -230,11 +237,11 @@ export function buildAccountSessionDetailModel(stats = {}) {
       {
         label: "정산 잔차",
         value: formatWon(cashOrSnapshotDelta, { signed: true }),
-        meta: "매매로 설명되지 않는 차이",
+        meta: "= 장시작 대비 − 실현 − 미실현",
         tone: toneFromNumber(cashOrSnapshotDelta),
       },
     ],
-    footnote: "정산 잔차는 어제 보유분의 미실현 변화·스냅샷 시점 차이·정산 시간차 등으로 발생합니다.",
+    footnote: "정산 잔차는 시스템 버그가 아니라 장시작 시점에 이미 잡혀있던 미실현 평가손익이 청산·가격 변동으로 자산 분해에 반영된 양입니다. 어제 보유분이 있으면 자연스럽게 0이 아닙니다.",
   };
 }
 
