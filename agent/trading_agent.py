@@ -2441,18 +2441,18 @@ class TradingAgent:
         bounds = {
             "CONSERVATIVE": {
                 TradeHorizon.SHORT: (1.8, 2.8),
-                TradeHorizon.MID: (2.4, 4.0),
-                TradeHorizon.LONG: (3.0, 5.5),
+                TradeHorizon.MID: (2.0, 3.5),
+                TradeHorizon.LONG: (2.5, 4.5),
             },
             "MODERATE": {
                 TradeHorizon.SHORT: (2.4, 3.5),
-                TradeHorizon.MID: (3.2, 5.0),
-                TradeHorizon.LONG: (4.0, 7.0),
+                TradeHorizon.MID: (2.5, 4.0),
+                TradeHorizon.LONG: (3.5, 5.5),
             },
             "AGGRESSIVE": {
                 TradeHorizon.SHORT: (3.0, 5.0),
-                TradeHorizon.MID: (4.0, 6.5),
-                TradeHorizon.LONG: (5.0, 9.0),
+                TradeHorizon.MID: (3.0, 5.0),
+                TradeHorizon.LONG: (4.0, 6.5),
             },
         }
         return bounds.get(appetite, bounds["CONSERVATIVE"]).get(horizon_key, (None, None))

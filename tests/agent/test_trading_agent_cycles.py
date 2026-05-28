@@ -81,6 +81,59 @@ def test_apply_trade_thresholds_widens_too_tight_stop_loss_by_risk_appetite(monk
     assert thresholds["stop_loss"] == 10_670
 
 
+def test_apply_trade_thresholds_caps_mid_horizon_stop_loss_in_moderate_risk(monkeypatch) -> None:
+    """MODERATE / MID 호라이즌은 최대 -4.0% 손실폭으로 캡되어야 한다.
+
+    5/27 mid-long 매매에서 -7~8% stop이 통과한 패턴을 다시 허용하지 않기 위함.
+    """
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    applied: dict[str, float] = {}
+
+    def fake_set_thresholds(_symbol: str, **kwargs) -> None:
+        applied.update(kwargs)
+
+    monkeypatch.setattr("agent.trading_agent.event_detector.set_thresholds", fake_set_thresholds)
+    monkeypatch.setattr("agent.trading_agent.settings.RISK_APPETITE", "MODERATE")
+
+    thresholds = agent._apply_trade_thresholds(
+        "005930",
+        # AI가 -7.9% stop을 줘도 -4.0%로 좁혀져야 한다.
+        {"target_price": 14_500, "stop_loss_price": 12_180},
+        {},
+        current_price=13_220,
+        horizon="MID",
+    )
+
+    assert thresholds == applied
+    # 13220 * (1 - 0.04) = 12691.2
+    assert abs(thresholds["stop_loss"] - 12_691.2) < 0.5
+
+
+def test_apply_trade_thresholds_caps_long_horizon_stop_loss_in_conservative_risk(monkeypatch) -> None:
+    """CONSERVATIVE / LONG 호라이즌은 최대 -4.5% 손실폭으로 캡되어야 한다."""
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    applied: dict[str, float] = {}
+
+    def fake_set_thresholds(_symbol: str, **kwargs) -> None:
+        applied.update(kwargs)
+
+    monkeypatch.setattr("agent.trading_agent.event_detector.set_thresholds", fake_set_thresholds)
+    monkeypatch.setattr("agent.trading_agent.settings.RISK_APPETITE", "CONSERVATIVE")
+
+    thresholds = agent._apply_trade_thresholds(
+        "005930",
+        # AI가 -8% stop을 줘도 -4.5%로 좁혀져야 한다.
+        {"target_price": 220_000, "stop_loss_price": 184_000},
+        {},
+        current_price=200_000,
+        horizon="LONG",
+    )
+
+    assert thresholds == applied
+    # 200000 * (1 - 0.045) = 191000
+    assert abs(thresholds["stop_loss"] - 191_000) < 1.0
+
+
 def test_apply_scan_thresholds_clamps_sensitive_monitoring_values(monkeypatch) -> None:
     agent = TradingAgent(broker_adapter=StubBrokerAdapter())
     applied: dict[str, dict] = {}
