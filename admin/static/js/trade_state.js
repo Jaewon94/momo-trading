@@ -64,6 +64,7 @@ export function buildPortfolioQuickStatsModel(
     assetDeltaAvailable: sessionAvailable,
     dailyUnrealizedDelta: sessionAvailable ? Number(sessionMetrics?.daily_unrealized_delta || 0) : 0,
     dailyUnrealizedAvailable: sessionAvailable,
+    realizedTodayPnl: sessionAvailable ? Number(sessionMetrics?.realized_today_pnl || 0) : 0,
     brokerUnrealizedPnl: sessionAvailable ? Number(sessionMetrics?.broker_unrealized_pnl || unrealizedPnl) : unrealizedPnl,
     cashOrSnapshotDelta: sessionAvailable ? Number(sessionMetrics?.cash_or_snapshot_delta || 0) : 0,
     currentExposureKrw,
@@ -145,8 +146,6 @@ export function buildAccountOverviewModel(stats = {}) {
     exposureLabel: formatWon(stats?.currentExposureKrw),
     exposureMeta,
     exposureTone: stats?.marketExposure ? "negative" : "neutral",
-    cashOrSnapshotDeltaLabel: formatWon(stats?.cashOrSnapshotDelta, { signed: true }),
-    cashOrSnapshotDeltaTone: toneFromNumber(stats?.cashOrSnapshotDelta),
     cashRatio,
     stockRatio,
     pnlLabel: formatWon(stats?.unrealizedPnl, { signed: true }),
@@ -170,14 +169,86 @@ export function buildAccountOverviewModel(stats = {}) {
         meta: formatPercent(stats?.unrealizedPnlRate, { digits: 2 }),
         tone: pnlTone,
       },
-      {
-        label: "현금/스냅샷 차이",
-        value: formatWon(stats?.cashOrSnapshotDelta, { signed: true }),
-        meta: exposureMeta,
-        tone: toneFromNumber(stats?.cashOrSnapshotDelta),
-      },
     ],
   };
+}
+
+/**
+ * 오늘 자산 변화의 세부 분해를 별도 카드용 모델로 정리한다.
+ *
+ * 메인 잔고 카드는 사용자가 바로 확인해야 할 핵심 수치(총자산·현금·주식·평가손익)만
+ * 표시하고, "장시작 대비"를 매매(실현+미실현)와 정산/스냅샷 잔차로 분해한
+ * 진단성 데이터는 이 모델을 통해 보조 카드에 노출한다.
+ */
+export function buildAccountSessionDetailModel(stats = {}) {
+  if (!stats?.assetDeltaAvailable) {
+    return {
+      available: false,
+      title: "오늘 자산 변화 분석",
+      caption: "장시작 기준선이 준비되면 표시됩니다.",
+      baselineMeta: "",
+      rows: [],
+      footnote: "",
+    };
+  }
+
+  const assetDelta = Number(stats?.assetDelta || 0);
+  const realized = Number(stats?.realizedTodayPnl || 0);
+  const brokerUnrealized = Number(stats?.brokerUnrealizedPnl || 0);
+  const cashOrSnapshotDelta = Number(stats?.cashOrSnapshotDelta || 0);
+
+  const baselineAt = stats?.baselineAt ? formatTimeShort(stats.baselineAt) : "";
+  const baselineAsset = Number(stats?.baselineTotalAsset || 0);
+  const baselineMeta = baselineAt && baselineAsset > 0
+    ? `장시작 ${baselineAt} · ${formatWon(baselineAsset)}`
+    : (stats?.baselineAt ? `장시작 기준 ${baselineAt}` : "");
+
+  return {
+    available: true,
+    title: "오늘 자산 변화 분석",
+    caption: stats?.riskMessage || "장시작 대비 자산 변화를 매매와 정산 잔차로 분해한 참고 지표입니다.",
+    baselineMeta,
+    rows: [
+      {
+        label: "장시작 대비",
+        value: formatWon(assetDelta, { signed: true }),
+        meta: formatPercent(stats?.assetDeltaRate || 0, { signed: true, digits: 2 }),
+        tone: toneFromNumber(assetDelta),
+      },
+      {
+        label: "오늘 실현 손익",
+        value: formatWon(realized, { signed: true }),
+        meta: "오늘 청산된 거래 합",
+        tone: toneFromNumber(realized),
+      },
+      {
+        label: "현재 평가손익",
+        value: formatWon(brokerUnrealized, { signed: true }),
+        meta: "보유분 미실현 손익 (현 시점)",
+        tone: toneFromNumber(brokerUnrealized),
+      },
+      {
+        label: "정산 잔차",
+        value: formatWon(cashOrSnapshotDelta, { signed: true }),
+        meta: "매매로 설명되지 않는 차이",
+        tone: toneFromNumber(cashOrSnapshotDelta),
+      },
+    ],
+    footnote: "정산 잔차는 어제 보유분의 미실현 변화·스냅샷 시점 차이·정산 시간차 등으로 발생합니다.",
+  };
+}
+
+function formatTimeShort(value) {
+  if (!value) return "";
+  try {
+    return new Intl.DateTimeFormat("ko-KR", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(new Date(value));
+  } catch {
+    return "";
+  }
 }
 
 export function buildTradePanelState(data = {}) {

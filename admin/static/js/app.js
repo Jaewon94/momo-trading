@@ -60,6 +60,7 @@ import {
 } from './llm_usage_state.js';
 import {
   buildAccountOverviewModel,
+  buildAccountSessionDetailModel,
   buildPortfolioQuickStatsModel,
   buildTradePanelState,
   buildTradeSummaryCounts,
@@ -1986,6 +1987,7 @@ function renderAccountBalance(data) {
   const el = document.getElementById('account-info');
   if (!el || !data) {
     if (el) el.innerHTML = '<div class="account-overview-empty">계좌 미연결</div>';
+    renderAccountSessionDetail(null);
     return;
   }
   const stats = buildPortfolioQuickStatsModel(data, latestAccountSnapshot?.holdings, latestAccountSnapshot?.pendingOrders, latestAccountSnapshot?.trades);
@@ -2010,6 +2012,39 @@ function renderAccountBalance(data) {
         </div>
       `).join('')}
     </div>`;
+  renderAccountSessionDetail(stats);
+}
+
+function renderAccountSessionDetail(stats) {
+  const el = document.getElementById('account-session-detail');
+  if (!el) return;
+  const detail = stats ? buildAccountSessionDetailModel(stats) : null;
+  if (!detail || !detail.available) {
+    el.innerHTML = detail
+      ? `<div class="account-session-detail-empty">${escapeHtml(detail.caption || '')}</div>`
+      : '';
+    return;
+  }
+  el.innerHTML = `
+    <details class="account-session-detail" open>
+      <summary>
+        <span class="account-session-detail-title">${escapeHtml(detail.title)}</span>
+        ${detail.baselineMeta ? `<span class="account-session-detail-baseline">${escapeHtml(detail.baselineMeta)}</span>` : ''}
+      </summary>
+      <div class="account-session-detail-caption">${escapeHtml(detail.caption || '')}</div>
+      <div class="account-session-detail-grid">
+        ${detail.rows.map(row => `
+          <div class="account-session-detail-row">
+            <div>
+              <div class="account-session-detail-label">${escapeHtml(row.label)}</div>
+              <div class="account-session-detail-row-meta">${escapeHtml(row.meta || '')}</div>
+            </div>
+            <div class="account-session-detail-value ${escapeHtml(row.tone || 'neutral')}">${escapeHtml(row.value)}</div>
+          </div>
+        `).join('')}
+      </div>
+      ${detail.footnote ? `<div class="account-session-detail-footnote">${escapeHtml(detail.footnote)}</div>` : ''}
+    </details>`;
 }
 
 function renderAccountHoldings(data) {

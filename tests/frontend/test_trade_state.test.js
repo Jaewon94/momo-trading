@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import {
   buildAccountOverviewModel,
+  buildAccountSessionDetailModel,
   buildPortfolioQuickStatsModel,
   buildTradePanelState,
   buildTradeSummaryCounts,
@@ -105,7 +106,9 @@ describe("trade_state", () => {
       completedCount: 2,
       unmatchedSellExecutions: 0,
     });
-    expect(stats).not.toHaveProperty("realizedTodayPnl");
+    // session_metrics가 없으면 realizedTodayPnl은 0이어야 한다.
+    // (로컬 completed trades의 pnl 합산 25,000원이 stats로 새어 들어가면 안 된다.)
+    expect(stats.realizedTodayPnl).toBe(0);
   });
 
   test("builds precise account overview labels without large-unit abbreviation", () => {
@@ -131,20 +134,23 @@ describe("trade_state", () => {
       {},
     );
 
-    expect(buildAccountOverviewModel(stats)).toMatchObject({
+    const overview = buildAccountOverviewModel(stats);
+    expect(overview).toMatchObject({
       totalAssetLabel: "527,064,565원",
       totalAssetMeta: "장시작 대비 -7,942,186원 / -2.29%",
       pnlLabel: "-2,704,805원",
       pnlTone: "negative",
-      rows: [
-        { label: "현금", value: "181,724,859원", meta: "34.5%" },
-        { label: "주식 평가액", value: "341,909,010원", meta: "64.9% · 노출 64.9%", tone: "neutral" },
-        { label: "평가손익", value: "-2,704,805원", meta: "-1.32%", tone: "negative" },
-        { label: "현금/스냅샷 차이" },
-      ],
     });
-    expect(buildAccountOverviewModel(stats).rows.map((row) => row.label)).not.toContain("보유");
-    expect(buildAccountOverviewModel(stats).rows.map((row) => row.label)).not.toContain("당일 실현손익");
+    // 메인 카드는 핵심 3개 row만 노출하고 정산 잔차 같은 진단 지표는 빼야 한다.
+    expect(overview.rows).toHaveLength(3);
+    expect(overview.rows.map((row) => row.label)).toEqual([
+      "현금",
+      "주식 평가액",
+      "평가손익",
+    ]);
+    expect(overview.rows.map((row) => row.label)).not.toContain("현금/스냅샷 차이");
+    expect(overview.rows.map((row) => row.label)).not.toContain("보유");
+    expect(overview.rows.map((row) => row.label)).not.toContain("당일 실현손익");
   });
 
   test("uses session metrics for day-session asset and unrealized movement", () => {
@@ -239,11 +245,67 @@ describe("trade_state", () => {
     const overview = buildAccountOverviewModel(stats);
     expect(overview.exposureTone).toBe("neutral");
     expect(overview.rows[1]).toMatchObject({ label: "주식 평가액", value: "0원", tone: "neutral" });
-    expect(overview.rows[3]).toMatchObject({
-      label: "현금/스냅샷 차이",
+    // 정산 잔차는 메인 row가 아닌 진단 모델에서 노출되어야 한다.
+    expect(overview.rows.map((row) => row.label)).not.toContain("현금/스냅샷 차이");
+    const detail = buildAccountSessionDetailModel(stats);
+    expect(detail.available).toBe(true);
+    const varianceRow = detail.rows.find((row) => row.label === "정산 잔차");
+    expect(varianceRow).toMatchObject({
       value: "-5,000원",
       tone: "negative",
     });
+  });
+
+  test("buildAccountSessionDetailModel 은 장시작 대비를 매매와 잔차로 분해한다", () => {
+    const stats = buildPortfolioQuickStatsModel(
+      {
+        total_asset: 474_324_783,
+        total_pnl: -129_906,
+        total_pnl_rate: -0.03,
+        cash: 462_287_232,
+        stock_value: 12_037_551,
+        session_metrics: {
+          available: true,
+          baseline_at: "2026-05-28T09:00:00+09:00",
+          baseline_total_asset: 475_824_563,
+          asset_delta: -1_499_780,
+          asset_delta_rate: -0.32,
+          realized_today_pnl: -2_385_080,
+          broker_unrealized_pnl: -129_906,
+          daily_unrealized_delta: 885_300,
+          cash_or_snapshot_delta: 1_015_206,
+          current_exposure_krw: 12_037_551,
+          current_exposure_pct: 2.5,
+          market_exposure: true,
+          risk_message: "보유 평가손실이 있어 가격 변동 리스크가 열려 있습니다.",
+        },
+      },
+      [{}],
+      [],
+      {},
+    );
+
+    const detail = buildAccountSessionDetailModel(stats);
+    expect(detail.available).toBe(true);
+    expect(detail.title).toBe("오늘 자산 변화 분석");
+    const byLabel = Object.fromEntries(detail.rows.map((row) => [row.label, row]));
+    expect(byLabel["장시작 대비"]).toMatchObject({ value: "-1,499,780원", tone: "negative" });
+    expect(byLabel["오늘 실현 손익"]).toMatchObject({ value: "-2,385,080원", tone: "negative" });
+    expect(byLabel["현재 평가손익"]).toMatchObject({ value: "-129,906원", tone: "negative" });
+    expect(byLabel["정산 잔차"]).toMatchObject({ value: "+1,015,206원", tone: "positive" });
+    expect(detail.footnote).toMatch(/정산 잔차/);
+  });
+
+  test("buildAccountSessionDetailModel 은 session 정보 없을 때 안전한 기본값을 반환한다", () => {
+    const stats = buildPortfolioQuickStatsModel(
+      { total_asset: 100_000, cash: 100_000, stock_value: 0 },
+      [],
+      [],
+      {},
+    );
+    const detail = buildAccountSessionDetailModel(stats);
+    expect(detail.available).toBe(false);
+    expect(detail.rows).toEqual([]);
   });
 
   test("falls back safely when session metrics are unavailable", () => {
