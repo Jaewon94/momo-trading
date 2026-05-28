@@ -5,7 +5,58 @@ from types import SimpleNamespace
 
 import pytest
 
-from api.routes.admin import _build_position_trade_stats, _extract_latest_signal
+from api.routes.admin import (
+    _build_position_trade_stats,
+    _extract_latest_signal,
+    _parse_json_detail,
+    _representative_trade_horizon,
+    _trade_horizon_from_trade_result,
+)
+
+
+def _open_buy_with_notes(notes: str, *, strategy_type: str = "AGGRESSIVE_SHORT", quantity: int = 80):
+    return SimpleNamespace(
+        side="BUY",
+        exit_at=None,
+        strategy_type=strategy_type,
+        notes=notes,
+        quantity=quantity,
+    )
+
+
+def test_parse_json_detail_tolerates_partial_take_profit_marker_suffix():
+    """`{...JSON...} | PARTIAL_TAKE_PROFIT_DONE` 형태 notes도 JSON 본문은 파싱돼야 한다."""
+    raw = '{"trade_horizon": "MID", "active_stop_loss": 7923.0} | PARTIAL_TAKE_PROFIT_DONE'
+    parsed = _parse_json_detail(raw)
+    assert parsed is not None
+    assert parsed.get("trade_horizon") == "MID"
+    assert parsed.get("active_stop_loss") == 7923.0
+
+
+def test_parse_json_detail_returns_none_for_garbage_after_strip():
+    assert _parse_json_detail("not a json | MARKER") is None
+    assert _parse_json_detail("") is None
+    assert _parse_json_detail(None) is None
+
+
+def test_trade_horizon_from_trade_result_respects_mid_horizon_after_partial_take_profit():
+    """012200 사례: AGGRESSIVE_SHORT 프로파일이지만 notes.trade_horizon=MID라
+    PARTIAL 후에도 MID로 표시돼야 한다."""
+    trade = _open_buy_with_notes(
+        '{"trade_horizon": "MID"} | PARTIAL_TAKE_PROFIT_DONE',
+        strategy_type="AGGRESSIVE_SHORT",
+    )
+    assert _trade_horizon_from_trade_result(trade) == "MID"
+
+
+def test_representative_trade_horizon_uses_quantity_weighted_max():
+    trades = [
+        _open_buy_with_notes('{"trade_horizon": "MID"} | PARTIAL_TAKE_PROFIT_DONE', quantity=80),
+    ]
+    assert _representative_trade_horizon(trades) == "MID"
+
+
+
 
 
 def _closed_buy(*, pnl: float, return_pct: float, is_win: bool):

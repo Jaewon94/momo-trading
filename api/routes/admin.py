@@ -261,7 +261,18 @@ def _parse_json_detail(detail):
     try:
         return _json.loads(detail)
     except (TypeError, ValueError):
-        return None
+        pass
+    # trade_results.notes 같은 컬럼은 PARTIAL_TAKE_PROFIT 등 실행 마커가
+    # JSON 뒤에 ` | MARKER` 형태로 덧붙는 케이스가 있다. JSON 본체만 떼어
+    # 한 번 더 시도해 horizon 같은 핵심 필드가 누락되지 않게 한다.
+    if isinstance(detail, str):
+        end = detail.rfind("}")
+        if end > 0:
+            try:
+                return _json.loads(detail[: end + 1])
+            except (TypeError, ValueError):
+                return None
+    return None
 
 
 def _trade_horizon_from_trade_result(trade: TradeResult | None) -> str:
