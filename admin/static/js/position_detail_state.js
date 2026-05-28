@@ -501,12 +501,18 @@ export function buildPositionDetailState(payload) {
       hero: `${formatInt(stats.total_trades)}건`,
       heroMeta: "누적 거래 이벤트",
       metrics: [
-        { label: "보유", value: `${formatInt(stats.open_buy_count)}건` },
-        { label: "청산", value: `${formatInt(stats.completed_count)}건` },
+        {
+          label: "승률",
+          value: stats.win_rate !== null && stats.win_rate !== undefined
+            ? `${(Number(stats.win_rate) * 100).toFixed(0)}% (${formatInt(stats.win_count)}/${formatInt(stats.win_count + stats.loss_count)})`
+            : "-",
+        },
         { label: "실현손익", value: formatSignedKrW(stats.realized_pnl) },
+        { label: "총 손익", value: formatSignedKrW(stats.total_pnl) },
       ],
       body: [
-        `현재 열린 매수 포지션 ${formatInt(stats.open_buy_count)}건`,
+        `보유 ${formatInt(stats.open_buy_count)}건 · 청산 ${formatInt(stats.completed_count)}건 · 미실현 ${formatSignedKrW(stats.unrealized_pnl)}`,
+        `평균 익절 ${formatPercent(stats.avg_win_return_pct)} / 평균 손절 ${formatPercent(stats.avg_loss_return_pct)}`,
       ],
     },
   ];

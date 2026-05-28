@@ -359,6 +359,47 @@ def _require_runtime_settings_confirmation(updates: dict, token: str | None) -> 
     )
 
 
+def _build_position_trade_stats(trades, open_buys, holding_payload) -> dict:
+    """종목 상세 화면용 누적 거래 통계.
+
+    실현/미실현 손익을 함께 노출하고, 청산된 BUY들의 승률·평균 익절/손절 폭도
+    계산해 화면이 비대칭 손익 패턴을 한 눈에 보여줄 수 있게 한다.
+    """
+    completed = [
+        trade for trade in trades
+        if getattr(trade, "exit_at", None) is not None
+           and str(getattr(trade, "side", "") or "").upper() == "BUY"
+    ]
+    realized_pnl = sum(float(getattr(t, "pnl", 0.0) or 0.0) for t in completed)
+    win_trades = [t for t in completed if bool(getattr(t, "is_win", False))]
+    loss_trades = [t for t in completed if not bool(getattr(t, "is_win", False))]
+    win_count = len(win_trades)
+    loss_count = len(loss_trades)
+    win_rate = (win_count / (win_count + loss_count)) if (win_count + loss_count) > 0 else None
+    avg_win_return_pct = (
+        sum(float(getattr(t, "return_pct", 0.0) or 0.0) for t in win_trades) / win_count
+        if win_count > 0 else None
+    )
+    avg_loss_return_pct = (
+        sum(float(getattr(t, "return_pct", 0.0) or 0.0) for t in loss_trades) / loss_count
+        if loss_count > 0 else None
+    )
+    unrealized_pnl = float((holding_payload or {}).get("pnl", 0.0) or 0.0)
+    return {
+        "total_trades": len(trades),
+        "open_buy_count": len(open_buys),
+        "completed_count": len(completed),
+        "win_count": win_count,
+        "loss_count": loss_count,
+        "win_rate": win_rate,
+        "avg_win_return_pct": avg_win_return_pct,
+        "avg_loss_return_pct": avg_loss_return_pct,
+        "realized_pnl": realized_pnl,
+        "unrealized_pnl": unrealized_pnl,
+        "total_pnl": realized_pnl + unrealized_pnl,
+    }
+
+
 def _extract_latest_signal(trades, activities):
     fallback_trade = next(
         (
@@ -2155,11 +2196,7 @@ async def get_position_detail(
         or (getattr(trades[0], "stock_name", None) if trades else None)
         or normalized_symbol
     )
-    realized_pnl = sum(
-        float(getattr(trade, "pnl", 0.0) or 0.0)
-        for trade in trades
-        if getattr(trade, "exit_at", None) is not None
-    )
+    trade_stats = _build_position_trade_stats(trades, open_buys, holding_payload)
 
     full_timeline = _build_position_timeline(trades, activities) + _build_news_timeline_entries(news_items)
     full_timeline.sort(key=lambda item: item.get("at") or "", reverse=True)
@@ -2175,12 +2212,7 @@ async def get_position_detail(
             "holding_message": holding_message,
             "latest_signal": latest_signal,
             "decision_insight": decision_insight,
-            "trade_stats": {
-                "total_trades": len(trades),
-                "open_buy_count": len(open_buys),
-                "completed_count": sum(1 for trade in trades if getattr(trade, "exit_at", None) is not None),
-                "realized_pnl": realized_pnl,
-            },
+            "trade_stats": trade_stats,
             "recent_events": [
                 item for item in (event_detector.get_radar_snapshot().get("events") or [])
                 if item.get("symbol") == normalized_symbol

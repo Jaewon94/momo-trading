@@ -5,7 +5,83 @@ from types import SimpleNamespace
 
 import pytest
 
-from api.routes.admin import _extract_latest_signal
+from api.routes.admin import _build_position_trade_stats, _extract_latest_signal
+
+
+def _closed_buy(*, pnl: float, return_pct: float, is_win: bool):
+    return SimpleNamespace(
+        side="BUY",
+        exit_at=datetime(2026, 5, 27, 15, 0),
+        pnl=pnl,
+        return_pct=return_pct,
+        is_win=is_win,
+    )
+
+
+def _open_buy():
+    return SimpleNamespace(side="BUY", exit_at=None, pnl=0.0, return_pct=0.0, is_win=False)
+
+
+def test_build_position_trade_stats_computes_win_rate_and_average_returns():
+    trades = [
+        _closed_buy(pnl=100_000.0, return_pct=4.0, is_win=True),
+        _closed_buy(pnl=50_000.0, return_pct=2.0, is_win=True),
+        _closed_buy(pnl=-200_000.0, return_pct=-6.0, is_win=False),
+        _open_buy(),
+    ]
+    open_buys = [_open_buy()]
+    holding = {"pnl": -30_000.0}
+
+    stats = _build_position_trade_stats(trades, open_buys, holding)
+
+    assert stats["total_trades"] == 4
+    assert stats["completed_count"] == 3
+    assert stats["open_buy_count"] == 1
+    assert stats["win_count"] == 2
+    assert stats["loss_count"] == 1
+    assert abs(stats["win_rate"] - 2 / 3) < 1e-6
+    assert abs(stats["avg_win_return_pct"] - 3.0) < 1e-6
+    assert abs(stats["avg_loss_return_pct"] - (-6.0)) < 1e-6
+    assert stats["realized_pnl"] == -50_000.0
+    assert stats["unrealized_pnl"] == -30_000.0
+    assert stats["total_pnl"] == -80_000.0
+
+
+def test_build_position_trade_stats_handles_no_closed_trades():
+    trades = [_open_buy()]
+    open_buys = [_open_buy()]
+    holding = None
+
+    stats = _build_position_trade_stats(trades, open_buys, holding)
+
+    assert stats["completed_count"] == 0
+    assert stats["win_count"] == 0
+    assert stats["loss_count"] == 0
+    assert stats["win_rate"] is None
+    assert stats["avg_win_return_pct"] is None
+    assert stats["avg_loss_return_pct"] is None
+    assert stats["realized_pnl"] == 0.0
+    assert stats["unrealized_pnl"] == 0.0
+    assert stats["total_pnl"] == 0.0
+
+
+def test_build_position_trade_stats_excludes_non_buy_side_from_completed():
+    """SELL row가 같은 stock에서 발견되더라도 completed/win/loss는 BUY 청산만 집계해야 한다."""
+    trades = [
+        _closed_buy(pnl=50_000.0, return_pct=3.0, is_win=True),
+        SimpleNamespace(
+            side="SELL",
+            exit_at=datetime(2026, 5, 27, 15, 0),
+            pnl=999_999.0,  # 들어가면 안 됨
+            return_pct=99.0,
+            is_win=True,
+        ),
+    ]
+    stats = _build_position_trade_stats(trades, [], {"pnl": 0.0})
+
+    assert stats["completed_count"] == 1
+    assert stats["realized_pnl"] == 50_000.0
+    assert stats["win_count"] == 1
 
 
 def test_extract_latest_signal_fills_thresholds_from_open_trade_when_activity_omits_them():
