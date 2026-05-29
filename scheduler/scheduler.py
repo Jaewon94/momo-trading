@@ -837,6 +837,21 @@ class TradingScheduler:
                 misfire_grace_time=3600,
             )
 
+            # ── 주간 캘리브레이션·IC 검증 (금요일 16:10) ──
+            # post_market(15:40) + portfolio_sync(16:00) 직후 한 주 데이터로
+            # LLM 신뢰도 보정과 pre-LLM 신호 IC를 자동으로 재측정해 활동 로그에
+            # 요약을 남긴다. 결과는 runtime/reports/weekly_review_*.json에 보관.
+            from scheduler.jobs.calibration_review_job import calibration_review_job
+            self.scheduler.add_job(
+                calibration_review_job,
+                "cron",
+                hour=16, minute=10,
+                day_of_week="fri",
+                id="weekly_calibration_review",
+                name="주간 캘리브레이션·IC 검증",
+                misfire_grace_time=3600,
+            )
+
             # ── 일봉 데이터 수집 (16:30) ──
             self.scheduler.add_job(
                 market_data_job,

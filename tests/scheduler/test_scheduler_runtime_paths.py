@@ -516,6 +516,7 @@ def test_scheduler_setup_jobs_registers_expected_job_ids() -> None:
         "force_liquidation",
         "post_market",
         "portfolio_sync",
+        "weekly_calibration_review",
         "market_data",
         "expire_recommendations",
     }
