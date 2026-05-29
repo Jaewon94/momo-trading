@@ -43,6 +43,7 @@ EXCLUDED_EXIT_REASONS = (
 
 # 분석 대상 numeric 지표 (notes JSON 키)
 INDICATOR_KEYS: tuple[str, ...] = (
+    "fast_gate_score",  # deterministic Tier1 fast gate 종합 점수 (2026-05-29 추가)
     "estimated_edge_bps",
     "edge_to_cost_ratio",
     "chart_signal_confidence",

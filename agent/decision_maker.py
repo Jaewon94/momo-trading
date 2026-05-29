@@ -513,6 +513,10 @@ class DecisionMaker:
             "active_stop_loss": ctx.get("active_stop_loss"),
             "active_take_profit": ctx.get("active_take_profit"),
             "active_trailing_stop_pct": ctx.get("active_trailing_stop_pct"),
+            # Pre-LLM deterministic fast gate (IC 분석용)
+            "fast_gate_score": ctx.get("fast_gate_score"),
+            "fast_gate_code": ctx.get("fast_gate_code"),
+            "fast_gate_threshold": ctx.get("fast_gate_threshold"),
         }
         payload = {
             k: v

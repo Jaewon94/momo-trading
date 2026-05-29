@@ -816,6 +816,7 @@ class TradingAgent:
 
         indicators = chart_result.indicators
 
+        fast_gate = None  # IC 분석을 위해 통과한 trade의 notes에도 score를 저장한다
         fast_gate_mode = self._deterministic_tier1_fast_gate_mode()
         if fast_gate_mode != "OFF":
             fast_gate = deterministic_tier1_fast_gate_service.evaluate(
@@ -1596,6 +1597,12 @@ class TradingAgent:
                 for item in (news_context_payload.get("items") or [])
                 if item.get("source_code")
             }),
+            # Pre-LLM deterministic fast gate 결과 (IC 분석용 — 매매된 trade도 score 저장)
+            "fast_gate_score": fast_gate.score if fast_gate else None,
+            "fast_gate_code": fast_gate.code if fast_gate else None,
+            "fast_gate_threshold": (
+                fast_gate.detail.get("threshold") if fast_gate and fast_gate.detail else None
+            ),
         }
 
         exec_result = await decision_maker.execute(
