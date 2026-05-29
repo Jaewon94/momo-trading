@@ -89,6 +89,7 @@ runtime/data/app.db.backup-*
 !runtime/logs/.gitkeep
 !runtime/pids/.gitkeep
 !runtime/data/.gitkeep
+runtime/reports/
 
 # 데이터베이스 파일
 *.db
