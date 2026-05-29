@@ -1,18 +1,23 @@
 """LLM 신뢰도(ai_confidence) 캘리브레이션 분석 도구.
 
 청산된 BUY 거래의 신뢰도와 실제 win rate를 비교해, 시스템이 보고하는
-신뢰도가 실제 적중률과 얼마나 일치하는지 진단한다.
+신뢰도가 실제 적중률과 얼마나 일치하는지 진단한다. Platt scaling을
+적용해 보정된 신뢰도를 산출하고, 보정 후 Brier/ECE 개선 폭과 권장
+임계값을 함께 출력한다.
 
 사용:
     .venv313/bin/python scripts/analyze_confidence_calibration.py
 
 산출물:
-    - 콘솔: 표본 수, 평균 신뢰도, 평균 win rate, Brier score, 빈별 분포
-    - PNG (선택): runtime/reports/calibration_<YYYYMMDD>.png
+    - 콘솔: Brier/ECE 보정 전후, 빈별 분포, sigmoid 파라미터, 권장 임계값
+    - JSON: runtime/reports/calibration_<YYYYMMDD>.json (sigmoid 파라미터)
+    - PNG (matplotlib 있을 때): runtime/reports/calibration_<YYYYMMDD>.png
 """
 from __future__ import annotations
 
 import argparse
+import json
+import math
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
@@ -105,6 +110,97 @@ def bin_samples(samples: Sequence[TradeSample], n_bins: int = 5) -> list[Calibra
         idx = min(int(sample.confidence * n_bins), n_bins - 1)
         bins[idx].samples.append(sample)
     return bins
+
+
+@dataclass(frozen=True)
+class PlattParams:
+    """Platt scaling 파라미터: p_calibrated(x) = sigmoid(slope * x + intercept)."""
+    slope: float
+    intercept: float
+
+    def apply(self, raw_confidence: float) -> float:
+        z = self.slope * raw_confidence + self.intercept
+        # numerically stable sigmoid
+        if z >= 0:
+            return 1.0 / (1.0 + math.exp(-z))
+        ez = math.exp(z)
+        return ez / (1.0 + ez)
+
+    def inverse_for_target(self, target_probability: float) -> float | None:
+        """보정된 확률 = target이 되는 raw confidence 값을 역산."""
+        if target_probability <= 0 or target_probability >= 1:
+            return None
+        if self.slope == 0:
+            return None
+        logit = math.log(target_probability / (1.0 - target_probability))
+        return (logit - self.intercept) / self.slope
+
+
+def fit_platt_scaling(
+    samples: Sequence[TradeSample],
+    *,
+    max_iter: int = 200,
+    tol: float = 1e-7,
+) -> PlattParams:
+    """Platt(1999) scaling을 Newton-Raphson으로 적합한다.
+
+    pseudo-target을 사용해 표본이 작은 경우의 과적합을 완화한다.
+    의존성을 줄이기 위해 numpy/scipy 없이 순수 Python 으로 구현했다.
+    """
+    if not samples:
+        raise ValueError("표본이 없습니다.")
+    n_pos = sum(1 for s in samples if s.is_win)
+    n_neg = len(samples) - n_pos
+    if n_pos == 0 or n_neg == 0:
+        raise ValueError("Platt scaling은 양/음 표본이 모두 있어야 합니다.")
+
+    target_pos = (n_pos + 1.0) / (n_pos + 2.0)
+    target_neg = 1.0 / (n_neg + 2.0)
+    targets = [target_pos if s.is_win else target_neg for s in samples]
+    scores = [s.confidence for s in samples]
+
+    slope = 0.0
+    intercept = math.log((n_neg + 1.0) / (n_pos + 1.0))
+
+    def _sigmoid(z: float) -> float:
+        if z >= 0:
+            return 1.0 / (1.0 + math.exp(-z))
+        ez = math.exp(z)
+        return ez / (1.0 + ez)
+
+    for _ in range(max_iter):
+        g1 = g2 = 0.0
+        h11 = h12 = h22 = 0.0
+        for x, t in zip(scores, targets):
+            z = slope * x + intercept
+            p = _sigmoid(z)
+            err = p - t
+            g1 += err * x
+            g2 += err
+            pp = p * (1.0 - p)
+            h11 += pp * x * x
+            h12 += pp * x
+            h22 += pp
+        h11 += 1e-12
+        h22 += 1e-12
+        det = h11 * h22 - h12 * h12
+        if abs(det) < 1e-14:
+            break
+        delta_slope = (h22 * g1 - h12 * g2) / det
+        delta_intercept = (h11 * g2 - h12 * g1) / det
+        new_slope = slope - delta_slope
+        new_intercept = intercept - delta_intercept
+        if abs(new_slope - slope) < tol and abs(new_intercept - intercept) < tol:
+            slope, intercept = new_slope, new_intercept
+            break
+        slope, intercept = new_slope, new_intercept
+
+    return PlattParams(slope=slope, intercept=intercept)
+
+
+def apply_calibration(samples: Sequence[TradeSample], params: PlattParams) -> list[TradeSample]:
+    """보정된 신뢰도로 새 표본 리스트를 만든다 (is_win은 그대로)."""
+    return [TradeSample(confidence=params.apply(s.confidence), is_win=s.is_win) for s in samples]
 
 
 def expected_calibration_error(bins: Sequence[CalibrationBin]) -> float:
@@ -213,24 +309,116 @@ def save_reliability_png(bins: Sequence[CalibrationBin], output_path: Path) -> P
     return output_path
 
 
+def format_calibration_report(
+    samples: Sequence[TradeSample],
+    params: PlattParams,
+    calibrated: Sequence[TradeSample],
+    calibrated_bins: Sequence[CalibrationBin],
+) -> str:
+    raw_brier = brier_score(samples)
+    new_brier = brier_score(calibrated)
+    raw_ece = expected_calibration_error(bin_samples(samples, n_bins=5))
+    new_ece = expected_calibration_error(calibrated_bins)
+
+    lines = []
+    lines.append("")
+    lines.append("=" * 70)
+    lines.append("Platt scaling 보정 결과")
+    lines.append("=" * 70)
+    lines.append(f"sigmoid 파라미터: slope={params.slope:+.4f}, intercept={params.intercept:+.4f}")
+    lines.append(f"  → 보정 공식:    p_calibrated = sigmoid({params.slope:+.4f} * raw + {params.intercept:+.4f})")
+    lines.append("")
+    lines.append(f"Brier score:  {raw_brier:.4f}  →  {new_brier:.4f}   ({new_brier - raw_brier:+.4f})")
+    lines.append(f"ECE:          {raw_ece:.4f}  →  {new_ece:.4f}   ({new_ece - raw_ece:+.4f})")
+    lines.append("")
+    lines.append("보정된 신뢰도 빈별 분포 (n_bins=5)")
+    lines.append("-" * 70)
+    lines.append(f"{'구간':>12} {'n':>5} {'wins':>5} {'평균 신뢰도':>12} {'실제 win rate':>14} {'차이':>10}")
+    for b in calibrated_bins:
+        if b.n == 0:
+            lines.append(f"{b.label:>12} {0:>5} {'-':>5} {'-':>12} {'-':>14} {'-':>10}")
+            continue
+        wins_b = sum(1 for s in b.samples if s.is_win)
+        gap = (b.mean_confidence or 0.0) - (b.win_rate or 0.0)
+        lines.append(
+            f"{b.label:>12} {b.n:>5} {wins_b:>5} "
+            f"{(b.mean_confidence or 0):>12.3f} {(b.win_rate or 0):>14.3f} {gap:>+10.3f}"
+        )
+    lines.append("")
+    lines.append("권장 임계값 (보정된 확률 기준)")
+    lines.append("-" * 70)
+    for target in (0.45, 0.50, 0.55, 0.60):
+        raw = params.inverse_for_target(target)
+        if raw is None:
+            continue
+        lines.append(f"  보정 후 {target:.0%} 적중률 = raw 신뢰도 {raw:.3f}")
+    lines.append("")
+    lines.append("해석:")
+    lines.append("  - sigmoid(slope*x + intercept) 보정 후 raw 임계값 적용 권장")
+    lines.append("  - 표본이 적은 경우(< 200건) 결과 신뢰성 제한적, 추가 데이터 누적 필요")
+    return "\n".join(lines)
+
+
+def save_calibration_json(
+    params: PlattParams,
+    samples: Sequence[TradeSample],
+    output_path: Path,
+) -> Path:
+    raw_brier = brier_score(samples)
+    calibrated = apply_calibration(samples, params)
+    new_brier = brier_score(calibrated)
+    payload = {
+        "generated_at": datetime.now().isoformat(),
+        "sample_count": len(samples),
+        "win_count": sum(1 for s in samples if s.is_win),
+        "platt": {
+            "slope": params.slope,
+            "intercept": params.intercept,
+        },
+        "brier_score_before": raw_brier,
+        "brier_score_after": new_brier,
+        "recommended_raw_thresholds": {
+            f"{int(target * 100)}pct_calibrated": params.inverse_for_target(target)
+            for target in (0.45, 0.50, 0.55, 0.60)
+        },
+    }
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False))
+    return output_path
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--n-bins", type=int, default=5, help="신뢰도 구간 개수 (기본 5)")
     parser.add_argument("--no-png", action="store_true", help="PNG 저장 건너뛰기")
+    parser.add_argument("--no-calibration", action="store_true", help="Platt scaling 보정 건너뛰기")
     args = parser.parse_args()
 
     samples = load_trade_samples()
     bins = bin_samples(samples, n_bins=args.n_bins)
     print(format_report(samples, bins))
 
+    today = datetime.now().strftime("%Y%m%d")
+    if samples and not args.no_calibration:
+        try:
+            params = fit_platt_scaling(samples)
+        except ValueError as exc:
+            print(f"\nPlatt scaling 건너뜀: {exc}")
+        else:
+            calibrated = apply_calibration(samples, params)
+            calibrated_bins = bin_samples(calibrated, n_bins=args.n_bins)
+            print(format_calibration_report(samples, params, calibrated, calibrated_bins))
+            json_path = REPORT_DIR / f"calibration_{today}.json"
+            saved_json = save_calibration_json(params, samples, json_path)
+            print(f"\nCalibration JSON 저장: {saved_json}")
+
     if samples and not args.no_png:
-        today = datetime.now().strftime("%Y%m%d")
         png_path = REPORT_DIR / f"calibration_{today}.png"
         saved = save_reliability_png(bins, png_path)
         if saved is not None and saved.exists():
-            print(f"\nReliability diagram 저장: {saved}")
+            print(f"Reliability diagram 저장: {saved}")
         else:
-            print("\nmatplotlib 미설치 — PNG 저장 건너뜀. (`uv pip install matplotlib`)")
+            print("matplotlib 미설치 — PNG 저장 건너뜀. (`uv pip install matplotlib`)")
     return 0
 
 
