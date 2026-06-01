@@ -44,6 +44,8 @@ EXCLUDED_EXIT_REASONS = (
 # 분석 대상 numeric 지표 (notes JSON 키)
 INDICATOR_KEYS: tuple[str, ...] = (
     "fast_gate_score",  # deterministic Tier1 fast gate 종합 점수 (2026-05-29 추가)
+    "ulcer_index_14d",  # 14일 Ulcer Index — drawdown 깊이·지속 (2026-06-01 추가)
+    "r_squared_60d",  # 60일 log-trend 선형성 (2026-06-01 추가)
     "estimated_edge_bps",
     "edge_to_cost_ratio",
     "chart_signal_confidence",

@@ -517,6 +517,9 @@ class DecisionMaker:
             "fast_gate_score": ctx.get("fast_gate_score"),
             "fast_gate_code": ctx.get("fast_gate_code"),
             "fast_gate_threshold": ctx.get("fast_gate_threshold"),
+            # 안정성 지표 (gate 미반영, IC 예측력 측정만)
+            "ulcer_index_14d": ctx.get("ulcer_index_14d"),
+            "r_squared_60d": ctx.get("r_squared_60d"),
         }
         payload = {
             k: v

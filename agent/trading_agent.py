@@ -1603,6 +1603,13 @@ class TradingAgent:
             "fast_gate_threshold": (
                 fast_gate.detail.get("threshold") if fast_gate and fast_gate.detail else None
             ),
+            # 안정성 지표 (gate 미반영, IC 예측력 측정만)
+            "ulcer_index_14d": (
+                fast_gate.detail.get("ulcer_index_14d") if fast_gate and fast_gate.detail else None
+            ),
+            "r_squared_60d": (
+                fast_gate.detail.get("r_squared_60d") if fast_gate and fast_gate.detail else None
+            ),
         }
 
         exec_result = await decision_maker.execute(

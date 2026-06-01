@@ -7,6 +7,7 @@ from datetime import datetime
 import pandas as pd
 
 from analysis.chart_analyzer import ChartAnalysisResult
+from analysis.technical.stability_metrics import compute_stability_metrics
 from core.config import settings
 from trading.symbols import normalize_krx_symbol
 from util.time_util import now_kst
@@ -164,6 +165,10 @@ class DeterministicTier1FastGateService:
             score += 4
             reasons.append("volume acceptable")
 
+        # 안정성 지표 (Ulcer Index 14d + R² 60d) — 측정만, 게이트 점수 미반영.
+        # 주간 IC 검증으로 예측력 확인 후 게이트에 통합 예정.
+        stability_metrics = compute_stability_metrics(daily_df)
+
         risk_profile = self._risk_profile()
         upper_limit_fade_risk = (
             change_rate >= risk_profile.overheat_change_pct
@@ -211,29 +216,33 @@ class DeterministicTier1FastGateService:
         if bull_momentum_allow:
             reasons.append("bull/theme momentum analysis allowance")
 
+        common_detail = {
+            "score": round(score, 2),
+            "threshold": risk_profile.min_continue_score,
+            "change_rate": change_rate,
+            "after_cutoff": after_cutoff,
+            "risk_appetite": risk_profile.risk_appetite,
+            "overheat_threshold": risk_profile.overheat_change_pct,
+            "trend_direction": trend_direction,
+            "signal_direction": signal_direction,
+            "intraday_direction": intraday_direction,
+            "intraday_vwap_position": vwap_position,
+            "intraday_volume_trend": volume_trend,
+            "volume_weakening": volume_weakening,
+            "upper_limit_fade_risk": upper_limit_fade_risk,
+            "bull_momentum_allow": bull_momentum_allow,
+            "ulcer_index_14d": stability_metrics["ulcer_index_14d"],
+            "r_squared_60d": stability_metrics["r_squared_60d"],
+            "reasons": reasons,
+        }
+
         if hard_late_overheat or (hard_bearish and not bull_momentum_allow) or (score < risk_profile.min_continue_score and not bull_momentum_allow):
             return DeterministicTier1FastGateDecision(
                 action="HOLD",
                 code="FAST_GATE_HOLD",
                 reason=", ".join(reasons[:6]) or "deterministic score below threshold",
                 score=round(score, 2),
-                detail={
-                    "score": round(score, 2),
-                    "threshold": risk_profile.min_continue_score,
-                    "change_rate": change_rate,
-                    "after_cutoff": after_cutoff,
-                    "risk_appetite": risk_profile.risk_appetite,
-                    "overheat_threshold": risk_profile.overheat_change_pct,
-                    "trend_direction": trend_direction,
-                    "signal_direction": signal_direction,
-                    "intraday_direction": intraday_direction,
-                    "intraday_vwap_position": vwap_position,
-                    "intraday_volume_trend": volume_trend,
-                    "volume_weakening": volume_weakening,
-                    "upper_limit_fade_risk": upper_limit_fade_risk,
-                    "bull_momentum_allow": bull_momentum_allow,
-                    "reasons": reasons,
-                },
+                detail=common_detail,
             )
 
         return DeterministicTier1FastGateDecision(
@@ -241,23 +250,7 @@ class DeterministicTier1FastGateService:
             code="FAST_GATE_CONTINUE",
             reason=", ".join(reasons[:6]) or "deterministic score passed",
             score=round(score, 2),
-            detail={
-                "score": round(score, 2),
-                "threshold": risk_profile.min_continue_score,
-                "change_rate": change_rate,
-                "after_cutoff": after_cutoff,
-                "risk_appetite": risk_profile.risk_appetite,
-                "overheat_threshold": risk_profile.overheat_change_pct,
-                "trend_direction": trend_direction,
-                "signal_direction": signal_direction,
-                "intraday_direction": intraday_direction,
-                "intraday_vwap_position": vwap_position,
-                "intraday_volume_trend": volume_trend,
-                "volume_weakening": volume_weakening,
-                "upper_limit_fade_risk": upper_limit_fade_risk,
-                "bull_momentum_allow": bull_momentum_allow,
-                "reasons": reasons,
-            },
+            detail=common_detail,
         )
 
     @staticmethod
