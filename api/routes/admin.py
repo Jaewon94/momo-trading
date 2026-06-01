@@ -48,6 +48,7 @@ from schemas.qa_schema import QARequest, QAResponse
 from scheduler.jobs import portfolio_sync_job
 from services.activity_logger import activity_logger
 from services.bloomberg_news_service import bloomberg_news_service
+from services.calibration_recommendation_service import calibration_recommendation_service
 from services.cnbc_news_service import cnbc_news_service
 from services.broker_runtime_service import broker_runtime_service
 from services.error_capture_service import error_capture_service
@@ -2772,6 +2773,57 @@ async def get_system_preflight(db: AsyncSession = Depends(get_async_db)):
     """장 시작 전 read-only 운영 점검"""
     snapshot = await system_preflight_service.build_snapshot(db)
     return SuccessResponse(data=snapshot)
+
+
+# ─────────────────────────────────────────────────────────────────
+# Calibration recommendation (weekly_review → trading_rules)
+# ─────────────────────────────────────────────────────────────────
+
+
+@router.get("/calibration/recommendation")
+async def get_calibration_recommendation():
+    """주간 캘리브레이션 리포트로 도출한 min_confidence 권장값 + 현재 활성 규칙 비교."""
+    rec = await calibration_recommendation_service.latest_recommendation()
+    message = (
+        "권장값 조회 완료"
+        if rec.available
+        else "권장값 없음 — weekly_review 또는 Platt 적합 결과 부족"
+    )
+    return SuccessResponse(data=rec.to_dict(), message=message)
+
+
+@router.post("/calibration/apply")
+async def apply_calibration_recommendation(
+    confirmation: AdminActionConfirmationVerifyRequest | None = None,
+):
+    """권장 min_confidence를 trading_rules PARAM_OVERRIDE 로 활성화."""
+    _require_admin_action_confirmation(
+        confirmation,
+        action="APPLY_CALIBRATION_RECOMMENDATION",
+        resource_id="MIN_CONFIDENCE",
+        quantity="WEEKLY_REVIEW",
+        always=True,
+    )
+    result = await calibration_recommendation_service.apply_recommendation()
+    if not result.get("applied"):
+        return SuccessResponse(data=result, message=result.get("reason") or "권장값 적용 불가")
+
+    await activity_logger.log(
+        ActivityType.EVENT,
+        ActivityPhase.PROGRESS,
+        (
+            f"⚙️ 캘리브레이션 권장 적용 · min_confidence "
+            f"{result.get('previous_min_confidence')} → {result.get('applied_min_confidence')}"
+        ),
+        detail=result,
+    )
+    return SuccessResponse(
+        data=result,
+        message=(
+            f"min_confidence {result['previous_min_confidence']} → "
+            f"{result['applied_min_confidence']} 적용 완료"
+        ),
+    )
 
 
 @router.post("/mcp/reconnect")
