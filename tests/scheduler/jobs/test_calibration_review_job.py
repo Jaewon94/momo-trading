@@ -116,6 +116,64 @@ def test_run_signal_analysis_filters_constants_and_returns_indicator_rows(monkey
     assert "CONSTANT" in const_row["verdict"]
 
 
+def test_collect_inverted_indicators_filters_only_inverted_rows():
+    indicators = [
+        {"key": "edge_to_cost_ratio", "verdict": "STRONG_POSITIVE", "spearman_ic": 0.12},
+        {"key": "estimated_edge_bps", "verdict": "INVERTED (역방향 신호)", "spearman_ic": -0.07, "t_statistic": -2.3, "n": 88},
+        {"key": "chart_signal_confidence", "verdict": "NOT_SIGNIFICANT", "spearman_ic": 0.01},
+        {"key": "news_negative_count", "verdict": "STRONG_INVERTED (단조 감소)", "spearman_ic": -0.18, "t_statistic": -3.5, "n": 88},
+    ]
+    out = job_module._collect_inverted_indicators(indicators)
+    assert [item["key"] for item in out] == ["estimated_edge_bps", "news_negative_count"]
+    assert out[0]["spearman_ic"] == -0.07
+    assert out[1]["verdict"].startswith("STRONG_INVERTED")
+
+
+@pytest.mark.asyncio
+async def test_calibration_review_job_emits_separate_alert_when_inverted(monkeypatch, tmp_path):
+    captured_logs: list[tuple[str, str, str, dict | None]] = []
+
+    class _FakeLogger:
+        async def log(self, activity_type, phase, summary, **kwargs):
+            captured_logs.append((str(activity_type), str(phase), summary, kwargs.get("detail")))
+
+    monkeypatch.setattr("services.activity_logger.activity_logger", _FakeLogger())
+    monkeypatch.setattr(job_module, "REPORT_DIR", tmp_path)
+    monkeypatch.setattr(job_module, "_run_calibration_analysis", lambda: {"sample_count": 50})
+    monkeypatch.setattr(job_module, "_run_signal_analysis", lambda: [
+        {"key": "fast_gate_score", "verdict": "STRONG_POSITIVE"},
+        {"key": "edge_to_cost_ratio", "verdict": "INVERTED (역방향 신호)", "spearman_ic": -0.06, "t_statistic": -2.1, "n": 88},
+    ])
+
+    await job_module.calibration_review_job()
+    alert_logs = [row for row in captured_logs if "ERROR" in row[1]]
+    assert len(alert_logs) == 1
+    activity_type, phase, message, detail = alert_logs[0]
+    assert "역방향 지표" in message
+    assert "edge_to_cost_ratio" in message
+    assert detail and detail.get("inverted_indicators")
+    assert detail["inverted_indicators"][0]["key"] == "edge_to_cost_ratio"
+
+
+@pytest.mark.asyncio
+async def test_calibration_review_job_skips_alert_when_no_inverted(monkeypatch, tmp_path):
+    captured_logs: list[tuple[str, str, str]] = []
+
+    class _FakeLogger:
+        async def log(self, activity_type, phase, summary, **kwargs):
+            captured_logs.append((str(activity_type), str(phase), summary))
+
+    monkeypatch.setattr("services.activity_logger.activity_logger", _FakeLogger())
+    monkeypatch.setattr(job_module, "REPORT_DIR", tmp_path)
+    monkeypatch.setattr(job_module, "_run_calibration_analysis", lambda: {"sample_count": 50})
+    monkeypatch.setattr(job_module, "_run_signal_analysis", lambda: [
+        {"key": "fast_gate_score", "verdict": "STRONG_POSITIVE"},
+    ])
+
+    await job_module.calibration_review_job()
+    assert not any("ERROR" in phase for _, phase, _ in captured_logs)
+
+
 @pytest.mark.asyncio
 async def test_calibration_review_job_logs_summary_and_returns_payload(monkeypatch, tmp_path):
     captured_logs: list[tuple[str, str, str]] = []

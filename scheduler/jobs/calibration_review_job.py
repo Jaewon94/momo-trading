@@ -157,6 +157,22 @@ def _save_report(payload: dict, *, report_dir: Path | None = None) -> Path:
     return path
 
 
+def _collect_inverted_indicators(indicator_payload: list[dict]) -> list[dict]:
+    """verdict 가 INVERTED 인 지표만 추출 — 별도 ALERT 로 노출하기 위함."""
+    inverted: list[dict] = []
+    for item in indicator_payload:
+        verdict = str(item.get("verdict") or "")
+        if "INVERTED" in verdict:
+            inverted.append({
+                "key": item.get("key"),
+                "spearman_ic": item.get("spearman_ic"),
+                "t_statistic": item.get("t_statistic"),
+                "verdict": verdict,
+                "n": item.get("n"),
+            })
+    return inverted
+
+
 async def calibration_review_job() -> dict:
     """매주 금요일 장 마감 후 한 번 호출되는 진입점."""
     from trading.enums import ActivityPhase, ActivityType
@@ -182,6 +198,27 @@ async def calibration_review_job() -> dict:
             summary,
             detail={"weekly_review_path": str(report_path)},
         )
+
+        inverted = _collect_inverted_indicators(indicator_payload)
+        if inverted:
+            names = ", ".join(item.get("key") or "?" for item in inverted)
+            alert_message = (
+                f"⚠️ Pre-LLM 게이트 역방향 지표 {len(inverted)}건 감지 — {names}. "
+                "부호 뒤집어 사용하거나 게이트에서 제외 검토 필요."
+            )
+            try:
+                await activity_logger.log(
+                    ActivityType.SCHEDULE,
+                    ActivityPhase.ERROR,
+                    alert_message,
+                    detail={
+                        "inverted_indicators": inverted,
+                        "weekly_review_path": str(report_path),
+                    },
+                )
+            except Exception as inner_exc:  # noqa: BLE001
+                logger.warning("역방향 지표 ALERT 로깅 실패: {}", str(inner_exc))
+
         logger.info("주간 캘리브레이션 검증 완료 — {}", report_path)
         return payload
     except Exception as exc:  # noqa: BLE001
