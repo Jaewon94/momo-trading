@@ -36,6 +36,7 @@ from scripts.analyze_signal_predictive_power import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REPORT_DIR = REPO_ROOT / "runtime" / "reports"
+INVERTED_ALERT_MIN_SAMPLE_SIZE = 30
 
 
 def _format_summary_message(
@@ -157,20 +158,47 @@ def _save_report(payload: dict, *, report_dir: Path | None = None) -> Path:
     return path
 
 
-def _collect_inverted_indicators(indicator_payload: list[dict]) -> list[dict]:
+def _collect_inverted_indicators(
+    indicator_payload: list[dict],
+    *,
+    min_sample_size: int = INVERTED_ALERT_MIN_SAMPLE_SIZE,
+) -> list[dict]:
     """verdict 가 INVERTED 인 지표만 추출 — 별도 ALERT 로 노출하기 위함."""
     inverted: list[dict] = []
     for item in indicator_payload:
         verdict = str(item.get("verdict") or "")
-        if "INVERTED" in verdict:
+        n = int(item.get("n") or 0)
+        if "INVERTED" in verdict and n >= min_sample_size:
             inverted.append({
                 "key": item.get("key"),
                 "spearman_ic": item.get("spearman_ic"),
                 "t_statistic": item.get("t_statistic"),
                 "verdict": verdict,
-                "n": item.get("n"),
+                "n": n,
             })
     return inverted
+
+
+def _collect_watchlist_inverted_indicators(
+    indicator_payload: list[dict],
+    *,
+    min_sample_size: int = INVERTED_ALERT_MIN_SAMPLE_SIZE,
+) -> list[dict]:
+    """소표본 역방향 후보를 별도 관찰 대상으로 남긴다."""
+    watchlist: list[dict] = []
+    for item in indicator_payload:
+        verdict = str(item.get("verdict") or "")
+        n = int(item.get("n") or 0)
+        if "INVERTED" in verdict and 0 < n < min_sample_size:
+            watchlist.append({
+                "key": item.get("key"),
+                "spearman_ic": item.get("spearman_ic"),
+                "t_statistic": item.get("t_statistic"),
+                "verdict": verdict,
+                "n": n,
+                "min_sample_size": min_sample_size,
+            })
+    return watchlist
 
 
 async def calibration_review_job() -> dict:
@@ -200,6 +228,21 @@ async def calibration_review_job() -> dict:
         )
 
         inverted = _collect_inverted_indicators(indicator_payload)
+        watchlist_inverted = _collect_watchlist_inverted_indicators(indicator_payload)
+        if watchlist_inverted:
+            try:
+                await activity_logger.log(
+                    ActivityType.SCHEDULE,
+                    ActivityPhase.PROGRESS,
+                    "Pre-LLM 게이트 소표본 역방향 후보 관찰",
+                    detail={
+                        "watchlist_inverted_indicators": watchlist_inverted,
+                        "min_sample_size": INVERTED_ALERT_MIN_SAMPLE_SIZE,
+                        "weekly_review_path": str(report_path),
+                    },
+                )
+            except Exception as inner_exc:  # noqa: BLE001
+                logger.warning("소표본 역방향 후보 로깅 실패: {}", str(inner_exc))
         if inverted:
             names = ", ".join(item.get("key") or "?" for item in inverted)
             alert_message = (

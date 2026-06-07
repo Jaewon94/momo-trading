@@ -646,6 +646,15 @@ def test_breakeven_and_scale_in_are_horizon_aware(monkeypatch) -> None:
     ) is None
 
 
+def test_preserve_tighter_stop_loss_keeps_existing_active_stop() -> None:
+    protected = TradingScheduler._preserve_tighter_stop_loss(
+        {"stop_loss": 69_000.0, "take_profit": 74_500.0},
+        current_stop_loss=70_000,
+    )
+
+    assert protected == {"stop_loss": 70_000.0, "take_profit": 74_500.0}
+
+
 def test_default_exit_thresholds_are_horizon_aware(monkeypatch) -> None:
     monkeypatch.setattr("scheduler.scheduler.settings.DEFAULT_STOP_LOSS_PCT_SHORT", -3.0)
     monkeypatch.setattr("scheduler.scheduler.settings.DEFAULT_STOP_LOSS_PCT_MID", -4.0)
@@ -2870,6 +2879,9 @@ async def test_intraday_holdings_review_sells_position_and_triggers_rescan(monke
     async def fake_confirm_and_record(**kwargs) -> None:
         confirmed_orders.append(kwargs)
 
+    async def fake_create_pending_record(**kwargs) -> str:
+        return "pending-sell-review"
+
     class DummyTask:
         pass
 
@@ -2899,6 +2911,7 @@ async def test_intraday_holdings_review_sells_position_and_triggers_rescan(monke
     monkeypatch.setattr("agent.trading_agent.trading_agent._market_context", "강세 유지")
     monkeypatch.setattr("agent.trading_agent.trading_agent._acquire_sell", fake_acquire_sell)
     monkeypatch.setattr("agent.trading_agent.trading_agent._release_sell", released.append)
+    monkeypatch.setattr("agent.decision_maker.decision_maker._create_pending_record", fake_create_pending_record)
     monkeypatch.setattr("agent.decision_maker.decision_maker.confirm_and_record", fake_confirm_and_record)
     monkeypatch.setattr("realtime.event_detector.event_detector.remove_levels", removed_levels.append)
     monkeypatch.setattr("asyncio.create_task", fake_create_task)
@@ -2907,6 +2920,7 @@ async def test_intraday_holdings_review_sells_position_and_triggers_rescan(monke
 
     assert confirmed_orders[0]["order_id"] == "SELL-REVIEW"
     assert confirmed_orders[0]["exit_reason"] == "HOLDINGS_REVIEW"
+    assert confirmed_orders[0]["pending_record_id"] == "pending-sell-review"
     assert removed_levels == ["005930"]
     assert released == ["005930"]
     assert len(created_tasks) == 1
@@ -3121,6 +3135,9 @@ async def test_intraday_holdings_review_executes_partial_sell(monkeypatch) -> No
     async def fake_confirm_and_record(**kwargs):
         confirms.append(kwargs)
 
+    async def fake_create_pending_record(**kwargs) -> str:
+        return "pending-partial-sell"
+
     async def fake_log(*args, **kwargs) -> None:
         logs.append(args[2])
 
@@ -3154,6 +3171,7 @@ async def test_intraday_holdings_review_executes_partial_sell(monkeypatch) -> No
             ]
         },
     )
+    monkeypatch.setattr("agent.decision_maker.decision_maker._create_pending_record", fake_create_pending_record)
     monkeypatch.setattr("agent.decision_maker.decision_maker.confirm_and_record", fake_confirm_and_record)
     monkeypatch.setattr("agent.trading_agent.trading_agent._acquire_sell", lambda _symbol: __import__("asyncio").sleep(0, result=True))
     monkeypatch.setattr("agent.trading_agent.trading_agent._release_sell", lambda _symbol: None)
@@ -3167,6 +3185,7 @@ async def test_intraday_holdings_review_executes_partial_sell(monkeypatch) -> No
     assert sell_orders == [("005930", 4)]
     assert confirms[0]["quantity"] == 4
     assert confirms[0]["exit_reason"] == "PARTIAL_TAKE_PROFIT"
+    assert confirms[0]["pending_record_id"] == "pending-partial-sell"
     assert any("PARTIAL_SELL 매도 성공 (4주)" in message for message in logs)
 
 

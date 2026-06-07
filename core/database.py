@@ -9,7 +9,7 @@ from core.config import settings
 # ── Async Engine & Session ──
 async_engine = create_async_engine(
     settings.async_database_url,
-    echo=settings.is_local,
+    echo=bool(settings.SQLALCHEMY_ECHO),
     connect_args={"timeout": max(settings.SQLITE_BUSY_TIMEOUT_MS / 1000.0, 0.1)}
     if settings.async_database_url.startswith("sqlite+aiosqlite:///")
     else {},

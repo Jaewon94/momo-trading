@@ -649,6 +649,52 @@ async def test_decision_maker_blocks_buy_when_pending_buy_confirm_exists(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_decision_maker_recovers_stale_pending_buy_before_blocking(monkeypatch) -> None:
+    adapter = FakeBrokerAdapter(OrderResult(success=True, order_id="ORD-NEW", message="ok"))
+    decision_maker = DecisionMaker(broker_adapter=adapter)
+    pending = SimpleNamespace(
+        stock_symbol="005930",
+        stock_name="삼성전자",
+        side="BUY",
+        status=OrderConfirmStatus.PENDING_CONFIRM.value,
+        order_id="ORD-STALE",
+        created_at=datetime(2026, 4, 6, 10, 0, 0),
+    )
+    repo_calls: list[str | None] = []
+    recover_calls = 0
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_pending_buy_confirms(self, symbol=None):
+            repo_calls.append(symbol)
+            return [pending] if len(repo_calls) == 1 else []
+
+    async def fake_recover_pending_confirms():
+        nonlocal recover_calls
+        recover_calls += 1
+        return {"recovered": 0, "failed": 1, "skipped": 0}
+
+    monkeypatch.setattr("agent.decision_maker.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("agent.decision_maker.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr(
+        "scheduler.jobs.portfolio_sync_job._recover_pending_confirms",
+        fake_recover_pending_confirms,
+    )
+    monkeypatch.setattr(
+        "agent.decision_maker.now_kst",
+        lambda: datetime(2026, 4, 6, 10, 2, 0),
+    )
+
+    block = await decision_maker._find_pending_buy_block("005930")
+
+    assert block is None
+    assert recover_calls == 1
+    assert repo_calls == ["005930", "005930", None]
+
+
+@pytest.mark.asyncio
 async def test_decision_maker_cancel_unfilled_order_invokes_executor(monkeypatch) -> None:
     adapter = FakeBrokerAdapter(OrderResult(success=True, order_id="ORD-CANCEL", message="ok"))
     decision_maker = DecisionMaker(broker_adapter=adapter)
@@ -1468,6 +1514,77 @@ async def test_decision_maker_marks_pending_failed_when_order_status_times_out(m
     assert failed_marks == [("pending-timeout", "체결 확인 타임아웃 (15초)")]
     assert settled == [("ORD-TIMEOUT", False)]
     assert adapter.cache_invalidated is False
+
+
+@pytest.mark.asyncio
+async def test_decision_maker_infers_sell_fill_after_timeout_with_fresh_holdings(monkeypatch) -> None:
+    class TimeoutBrokerAdapter(FakeBrokerAdapter):
+        async def get_order_status(self, order_id: str) -> OrderStatusInfo | None:
+            self.queried_order_ids.append(order_id)
+            raise asyncio.TimeoutError
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_all_open_buys(self, symbol: str):
+            assert symbol == "004060"
+            return [SimpleNamespace(quantity=1500)]
+
+    adapter = TimeoutBrokerAdapter(
+        OrderResult(success=True, order_id="SELL-TIMEOUT", message="주문 접수")
+    )
+    adapter.holdings = []
+    decision_maker = DecisionMaker(broker_adapter=adapter)
+    recorded: dict = {}
+    failed_marks: list[tuple[str | None, str]] = []
+    cancelled: list[tuple[str, str]] = []
+    settled: list[tuple[str, bool]] = []
+
+    async def fake_sleep(_: float) -> None:
+        return None
+
+    async def fake_record_trade_result(**kwargs) -> None:
+        recorded.update(kwargs)
+
+    async def fake_mark_pending_failed(pending_record_id: str | None, reason: str) -> None:
+        failed_marks.append((pending_record_id, reason))
+
+    async def fake_cancel(order_id: str, symbol: str) -> None:
+        cancelled.append((order_id, symbol))
+
+    async def fake_on_settled(order_id: str, success: bool) -> None:
+        settled.append((order_id, success))
+
+    monkeypatch.setattr("agent.decision_maker.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("agent.decision_maker.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("agent.decision_maker.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr(decision_maker, "_record_trade_result", fake_record_trade_result)
+    monkeypatch.setattr(decision_maker, "_mark_pending_failed", fake_mark_pending_failed)
+    monkeypatch.setattr(decision_maker, "_cancel_unfilled_order", fake_cancel)
+
+    result = await decision_maker.confirm_and_record(
+        symbol="004060",
+        side="SELL",
+        order_id="SELL-TIMEOUT",
+        quantity=1500,
+        expected_price=2992,
+        pending_record_id="pending-sell-timeout",
+        exit_reason="HOLDINGS_REVIEW",
+        on_settled=fake_on_settled,
+    )
+
+    assert result is True
+    assert adapter.queried_order_ids == ["SELL-TIMEOUT"]
+    assert adapter.cache_invalidated is True
+    assert recorded["symbol"] == "004060"
+    assert recorded["side"] == "SELL"
+    assert recorded["filled_qty"] == 1500
+    assert recorded["filled_price"] == 2992
+    assert recorded["exit_reason"] == "HOLDINGS_REVIEW"
+    assert failed_marks == []
+    assert cancelled == []
+    assert settled == [("SELL-TIMEOUT", True)]
 
 
 def test_decision_maker_uses_risk_based_buy_confirm_wait(monkeypatch) -> None:

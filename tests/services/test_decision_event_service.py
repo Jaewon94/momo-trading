@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import delete, select
 
 from models.decision_event import DecisionEvent
-from services.decision_event_service import DecisionEventService
+from services.decision_event_service import DecisionEventService, decision_event_service
 from tests.conftest import TestAsyncSessionLocal
 
 
@@ -81,3 +81,30 @@ async def test_decision_event_service_normalizes_empty_optional_fields() -> None
     assert event.final_action == "SKIP"
     assert event.provider == "UNKNOWN"
     assert event.model == "UNKNOWN"
+
+
+@pytest.mark.asyncio
+async def test_global_decision_event_service_uses_current_database_session(monkeypatch) -> None:
+    async with TestAsyncSessionLocal() as session:
+        await session.execute(delete(DecisionEvent))
+        await session.commit()
+
+    import core.database as database_module
+
+    monkeypatch.setattr(database_module, "AsyncSessionLocal", TestAsyncSessionLocal)
+
+    await decision_event_service.record_event(
+        cycle_id="cycle-test-isolated",
+        symbol="005930",
+        stock_name="삼성전자",
+        market="KRX",
+        decision_stage="ORDER_SUBMISSION",
+        source="decision_maker",
+        final_action="BUY",
+    )
+
+    async with TestAsyncSessionLocal() as session:
+        rows = (await session.execute(select(DecisionEvent))).scalars().all()
+
+    assert len(rows) == 1
+    assert rows[0].cycle_id == "cycle-test-isolated"

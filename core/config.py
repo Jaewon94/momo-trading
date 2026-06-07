@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     SQLITE_BUSY_TIMEOUT_MS: int = 5000
     SQLITE_WRITE_RETRY_COUNT: int = 3
     SQLITE_WRITE_RETRY_DELAY_MS: int = 150
+    SQLALCHEMY_ECHO: bool = False
     LOG_LEVEL: str = "DEBUG"
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:8000"]
 

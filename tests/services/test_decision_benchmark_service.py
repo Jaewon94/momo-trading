@@ -88,6 +88,81 @@ async def _add_labeled_decision(
 
 
 @pytest.mark.asyncio
+async def test_decision_benchmark_excludes_probable_fixture_decision_events() -> None:
+    created_at = datetime.now() - timedelta(days=1)
+    async with TestAsyncSessionLocal() as session:
+        real = DecisionEvent(
+            cycle_id="7f868aeb-1b76-4384-846b-21f08f8b39cb",
+            symbol="005930",
+            stock_name="삼성전자",
+            market="KRX",
+            decision_stage="ORDER_SUBMISSION",
+            source="decision_maker",
+            final_action="BUY",
+            reference_price=100_000,
+            provider="CODEX",
+            model="gpt-5.4",
+            status="ORDER_SUBMITTED",
+            created_at=created_at,
+        )
+        fixture = DecisionEvent(
+            cycle_id="cycle-read-only",
+            symbol="005930",
+            stock_name="005930",
+            market="KRX",
+            decision_stage="ORDER_GATE",
+            source="decision_maker",
+            final_action="SKIP",
+            confidence=0.0,
+            reference_price=100_000,
+            quantity=2,
+            provider="UNKNOWN",
+            model="UNKNOWN",
+            status="SKIPPED",
+            reason="주문 제출 차단: ORDER_SUBMISSION_MODE=READ_ONLY",
+            metadata_json=json.dumps({"order_result": {"order_id": "ORD-1"}}, ensure_ascii=False),
+            created_at=created_at,
+        )
+        session.add_all([real, fixture])
+        await session.flush()
+        session.add_all([
+            DecisionForwardReturn(
+                decision_event_id=real.id,
+                symbol="005930",
+                horizon="close",
+                target_at=created_at.replace(hour=15, minute=30),
+                reference_price=100_000,
+                target_price=102_000,
+                return_pct=2.0,
+                label_status="LABELED",
+                price_source="market_data_daily.close",
+            ),
+            DecisionForwardReturn(
+                decision_event_id=fixture.id,
+                symbol="005930",
+                horizon="close",
+                target_at=created_at.replace(hour=15, minute=30),
+                reference_price=100_000,
+                target_price=90_000,
+                return_pct=-10.0,
+                label_status="LABELED",
+                price_source="market_data_daily.close",
+            ),
+        ])
+        await session.commit()
+
+    report = await DecisionBenchmarkService().build_report(
+        TestAsyncSessionLocal,
+        days=7,
+        horizon="close",
+        min_sample_size=1,
+    )
+
+    assert report["overall"]["event_count"] == 1
+    assert report["overall"]["avg_return_pct"] == 2.0
+
+
+@pytest.mark.asyncio
 async def test_decision_benchmark_service_groups_labeled_returns() -> None:
     created_at = datetime.now() - timedelta(days=1)
     await _add_labeled_decision(

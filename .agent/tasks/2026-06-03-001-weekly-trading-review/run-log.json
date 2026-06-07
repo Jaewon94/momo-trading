@@ -1,0 +1,48 @@
+{
+  "schema_version": "momo.run-log.v1",
+  "task_id": "2026-06-03-001-weekly-trading-review",
+  "events": [
+    {
+      "at": "2026-06-03T17:06:40+09:00",
+      "type": "task_started",
+      "status": "created",
+      "summary": "Task artifact created."
+    },
+    {
+      "at": "2026-06-03T17:28:00+09:00",
+      "type": "analysis",
+      "status": "completed",
+      "summary": "Read-only weekly runtime DB review completed for 2026-06-01 through 2026-06-03 KST. Key issues: aggressive persisted settings, trade/report PnL inconsistencies, partial/stale confirmation paths, fixture-like decision events in production DB, and news polling partial errors."
+    },
+    {
+      "at": "2026-06-04T10:07:25+09:00",
+      "type": "verification",
+      "status": "warn",
+      "summary": "2026-06-04 10:05 KST live check: service/API healthy, scheduler and agent running, TRADING_ENABLED=true, AUTONOMOUS/FULL order mode, market open. Account snapshot fresh. Broker holdings show only 321370 Sensorview 1005 shares, +192k to +202k unrealized around 10:05, no pending orders. Today realized ledger shows Sensorview partial take profit +80,190 KRW, but account total asset is down 55,370 KRW from first snapshot. Critical mismatch: trade_results/admin trades still list 004060 SG Global as open 1500 shares while broker holdings no longer include it; operations WARN reports SG sell confirmation failure after stop-loss breach (-5.44%). Daily latest report endpoint is stale at 2026-06-02."
+    },
+    {
+      "at": "2026-06-04T10:07:39+09:00",
+      "type": "verification",
+      "status": "",
+      "summary": "2026-06-04 10:05 KST live check: service/API healthy, scheduler and agent running, TRADING_ENABLED=true, AUTONOMOUS/FULL order mode, market open. Account snapshot fresh. Broker holdings show only 321370 Sensorview 1005 shares, +192k to +202k unrealized around 10:05, no pending orders. Today realized ledger shows Sensorview partial take profit +80,190 KRW, but account total asset is down 55,370 KRW from first snapshot. Critical mismatch: trade_results/admin trades still list 004060 SG Global as open 1500 shares while broker holdings no longer include it; operations WARN reports SG sell confirmation failure after stop-loss breach (-5.44%). Daily latest report endpoint is stale at 2026-06-02."
+    },
+    {
+      "at": "2026-06-06T12:15:00+09:00",
+      "type": "analysis",
+      "status": "completed",
+      "summary": "Read-only weekly follow-up completed for 2026-06-01 through 2026-06-06 KST. Current service/API is healthy and closed/holiday session has no holdings or pending orders. Lifecycle/reconciliation are OK after the 2026-06-04 ledger repair. Weekly closed-trade performance is +290,900 KRW gross and +152,446 KRW estimated net after costs, but rollout remains ROLLBACK due to MDD -533,030 KRW and negative news-enriched comparison. Remaining issues: 10 historical CONFIRM_FAILED rows, stale BUY pending patterns that blocked later orders, daily report/performance PnL mismatch of 3,600 KRW, fixture-like 2026-06-03/04 decision_events contamination, and a small-sample inverted fast_gate_score warning."
+    },
+    {
+      "at": "2026-06-06T12:09:45+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "`python scripts/task_harness.py verify 2026-06-03-001-weekly-trading-review` failed because system Python 3.14 has no pytest module."
+    },
+    {
+      "at": "2026-06-06T12:09:56+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "`.venv313/bin/python scripts/task_harness.py verify 2026-06-03-001-weekly-trading-review` passed all standard harness checks."
+    }
+  ]
+}

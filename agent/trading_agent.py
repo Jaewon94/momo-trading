@@ -1042,7 +1042,12 @@ class TradingAgent:
                         confidence=float(analysis.get("confidence", 0.0) or 0.0),
                         market_regime=self._market_regime,
                     ),
+                    preserve_tighter_stop_loss=True,
                 )
+                protected_thresholds = await self._persist_open_position_thresholds(symbol, active_thresholds)
+                if protected_thresholds != active_thresholds:
+                    active_thresholds = protected_thresholds
+                    event_detector.set_thresholds(symbol, **active_thresholds)
             position_action = str(analysis.get("position_action") or "HOLD").upper()
             threshold_suffix = ""
             if active_thresholds:
@@ -2384,6 +2389,7 @@ class TradingAgent:
         self, symbol: str, tier1: dict, tier2: dict,
         current_price: float = 0.0,
         horizon: str | None = None,
+        preserve_tighter_stop_loss: bool = False,
     ) -> dict[str, float]:
         """Tier1/Tier2 분석 결과에서 손절/익절/트레일링 스탑을 event_detector에 적용
 
@@ -2440,6 +2446,19 @@ class TradingAgent:
                 if default_trailing:
                     kwargs["trailing_stop_pct"] = default_trailing
 
+        if preserve_tighter_stop_loss and "stop_loss" in kwargs:
+            current_thresholds = event_detector.get_thresholds(symbol)
+            current_stop = self._optional_float(getattr(current_thresholds, "stop_loss", None))
+            proposed_stop = self._optional_float(kwargs.get("stop_loss"))
+            if (
+                current_stop is not None
+                and proposed_stop is not None
+                and current_stop > 0
+                and proposed_stop > 0
+                and proposed_stop < current_stop
+            ):
+                kwargs["stop_loss"] = current_stop
+
         if kwargs:
             event_detector.set_thresholds(symbol, **kwargs)
             logger.info(
@@ -2448,6 +2467,44 @@ class TradingAgent:
                 ", ".join(f"{k}={v}" for k, v in kwargs.items()),
             )
         return kwargs
+
+    async def _persist_open_position_thresholds(self, symbol: str, thresholds: dict[str, float]) -> dict[str, float]:
+        stop_loss = self._optional_float(thresholds.get("stop_loss"))
+        take_profit = self._optional_float(thresholds.get("take_profit"))
+        if (not stop_loss or stop_loss <= 0) and (not take_profit or take_profit <= 0):
+            return thresholds
+
+        from repositories.trade_result_repository import TradeResultRepository
+
+        normalized = normalize_krx_symbol(symbol)
+        protected_thresholds = dict(thresholds)
+        try:
+            async with AsyncSessionLocal() as session:
+                repo = TradeResultRepository(session)
+                trade_result = await repo.get_open_buy(normalized)
+                if not trade_result:
+                    return protected_thresholds
+
+                changed = False
+                if stop_loss and stop_loss > 0:
+                    current_stop = self._optional_float(
+                        getattr(trade_result, "ai_stop_loss_price", None)
+                    ) or 0.0
+                    if current_stop <= 0 or stop_loss >= current_stop:
+                        trade_result.ai_stop_loss_price = stop_loss
+                        changed = True
+                    elif current_stop > 0:
+                        protected_thresholds["stop_loss"] = current_stop
+                if take_profit and take_profit > 0:
+                    trade_result.ai_target_price = take_profit
+                    changed = True
+
+                if changed:
+                    await session.flush()
+                    await session.commit()
+        except Exception as exc:
+            logger.warning("보유 포지션 임계값 DB 반영 실패 {}: {}", normalized, str(exc))
+        return protected_thresholds
 
     @staticmethod
     def _stop_loss_risk_bounds(horizon_key: str) -> tuple[float | None, float | None]:

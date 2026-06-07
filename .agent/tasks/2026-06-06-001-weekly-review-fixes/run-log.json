@@ -1,0 +1,72 @@
+{
+  "schema_version": "momo.run-log.v1",
+  "task_id": "2026-06-06-001-weekly-review-fixes",
+  "events": [
+    {
+      "at": "2026-06-06T12:28:39+09:00",
+      "type": "task_started",
+      "status": "created",
+      "summary": "Task artifact created."
+    },
+    {
+      "at": "2026-06-06T12:36:46+09:00",
+      "type": "investigation",
+      "status": "completed",
+      "summary": "Confirmed weekly audit findings: fixture-like decision_events were data contamination, not broker orders; 2026-06-02 stored daily report PnL differed from canonical completed trade ledger; stale BUY pending-confirm could keep blocking buys."
+    },
+    {
+      "at": "2026-06-06T12:36:46+09:00",
+      "type": "implementation",
+      "status": "completed",
+      "summary": "Implemented lazy decision_event session factory, fixture-event exclusion for benchmark/forward labels, canonical admin report overlay, stale BUY pending recovery before block, and small-sample fast gate watchlist handling."
+    },
+    {
+      "at": "2026-06-06T12:36:46+09:00",
+      "type": "verification",
+      "status": "passed",
+      "summary": "Focused tests passed: 79 passed. Related reporting/sync/integrity tests passed: 59 passed. Broad tests passed: 641 passed with 3 existing scheduler coroutine warnings."
+    },
+    {
+      "at": "2026-06-06T12:37:50+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-06T12:38:10+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-06T12:38:20+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-06T12:39:03+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-06T12:43:55+09:00",
+      "type": "verification",
+      "status": "passed",
+      "summary": "Task harness verify passed with project venv. Service restarted in tmux foreground session and health/status/lifecycle APIs returned OK."
+    },
+    {
+      "at": "2026-06-06T12:43:55+09:00",
+      "type": "runtime_review",
+      "status": "completed",
+      "summary": "2026-06-06 is a KRX holiday/closed session. Latest report 2026-06-05 realized PnL is -198000 with no open positions. Weekly canonical closed BUY PnL for 2026-06-01..2026-06-05 is +290900."
+    },
+    {
+      "at": "2026-06-06T12:43:55+09:00",
+      "type": "runtime_review",
+      "status": "completed",
+      "summary": "Candidate scoring since 2026-06-01 recorded 219 cycles and 1752 events, exactly 8 candidates per cycle. AI skip metrics were fast gate 237, pre-analysis gate 24, final gate 14."
+    }
+  ]
+}

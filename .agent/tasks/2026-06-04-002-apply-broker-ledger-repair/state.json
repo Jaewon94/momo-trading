@@ -1,0 +1,35 @@
+{
+  "schema_version": "momo.task.v1",
+  "task_id": "2026-06-04-002-apply-broker-ledger-repair",
+  "status": "completed",
+  "title": "Apply broker ledger repair",
+  "repo": "momo-trading",
+  "risk_level": "medium",
+  "task_type": "engineering",
+  "priority": "normal",
+  "primary_runtime": "codex",
+  "created_at": "2026-06-04T10:30:11+09:00",
+  "updated_at": "2026-06-04T11:02:44+09:00",
+  "approval": {
+    "required": false,
+    "status": "not_required"
+  },
+  "checks": {
+    "diff_check": "passed",
+    "py_compile": "passed",
+    "secret_scan": "passed",
+    "task_harness": "passed",
+    "markdown_links": "passed",
+    "docs_consistency": "passed",
+    "harness_tests": "passed"
+  },
+  "artifacts": {
+    "brief": ".agent/tasks/2026-06-04-002-apply-broker-ledger-repair/brief.md",
+    "state": ".agent/tasks/2026-06-04-002-apply-broker-ledger-repair/state.json",
+    "run_log": ".agent/tasks/2026-06-04-002-apply-broker-ledger-repair/run-log.json",
+    "test_plan": ".agent/tasks/2026-06-04-002-apply-broker-ledger-repair/test-plan.md",
+    "decision_record": ".agent/tasks/2026-06-04-002-apply-broker-ledger-repair/decision-record.md",
+    "quality_scorecard": ".agent/tasks/2026-06-04-002-apply-broker-ledger-repair/quality-scorecard.md"
+  },
+  "errors": []
+}

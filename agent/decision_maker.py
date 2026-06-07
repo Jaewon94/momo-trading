@@ -388,9 +388,47 @@ class DecisionMaker:
             repo = TradeResultRepository(session)
             symbol_pending = await repo.get_pending_buy_confirms(symbol)
             if symbol_pending:
-                return symbol_pending[0]
+                pending = symbol_pending[0]
+                if await self._recover_if_stale_pending_buy(pending):
+                    symbol_pending = await repo.get_pending_buy_confirms(symbol)
+                    if not symbol_pending:
+                        any_pending = await repo.get_pending_buy_confirms()
+                        return any_pending[0] if any_pending else None
+                    pending = symbol_pending[0]
+                return pending
             any_pending = await repo.get_pending_buy_confirms()
-            return any_pending[0] if any_pending else None
+            if any_pending:
+                pending = any_pending[0]
+                if await self._recover_if_stale_pending_buy(pending):
+                    any_pending = await repo.get_pending_buy_confirms()
+                    return any_pending[0] if any_pending else None
+                return pending
+            return None
+
+    async def _recover_if_stale_pending_buy(self, pending: TradeResult) -> bool:
+        """Try one synchronous recovery pass before stale BUY pending blocks new orders."""
+        try:
+            from scheduler.jobs import portfolio_sync_job as sync_job
+
+            if not sync_job._is_pending_confirm_stale(
+                pending,
+                now=now_kst(),
+                stale_after=sync_job.BUY_PENDING_CONFIRM_STALE_AFTER,
+            ):
+                return False
+            summary = await sync_job._recover_pending_confirms()
+            recovered = int(summary.get("recovered") or 0)
+            failed = int(summary.get("failed") or 0)
+            if recovered or failed:
+                logger.info(
+                    "stale BUY PENDING_CONFIRM 복구 후 주문 게이트 재검사: recovered={}, failed={}",
+                    recovered,
+                    failed,
+                )
+                return True
+        except Exception as exc:
+            logger.warning("stale BUY PENDING_CONFIRM 복구 시도 실패: {}", str(exc))
+        return False
 
     async def _record_decision_event(
         self,
@@ -826,6 +864,20 @@ class DecisionMaker:
             except asyncio.TimeoutError:
                 reason = f"체결 확인 타임아웃 ({confirm_timeout_sec:.0f}초)"
                 logger.warning("[{}] 주문 {} {}", symbol, order_id, reason)
+                if side == "SELL":
+                    inferred = await self._infer_and_record_sell_fill_from_holdings(
+                        symbol=symbol,
+                        order_id=order_id,
+                        requested_quantity=quantity,
+                        expected_price=expected_price,
+                        analysis_context=analysis_context,
+                        cycle_id=cycle_id,
+                        exit_reason=exit_reason,
+                    )
+                    if inferred:
+                        if on_settled:
+                            await on_settled(order_id, True)
+                        return True
                 await self._mark_pending_failed(pending_record_id, reason)
                 if on_settled:
                     await on_settled(order_id, False)
@@ -1019,6 +1071,15 @@ class DecisionMaker:
         )
         return float(getattr(settings, setting_name, 60) or 60)
 
+    def _invalidate_broker_cache_for_sell_confirmation(self, symbol: str, *, reason: str) -> None:
+        invalidate = getattr(self._broker_adapter, "invalidate_cache", None)
+        if not callable(invalidate):
+            return
+        try:
+            invalidate()
+        except Exception as exc:
+            logger.warning("[{}] SELL 확인 전 브로커 캐시 무효화 실패({}): {}", symbol, reason, str(exc))
+
     async def _infer_and_record_sell_fill_from_holdings(
         self,
         *,
@@ -1033,6 +1094,10 @@ class DecisionMaker:
         """SELL status lookup can lag on Kiwoom; infer a fill only when holdings shrink."""
         try:
             normalized_symbol = normalize_krx_symbol(symbol)
+            self._invalidate_broker_cache_for_sell_confirmation(
+                normalized_symbol,
+                reason="holding-delta inference",
+            )
             holdings = await self._broker_adapter.get_holdings()
             holding = next(
                 (
@@ -1148,6 +1213,10 @@ class DecisionMaker:
             return int(reported_filled_qty or 0)
 
         try:
+            self._invalidate_broker_cache_for_sell_confirmation(
+                normalized_symbol,
+                reason="filled-quantity adjustment",
+            )
             holdings = await self._broker_adapter.get_holdings()
             current_holding_qty = 0
             for holding in holdings or []:

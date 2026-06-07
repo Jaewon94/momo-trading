@@ -105,6 +105,45 @@ async def test_forward_return_label_job_waits_when_price_data_is_missing() -> No
 
 
 @pytest.mark.asyncio
+async def test_forward_return_label_job_skips_probable_fixture_decision_event() -> None:
+    event_at = datetime(2026, 4, 23, 9, 5)
+    target_at = event_at + timedelta(minutes=5)
+
+    async with TestAsyncSessionLocal() as session:
+        session.add(
+            DecisionEvent(
+                cycle_id="cycle-read-only",
+                symbol="005930",
+                stock_name="005930",
+                market="KRX",
+                decision_stage="ORDER_GATE",
+                source="decision_maker",
+                final_action="SKIP",
+                confidence=0.0,
+                reference_price=100_000,
+                quantity=2,
+                provider="UNKNOWN",
+                model="UNKNOWN",
+                status="SKIPPED",
+                reason="주문 제출 차단: ORDER_SUBMISSION_MODE=READ_ONLY",
+                created_at=event_at,
+            )
+        )
+        await session.commit()
+
+    summary = await ForwardReturnLabelJob(
+        session_factory=TestAsyncSessionLocal,
+        intraday_horizons={"5m": timedelta(minutes=5)},
+    ).run_once(now=target_at + timedelta(minutes=1))
+
+    async with TestAsyncSessionLocal() as session:
+        labels = (await session.execute(select(DecisionForwardReturn))).scalars().all()
+
+    assert summary["events_scanned"] == 0
+    assert labels == []
+
+
+@pytest.mark.asyncio
 async def test_forward_return_label_job_labels_close_return_from_daily_data() -> None:
     event_at = datetime(2026, 4, 23, 13, 0)
     close_at = datetime(2026, 4, 23, 15, 30)

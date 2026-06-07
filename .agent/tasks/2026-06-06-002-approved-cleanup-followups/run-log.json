@@ -1,0 +1,54 @@
+{
+  "schema_version": "momo.run-log.v1",
+  "task_id": "2026-06-06-002-approved-cleanup-followups",
+  "events": [
+    {
+      "at": "2026-06-06T16:51:36+09:00",
+      "type": "task_started",
+      "status": "created",
+      "summary": "Task artifact created."
+    },
+    {
+      "at": "2026-06-06T16:52:33+09:00",
+      "type": "runtime_backup",
+      "status": "completed",
+      "summary": "Created runtime DB backup before mutation: runtime/backups/db/app-cli-20260606-165233.db"
+    },
+    {
+      "at": "2026-06-06T16:53:00+09:00",
+      "type": "runtime_db_cleanup",
+      "status": "completed",
+      "summary": "Exported deletion target CSV, deleted 770 linked WAITING_DATA decision_forward_returns and 510 fixture-like decision_events. Post-checks: remaining fixture-like rows 0, orphan forward returns 0, sqlite integrity_check ok."
+    },
+    {
+      "at": "2026-06-06T16:55:49+09:00",
+      "type": "implementation",
+      "status": "completed",
+      "summary": "Changed scheduler startup background task helper to accept coroutine factories, preventing unawaited inner coroutines when a scheduled runner is closed before execution."
+    },
+    {
+      "at": "2026-06-06T16:55:49+09:00",
+      "type": "verification",
+      "status": "passed",
+      "summary": "Scheduler warning target test passed with RuntimeWarning as error. Full scheduler runtime path tests passed: 88 passed. Focused regression tests passed: 79 passed. Broad agent/api/scheduler/services tests passed: 641 passed."
+    },
+    {
+      "at": "2026-06-06T16:57:18+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-06T16:58:24+09:00",
+      "type": "service_restart",
+      "status": "passed",
+      "summary": "Restarted service in tmux session momo-trading-service. Service is running with PID 53819 and health API returned healthy."
+    },
+    {
+      "at": "2026-06-06T16:58:24+09:00",
+      "type": "runtime_verification",
+      "status": "passed",
+      "summary": "Admin system status OK, lifecycle integrity OK, runtime integrity OK, decision benchmark API success, remaining fixture-like decision_events 0, orphan forward returns 0."
+    }
+  ]
+}

@@ -836,19 +836,16 @@ async def _build_report_response(report, trade_repo: TradeResultRepository, open
     report_date = getattr(report, "report_date", None)
     metric_contract = _extract_report_metric_contract(report)
     completed = []
+    opened = []
+    sell_count = None
     if report_date:
+        opened = await trade_repo.get_opened_by_date(report_date)
         completed = await trade_repo.get_completed_by_date(report_date)
+        sell_count = await trade_repo.get_sell_count_by_date(report_date)
     trade_comparison = ReportTradeComparisonResponse.model_validate(
         performance_reporting_service.build_trade_comparison_from_results(completed)
     )
     live_snapshot = await _load_live_report_snapshot(report_date) if report_date else {}
-
-    if not _report_looks_empty(report):
-        return payload.model_copy(update={
-            "metric_contract": metric_contract,
-            "trade_comparison": trade_comparison,
-            **live_snapshot,
-        })
 
     if not report_date:
         return payload.model_copy(update={
@@ -857,9 +854,8 @@ async def _build_report_response(report, trade_repo: TradeResultRepository, open
             **live_snapshot,
         })
 
-    opened = await trade_repo.get_opened_by_date(report_date)
     trade_has_data = bool(opened or completed)
-    if not trade_has_data:
+    if not trade_has_data and not _report_looks_empty(report):
         return payload.model_copy(update={
             "metric_contract": metric_contract,
             "trade_comparison": trade_comparison,
@@ -875,20 +871,20 @@ async def _build_report_response(report, trade_repo: TradeResultRepository, open
         }
 
     buy_count = len(opened)
-    sell_count = len(completed)
+    canonical_sell_count = int(sell_count or 0)
     win_count = sum(1 for item in completed if bool(getattr(item, "is_win", False)))
-    loss_count = max(0, sell_count - win_count)
+    loss_count = max(0, len(completed) - win_count)
     total_pnl = sum(float(getattr(item, "pnl", 0.0) or 0.0) for item in completed)
     open_position_count = len(open_symbols_cache)
 
     return payload.model_copy(update={
         "buy_count": buy_count,
-        "sell_count": sell_count,
+        "sell_count": canonical_sell_count,
         "win_count": win_count,
         "loss_count": loss_count,
         "total_pnl": total_pnl,
         "open_position_count": open_position_count,
-        "total_orders": max(int(getattr(report, "total_orders", 0) or 0), buy_count + sell_count),
+        "total_orders": max(int(getattr(report, "total_orders", 0) or 0), buy_count + canonical_sell_count),
         "metric_contract": metric_contract,
         "trade_comparison": trade_comparison,
         **live_snapshot,

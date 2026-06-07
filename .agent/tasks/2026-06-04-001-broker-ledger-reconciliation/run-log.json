@@ -1,0 +1,60 @@
+{
+  "schema_version": "momo.run-log.v1",
+  "task_id": "2026-06-04-001-broker-ledger-reconciliation",
+  "events": [
+    {
+      "at": "2026-06-04T10:12:56+09:00",
+      "type": "task_started",
+      "status": "created",
+      "summary": "Task artifact created."
+    },
+    {
+      "at": "2026-06-04T10:20:07+09:00",
+      "type": "verification",
+      "status": "testing",
+      "summary": "Focused tests passed: .venv313/bin/python -m pytest tests/agent/test_decision_maker.py tests/scheduler/test_scheduler_runtime_paths.py -q -> 136 passed, 3 existing scheduler coroutine warnings. Read-only runtime integrity still FAILS due pre-existing live DB mismatch: broker_missing_open_buys=1 (SG Global 004060 open BUY remains in DB while broker holdings omit it); no runtime DB repair or broker action was applied."
+    },
+    {
+      "at": "2026-06-04T10:20:14+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-04T10:20:22+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-04T10:20:41+09:00",
+      "type": "verification",
+      "status": "reporting",
+      "summary": "Reset task state from failed to reporting after default Python verify failed only because /opt/homebrew python3.14 lacks pytest. Re-running verify with .venv313, the project test environment used for focused tests."
+    },
+    {
+      "at": "2026-06-04T10:20:48+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-04T10:21:26+09:00",
+      "type": "completion",
+      "status": "completed",
+      "summary": "Implemented SELL confirmation bookkeeping fix. Focused tests passed under .venv313 and task_harness verify passed under .venv313. Runtime integrity remains FAIL only because pre-existing live 004060 DB-open/broker-missing mismatch still requires explicit approved DB reconciliation."
+    },
+    {
+      "at": "2026-06-04T10:21:32+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-04T10:21:41+09:00",
+      "type": "completion",
+      "status": "completed",
+      "summary": "Task finalized after successful .venv313 task_harness verify. Final report exists and residual live DB reconciliation risk is documented."
+    }
+  ]
+}

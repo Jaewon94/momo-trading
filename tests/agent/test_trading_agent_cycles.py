@@ -81,6 +81,79 @@ def test_apply_trade_thresholds_widens_too_tight_stop_loss_by_risk_appetite(monk
     assert thresholds["stop_loss"] == 10_670
 
 
+def test_apply_trade_thresholds_preserves_tighter_existing_stop_for_holding(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    applied: dict[str, float] = {}
+
+    def fake_set_thresholds(_symbol: str, **kwargs) -> None:
+        applied.update(kwargs)
+
+    monkeypatch.setattr("agent.trading_agent.event_detector.set_thresholds", fake_set_thresholds)
+    monkeypatch.setattr(
+        "agent.trading_agent.event_detector.get_thresholds",
+        lambda _symbol: SimpleNamespace(stop_loss=10_800),
+    )
+    monkeypatch.setattr("agent.trading_agent.settings.RISK_APPETITE", "MODERATE")
+
+    thresholds = agent._apply_trade_thresholds(
+        "005930",
+        {"target_price": 12_000, "stop_loss_price": 10_000},
+        {},
+        current_price=11_000,
+        horizon="SHORT",
+        preserve_tighter_stop_loss=True,
+    )
+
+    assert thresholds == applied
+    assert thresholds["stop_loss"] == 10_800
+
+
+@pytest.mark.asyncio
+async def test_persist_open_position_thresholds_does_not_loosen_stop_loss(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    trade_result = SimpleNamespace(ai_stop_loss_price=10_800, ai_target_price=12_000)
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.flushed = 0
+            self.committed = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def flush(self) -> None:
+            self.flushed += 1
+
+        async def commit(self) -> None:
+            self.committed += 1
+
+    session = FakeSession()
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_open_buy(self, _symbol: str):
+            return trade_result
+
+    monkeypatch.setattr("agent.trading_agent.AsyncSessionLocal", lambda: session)
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+
+    protected = await agent._persist_open_position_thresholds(
+        "005930",
+        {"stop_loss": 10_000, "take_profit": 12_500},
+    )
+
+    assert protected == {"stop_loss": 10_800, "take_profit": 12_500}
+    assert trade_result.ai_stop_loss_price == 10_800
+    assert trade_result.ai_target_price == 12_500
+    assert session.flushed == 1
+    assert session.committed == 1
+
+
 def test_apply_trade_thresholds_caps_mid_horizon_stop_loss_in_moderate_risk(monkeypatch) -> None:
     """MODERATE / MID 호라이즌은 최대 -4.0% 손실폭으로 캡되어야 한다.
 

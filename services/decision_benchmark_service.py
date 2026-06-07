@@ -6,13 +6,14 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import timedelta
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, not_, select
 
 from core.config import settings
 from core.database import AsyncSessionLocal
 from models.decision_event import DecisionEvent
 from models.decision_forward_return import DecisionForwardReturn
 from models.execution_metric import ExecutionMetric
+from services.decision_event_quality import probable_fixture_decision_event_filter
 from util.time_util import now_kst
 
 
@@ -71,6 +72,7 @@ class DecisionBenchmarkService:
                             DecisionForwardReturn.horizon == normalized_horizon,
                             DecisionForwardReturn.label_status == "LABELED",
                             DecisionForwardReturn.return_pct.is_not(None),
+                            not_(probable_fixture_decision_event_filter(DecisionEvent)),
                         )
                     )
                     .order_by(DecisionEvent.created_at.asc())

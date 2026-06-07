@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import not_, select
 
 from core.database import AsyncSessionLocal
 from models.decision_event import DecisionEvent
@@ -11,6 +11,7 @@ from models.decision_forward_return import DecisionForwardReturn
 from models.market_data import MarketDataDaily, MarketSnapshot
 from models.stock import Stock
 from repositories.decision_forward_return_repository import DecisionForwardReturnRepository
+from services.decision_event_quality import probable_fixture_decision_event_filter
 
 
 DEFAULT_INTRADAY_HORIZONS = {
@@ -60,6 +61,7 @@ class DecisionForwardReturnService:
                                 DecisionEvent.reference_price.is_not(None),
                                 DecisionEvent.reference_price > 0,
                                 DecisionEvent.created_at <= now,
+                                not_(probable_fixture_decision_event_filter(DecisionEvent)),
                             )
                             .order_by(DecisionEvent.created_at.asc())
                             .limit(limit)

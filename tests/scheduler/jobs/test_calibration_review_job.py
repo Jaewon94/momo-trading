@@ -122,11 +122,15 @@ def test_collect_inverted_indicators_filters_only_inverted_rows():
         {"key": "estimated_edge_bps", "verdict": "INVERTED (역방향 신호)", "spearman_ic": -0.07, "t_statistic": -2.3, "n": 88},
         {"key": "chart_signal_confidence", "verdict": "NOT_SIGNIFICANT", "spearman_ic": 0.01},
         {"key": "news_negative_count", "verdict": "STRONG_INVERTED (단조 감소)", "spearman_ic": -0.18, "t_statistic": -3.5, "n": 88},
+        {"key": "fast_gate_score", "verdict": "INVERTED (역방향 신호)", "spearman_ic": -0.89, "t_statistic": -6.7, "n": 13},
     ]
     out = job_module._collect_inverted_indicators(indicators)
     assert [item["key"] for item in out] == ["estimated_edge_bps", "news_negative_count"]
     assert out[0]["spearman_ic"] == -0.07
     assert out[1]["verdict"].startswith("STRONG_INVERTED")
+
+    watchlist = job_module._collect_watchlist_inverted_indicators(indicators)
+    assert [item["key"] for item in watchlist] == ["fast_gate_score"]
 
 
 @pytest.mark.asyncio

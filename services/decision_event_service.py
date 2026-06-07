@@ -3,15 +3,22 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from core.database import AsyncSessionLocal
 from models.decision_event import DecisionEvent
 from repositories.decision_event_repository import DecisionEventRepository
 from trading.symbols import normalize_krx_symbol
 
 
 class DecisionEventService:
-    def __init__(self, session_factory=AsyncSessionLocal) -> None:
+    def __init__(self, session_factory=None) -> None:
         self._session_factory = session_factory
+
+    @property
+    def session_factory(self):
+        if self._session_factory is not None:
+            return self._session_factory
+        from core import database
+
+        return database.AsyncSessionLocal
 
     async def record_event(
         self,
@@ -62,7 +69,7 @@ class DecisionEventService:
             reason=self._optional_text(reason),
             metadata_json=self._serialize_metadata(metadata),
         )
-        async with self._session_factory() as session:
+        async with self.session_factory() as session:
             async with session.begin():
                 return await DecisionEventRepository(session).create(event)
 

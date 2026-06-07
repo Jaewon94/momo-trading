@@ -52,8 +52,14 @@ async def test_admin_report_by_date_lifts_metric_contract_from_strategy_stats(cl
         def __init__(self, _db) -> None:
             pass
 
+        async def get_opened_by_date(self, _d):
+            return []
+
         async def get_completed_by_date(self, _d):
             return []
+
+        async def get_sell_count_by_date(self, _d):
+            return 0
 
     monkeypatch.setattr("api.routes.admin.DailyReportRepository", FakeDailyReportRepo, raising=False)
     monkeypatch.setattr("api.routes.admin.TradeResultRepository", FakeTradeRepo, raising=False)
@@ -89,6 +95,9 @@ async def test_admin_report_by_date_applies_trade_metrics_fallback(client, monke
 
         async def get_completed_by_date(self, _d):
             return completed
+
+        async def get_sell_count_by_date(self, _d):
+            return len(completed)
 
         async def get_all_open(self):
             return all_open
@@ -131,6 +140,9 @@ async def test_admin_reports_list_applies_trade_metrics_fallback(client, monkeyp
 
         async def get_completed_by_date(self, _d):
             return completed
+
+        async def get_sell_count_by_date(self, _d):
+            return 0
 
         async def get_all_open(self):
             return all_open
@@ -189,6 +201,9 @@ async def test_admin_reports_list_includes_news_trade_comparison_snapshot(client
 
         async def get_completed_by_date(self, _d):
             return completed
+
+        async def get_sell_count_by_date(self, _d):
+            return len(completed)
 
         async def get_all_open(self):
             return []
@@ -249,6 +264,9 @@ async def test_admin_report_by_date_includes_news_trade_comparison_snapshot(clie
         async def get_completed_by_date(self, _d):
             return completed
 
+        async def get_sell_count_by_date(self, _d):
+            return len(completed)
+
         async def get_all_open(self):
             return []
 
@@ -287,6 +305,9 @@ async def test_admin_report_by_date_uses_live_snapshot_for_today(client, monkeyp
 
         async def get_completed_by_date(self, _d):
             return []
+
+        async def get_sell_count_by_date(self, _d):
+            return 0
 
         async def get_all_open(self):
             return []
@@ -335,6 +356,9 @@ async def test_admin_latest_report_uses_live_snapshot_for_today(client, monkeypa
 
         async def get_opened_by_date(self, _d):
             return []
+
+        async def get_sell_count_by_date(self, _d):
+            return 0
 
         async def get_all_open(self):
             return []

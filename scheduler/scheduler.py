@@ -62,7 +62,7 @@ class TradingScheduler:
 
     def _spawn_background_task(
         self,
-        coro,
+        task_factory,
         *,
         task_name: str,
         delay_seconds: float = 0.25,
@@ -71,7 +71,7 @@ class TradingScheduler:
             try:
                 if delay_seconds > 0:
                     await asyncio.sleep(delay_seconds)
-                await coro
+                await task_factory()
             except Exception as exc:
                 logger.warning("백그라운드 시작 작업 실패 ({}): {}", task_name, str(exc))
                 await error_capture_service.capture_exception(
@@ -160,6 +160,23 @@ class TradingScheduler:
         except (TypeError, ValueError):
             return None
         return parsed if parsed > 0 else None
+
+    @classmethod
+    def _preserve_tighter_stop_loss(
+        cls,
+        kwargs: dict[str, float],
+        *,
+        current_stop_loss: object,
+    ) -> dict[str, float]:
+        if "stop_loss" not in kwargs:
+            return kwargs
+        proposed_stop = cls._positive_float(kwargs.get("stop_loss"))
+        active_stop = cls._positive_float(current_stop_loss)
+        if proposed_stop is not None and active_stop is not None and proposed_stop < active_stop:
+            protected = dict(kwargs)
+            protected["stop_loss"] = active_stop
+            return protected
+        return kwargs
 
     @classmethod
     def _persisted_threshold_kwargs(cls, tr, *, current_thresholds=None) -> dict[str, float]:
@@ -512,18 +529,18 @@ class TradingScheduler:
                 self._trading_jobs_registered = True
                 logger.info("스케줄러 트레이딩 잡 등록 — 이후 사이클이 활성화됩니다")
                 self._spawn_background_task(
-                    self._on_startup(),
+                    self._on_startup,
                     task_name="trading_startup",
                 )
             if add_news:
                 self._news_jobs_registered = True
                 logger.info("스케줄러 뉴스 잡 등록")
                 self._spawn_background_task(
-                    self._news_poll(),
+                    self._news_poll,
                     task_name="initial_news_poll",
                 )
                 self._spawn_background_task(
-                    self._news_translation_backfill(),
+                    self._news_translation_backfill,
                     task_name="initial_news_translation_backfill",
                 )
             return
@@ -546,16 +563,16 @@ class TradingScheduler:
         # 서버 기동 시 현재 상태에 맞는 초기 작업 실행
         if trading_jobs_enabled:
             self._spawn_background_task(
-                self._on_startup(),
+                self._on_startup,
                 task_name="trading_startup",
             )
         if news_jobs_enabled:
             self._spawn_background_task(
-                self._news_poll(),
+                self._news_poll,
                 task_name="initial_news_poll",
             )
             self._spawn_background_task(
-                self._news_translation_backfill(),
+                self._news_translation_backfill,
                 task_name="initial_news_translation_backfill",
             )
 
@@ -2551,7 +2568,6 @@ class TradingScheduler:
                 logger.warning("장중 보유 재평가 LLM 실패 → 폴백: {}", str(e))
 
             # ── 3) 판정 결과 처리 ──
-            from agent.decision_maker import decision_maker
             from agent.trading_agent import trading_agent
             from realtime.event_detector import event_detector
             from strategy.holding_policy import evaluate_overnight_hold
@@ -2618,9 +2634,11 @@ class TradingScheduler:
                             exit_reason = "PARTIAL_TAKE_PROFIT"
                         sell_resp = await self._place_market_sell(symbol, sell_quantity)
                         if sell_resp.success:
-                            confirmed = await decision_maker.confirm_and_record(
-                                symbol=symbol, side="SELL",
-                                order_id=str(getattr(sell_resp, "order_id", "") or ""), quantity=sell_quantity,
+                            confirmed = await self._track_scheduler_sell_confirmation(
+                                holding=h,
+                                response=sell_resp,
+                                symbol=symbol,
+                                quantity=int(sell_quantity),
                                 expected_price=current_price,
                                 exit_reason=exit_reason,
                             )
@@ -2677,6 +2695,10 @@ class TradingScheduler:
                         kwargs["trailing_stop_pct"] = float(trailing)
 
                     if kwargs:
+                        kwargs = self._preserve_tighter_stop_loss(
+                            kwargs,
+                            current_stop_loss=data.get("active_stop_loss"),
+                        )
                         event_detector.set_thresholds(symbol, **kwargs)
                         # TradeResult에도 반영
                         try:
@@ -2687,7 +2709,9 @@ class TradingScheduler:
                                 tr = await repo.get_open_buy(symbol)
                                 if tr:
                                     if "stop_loss" in kwargs:
-                                        tr.ai_stop_loss_price = kwargs["stop_loss"]
+                                        current_stop = float(getattr(tr, "ai_stop_loss_price", 0.0) or 0.0)
+                                        if current_stop <= 0 or kwargs["stop_loss"] >= current_stop:
+                                            tr.ai_stop_loss_price = kwargs["stop_loss"]
                                     if "take_profit" in kwargs:
                                         tr.ai_target_price = kwargs["take_profit"]
                                     await session.flush()

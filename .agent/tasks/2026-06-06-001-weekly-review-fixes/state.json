@@ -1,0 +1,45 @@
+{
+  "schema_version": "momo.task.v1",
+  "task_id": "2026-06-06-001-weekly-review-fixes",
+  "status": "completed",
+  "title": "Stabilize weekly trading review fixes",
+  "repo": "momo-trading",
+  "risk_level": "high",
+  "task_type": "engineering",
+  "priority": "normal",
+  "primary_runtime": "codex",
+  "created_at": "2026-06-06T12:28:39+09:00",
+  "updated_at": "2026-06-06T12:43:55+09:00",
+  "approval": {
+    "required": false,
+    "status": "not_required"
+  },
+  "checks": {
+    "py_compile": "passed",
+    "focused_tests": "passed",
+    "related_service_tests": "passed",
+    "broad_tests": "passed",
+    "change_harness": "high-risk-protected-surface",
+    "diff_check": "passed",
+    "secret_scan": "passed",
+    "task_harness": "passed",
+    "markdown_links": "passed",
+    "docs_consistency": "passed",
+    "harness_tests": "passed",
+    "service_health": "passed",
+    "system_status": "passed",
+    "lifecycle_integrity": "passed",
+    "runtime_integrity": "passed",
+    "weekly_pnl_check": "passed",
+    "candidate_count_check": "passed"
+  },
+  "artifacts": {
+    "brief": ".agent/tasks/2026-06-06-001-weekly-review-fixes/brief.md",
+    "state": ".agent/tasks/2026-06-06-001-weekly-review-fixes/state.json",
+    "run_log": ".agent/tasks/2026-06-06-001-weekly-review-fixes/run-log.json",
+    "test_plan": ".agent/tasks/2026-06-06-001-weekly-review-fixes/test-plan.md",
+    "decision_record": ".agent/tasks/2026-06-06-001-weekly-review-fixes/decision-record.md",
+    "quality_scorecard": ".agent/tasks/2026-06-06-001-weekly-review-fixes/quality-scorecard.md"
+  },
+  "errors": []
+}
