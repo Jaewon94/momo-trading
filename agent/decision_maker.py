@@ -18,6 +18,7 @@ from models.trade_result import TradeResult
 from repositories.trade_result_repository import TradeResultRepository
 from services.activity_logger import activity_logger
 from services.decision_event_service import decision_event_service
+from services.pending_trade_note_utils import with_pending_partial_note
 from strategy.signal import TradeSignal
 from trading.adapters.base import BrokerAdapter
 from trading.broker_factory import get_broker_adapter
@@ -1405,11 +1406,11 @@ class DecisionMaker:
                             tr.status,
                         )
                         return
-                    tr.notes = (
-                        "PENDING_CONFIRM_PARTIAL: "
-                        f"filled_qty={int(filled_qty or 0)}, "
-                        f"remaining_qty={int(remaining_qty or 0)}, "
-                        f"filled_price={float(filled_price or 0.0):.2f}"
+                    tr.notes = with_pending_partial_note(
+                        getattr(tr, "notes", None),
+                        filled_qty=int(filled_qty or 0),
+                        remaining_qty=int(remaining_qty or 0),
+                        filled_price=float(filled_price or 0.0),
                     )
         except Exception as e:
             logger.warning("[{}] 부분체결 PENDING 표시 실패: {}", symbol, str(e))

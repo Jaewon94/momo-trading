@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 from loguru import logger
 from models.trade_result import TradeResult
+from services.pending_trade_note_utils import confirmed_notes, with_pending_partial_note
 from trading.symbols import normalize_krx_symbol
 from util.time_util import now_kst
 
@@ -164,9 +165,11 @@ async def _process_one_pending(tr, repo, session, adapter, order_map, holding_ma
         if filled_qty > 0:
             remaining_qty = int(getattr(matched, "remaining_qty", 0) or 0)
             if remaining_qty > 0:
-                tr.notes = (
-                    "PENDING_CONFIRM_PARTIAL: "
-                    f"filled_qty={filled_qty}, remaining_qty={remaining_qty}"
+                tr.notes = with_pending_partial_note(
+                    getattr(tr, "notes", None),
+                    filled_qty=filled_qty,
+                    remaining_qty=remaining_qty,
+                    filled_price=float(getattr(matched, "order_price", 0.0) or 0.0),
                 )
                 logger.warning(
                     "PENDING 복구 보류: {} {} 주문번호={} — 부분체결 {}주 / 잔량 {}주",
@@ -186,7 +189,7 @@ async def _process_one_pending(tr, repo, session, adapter, order_map, holding_ma
                     tr.entry_price = filled_price
                 elif tr.side == "SELL":
                     tr.exit_price = filled_price
-            tr.notes = None
+            tr.notes = confirmed_notes(getattr(tr, "notes", None))
             logger.debug(
                 "PENDING 복구: {} {} {}주 → CONFIRMED",
                 tr.stock_symbol, tr.side, filled_qty,
@@ -303,7 +306,7 @@ async def _process_one_pending(tr, repo, session, adapter, order_map, holding_ma
                 tr.quantity = inferred_qty
                 if tr.entry_price <= 0 and holding.avg_buy_price > 0:
                     tr.entry_price = float(holding.avg_buy_price)
-                tr.notes = None
+                tr.notes = confirmed_notes(getattr(tr, "notes", None))
                 logger.debug(
                     "PENDING 복구(보유수량 델타 추론): {} {} {}주 → CONFIRMED (계좌 {}주 / DB open {}주)",
                     tr.stock_symbol, tr.side, inferred_qty, holding_qty, confirmed_open_qty,

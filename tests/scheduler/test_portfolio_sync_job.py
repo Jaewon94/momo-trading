@@ -79,6 +79,68 @@ async def test_recover_pending_confirms_uses_kiwoom_holdings_for_filled_buy(monk
 
 
 @pytest.mark.asyncio
+async def test_recover_pending_confirms_preserves_trade_horizon_notes(monkeypatch) -> None:
+    pending_trade = SimpleNamespace(
+        order_id="0019412",
+        stock_symbol="003280",
+        side="BUY",
+        quantity=7800,
+        entry_price=1895.0,
+        exit_price=0.0,
+        notes='{"trade_horizon":"LONG","active_take_profit":2100} | PENDING_CONFIRM_PARTIAL: filled_qty=10, remaining_qty=7790',
+        status=OrderConfirmStatus.PENDING_CONFIRM.value,
+    )
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def begin(self):
+            return self
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_pending_confirms(self):
+            return [pending_trade]
+
+        async def get_all_open_buys(self, _symbol):
+            return []
+
+    class FakeBrokerAdapter:
+        provider = BrokerProvider.KIWOOM
+
+        async def get_pending_orders(self):
+            return []
+
+        async def get_holdings(self):
+            return [
+                HoldingInfo(
+                    symbol="003280",
+                    name="흥아해운",
+                    quantity=7800,
+                    avg_buy_price=1895.0,
+                    current_price=1910.0,
+                    pnl=117000.0,
+                    pnl_rate=0.79,
+                )
+            ]
+
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("trading.broker_factory.get_broker_adapter", lambda: FakeBrokerAdapter())
+
+    await _recover_pending_confirms()
+
+    assert pending_trade.status == OrderConfirmStatus.CONFIRMED.value
+    assert pending_trade.notes == '{"trade_horizon":"LONG","active_take_profit":2100}'
+
+
+@pytest.mark.asyncio
 async def test_recover_pending_confirms_uses_holding_delta_for_cancelled_partial_buy(monkeypatch) -> None:
     pending_trade = SimpleNamespace(
         order_id="0067887",
@@ -204,6 +266,63 @@ async def test_recover_pending_confirms_keeps_partial_broker_order_pending(monke
     assert pending_trade.status == OrderConfirmStatus.PENDING_CONFIRM.value
     assert pending_trade.quantity == 3250
     assert "PENDING_CONFIRM_PARTIAL" in pending_trade.notes
+    assert "remaining_qty=3225" in pending_trade.notes
+
+
+@pytest.mark.asyncio
+async def test_recover_pending_confirms_keeps_metadata_when_marking_partial_pending(monkeypatch) -> None:
+    pending_trade = SimpleNamespace(
+        order_id="0067887",
+        stock_symbol="066430",
+        side="BUY",
+        quantity=3250,
+        entry_price=3080.0,
+        exit_price=0.0,
+        notes='{"trade_horizon":"MID"}',
+        status=OrderConfirmStatus.PENDING_CONFIRM.value,
+    )
+    broker_order = SimpleNamespace(
+        order_id="0067887",
+        symbol="066430",
+        filled_qty=25,
+        remaining_qty=3225,
+        order_price=3080.0,
+    )
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def begin(self):
+            return self
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_pending_confirms(self):
+            return [pending_trade]
+
+    class FakeBrokerAdapter:
+        provider = BrokerProvider.KIWOOM
+
+        async def get_pending_orders(self):
+            return [broker_order]
+
+        async def get_holdings(self):
+            return []
+
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("trading.broker_factory.get_broker_adapter", lambda: FakeBrokerAdapter())
+
+    summary = await _recover_pending_confirms()
+
+    assert summary["skipped"] == 1
+    assert pending_trade.notes.startswith('{"trade_horizon":"MID"} | PENDING_CONFIRM_PARTIAL')
     assert "remaining_qty=3225" in pending_trade.notes
 
 

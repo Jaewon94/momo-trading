@@ -38,6 +38,10 @@ from strategy.risk_manager import risk_manager
 from strategy.signal import TradeSignal
 from strategy.stable_short import StableShortStrategy
 from strategy.trade_horizon import TradeHorizon, decide_trade_horizon
+from strategy.position_exit_policy import (
+    strategic_exit_min_hold_block_reason,
+    trade_horizon_from_result,
+)
 from services.news_signal_service import news_signal_service
 from trading.adapters.base import BrokerAdapter
 from trading.broker_factory import get_broker_adapter
@@ -118,6 +122,29 @@ class TradingAgent:
     def _release_sell(self, symbol: str) -> None:
         """매도 잠금 해제"""
         self._selling.discard(normalize_krx_symbol(symbol))
+
+    async def _take_profit_min_hold_block_reason(self, symbol: str) -> str | None:
+        try:
+            from repositories.trade_result_repository import TradeResultRepository
+            from util.time_util import now_kst
+
+            async with AsyncSessionLocal() as session:
+                repo = TradeResultRepository(session)
+                trade_result = await repo.get_open_buy(symbol)
+            if not trade_result:
+                return None
+
+            horizon = trade_horizon_from_result(trade_result)
+            return strategic_exit_min_hold_block_reason(
+                trade_result,
+                settings=settings,
+                horizon=horizon,
+                exit_scope="profit",
+                observed_at=now_kst(),
+            )
+        except Exception as exc:
+            logger.warning("익절 최소 보유시간 확인 실패 ({}): {}", symbol, str(exc))
+            return None
 
     def _resolve_name(self, symbol: str) -> str:
         """종목코드 → 종목명 반환 (캐시에 없으면 코드 그대로)"""
@@ -3197,6 +3224,18 @@ class TradingAgent:
 
         try:
             name = event.data.get("name") or self._resolve_name(symbol)
+            min_hold_reason = await self._take_profit_min_hold_block_reason(symbol)
+            if min_hold_reason:
+                logger.info("익절선 도달 보류: {} {} — {}", name, symbol, min_hold_reason)
+                await activity_logger.log(
+                    ActivityType.EVENT, ActivityPhase.PROGRESS,
+                    f"\U0001f3af 익절선 도달 보류: {name}({symbol}) — {min_hold_reason} "
+                    f"(현재가: {price:,.0f}원, 익절: {take_profit:,.0f}원)",
+                    symbol=symbol,
+                    detail={**event.data, "symbol": symbol, "min_hold_blocked": True},
+                )
+                return
+
             logger.info("익절선 도달: {} {} (현재가: {:,.0f}, 익절: {:,.0f})", name, symbol, price, take_profit)
             await activity_logger.log(
                 ActivityType.EVENT, ActivityPhase.PROGRESS,

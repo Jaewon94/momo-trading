@@ -2,6 +2,7 @@ import pytest
 from types import SimpleNamespace
 import asyncio
 import json
+from datetime import datetime, timedelta
 
 from core.events import Event, EventType
 from scheduler.scheduler import TradingScheduler
@@ -326,7 +327,9 @@ async def test_scheduler_on_startup_schedules_market_open_scan_during_trading_ho
     scheduler = TradingScheduler()
     sleep_calls: list[float] = []
     created_tasks: list[object] = []
+    startup_steps: list[str] = []
     snapshot_calls = 0
+    restore_calls = 0
 
     async def fake_sleep(seconds: float) -> None:
         sleep_calls.append(seconds)
@@ -337,6 +340,13 @@ async def test_scheduler_on_startup_schedules_market_open_scan_during_trading_ho
     async def fake_account_equity_snapshot() -> None:
         nonlocal snapshot_calls
         snapshot_calls += 1
+        startup_steps.append("snapshot")
+
+    async def fake_restore_open_position_exit_thresholds() -> int:
+        nonlocal restore_calls
+        restore_calls += 1
+        startup_steps.append("restore_thresholds")
+        return 1
 
     class DummyTask:
         pass
@@ -352,15 +362,74 @@ async def test_scheduler_on_startup_schedules_market_open_scan_during_trading_ho
     monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
     monkeypatch.setattr(scheduler, "_market_open_scan", fake_market_open_scan)
     monkeypatch.setattr(scheduler, "_account_equity_snapshot", fake_account_equity_snapshot)
+    monkeypatch.setattr(
+        scheduler,
+        "_restore_open_position_exit_thresholds",
+        fake_restore_open_position_exit_thresholds,
+    )
 
     await scheduler._on_startup()
 
     assert sleep_calls == [3]
     assert snapshot_calls == 1
+    assert restore_calls == 1
+    assert startup_steps == ["snapshot", "restore_thresholds"]
     assert any(
         getattr(task, "cr_code", None) and task.cr_code.co_name == "fake_market_open_scan"
         for task in created_tasks
     )
+
+
+@pytest.mark.asyncio
+async def test_restore_open_position_exit_thresholds_uses_persisted_trade_levels(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    open_trade = SimpleNamespace(
+        stock_symbol="082800",
+        ai_stop_loss_price=3059.05,
+        ai_target_price=3375.0,
+        notes='{"active_trailing_stop_pct":4.5}',
+    )
+    calls: list[tuple[str, dict[str, float]]] = []
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_all_open(self):
+            return [open_trade]
+
+    class FakeEventDetector:
+        def get_thresholds(self, symbol: str):
+            assert symbol == "082800"
+            return SimpleNamespace(stop_loss=0.0, take_profit=0.0, trailing_stop_pct=0.0)
+
+        def set_thresholds(self, symbol: str, **kwargs) -> None:
+            calls.append((symbol, kwargs))
+
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("realtime.event_detector.event_detector", FakeEventDetector())
+
+    restored = await scheduler._restore_open_position_exit_thresholds()
+
+    assert restored == 1
+    assert calls == [
+        (
+            "082800",
+            {
+                "stop_loss": 3059.05,
+                "take_profit": 3375.0,
+                "trailing_stop_pct": 4.5,
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio
@@ -391,6 +460,7 @@ async def test_scheduler_on_startup_continues_after_snapshot_refresh_failure(mon
     """스냅샷 갱신이 실패해도 market_open_scan은 예약되어야 한다."""
     scheduler = TradingScheduler()
     created_tasks: list[object] = []
+    restore_calls = 0
 
     async def fake_sleep(_seconds: float) -> None:
         return None
@@ -400,6 +470,11 @@ async def test_scheduler_on_startup_continues_after_snapshot_refresh_failure(mon
 
     async def failing_account_equity_snapshot() -> None:
         raise RuntimeError("simulated broker timeout")
+
+    async def fake_restore_open_position_exit_thresholds() -> int:
+        nonlocal restore_calls
+        restore_calls += 1
+        return 0
 
     class DummyTask:
         pass
@@ -415,9 +490,15 @@ async def test_scheduler_on_startup_continues_after_snapshot_refresh_failure(mon
     monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
     monkeypatch.setattr(scheduler, "_market_open_scan", fake_market_open_scan)
     monkeypatch.setattr(scheduler, "_account_equity_snapshot", failing_account_equity_snapshot)
+    monkeypatch.setattr(
+        scheduler,
+        "_restore_open_position_exit_thresholds",
+        fake_restore_open_position_exit_thresholds,
+    )
 
     await scheduler._on_startup()
 
+    assert restore_calls == 1
     assert any(
         getattr(task, "cr_code", None) and task.cr_code.co_name == "fake_market_open_scan"
         for task in created_tasks
@@ -617,6 +698,32 @@ def test_partial_take_profit_skips_when_already_done() -> None:
     assert reason == ""
 
 
+def test_partial_take_profit_blocks_mid_position_before_min_hold(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    observed_at = datetime(2026, 6, 8, 10, 0)
+    trade_result = SimpleNamespace(
+        strategy_type="STABLE_SHORT",
+        notes='{"trade_horizon":"MID"}',
+        entry_at=observed_at - timedelta(minutes=20),
+    )
+
+    monkeypatch.setattr("scheduler.scheduler.settings.POSITION_EXIT_MANAGEMENT_ENABLED", True)
+    monkeypatch.setattr("scheduler.scheduler.settings.PARTIAL_TAKE_PROFIT_ENABLED", True)
+    monkeypatch.setattr("scheduler.scheduler.settings.PARTIAL_TAKE_PROFIT_PCT_MID", 5.0)
+    monkeypatch.setattr("scheduler.scheduler.settings.MIN_HOLD_MINUTES_BEFORE_PROFIT_EXIT_MID", 180, raising=False)
+
+    should_sell, quantity, reason = scheduler._should_partial_take_profit(
+        tr=trade_result,
+        pnl_rate=6.0,
+        holding_quantity=10,
+        observed_at=observed_at,
+    )
+
+    assert should_sell is False
+    assert quantity == 0
+    assert "MID 최소 보유 180분" in reason
+
+
 def test_breakeven_and_scale_in_are_horizon_aware(monkeypatch) -> None:
     scheduler = TradingScheduler()
     mid_trade = SimpleNamespace(strategy_type="STABLE_SHORT", notes='{"trade_horizon":"MID"}')
@@ -729,6 +836,43 @@ def test_trailing_profit_guard_is_wider_for_long_horizon(monkeypatch) -> None:
 
     assert should_sell is False
     assert detail["drawdown_pct"] == pytest.approx(2.5)
+
+
+def test_trailing_profit_guard_blocks_mid_position_before_min_hold(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    observed_at = datetime(2026, 6, 8, 10, 0)
+    trade_result = SimpleNamespace(
+        strategy_type="STABLE_SHORT",
+        notes='{"trade_horizon":"MID"}',
+        entry_at=observed_at - timedelta(minutes=20),
+    )
+
+    monkeypatch.setattr("scheduler.scheduler.settings.TRAILING_PROFIT_GUARD_ENABLED", True)
+    monkeypatch.setattr("scheduler.scheduler.settings.TRAILING_PROFIT_ACTIVATE_PCT_MID", 5.0)
+    monkeypatch.setattr("scheduler.scheduler.settings.TRAILING_PROFIT_DRAWDOWN_PCT_MID", 2.0)
+    monkeypatch.setattr("scheduler.scheduler.settings.RISK_APPETITE", "CONSERVATIVE")
+    monkeypatch.setattr("scheduler.scheduler.settings.MIN_HOLD_MINUTES_BEFORE_PROFIT_EXIT_MID", 180, raising=False)
+
+    scheduler._evaluate_trailing_profit_guard(
+        symbol="005930",
+        avg_buy_price=10_000,
+        current_price=10_700,
+        pnl_rate=7.0,
+        tr=trade_result,
+        observed_at=observed_at,
+    )
+    should_sell, reason, detail = scheduler._evaluate_trailing_profit_guard(
+        symbol="005930",
+        avg_buy_price=10_000,
+        current_price=10_400,
+        pnl_rate=4.0,
+        tr=trade_result,
+        observed_at=observed_at,
+    )
+
+    assert should_sell is False
+    assert detail["min_hold_blocked"] is True
+    assert "MID 최소 보유 180분" in reason
 
 
 @pytest.mark.asyncio

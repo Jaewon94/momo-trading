@@ -5,6 +5,35 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+_COMPLEX_PRODUCT_KEYWORDS = (
+    "인버스",
+    "선물인버스",
+    "레버리지",
+    "2X",
+    "3X",
+    "2배",
+    "3배",
+)
+_CASH_BOND_PRODUCT_KEYWORDS = (
+    "CD금리",
+    "KOFR",
+    "머니마켓",
+    "단기채",
+    "채권",
+    "국채",
+    "통안채",
+    "회사채",
+)
+_DEFENSIVE_PRODUCT_KEYWORDS = (
+    "필수소비재",
+    "고배당",
+    "리츠",
+    "월배당",
+    "커버드콜",
+)
+_ETF_BRAND_KEYWORDS = ("KODEX", "TIGER", "ACE", "RISE", "SOL", "PLUS", "HANARO", "KBSTAR")
+
+
 @dataclass
 class _Candidate:
     symbol: str
@@ -35,8 +64,13 @@ class CandidateScoringService:
         news_pressure_by_symbol: dict[str, float] | None = None,
         preferred_change_min_pct: float | None = None,
         preferred_change_max_pct: float | None = None,
+        risk_appetite: str = "MODERATE",
+        aggressive_min_change_pct: float | None = None,
+        aggressive_max_change_pct: float | None = None,
+        aggressive_min_score: float | None = None,
     ) -> list[dict[str, Any]]:
         candidates: dict[str, _Candidate] = {}
+        risk_key = str(risk_appetite or "MODERATE").upper()
         cooldown_set = {str(symbol).strip() for symbol in (cooldown_symbols or set()) if str(symbol).strip()}
         news_pressure = {
             str(symbol).strip(): float(value or 0.0)
@@ -45,6 +79,9 @@ class CandidateScoringService:
         }
         preferred_min = self._positive_or_none(preferred_change_min_pct)
         preferred_max = self._positive_or_none(preferred_change_max_pct)
+        aggressive_min = self._positive_or_default(aggressive_min_change_pct, 3.0)
+        aggressive_max = self._positive_or_default(aggressive_max_change_pct, 18.0)
+        aggressive_score = self._positive_or_default(aggressive_min_score, 45.0)
 
         self._merge_rows(candidates, volume_rank or [], source="volume_rank")
         self._merge_rows(candidates, surge_data or [], source="surge_data")
@@ -77,6 +114,7 @@ class CandidateScoringService:
                     preferred_min=preferred_min,
                     preferred_max=preferred_max,
                 )
+                self._apply_product_policy(candidate, risk_appetite=risk_key)
 
             if candidate.price > 0 and available_cash > 0 and candidate.price > available_cash:
                 candidate.buyable = False
@@ -119,7 +157,14 @@ class CandidateScoringService:
                     "buyable": item.buyable,
                     "hold_candidate": item.hold_candidate,
                     "policy_buy_eligible": item.policy_buy_eligible,
-                    "strategy_type_hint": self._strategy_type_hint(item, pressure),
+                    "strategy_type_hint": self._strategy_type_hint(
+                        item,
+                        pressure,
+                        risk_appetite=risk_key,
+                        aggressive_min_change_pct=aggressive_min,
+                        aggressive_max_change_pct=aggressive_max,
+                        aggressive_min_score=aggressive_score,
+                    ),
                     "reason_codes": sorted(item.reason_codes),
                     "news_negative_pressure": pressure,
                     "reasons": item.reasons[:4],
@@ -128,20 +173,65 @@ class CandidateScoringService:
         return results
 
     @staticmethod
-    def _strategy_type_hint(candidate: _Candidate, news_pressure: float) -> str:
-        if candidate.hold_candidate or not candidate.buyable:
+    def _strategy_type_hint(
+        candidate: _Candidate,
+        news_pressure: float,
+        *,
+        risk_appetite: str = "MODERATE",
+        aggressive_min_change_pct: float = 3.0,
+        aggressive_max_change_pct: float = 18.0,
+        aggressive_min_score: float = 45.0,
+    ) -> str:
+        if candidate.hold_candidate or not candidate.buyable or not candidate.policy_buy_eligible:
             return "STABLE_SHORT"
         if news_pressure >= 0.5:
             return "STABLE_SHORT"
+        has_confirmed_momentum = "surge_data" in candidate.sources and "volume_rank" in candidate.sources
         if (
-            "surge_data" in candidate.sources
-            and "volume_rank" in candidate.sources
-            and 6.0 <= abs(candidate.change_rate) <= 10.0
+            has_confirmed_momentum
+            and 6.0 <= candidate.change_rate <= 10.0
             and candidate.score >= 50.0
             and news_pressure < 0.25
         ):
             return "AGGRESSIVE_SHORT"
+        if (
+            str(risk_appetite or "").upper() == "AGGRESSIVE"
+            and has_confirmed_momentum
+            and aggressive_min_change_pct <= candidate.change_rate <= aggressive_max_change_pct
+            and candidate.score >= aggressive_min_score
+            and news_pressure < 0.25
+        ):
+            return "AGGRESSIVE_SHORT"
         return "STABLE_SHORT"
+
+    @staticmethod
+    def _apply_product_policy(candidate: _Candidate, *, risk_appetite: str) -> None:
+        normalized_name = str(candidate.name or "").upper()
+        if any(keyword.upper() in normalized_name for keyword in _COMPLEX_PRODUCT_KEYWORDS):
+            candidate.buyable = False
+            candidate.policy_buy_eligible = False
+            candidate.score -= 150.0
+            candidate.reasons.append("복잡 ETF/ETN 신규매수 제외")
+            candidate.reason_codes.add("UNSUPPORTED_COMPLEX_PRODUCT")
+            return
+
+        if any(keyword.upper() in normalized_name for keyword in _CASH_BOND_PRODUCT_KEYWORDS):
+            candidate.buyable = False
+            candidate.policy_buy_eligible = False
+            candidate.score -= 120.0
+            candidate.reasons.append("현금성/채권형 상품 신규매수 제외")
+            candidate.reason_codes.add("CASH_OR_BOND_PRODUCT")
+            return
+
+        is_etf_like = any(keyword in normalized_name for keyword in _ETF_BRAND_KEYWORDS)
+        if (
+            risk_appetite == "AGGRESSIVE"
+            and is_etf_like
+            and any(keyword.upper() in normalized_name for keyword in _DEFENSIVE_PRODUCT_KEYWORDS)
+        ):
+            candidate.score -= 25.0
+            candidate.reasons.append("공격 성향 대비 방어형 상품 감점")
+            candidate.reason_codes.add("DEFENSIVE_PRODUCT_DEPRIORITIZED")
 
     @staticmethod
     def _apply_policy_change_band(
@@ -240,6 +330,11 @@ class CandidateScoringService:
         except (TypeError, ValueError):
             return None
         return parsed if parsed > 0 else None
+
+    @staticmethod
+    def _positive_or_default(value: float | int | str | None, default: float) -> float:
+        parsed = CandidateScoringService._positive_or_none(value)
+        return float(default if parsed is None else parsed)
 
 
 candidate_scoring_service = CandidateScoringService()

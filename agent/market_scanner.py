@@ -200,6 +200,7 @@ class MarketScanner:
         data_elapsed = activity_logger.elapsed_ms(timer)
         logger.debug("MCP 데이터 수집 완료: {}ms", data_elapsed)
         scanner_policy = await self._build_scanner_policy()
+        max_candidates = max(int(getattr(settings, "SCANNER_MAX_CANDIDATES", 30) or 30), 1)
 
         scored_candidates = candidate_scoring_service.score_candidates(
             volume_rank=volume_rank,
@@ -207,8 +208,12 @@ class MarketScanner:
             drop_data=drop_data,
             holdings=holdings,
             available_cash=available_cash,
-            max_candidates=8,
+            max_candidates=max_candidates,
             cooldown_symbols=cooldown_symbols,
+            risk_appetite=getattr(settings, "RISK_APPETITE", "MODERATE"),
+            aggressive_min_change_pct=getattr(settings, "SCANNER_AGGRESSIVE_MIN_CHANGE_PCT", 3.0),
+            aggressive_max_change_pct=getattr(settings, "SCANNER_AGGRESSIVE_MAX_CHANGE_PCT", 18.0),
+            aggressive_min_score=getattr(settings, "SCANNER_AGGRESSIVE_MIN_SCORE", 45.0),
             preferred_change_min_pct=scanner_policy.get("preferred_change_min_pct"),
             preferred_change_max_pct=scanner_policy.get("preferred_change_max_pct"),
         )
@@ -220,9 +225,13 @@ class MarketScanner:
                 drop_data=drop_data,
                 holdings=holdings,
                 available_cash=available_cash,
-                max_candidates=8,
+                max_candidates=max_candidates,
                 cooldown_symbols=cooldown_symbols,
                 news_pressure_by_symbol=news_pressure_by_symbol,
+                risk_appetite=getattr(settings, "RISK_APPETITE", "MODERATE"),
+                aggressive_min_change_pct=getattr(settings, "SCANNER_AGGRESSIVE_MIN_CHANGE_PCT", 3.0),
+                aggressive_max_change_pct=getattr(settings, "SCANNER_AGGRESSIVE_MAX_CHANGE_PCT", 18.0),
+                aggressive_min_score=getattr(settings, "SCANNER_AGGRESSIVE_MIN_SCORE", 45.0),
                 preferred_change_min_pct=scanner_policy.get("preferred_change_min_pct"),
                 preferred_change_max_pct=scanner_policy.get("preferred_change_max_pct"),
             )
@@ -475,6 +484,17 @@ class MarketScanner:
                             }
                         )
                 item.setdefault("policy_buy_eligible", scored.get("policy_buy_eligible"))
+                if scored.get("policy_buy_eligible") is False or scored.get("buyable") is False:
+                    adjustments.append(
+                        {
+                            "symbol": symbol,
+                            "action": "buy_filtered",
+                            "reason": "SCANNER_POLICY_INELIGIBLE",
+                            "reason_codes": scored.get("reason_codes", []),
+                            "scanner_score": scored.get("score"),
+                        }
+                    )
+                    continue
 
             if direction == "BUY" and probation_active:
                 change_rate = self._candidate_change_rate(item, scored)
@@ -716,8 +736,10 @@ class MarketScanner:
         lines = [
             "운용 방향: 초단기/단기 비중 축소, MID/LONG 심층 분석 우선",
             "전략 의미: STABLE_SHORT/AGGRESSIVE_SHORT는 legacy 실행·위험 프로파일이며 보유기간 자체가 아님",
+            f"결정론 1차 후보 폭: 최대 {int(getattr(settings, 'SCANNER_MAX_CANDIDATES', 30) or 30)}개 점수화 후 LLM 선별",
             f"선호 등락률 상한: +{float(policy.get('preferred_change_max_pct') or 0.0):.2f}%",
-            "AGGRESSIVE_SHORT 사용: Deterministic 후보 점수의 strategy=AGGRESSIVE_SHORT인 경우만 허용",
+            "상품 정책: 인버스/레버리지/현금성/채권형 상품은 신규 BUY 제외, 방어형 ETF는 공격 성향에서 감점",
+            "AGGRESSIVE_SHORT 사용: 상승 모멘텀+거래량 확인 후보 중 Deterministic strategy=AGGRESSIVE_SHORT인 경우만 허용",
         ]
         if bool(policy.get("probation_active")):
             min_change = policy.get("preferred_change_min_pct")

@@ -20,7 +20,6 @@
 from collections.abc import Awaitable
 import asyncio
 import copy
-import json
 import time as _time
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -40,6 +39,11 @@ from trading.enums import ActivityPhase, ActivityType, Market, OrderSide, OrderT
 from trading.models import OrderRequest
 from scheduler.jobs.forward_return_label_job import forward_return_label_job
 from strategy.trade_horizon import TradeHorizon
+from strategy.position_exit_policy import (
+    strategic_exit_min_hold_block_reason,
+    trade_horizon_from_result,
+    trade_notes_dict,
+)
 
 
 class TradingScheduler:
@@ -143,15 +147,7 @@ class TradingScheduler:
 
     @staticmethod
     def _trade_notes_dict(tr) -> dict:
-        notes = str(getattr(tr, "notes", "") or "")
-        try:
-            parsed = json.loads(notes)
-        except (TypeError, ValueError):
-            try:
-                parsed, _end_index = json.JSONDecoder().raw_decode(notes.strip())
-            except (TypeError, ValueError):
-                return {}
-        return parsed if isinstance(parsed, dict) else {}
+        return trade_notes_dict(tr)
 
     @staticmethod
     def _positive_float(value) -> float | None:
@@ -209,21 +205,55 @@ class TradingScheduler:
 
         return kwargs
 
+    async def _restore_open_position_exit_thresholds(self) -> int:
+        """Restore in-memory exit thresholds for open positions on startup."""
+        from core.database import AsyncSessionLocal
+        from realtime.event_detector import event_detector
+        from repositories.trade_result_repository import TradeResultRepository
+
+        async with AsyncSessionLocal() as session:
+            repo = TradeResultRepository(session)
+            open_positions = await repo.get_all_open()
+
+        restored = 0
+        for tr in open_positions:
+            symbol = normalize_krx_symbol(getattr(tr, "stock_symbol", ""))
+            if not symbol:
+                continue
+            current_thresholds = event_detector.get_thresholds(symbol)
+            kwargs = self._persisted_threshold_kwargs(tr, current_thresholds=current_thresholds)
+            if not kwargs:
+                continue
+            event_detector.set_thresholds(symbol, **kwargs)
+            restored += 1
+
+        if restored:
+            logger.info("기동 시 보유 포지션 AI 손절/익절 임계값 복원: {}종목", restored)
+        return restored
+
     @staticmethod
     def _trade_horizon_from_result(tr) -> str:
-        parsed = TradingScheduler._trade_notes_dict(tr)
-        if isinstance(parsed, dict):
-            horizon = str(parsed.get("trade_horizon") or "").upper()
-            if horizon in {TradeHorizon.SHORT, TradeHorizon.MID, TradeHorizon.LONG}:
-                return horizon
-        strategy_type = str(getattr(tr, "strategy_type", "") or "").upper()
-        if "AGGRESSIVE" in strategy_type:
-            return TradeHorizon.SHORT
-        return TradeHorizon.MID
+        return trade_horizon_from_result(tr)
 
     @staticmethod
     def _note_has_marker(tr, marker: str) -> bool:
         return marker in str(getattr(tr, "notes", "") or "")
+
+    @staticmethod
+    def _strategic_exit_min_hold_block_reason(
+        tr,
+        *,
+        horizon: str | None = None,
+        exit_scope: str = "profit",
+        observed_at=None,
+    ) -> str | None:
+        return strategic_exit_min_hold_block_reason(
+            tr,
+            settings=settings,
+            horizon=horizon,
+            exit_scope=exit_scope,
+            observed_at=observed_at,
+        )
 
     @staticmethod
     def _partial_take_profit_threshold_pct(horizon: str) -> float:
@@ -305,7 +335,14 @@ class TradingScheduler:
         sell_qty = int(quantity * size_pct / 100.0)
         return min(max(sell_qty, 1), quantity - 1)
 
-    def _should_partial_take_profit(self, *, tr, pnl_rate: float, holding_quantity: int) -> tuple[bool, int, str]:
+    def _should_partial_take_profit(
+        self,
+        *,
+        tr,
+        pnl_rate: float,
+        holding_quantity: int,
+        observed_at=None,
+    ) -> tuple[bool, int, str]:
         if not bool(getattr(settings, "POSITION_EXIT_MANAGEMENT_ENABLED", True)):
             return False, 0, ""
         if self._note_has_marker(tr, "PARTIAL_TAKE_PROFIT_DONE"):
@@ -314,6 +351,14 @@ class TradingScheduler:
         trigger_pct = self._partial_take_profit_threshold_pct(horizon)
         if pnl_rate < trigger_pct:
             return False, 0, ""
+        min_hold_reason = self._strategic_exit_min_hold_block_reason(
+            tr,
+            horizon=horizon,
+            exit_scope="profit",
+            observed_at=observed_at,
+        )
+        if min_hold_reason:
+            return False, 0, min_hold_reason
         quantity = self._partial_take_profit_quantity(
             holding_quantity=holding_quantity,
             horizon=horizon,
@@ -343,6 +388,7 @@ class TradingScheduler:
         current_price: float,
         pnl_rate: float,
         tr,
+        observed_at=None,
     ) -> tuple[bool, str, dict]:
         if not bool(getattr(settings, "POSITION_EXIT_MANAGEMENT_ENABLED", True)):
             return False, "", {}
@@ -377,6 +423,16 @@ class TradingScheduler:
             return False, "", detail
         if drawdown_pct < drawdown_limit:
             return False, "", detail
+        min_hold_reason = self._strategic_exit_min_hold_block_reason(
+            tr,
+            horizon=horizon,
+            exit_scope="profit",
+            observed_at=observed_at,
+        )
+        if min_hold_reason:
+            detail["min_hold_blocked"] = True
+            detail["min_hold_reason"] = min_hold_reason
+            return False, min_hold_reason, detail
         return (
             True,
             f"{horizon} 트레일링 수익보호 "
@@ -908,6 +964,10 @@ class TradingScheduler:
                 await self._account_equity_snapshot()
             except Exception as exc:
                 logger.warning("기동 시 계좌 스냅샷 갱신 실패: {}", str(exc))
+            try:
+                await self._restore_open_position_exit_thresholds()
+            except Exception as exc:
+                logger.warning("기동 시 보유 포지션 임계값 복원 실패: {}", str(exc))
             asyncio.create_task(self._market_open_scan())
         else:
             next_open = market_calendar.next_krx_open()
@@ -1379,12 +1439,15 @@ class TradingScheduler:
                         tr=tr,
                         pnl_rate=pnl_rate,
                         holding_quantity=int(h.quantity),
+                        observed_at=current_dt,
                     )
                     if do_partial:
                         should_sell = True
                         sell_quantity = partial_qty
                         exit_reason = "PARTIAL_TAKE_PROFIT"
                         reason = partial_reason
+                    elif partial_reason:
+                        alerts.append(f"👀 {h.name}({symbol}): {partial_reason}")
 
                 if not should_sell and tr:
                     trail_sell, trail_reason, trail_detail = self._evaluate_trailing_profit_guard(
@@ -1393,6 +1456,7 @@ class TradingScheduler:
                         current_price=current,
                         pnl_rate=pnl_rate,
                         tr=tr,
+                        observed_at=current_dt,
                     )
                     if trail_sell:
                         should_sell = True
@@ -1408,6 +1472,8 @@ class TradingScheduler:
                                 **trail_detail,
                             },
                         )
+                    elif trail_detail.get("min_hold_blocked"):
+                        alerts.append(f"👀 {h.name}({symbol}): {trail_reason}")
 
                 # 손절/익절
                 if not should_sell and pnl_rate <= stop_loss_pct:
@@ -1434,8 +1500,24 @@ class TradingScheduler:
                     elif defer_reason == "near_close":
                         reason += " — 장마감 임박"
                 elif not should_sell and pnl_rate >= take_profit_pct:
-                    should_sell = True
-                    reason = f"익절 도달 ({pnl_rate:+.1f}%, 기준 {take_profit_pct:+.1f}%)"
+                    min_hold_reason = (
+                        self._strategic_exit_min_hold_block_reason(
+                            tr,
+                            horizon=horizon,
+                            exit_scope="profit",
+                            observed_at=current_dt,
+                        )
+                        if tr
+                        else None
+                    )
+                    if min_hold_reason:
+                        alerts.append(
+                            f"👀 {h.name}({symbol}): 익절 도달 ({pnl_rate:+.1f}%, "
+                            f"기준 {take_profit_pct:+.1f}%) — {min_hold_reason}"
+                        )
+                    else:
+                        should_sell = True
+                        reason = f"익절 도달 ({pnl_rate:+.1f}%, 기준 {take_profit_pct:+.1f}%)"
                 # 시간 기반 조건 (데이트레이딩 전용)
                 elif not should_sell and settings.DAY_TRADING_ONLY:
                     if minutes_left <= 60 and pnl_rate > 1.0:
@@ -2621,6 +2703,27 @@ class TradingScheduler:
                     decision = {}
 
                 if action in {"SELL", "PARTIAL_SELL"} and settings.TRADING_ENABLED:
+                    active_stop_loss = float(data.get("active_stop_loss") or 0.0)
+                    pnl_rate = float(data.get("pnl_rate") or 0.0)
+                    horizon = self._trade_horizon_from_result(trade_result) if trade_result else TradeHorizon.MID
+                    protective_stop = (
+                        (active_stop_loss > 0 and current_price <= active_stop_loss)
+                        or pnl_rate <= self._default_stop_loss_pct(horizon)
+                    )
+                    if trade_result and not protective_stop:
+                        min_hold_reason = self._strategic_exit_min_hold_block_reason(
+                            trade_result,
+                            horizon=horizon,
+                            exit_scope="profit" if action == "PARTIAL_SELL" else "review",
+                            observed_at=current_dt,
+                        )
+                        if min_hold_reason:
+                            log_lines.append(
+                                f"  - {stock_name}({symbol}): {action} 보류 — "
+                                f"{min_hold_reason} — {reason} (AI {conf:.2f})"
+                            )
+                            continue
+
                     # 즉시 시장가 매도
                     if not await trading_agent._acquire_sell(symbol):
                         log_lines.append(f"  - {stock_name}({symbol}): {action} → 이미 매도 진행 중")

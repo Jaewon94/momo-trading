@@ -1,0 +1,132 @@
+{
+  "schema_version": "momo.run-log.v1",
+  "task_id": "2026-06-08-001-bull-market-strategy-alignment",
+  "events": [
+    {
+      "at": "2026-06-08T09:09:13+09:00",
+      "type": "task_started",
+      "status": "created",
+      "summary": "Task artifact created."
+    },
+    {
+      "at": "2026-06-08T09:23:00+09:00",
+      "type": "implementation",
+      "status": "completed",
+      "summary": "Broadened deterministic scanner candidates, added product policy filters, aggressive momentum hint widening, forward-return labeling recency/snapshot fallback, and minimum-hold guards for strategic profit/review exits."
+    },
+    {
+      "at": "2026-06-08T09:24:10+09:00",
+      "type": "verification",
+      "status": "passed",
+      "summary": ".venv313/bin/python -m pytest tests/services/test_candidate_scoring_service.py tests/scheduler/test_forward_return_label_job.py tests/scheduler/test_scheduler_runtime_paths.py tests/agent/test_trading_agent_cycles.py tests/strategy/test_trade_horizon.py -q passed: 149 passed."
+    },
+    {
+      "at": "2026-06-08T09:24:31+09:00",
+      "type": "verification",
+      "status": "warn",
+      "summary": "python scripts/check_runtime_integrity.py --days 7 returned WARN: system/settings OK, but existing broker/db pending count=1 and partial_fill_pending_count=1 remain."
+    },
+    {
+      "at": "2026-06-08T09:25:00+09:00",
+      "type": "verification",
+      "status": "passed",
+      "summary": ".venv313/bin/python -m pytest tests/agent/test_market_scanner.py tests/services/test_candidate_scoring_service.py tests/scheduler/test_forward_return_label_job.py -q passed: 19 passed."
+    },
+    {
+      "at": "2026-06-08T09:25:40+09:00",
+      "type": "verification",
+      "status": "passed",
+      "summary": ".venv313/bin/python -m pytest tests/services/test_candidate_scoring_service.py tests/scheduler/test_forward_return_label_job.py tests/scheduler/test_scheduler_runtime_paths.py tests/agent/test_trading_agent_cycles.py tests/agent/test_market_scanner.py tests/strategy/test_trade_horizon.py -q passed: 153 passed."
+    },
+    {
+      "at": "2026-06-08T09:26:25+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-08T09:26:38+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-08T09:27:10+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-08T09:31:00+09:00",
+      "type": "runtime_reconciliation",
+      "status": "completed",
+      "summary": "Recovered BUY PENDING_CONFIRM for 210120 after broker holding appeared; then recovered SELL PENDING_CONFIRM after broker holding went to zero. No broker reset, liquidation command, or destructive DB cleanup was run."
+    },
+    {
+      "at": "2026-06-08T09:33:40+09:00",
+      "type": "verification",
+      "status": "passed",
+      "summary": "Runtime integrity returned OK before restart: broker/db pending 0, broker/db position mismatch 0."
+    },
+    {
+      "at": "2026-06-08T09:36:40+09:00",
+      "type": "restart",
+      "status": "passed",
+      "summary": "Restarted service in tmux session momo-trading-server after start.sh -d did not persist in this execution environment. Health OK, scheduler/agent running, runtime integrity OK."
+    },
+    {
+      "at": "2026-06-08T09:37:50+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-08T09:46:20+09:00",
+      "type": "implementation",
+      "status": "completed",
+      "summary": "Fixed pending-confirm recovery so TradeResult.notes metadata such as trade_horizon and active thresholds is preserved through partial and full confirmation recovery."
+    },
+    {
+      "at": "2026-06-08T09:47:00+09:00",
+      "type": "runtime_repair",
+      "status": "completed",
+      "summary": "Repaired the live 082800 open BUY notes after the earlier recovery path had cleared LONG metadata. Holding API then showed trade_horizon=LONG and runtime integrity was OK."
+    },
+    {
+      "at": "2026-06-08T09:48:00+09:00",
+      "type": "verification",
+      "status": "passed",
+      "summary": ".venv313/bin/python -m pytest tests/scheduler/test_portfolio_sync_job.py tests/services/test_candidate_scoring_service.py tests/scheduler/test_forward_return_label_job.py tests/scheduler/test_scheduler_runtime_paths.py tests/agent/test_trading_agent_cycles.py tests/agent/test_market_scanner.py tests/strategy/test_trade_horizon.py -q passed: 177 passed."
+    },
+    {
+      "at": "2026-06-08T09:52:53+09:00",
+      "type": "runtime_trade",
+      "status": "completed",
+      "summary": "082800 was closed by HOLDINGS_CHECK stop-loss at 2995 for -162,500 KRW (-2.12%). This was a protective stop-loss path, not a strategic early profit/review exit."
+    },
+    {
+      "at": "2026-06-08T09:54:00+09:00",
+      "type": "implementation",
+      "status": "completed",
+      "summary": "Added startup restoration of persisted open-position AI exit thresholds into event_detector before market scan so intraday restarts do not begin with missing in-memory stop/take levels."
+    },
+    {
+      "at": "2026-06-08T09:55:00+09:00",
+      "type": "verification",
+      "status": "passed",
+      "summary": ".venv313/bin/python -m pytest tests/scheduler/test_scheduler_runtime_paths.py tests/scheduler/test_portfolio_sync_job.py tests/services/test_candidate_scoring_service.py tests/scheduler/test_forward_return_label_job.py tests/agent/test_trading_agent_cycles.py tests/agent/test_market_scanner.py tests/strategy/test_trade_horizon.py -q passed: 178 passed."
+    },
+    {
+      "at": "2026-06-08T09:56:33+09:00",
+      "type": "restart",
+      "status": "passed",
+      "summary": "Restarted service in a fresh tmux session with the latest code. Health OK, scheduler/agent running, last_cycle_time updated, pending orders 0, runtime integrity OK. New BUY 459550 was confirmed and broker/DB reconciliation is clean."
+    },
+    {
+      "at": "2026-06-08T09:58:27+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    }
+  ]
+}

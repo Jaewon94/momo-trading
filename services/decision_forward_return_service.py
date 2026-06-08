@@ -63,7 +63,7 @@ class DecisionForwardReturnService:
                                 DecisionEvent.created_at <= now,
                                 not_(probable_fixture_decision_event_filter(DecisionEvent)),
                             )
-                            .order_by(DecisionEvent.created_at.asc())
+                            .order_by(DecisionEvent.created_at.desc())
                             .limit(limit)
                         )
                     )
@@ -163,9 +163,8 @@ class DecisionForwardReturnService:
                     .order_by(MarketDataDaily.trade_date.asc())
                 )
             ).scalars().first()
-            if not daily:
-                return None
-            return ResolvedForwardPrice(price=float(daily.close), source="market_data_daily.close")
+            if daily:
+                return ResolvedForwardPrice(price=float(daily.close), source="market_data_daily.close")
 
         snapshot = (
             await session.execute(
@@ -180,7 +179,12 @@ class DecisionForwardReturnService:
         price = float(snapshot.current_price or 0)
         if price <= 0:
             return None
-        return ResolvedForwardPrice(price=price, source="market_snapshot.current_price")
+        source = (
+            "market_snapshot.current_price_after_close"
+            if horizon == "close"
+            else "market_snapshot.current_price"
+        )
+        return ResolvedForwardPrice(price=price, source=source)
 
     async def _upsert_label(
         self,

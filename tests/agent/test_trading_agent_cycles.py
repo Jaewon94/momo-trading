@@ -109,6 +109,44 @@ def test_apply_trade_thresholds_preserves_tighter_existing_stop_for_holding(monk
 
 
 @pytest.mark.asyncio
+async def test_take_profit_event_blocks_before_min_hold(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    agent._running = True
+    logs: list[str] = []
+    exit_calls: list[dict] = []
+
+    async def fake_min_hold_reason(_symbol: str) -> str:
+        return "MID 최소 보유 180분 전 수익보호 매도 보류 (현재 20분)"
+
+    async def fake_execute_exit_order(**kwargs):
+        exit_calls.append(kwargs)
+        return SimpleNamespace(success=True, message="ok")
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append(args[2])
+
+    monkeypatch.setattr("agent.trading_agent.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr(agent, "_take_profit_min_hold_block_reason", fake_min_hold_reason)
+    monkeypatch.setattr(agent, "_execute_exit_order", fake_execute_exit_order)
+    monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
+
+    await agent._on_take_profit(
+        Event(
+            type=EventType.TAKE_PROFIT_HIT,
+            data={
+                "symbol": "005930",
+                "name": "삼성전자",
+                "price": 73_000,
+                "take_profit_price": 72_000,
+            },
+        )
+    )
+
+    assert exit_calls == []
+    assert any("익절선 도달 보류" in message for message in logs)
+
+
+@pytest.mark.asyncio
 async def test_persist_open_position_thresholds_does_not_loosen_stop_loss(monkeypatch) -> None:
     agent = TradingAgent(broker_adapter=StubBrokerAdapter())
     trade_result = SimpleNamespace(ai_stop_loss_price=10_800, ai_target_price=12_000)

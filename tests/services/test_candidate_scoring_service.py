@@ -150,3 +150,72 @@ def test_candidate_scoring_service_marks_only_confirmed_momentum_aggressive() ->
     )
 
     assert result[0]["strategy_type_hint"] == "AGGRESSIVE_SHORT"
+
+
+def test_candidate_scoring_service_blocks_inverse_leveraged_products_for_new_buys() -> None:
+    service = CandidateScoringService()
+
+    result = service.score_candidates(
+        volume_rank=[
+            {"symbol": "252670", "name": "KODEX 200선물인버스2X", "price": 1800, "change_rate": 5.2, "volume": 8000000},
+        ],
+        surge_data=[
+            {"symbol": "252670", "name": "KODEX 200선물인버스2X", "price": 1800, "change_rate": 5.2, "volume": 8000000},
+        ],
+        drop_data=[],
+        holdings=[],
+        available_cash=300000,
+        max_candidates=1,
+        risk_appetite="AGGRESSIVE",
+    )
+
+    assert result[0]["buyable"] is False
+    assert result[0]["policy_buy_eligible"] is False
+    assert result[0]["strategy_type_hint"] == "STABLE_SHORT"
+    assert "UNSUPPORTED_COMPLEX_PRODUCT" in result[0]["reason_codes"]
+
+
+def test_candidate_scoring_service_aggressive_risk_broadens_positive_momentum_hint() -> None:
+    service = CandidateScoringService()
+
+    result = service.score_candidates(
+        volume_rank=[
+            {"symbol": "123456", "name": "강한모멘텀", "price": 12000, "change_rate": 4.2, "volume": 6000000},
+        ],
+        surge_data=[
+            {"symbol": "123456", "name": "강한모멘텀", "price": 12000, "change_rate": 4.2, "volume": 6000000},
+        ],
+        drop_data=[],
+        holdings=[],
+        available_cash=300000,
+        max_candidates=1,
+        risk_appetite="AGGRESSIVE",
+        aggressive_min_change_pct=3.0,
+        aggressive_max_change_pct=18.0,
+        aggressive_min_score=45.0,
+    )
+
+    assert result[0]["strategy_type_hint"] == "AGGRESSIVE_SHORT"
+
+
+def test_candidate_scoring_service_deprioritizes_defensive_etfs_in_aggressive_mode() -> None:
+    service = CandidateScoringService()
+
+    result = service.score_candidates(
+        volume_rank=[
+            {"symbol": "111111", "name": "KODEX 미국S&P500필수소비재", "price": 12000, "change_rate": 4.2, "volume": 6000000},
+        ],
+        surge_data=[
+            {"symbol": "111111", "name": "KODEX 미국S&P500필수소비재", "price": 12000, "change_rate": 4.2, "volume": 6000000},
+        ],
+        drop_data=[],
+        holdings=[],
+        available_cash=300000,
+        max_candidates=1,
+        risk_appetite="AGGRESSIVE",
+    )
+
+    assert result[0]["buyable"] is True
+    assert result[0]["policy_buy_eligible"] is True
+    assert result[0]["strategy_type_hint"] == "STABLE_SHORT"
+    assert "DEFENSIVE_PRODUCT_DEPRIORITIZED" in result[0]["reason_codes"]
