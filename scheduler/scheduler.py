@@ -42,6 +42,9 @@ from strategy.trade_horizon import TradeHorizon
 from strategy.position_exit_policy import (
     is_loss_protective_stop,
     is_profit_protection_stop,
+    min_hold_minutes_for_profit_exit,
+    min_hold_minutes_for_review_exit,
+    min_hold_minutes_for_soft_stop_exit,
     soft_loss_stop_min_hold_block_reason,
     strategic_exit_min_hold_block_reason,
     trade_horizon_from_result,
@@ -2056,6 +2059,11 @@ class TradingScheduler:
                     hold_days = _calc_hold_days(trade_result)
                     max_hold_days = _get_max_hold_days_for_trade(trade_result, settings)
                     hold_extension_status = get_hold_extension_status(trade_result, settings)
+                    horizon = str(
+                        hold_extension_status.get("trade_horizon")
+                        or self._trade_horizon_from_result(trade_result)
+                        or TradeHorizon.MID
+                    ).upper()
 
                     # 현재 event_detector 활성 임계값
                     th = event_detector.get_thresholds(symbol)
@@ -2079,6 +2087,10 @@ class TradingScheduler:
                         "stop_loss_price": trade_result.ai_stop_loss_price,
                         "strategy_type": trade_result.strategy_type or "N/A",
                         **hold_extension_status,
+                        "trade_horizon": horizon,
+                        "min_hold_minutes_before_review_exit": min_hold_minutes_for_review_exit(settings, horizon),
+                        "min_hold_minutes_before_profit_exit": min_hold_minutes_for_profit_exit(settings, horizon),
+                        "min_hold_minutes_before_soft_stop_exit": min_hold_minutes_for_soft_stop_exit(settings, horizon),
                         "active_stop_loss": th.stop_loss,
                         "active_take_profit": th.take_profit,
                         **news_context,

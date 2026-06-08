@@ -12,6 +12,7 @@
 8. Treat stop prices at/above average buy price as breakeven/profit-guard stops, not hard loss-protective stops. Apply MID/LONG minimum-hold guards to those exits unless the default loss stop is actually breached.
 9. Treat tight loss stops below average buy price but above the horizon default loss threshold as soft stops. Apply a short horizon-specific minimum hold before honoring those stops, while still allowing the default hard stop immediately.
 10. Keep the consecutive-loss recovery guard in `PROBATION` mode, but allow up to 50 probation BUYs per trading day. The daily count already resets by date, so this preserves the warning/reduced-size behavior without blocking aggressive-mode participation after a small number of early losses.
+11. Make intraday holdings-review prompts explicitly horizon-aware. The prompt must show `trade_horizon`, max hold days, minimum hold guards, and state that `STABLE_SHORT`/`AGGRESSIVE_SHORT` are legacy execution/risk profiles, not holding-period labels.
 
 ## Rationale
 
@@ -24,6 +25,7 @@
 - The live `459550` MID trade was closed at 10:21 for -45,000 KRW after a `HOLD` reanalysis raised `stop_loss` to 2,037, above its 2,035 average buy price. The fast holdings guard then treated that profit-guard threshold as a hard stop and sold at 2,010. That proves minimum-hold protection must distinguish loss stops from breakeven/profit stops.
 - The remaining early-exit risk is a tight AI/active stop below cost basis, for example a MID entry at 10,000 with active stop 9,900. A 1-3% early loss can be ordinary intraday noise for a mid/long thesis, so it should not bypass the thesis window unless the MID default hard stop, currently -4%, is actually breached.
 - On 2026-06-08, `RISK_APPETITE=AGGRESSIVE` conflicted with `LOSS_STREAK_RECOVERY_MODE=PROBATION` and `LOSS_STREAK_RECOVERY_MAX_DAILY_BUYS=2`: after three early BUYs, every candidate reached LLM/risk review but was blocked by the probation daily cap. Raising the cap to 50 matches the aggressive-mode intent better than disabling the entire recovery guard.
+- The intraday holdings-review prompt already received holdings payloads that included `trade_horizon`, but the prompt text did not display that field and only displayed `strategy_type`. This could lead the LLM to interpret `STABLE_SHORT`/`AGGRESSIVE_SHORT` as short-horizon labels even though the runtime exit policy uses `notes.trade_horizon`.
 
 ## Deferred
 
@@ -41,3 +43,4 @@
 - A stop above cost basis can still execute after the minimum hold window or when the position breaches the horizon default loss stop; this preserves risk controls while preventing immediate profit-guard churn.
 - A soft stop below cost basis can also execute after its configured minimum hold window. This may increase interim drawdown compared with the previous tighter behavior; the default hard stop remains the emergency boundary.
 - A 50-trade probation cap can increase turnover and intraday loss if the model keeps selecting weak candidates. Daily drawdown, account-equity drawdown, position sizing, order confirmation, and hard stop controls remain active.
+- Prompt improvements reduce LLM horizon confusion but do not remove hard stops, severe-news exits, or max-hold review exits. The LLM can still recommend SELL when the thesis is clearly broken; runtime minimum-hold guards remain the final safety net for non-hard-stop exits.

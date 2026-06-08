@@ -2515,6 +2515,7 @@ async def test_collect_holdings_data_builds_prompt_payload_for_valid_holding(mon
         ai_target_price=75_000,
         ai_stop_loss_price=68_000,
         strategy_type="STABLE_SHORT",
+        notes='{"trade_horizon":"MID"}',
     )
     observed: dict[str, str] = {}
 
@@ -2574,7 +2575,7 @@ async def test_collect_holdings_data_builds_prompt_payload_for_valid_holding(mon
         ),
     )
     monkeypatch.setattr("strategy.holding_policy._calc_hold_days", lambda _tr: 2)
-    monkeypatch.setattr("strategy.holding_policy._get_max_hold_days", lambda _strategy, _settings: 5)
+    monkeypatch.setattr("strategy.holding_policy._get_max_hold_days", lambda _strategy, _settings, _horizon=None: 15)
 
     holdings_data, holdings_map, review_required = await scheduler._collect_holdings_data([holding])
 
@@ -2590,6 +2591,11 @@ async def test_collect_holdings_data_builds_prompt_payload_for_valid_holding(mon
     assert holdings_data[0]["symbol"] == "005930"
     assert holdings_data[0]["stock_name"] == "삼성전자"
     assert round(holdings_data[0]["pnl_rate"], 2) == round((73_000 - 70_000) / 70_000 * 100, 2)
+    assert holdings_data[0]["trade_horizon"] == "MID"
+    assert holdings_data[0]["max_hold_days"] == 15
+    assert holdings_data[0]["min_hold_minutes_before_review_exit"] == 120
+    assert holdings_data[0]["min_hold_minutes_before_profit_exit"] == 180
+    assert holdings_data[0]["min_hold_minutes_before_soft_stop_exit"] == 60
     assert holdings_data[0]["active_stop_loss"] == 68_500
     assert holdings_data[0]["active_take_profit"] == 74_500
     assert holdings_data[0]["news_context_available"] is True

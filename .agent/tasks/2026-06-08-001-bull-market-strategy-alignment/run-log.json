@@ -271,6 +271,48 @@
       "type": "runtime_cycle",
       "status": "passed",
       "summary": "After raising the probation daily BUY cap to 50, the next intraday cycle continued through PROBATION review, analyzed 6 candidates, generated 1 signal, executed 1 BUY, and confirmed 052710 BUY 40주 @24,881원. Pending orders cleared and runtime integrity returned OK."
+    },
+    {
+      "at": "2026-06-08T16:01:00+09:00",
+      "type": "implementation",
+      "status": "completed",
+      "summary": "Made intraday holdings-review LLM prompts horizon-aware by exposing trade_horizon, max hold days, minimum hold guards, and legacy strategy profile semantics. Added horizon and minimum-hold fields to holdings review cache keys to avoid reusing decisions made under ambiguous prompt context."
+    },
+    {
+      "at": "2026-06-08T16:02:00+09:00",
+      "type": "verification",
+      "status": "passed",
+      "summary": ".venv313/bin/python -m pytest tests/analysis/test_holdings_review_prompt.py tests/services/test_holdings_review_cache_service.py tests/scheduler/test_scheduler_runtime_paths.py::test_collect_holdings_data_builds_prompt_payload_for_valid_holding tests/scheduler/test_scheduler_runtime_paths.py::test_intraday_holdings_review_sells_position_and_triggers_rescan tests/scheduler/test_scheduler_runtime_paths.py::test_intraday_holdings_review_adjusts_thresholds_on_hold -q passed: 10 passed."
+    },
+    {
+      "at": "2026-06-08T16:03:00+09:00",
+      "type": "verification",
+      "status": "passed",
+      "summary": ".venv313/bin/python -m pytest tests/analysis/test_holdings_review_prompt.py tests/analysis/test_overnight_hold_prompt.py tests/services/test_holdings_review_cache_service.py tests/services/test_holdings_precheck_service.py tests/strategy/test_holding_policy.py tests/scheduler/test_scheduler_runtime_paths.py -q passed: 117 passed."
+    },
+    {
+      "at": "2026-06-08T16:03:45+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-08T16:04:00+09:00",
+      "type": "runtime_check",
+      "status": "passed",
+      "summary": "Runtime integrity OK before restart: scheduler/agent running, broker pending 0, DB pending 0, broker/DB reconciliation clean."
+    },
+    {
+      "at": "2026-06-08T16:04:49+09:00",
+      "type": "restart",
+      "status": "passed",
+      "summary": "Restarted service in tmux session momo-trading-server with horizon-aware holdings-review prompt changes. Health OK, scheduler/agent running, NXT_AFTER session auto-trading false, holdings 052710 MID 40주, pending orders 0, runtime integrity OK."
+    },
+    {
+      "at": "2026-06-08T16:05:21+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
     }
   ]
 }

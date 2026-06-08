@@ -8,11 +8,18 @@ HOLDINGS_REVIEW_SYSTEM = """당신은 한국 주식 장중 보유종목 재평�
 보유종목 데이터와 시장 상황을 분석하여 종목별로 HOLD/SELL/PARTIAL_SELL/ADD_BUY/TIGHTEN_STOP을 판단하고,
 현재 설정된 손절/익절 임계값이 시장 국면에 적합한지 평가합니다.
 
+## 호라이즌 계약
+- trade_horizon이 보유기간 판단의 우선 기준입니다. SHORT=단기, MID=중기, LONG=장기입니다.
+- STABLE_SHORT/AGGRESSIVE_SHORT는 legacy 실행/위험 프로파일 이름일 뿐 보유기간 이름이 아닙니다.
+- MID/LONG 포지션은 단순 장중 흔들림, 일시적 모멘텀 약화, 또는 "단기적으로 불확실"하다는 이유만으로 SELL/PARTIAL_SELL하지 마세요.
+- MID/LONG의 SELL/PARTIAL_SELL/TIGHTEN_STOP은 손절가 명확한 이탈, 논거 훼손, 강한 악재, 목표/리스크 조건 변화, 최대보유일 심사 같은 근거가 필요합니다.
+- 최소 보유 가드가 남아 있으면 하드 손절이 아닌 리뷰매도/수익보호/소프트손절은 HOLD 또는 TIGHTEN_STOP 보류 관점으로 판단하세요.
+
 ## 판단 프레임워크
 1. **손익 상태**: 현재 수익률 vs 손절가/목표가 위치
 2. **보유일 vs 최대보유일**: 잔여 보유 여유
 3. **AI 신뢰도**: 매수 시점의 분석 신뢰도
-4. **전략 특성**: 전략별 손절/보유 기간
+4. **호라이즌 특성**: trade_horizon별 손절/보유 기간과 최소 보유 가드
 5. **시장 국면 변화**: 매수 시점 대비 현재 국면이 악화되었는지
 6. **임계값 적정성**: 현재 stop_loss/take_profit이 시장 상황에 맞는지
 7. **뉴스/공시 변화**: 최근 뉴스는 보조 근거로 쓰되, 악재는 손절/축소/트레일링 강화 근거로 우선 점검
@@ -95,6 +102,15 @@ def build_holdings_review_prompt(
         active_tp = d.get("active_take_profit")
         active_sl_text = f"{active_sl:,.0f}원" if active_sl and active_sl > 0 else "미설정"
         active_tp_text = f"{active_tp:,.0f}원" if active_tp and active_tp > 0 else "미설정"
+        horizon = str(d.get("trade_horizon") or "N/A").upper()
+        review_min = d.get("min_hold_minutes_before_review_exit")
+        profit_min = d.get("min_hold_minutes_before_profit_exit")
+        soft_stop_min = d.get("min_hold_minutes_before_soft_stop_exit")
+        min_hold_text = (
+            f"리뷰매도 {review_min}분, 수익/부분익절 {profit_min}분, 소프트손절 {soft_stop_min}분"
+            if review_min is not None or profit_min is not None or soft_stop_min is not None
+            else "정보 없음"
+        )
         news_context = str(d.get("news_context_prompt") or "").strip()
         if not news_context:
             news_context = (
@@ -108,10 +124,11 @@ def build_holdings_review_prompt(
             f"- 수익률: {pnl_rate:+.2f}%\n"
             f"- 보유수량: {d.get('quantity', 0)}주\n"
             f"- 보유일수: {d.get('hold_days', 0)}일 / 최대 {d.get('max_hold_days', 0)}일\n"
+            f"- 호라이즌: {horizon} | 최소 보유 가드: {min_hold_text}\n"
             f"- AI 신뢰도: {d.get('confidence', 0):.2f}\n"
             f"- 목표가: {target_text} | 손절가: {stop_text}\n"
             f"- 현재 활성 익절가: {active_tp_text} | 활성 손절가: {active_sl_text}\n"
-            f"- 전략: {d.get('strategy_type', 'N/A')}\n"
+            f"- 전략 프로파일: {d.get('strategy_type', 'N/A')} (legacy 실행/위험 프로파일, 보유기간 아님)\n"
             f"{news_context}"
         )
 

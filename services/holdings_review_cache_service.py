@@ -34,12 +34,16 @@ class HoldingsReviewCacheService:
             "symbol": normalize_krx_symbol(str(holding_data.get("symbol", ""))),
             "stock_name": str(holding_data.get("stock_name", "")),
             "strategy_type": str(holding_data.get("strategy_type", "")).upper(),
+            "trade_horizon": str(holding_data.get("trade_horizon", "")).upper(),
             "avg_price": round(float(holding_data.get("avg_price", 0.0) or 0.0), 2),
             "current_price": round(float(holding_data.get("current_price", 0.0) or 0.0), 2),
             "pnl_rate": round(float(holding_data.get("pnl_rate", 0.0) or 0.0), 3),
             "quantity": int(holding_data.get("quantity", 0) or 0),
             "hold_days": int(holding_data.get("hold_days", 0) or 0),
             "max_hold_days": int(holding_data.get("max_hold_days", 0) or 0),
+            "min_hold_review": self._optional_int(holding_data.get("min_hold_minutes_before_review_exit")),
+            "min_hold_profit": self._optional_int(holding_data.get("min_hold_minutes_before_profit_exit")),
+            "min_hold_soft_stop": self._optional_int(holding_data.get("min_hold_minutes_before_soft_stop_exit")),
             "ai_confidence": round(float(holding_data.get("confidence", 0.0) or 0.0), 3),
             "target_price": self._optional_round(holding_data.get("target_price"), 2),
             "stop_loss_price": self._optional_round(holding_data.get("stop_loss_price"), 2),
@@ -101,6 +105,15 @@ class HoldingsReviewCacheService:
             return None
         try:
             return round(float(value), digits)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _optional_int(value) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(value)
         except (TypeError, ValueError):
             return None
 
