@@ -265,6 +265,12 @@
       "type": "verification_run",
       "status": "passed",
       "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-08T14:32:01+09:00",
+      "type": "runtime_cycle",
+      "status": "passed",
+      "summary": "After raising the probation daily BUY cap to 50, the next intraday cycle continued through PROBATION review, analyzed 6 candidates, generated 1 signal, executed 1 BUY, and confirmed 052710 BUY 40주 @24,881원. Pending orders cleared and runtime integrity returned OK."
     }
   ]
 }
