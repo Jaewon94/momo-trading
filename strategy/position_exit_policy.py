@@ -84,6 +84,15 @@ def min_hold_minutes_for_review_exit(settings: Any, horizon: str) -> int:
     return max(int(getattr(settings, "MIN_HOLD_MINUTES_BEFORE_REVIEW_EXIT_MID", 120) or 0), 0)
 
 
+def min_hold_minutes_for_soft_stop_exit(settings: Any, horizon: str) -> int:
+    key = str(horizon or TradeHorizon.MID).upper()
+    if key == TradeHorizon.SHORT:
+        return max(int(getattr(settings, "MIN_HOLD_MINUTES_BEFORE_SOFT_STOP_EXIT_SHORT", 5) or 0), 0)
+    if key == TradeHorizon.LONG:
+        return max(int(getattr(settings, "MIN_HOLD_MINUTES_BEFORE_SOFT_STOP_EXIT_LONG", 120) or 0), 0)
+    return max(int(getattr(settings, "MIN_HOLD_MINUTES_BEFORE_SOFT_STOP_EXIT_MID", 60) or 0), 0)
+
+
 def strategic_exit_min_hold_block_reason(
     tr: Any,
     *,
@@ -110,4 +119,32 @@ def strategic_exit_min_hold_block_reason(
     return (
         f"{resolved_horizon} 최소 보유 {minimum}분 전 {label} 보류 "
         f"(현재 {age:.0f}분)"
+    )
+
+
+def soft_loss_stop_min_hold_block_reason(
+    tr: Any,
+    *,
+    settings: Any,
+    horizon: str | None = None,
+    pnl_rate: float,
+    default_stop_loss_pct: float,
+    observed_at: datetime | None = None,
+) -> str | None:
+    """Block tight active stops early, while preserving the horizon default hard stop."""
+    if pnl_rate <= default_stop_loss_pct:
+        return None
+
+    resolved_horizon = str(horizon or trade_horizon_from_result(tr)).upper()
+    minimum = min_hold_minutes_for_soft_stop_exit(settings, resolved_horizon)
+    if minimum <= 0:
+        return None
+
+    age = position_age_minutes(tr, observed_at=observed_at)
+    if age is None or age >= minimum:
+        return None
+
+    return (
+        f"{resolved_horizon} 최소 보유 {minimum}분 전 소프트 손절 보류 "
+        f"(현재 {age:.0f}분, 손익 {pnl_rate:+.1f}% > 기본 손절 {default_stop_loss_pct:+.1f}%)"
     )

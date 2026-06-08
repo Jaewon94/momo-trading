@@ -166,7 +166,7 @@ async def test_profit_guard_stop_event_blocks_before_min_hold(monkeypatch) -> No
         logs.append(args[2])
 
     monkeypatch.setattr("agent.trading_agent.market_calendar.is_krx_trading_hours", lambda: True)
-    monkeypatch.setattr(agent, "_profit_guard_stop_min_hold_block_reason", fake_min_hold_reason)
+    monkeypatch.setattr(agent, "_stop_loss_min_hold_block_reason", fake_min_hold_reason)
     monkeypatch.setattr(agent, "_execute_exit_order", fake_execute_exit_order)
     monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
 
@@ -183,7 +183,49 @@ async def test_profit_guard_stop_event_blocks_before_min_hold(monkeypatch) -> No
     )
 
     assert exit_calls == []
-    assert any("수익보호 스탑 이탈 보류" in message for message in logs)
+    assert any("손절 이벤트 보류" in message for message in logs)
+
+
+@pytest.mark.asyncio
+async def test_tight_loss_stop_event_blocks_before_soft_stop_min_hold(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    observed_at = datetime(2026, 6, 8, 10, 20)
+    trade_result = SimpleNamespace(
+        entry_price=10_000,
+        strategy_type="STABLE_SHORT",
+        notes='{"trade_horizon":"MID"}',
+        entry_at=datetime(2026, 6, 8, 10, 0),
+    )
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_open_buy(self, _symbol: str):
+            return trade_result
+
+    monkeypatch.setattr("agent.trading_agent.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("util.time_util.now_kst", lambda: observed_at)
+    monkeypatch.setattr("agent.trading_agent.settings.DEFAULT_STOP_LOSS_PCT_MID", -4.0)
+    monkeypatch.setattr("agent.trading_agent.settings.MIN_HOLD_MINUTES_BEFORE_SOFT_STOP_EXIT_MID", 60, raising=False)
+
+    reason = await agent._stop_loss_min_hold_block_reason(
+        "005930",
+        stop_loss_price=9_900,
+        current_price=9_750,
+    )
+
+    assert reason is not None
+    assert "소프트 손절 보류" in reason
+    assert "MID 최소 보유 60분" in reason
 
 
 @pytest.mark.asyncio

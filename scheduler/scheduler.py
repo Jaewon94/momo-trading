@@ -42,6 +42,7 @@ from strategy.trade_horizon import TradeHorizon
 from strategy.position_exit_policy import (
     is_loss_protective_stop,
     is_profit_protection_stop,
+    soft_loss_stop_min_hold_block_reason,
     strategic_exit_min_hold_block_reason,
     trade_horizon_from_result,
     trade_notes_dict,
@@ -254,6 +255,24 @@ class TradingScheduler:
             settings=settings,
             horizon=horizon,
             exit_scope=exit_scope,
+            observed_at=observed_at,
+        )
+
+    @staticmethod
+    def _soft_loss_stop_min_hold_block_reason(
+        tr,
+        *,
+        horizon: str | None = None,
+        pnl_rate: float,
+        default_stop_loss_pct: float,
+        observed_at=None,
+    ) -> str | None:
+        return soft_loss_stop_min_hold_block_reason(
+            tr,
+            settings=settings,
+            horizon=horizon,
+            pnl_rate=pnl_rate,
+            default_stop_loss_pct=default_stop_loss_pct,
             observed_at=observed_at,
         )
 
@@ -1500,6 +1519,20 @@ class TradingScheduler:
                             continue
                     else:
                         reason = f"손절 도달 ({pnl_rate:+.1f}%, 기준 {stop_loss_pct:+.1f}%)"
+                        soft_stop_reason = (
+                            self._soft_loss_stop_min_hold_block_reason(
+                                tr,
+                                horizon=horizon,
+                                pnl_rate=pnl_rate,
+                                default_stop_loss_pct=default_loss_stop_pct,
+                                observed_at=current_dt,
+                            )
+                            if tr and is_loss_protective_stop(th.stop_loss, h.avg_buy_price)
+                            else None
+                        )
+                        if soft_stop_reason:
+                            alerts.append(f"👀 {h.name}({symbol}): {reason} — {soft_stop_reason}")
+                            continue
                     defer_sell, defer_reason = self._should_defer_soft_stop(
                         symbol,
                         pnl_rate=pnl_rate,

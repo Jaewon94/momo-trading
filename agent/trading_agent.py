@@ -41,6 +41,7 @@ from strategy.trade_horizon import TradeHorizon, decide_trade_horizon
 from strategy.position_exit_policy import (
     is_loss_protective_stop,
     is_profit_protection_stop,
+    soft_loss_stop_min_hold_block_reason,
     strategic_exit_min_hold_block_reason,
     trade_horizon_from_result,
     trade_notes_dict,
@@ -149,7 +150,7 @@ class TradingAgent:
             logger.warning("익절 최소 보유시간 확인 실패 ({}): {}", symbol, str(exc))
             return None
 
-    async def _profit_guard_stop_min_hold_block_reason(
+    async def _stop_loss_min_hold_block_reason(
         self,
         symbol: str,
         *,
@@ -167,25 +168,37 @@ class TradingAgent:
                 return None
 
             entry_price = self._optional_float(getattr(trade_result, "entry_price", None)) or 0.0
-            if not is_profit_protection_stop(stop_loss_price, entry_price):
-                return None
-
             horizon = trade_horizon_from_result(trade_result)
             default_stop_pct = self._default_stop_loss_pct(horizon)
+            observed_at = now_kst()
+            pnl_rate = None
             if entry_price > 0 and current_price > 0:
                 pnl_rate = (current_price - entry_price) / entry_price * 100
-                if pnl_rate <= default_stop_pct:
-                    return None
 
-            return strategic_exit_min_hold_block_reason(
-                trade_result,
-                settings=settings,
-                horizon=horizon,
-                exit_scope="profit",
-                observed_at=now_kst(),
-            )
+            if is_profit_protection_stop(stop_loss_price, entry_price):
+                if pnl_rate is not None and pnl_rate <= default_stop_pct:
+                    return None
+                return strategic_exit_min_hold_block_reason(
+                    trade_result,
+                    settings=settings,
+                    horizon=horizon,
+                    exit_scope="profit",
+                    observed_at=observed_at,
+                )
+
+            if is_loss_protective_stop(stop_loss_price, entry_price) and pnl_rate is not None:
+                return soft_loss_stop_min_hold_block_reason(
+                    trade_result,
+                    settings=settings,
+                    horizon=horizon,
+                    pnl_rate=pnl_rate,
+                    default_stop_loss_pct=default_stop_pct,
+                    observed_at=observed_at,
+                )
+
+            return None
         except Exception as exc:
-            logger.warning("수익보호 스탑 최소 보유시간 확인 실패 ({}): {}", symbol, str(exc))
+            logger.warning("손절 이벤트 최소 보유시간 확인 실패 ({}): {}", symbol, str(exc))
             return None
 
     def _resolve_name(self, symbol: str) -> str:
@@ -3285,16 +3298,16 @@ class TradingAgent:
 
         try:
             name = event.data.get("name") or self._resolve_name(symbol)
-            min_hold_reason = await self._profit_guard_stop_min_hold_block_reason(
+            min_hold_reason = await self._stop_loss_min_hold_block_reason(
                 symbol,
                 stop_loss_price=float(stop_loss or 0.0),
                 current_price=float(price or 0.0),
             )
             if min_hold_reason:
-                logger.info("수익보호 스탑 이탈 보류: {} {} — {}", name, symbol, min_hold_reason)
+                logger.info("손절 이벤트 보류: {} {} — {}", name, symbol, min_hold_reason)
                 await activity_logger.log(
                     ActivityType.EVENT, ActivityPhase.PROGRESS,
-                    f"👀 수익보호 스탑 이탈 보류: {name}({symbol}) — {min_hold_reason} "
+                    f"👀 손절 이벤트 보류: {name}({symbol}) — {min_hold_reason} "
                     f"(현재가: {price:,.0f}원, 기준: {stop_loss:,.0f}원)",
                     symbol=symbol,
                     detail={**event.data, "symbol": symbol, "min_hold_blocked": True},

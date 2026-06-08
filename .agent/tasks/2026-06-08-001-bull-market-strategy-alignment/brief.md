@@ -21,6 +21,7 @@ In scope:
 - Forward-return labeling progress so old `WAITING_DATA` rows do not block recent decision benchmarking.
 - Minimum holding-time guards for strategic profit/review exits while preserving protective stop-loss and reconciliation behavior.
 - Profit-guard stop handling so a stop above cost basis is not treated as a hard loss-protective stop that bypasses MID/LONG minimum holding time.
+- Soft stop-loss minimum holding-time guards so tight AI/active stops below cost basis do not close MID/LONG positions within minutes unless the horizon default hard stop is breached.
 - Focused tests and runtime integrity checks after implementation.
 
 Out of scope:
@@ -52,6 +53,7 @@ Plan implications:
 - Adopt: hard-block inverse/leveraged/cash-like/bond-like products from new BUY candidates unless already held; de-prioritize defensive ETFs in aggressive mode.
 - Adopt: add minimum age before strategic profit exits for MID/LONG positions; keep hard stop-loss and broker reconciliation paths active.
 - Adopt: classify stop prices at or above cost basis as breakeven/profit protection, not hard loss stops; this prevents `HOLD` reanalysis from turning a MID/LONG position into an immediate stop-loss exit before minimum hold time.
+- Adopt: classify tight stop prices below cost basis but above the horizon default loss threshold as soft stops; before the soft-stop minimum holding window, block those early exits while preserving the default hard stop.
 - Adopt: change forward-return labeling order so recent events can be labeled even if old events remain missing data.
 - Defer: full historical KRX daily-data ingestion/backfill; this is larger and may need API credentials/rate handling.
 - Reject: removing risk controls or forcing all cash into positions just because the market is bullish.

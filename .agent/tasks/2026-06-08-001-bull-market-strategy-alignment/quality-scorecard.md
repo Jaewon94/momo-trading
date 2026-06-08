@@ -8,12 +8,12 @@
 ## Implementation Quality
 
 - Status: pass
-- Notes: Changes are scoped to scanner candidate policy, decision benchmark labeling, strategic exit timing, pending-confirm note preservation, startup threshold restoration, and profit-guard stop classification. Hard loss stops, broker reconciliation, order confirmation, and liquidation paths remain active.
+- Notes: Changes are scoped to scanner candidate policy, decision benchmark labeling, strategic exit timing, pending-confirm note preservation, startup threshold restoration, profit-guard stop classification, and early soft-stop minimum-hold behavior. Hard default loss stops, broker reconciliation, order confirmation, and liquidation paths remain active.
 
 ## Test Quality
 
 - Status: pass
-- Notes: Focused tests passed (`139 passed`) across trading-agent threshold persistence/realtime stop handling, scheduler exits/startup restore, and horizon logic after adding `459550` profit-guard stop regression coverage. Earlier broader suite passed (`178 passed`) across scanner, candidate scoring, forward-return labeling, scheduler exits/startup restore, pending-confirm note preservation, realtime take-profit handling, and horizon logic.
+- Notes: Focused soft-stop tests passed (`5 passed`) and surrounding trading-agent/scheduler/horizon regression suite passed (`142 passed`). Earlier broader suite passed (`178 passed`) across scanner, candidate scoring, forward-return labeling, scheduler exits/startup restore, pending-confirm note preservation, realtime take-profit handling, and horizon logic.
 
 ## Operational Safety
 

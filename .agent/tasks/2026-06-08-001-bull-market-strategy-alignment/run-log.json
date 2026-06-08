@@ -175,6 +175,48 @@
       "type": "runtime_cycle",
       "status": "passed",
       "summary": "Post-restart first intraday cycle completed: scanned 6, analyzed 6, signals 0, executed 0. Holdings 0, broker pending orders 0, runtime integrity OK."
+    },
+    {
+      "at": "2026-06-08T11:02:00+09:00",
+      "type": "runtime_safety",
+      "status": "passed",
+      "summary": "Before soft-stop behavior changes, checked holdings 0, broker pending orders 0, runtime integrity OK, and clean worktree. Service was stopped with bash start.sh stop to avoid live trading during exit-policy edits."
+    },
+    {
+      "at": "2026-06-08T11:04:00+09:00",
+      "type": "implementation",
+      "status": "completed",
+      "summary": "Added horizon-specific soft stop-loss minimum holding windows (SHORT 5m, MID 60m, LONG 120m). Tight active stops below cost basis but above the default hard stop are now blocked before the soft-stop window in both holdings check and realtime STOP_LOSS event paths."
+    },
+    {
+      "at": "2026-06-08T11:04:30+09:00",
+      "type": "verification",
+      "status": "passed",
+      "summary": ".venv313/bin/python -m pytest tests/agent/test_trading_agent_cycles.py::test_profit_guard_stop_event_blocks_before_min_hold tests/agent/test_trading_agent_cycles.py::test_tight_loss_stop_event_blocks_before_soft_stop_min_hold tests/scheduler/test_scheduler_runtime_paths.py::test_holdings_check_blocks_profit_guard_stop_before_mid_min_hold tests/scheduler/test_scheduler_runtime_paths.py::test_holdings_check_blocks_tight_loss_stop_before_mid_soft_stop_min_hold tests/scheduler/test_scheduler_runtime_paths.py::test_holdings_check_allows_default_hard_stop_before_soft_stop_min_hold -q passed: 5 passed."
+    },
+    {
+      "at": "2026-06-08T11:04:55+09:00",
+      "type": "verification",
+      "status": "passed",
+      "summary": ".venv313/bin/python -m pytest tests/agent/test_trading_agent_cycles.py tests/scheduler/test_scheduler_runtime_paths.py tests/strategy/test_trade_horizon.py -q passed: 142 passed."
+    },
+    {
+      "at": "2026-06-08T11:06:15+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-08T11:08:00+09:00",
+      "type": "restart",
+      "status": "passed",
+      "summary": "Restarted service in tmux session momo-trading-server after start.sh -d exited in this execution environment. Health OK, scheduler/agent running, broker OK, news polling OK."
+    },
+    {
+      "at": "2026-06-08T11:08:56+09:00",
+      "type": "runtime_cycle",
+      "status": "passed",
+      "summary": "Post-restart intraday cycle completed: scanned 5, analyzed 4, signals 0, executed 0. Holdings 0, broker pending orders 0, runtime integrity OK. One candidate detail lookup hit Kiwoom mock API 429, so it was skipped without order execution."
     }
   ]
 }

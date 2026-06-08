@@ -16,5 +16,6 @@ python scripts/task_harness.py verify 2026-06-08-001-bull-market-strategy-alignm
 - Confirm protected operations were not run without approval.
 - Confirm task-specific behavior is covered by focused tests or documented as manual verification.
 - Confirm profit-guard stops above average buy price do not bypass MID/LONG minimum holding windows unless the horizon default loss stop is breached.
+- Confirm tight loss stops below average buy price but above the horizon default loss stop are held through the configured soft-stop minimum window, and hard default stop breaches still sell.
 - Confirm service health/status if runtime restart is performed.
 - Confirm no broker reset, DB deletion, migration, or forced liquidation was performed.
