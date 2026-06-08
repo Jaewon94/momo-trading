@@ -217,6 +217,54 @@
       "type": "runtime_cycle",
       "status": "passed",
       "summary": "Post-restart intraday cycle completed: scanned 5, analyzed 4, signals 0, executed 0. Holdings 0, broker pending orders 0, runtime integrity OK. One candidate detail lookup hit Kiwoom mock API 429, so it was skipped without order execution."
+    },
+    {
+      "at": "2026-06-08T14:23:00+09:00",
+      "type": "runtime_diagnosis",
+      "status": "completed",
+      "summary": "Confirmed the lack of new BUY executions was not a service outage: scans and LLM analysis continued, but consecutive-loss PROBATION blocked new BUYs after the daily probation cap was reached (3/2) despite aggressive risk appetite."
+    },
+    {
+      "at": "2026-06-08T14:24:00+09:00",
+      "type": "runtime_safety",
+      "status": "passed",
+      "summary": "Before changing loss-streak recovery behavior, checked holdings 0 and broker pending orders 0. Runtime integrity showed scheduler_running=false after a prior runtime settings reconfiguration, so the service was stopped for code/test/restart."
+    },
+    {
+      "at": "2026-06-08T14:25:00+09:00",
+      "type": "implementation",
+      "status": "completed",
+      "summary": "Raised runtime validation limit for LOSS_STREAK_RECOVERY_MAX_DAILY_BUYS from 3 to 50 so aggressive-mode operation can keep PROBATION warning/reduced-size controls without prematurely blocking all BUYs."
+    },
+    {
+      "at": "2026-06-08T14:25:20+09:00",
+      "type": "verification",
+      "status": "passed",
+      "summary": ".venv313/bin/python -m pytest tests/api/test_admin_settings_validation.py::test_admin_settings_accepts_loss_streak_recovery_mode tests/strategy/test_trading_guard.py -q passed: 18 passed."
+    },
+    {
+      "at": "2026-06-08T14:26:24+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-08T14:28:00+09:00",
+      "type": "restart",
+      "status": "passed",
+      "summary": "Restarted service in tmux session momo-trading-server after start.sh -d exited in this execution environment. Health OK, scheduler/agent running, broker OK, news polling OK."
+    },
+    {
+      "at": "2026-06-08T14:28:45+09:00",
+      "type": "runtime_settings",
+      "status": "passed",
+      "summary": "Applied live runtime settings: LOSS_STREAK_RECOVERY_MODE=PROBATION and LOSS_STREAK_RECOVERY_MAX_DAILY_BUYS=50. Runtime integrity OK, holdings 0, broker pending orders 0."
+    },
+    {
+      "at": "2026-06-08T14:29:30+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
     }
   ]
 }

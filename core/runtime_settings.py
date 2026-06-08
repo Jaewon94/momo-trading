@@ -231,8 +231,8 @@ def coerce_runtime_setting_value(key: str, value: Any) -> Any:
             if normalized_int < 1 or normalized_int > 60:
                 raise HTTPException(status_code=400, detail=f"{key} must be between 1 and 60")
         if key == "LOSS_STREAK_RECOVERY_MAX_DAILY_BUYS":
-            if normalized_int < 0 or normalized_int > 3:
-                raise HTTPException(status_code=400, detail=f"{key} must be between 0 and 3")
+            if normalized_int < 0 or normalized_int > 50:
+                raise HTTPException(status_code=400, detail=f"{key} must be between 0 and 50")
         if key == "LOSS_STREAK_RECOVERY_MAX_ORDER_KRW":
             if normalized_int < 0 or normalized_int > 10_000_000:
                 raise HTTPException(status_code=400, detail=f"{key} must be between 0 and 10000000")

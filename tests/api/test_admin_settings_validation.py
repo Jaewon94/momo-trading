@@ -309,7 +309,7 @@ async def test_admin_settings_accepts_loss_streak_recovery_mode(client):
         client,
         {
             "LOSS_STREAK_RECOVERY_MODE": "probation",
-            "LOSS_STREAK_RECOVERY_MAX_DAILY_BUYS": "1",
+            "LOSS_STREAK_RECOVERY_MAX_DAILY_BUYS": "50",
             "LOSS_STREAK_RECOVERY_MAX_ORDER_KRW": "1000000",
             "LOSS_STREAK_RECOVERY_SIZE_MULTIPLIER": "0.2",
         },
@@ -322,7 +322,7 @@ async def test_admin_settings_accepts_loss_streak_recovery_mode(client):
     assert response.status_code == 200
     payload = response.json()["data"]
     assert payload["LOSS_STREAK_RECOVERY_MODE"]["new"] == "PROBATION"
-    assert payload["LOSS_STREAK_RECOVERY_MAX_DAILY_BUYS"]["new"] == 1
+    assert payload["LOSS_STREAK_RECOVERY_MAX_DAILY_BUYS"]["new"] == 50
     assert payload["LOSS_STREAK_RECOVERY_MAX_ORDER_KRW"]["new"] == 1_000_000
     assert payload["LOSS_STREAK_RECOVERY_SIZE_MULTIPLIER"]["new"] == 0.2
 
