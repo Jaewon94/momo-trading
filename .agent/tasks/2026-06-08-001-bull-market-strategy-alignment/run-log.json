@@ -127,6 +127,54 @@
       "type": "verification_run",
       "status": "passed",
       "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-08T10:21:39+09:00",
+      "type": "runtime_trade",
+      "status": "completed",
+      "summary": "459550 MID position was closed by HOLDINGS_CHECK at 2010 for -45,000 KRW (-1.23%). Root cause review found a HOLD reanalysis raised stop_loss to 2037, above the 2035 average buy price, and the fast holdings guard treated that profit-guard stop as a hard loss stop."
+    },
+    {
+      "at": "2026-06-08T10:34:00+09:00",
+      "type": "runtime_safety",
+      "status": "passed",
+      "summary": "Before code changes, checked holdings 0, broker pending orders 0, and runtime integrity OK. Service was then stopped with bash start.sh stop to avoid live trading while modifying stop/exit policy."
+    },
+    {
+      "at": "2026-06-08T10:40:00+09:00",
+      "type": "implementation",
+      "status": "completed",
+      "summary": "Added profit-guard stop classification: stop prices at/above cost basis are treated as breakeven/profit protection and must respect MID/LONG minimum-hold guards unless the horizon default loss stop is breached. Also prevented pre-breakeven HOLD reanalysis from persisting stop_loss above entry price."
+    },
+    {
+      "at": "2026-06-08T10:41:00+09:00",
+      "type": "verification",
+      "status": "passed",
+      "summary": ".venv313/bin/python -m pytest tests/agent/test_trading_agent_cycles.py::test_persist_open_position_thresholds_blocks_profit_guard_stop_before_breakeven tests/agent/test_trading_agent_cycles.py::test_persist_open_position_thresholds_repairs_bad_profit_stop_from_notes tests/agent/test_trading_agent_cycles.py::test_profit_guard_stop_event_blocks_before_min_hold tests/scheduler/test_scheduler_runtime_paths.py::test_holdings_check_blocks_profit_guard_stop_before_mid_min_hold -q passed: 4 passed."
+    },
+    {
+      "at": "2026-06-08T10:41:47+09:00",
+      "type": "verification",
+      "status": "passed",
+      "summary": ".venv313/bin/python -m pytest tests/agent/test_trading_agent_cycles.py tests/scheduler/test_scheduler_runtime_paths.py tests/strategy/test_trade_horizon.py -q passed: 139 passed."
+    },
+    {
+      "at": "2026-06-08T10:43:23+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-08T10:44:13+09:00",
+      "type": "restart",
+      "status": "passed",
+      "summary": "Restarted service in tmux session momo-trading-server with the profit-guard stop fix. Health OK, scheduler/agent running, broker OK, news polling OK."
+    },
+    {
+      "at": "2026-06-08T10:45:32+09:00",
+      "type": "runtime_cycle",
+      "status": "passed",
+      "summary": "Post-restart first intraday cycle completed: scanned 6, analyzed 6, signals 0, executed 0. Holdings 0, broker pending orders 0, runtime integrity OK."
     }
   ]
 }

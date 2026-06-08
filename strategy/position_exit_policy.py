@@ -46,6 +46,26 @@ def position_age_minutes(tr: Any, *, observed_at: datetime | None = None) -> flo
     return max((current - entry_at).total_seconds() / 60.0, 0.0)
 
 
+def is_loss_protective_stop(stop_loss_price: float | int | None, avg_buy_price: float | int | None) -> bool:
+    """True only when a stop is below cost basis and therefore loss-protective."""
+    try:
+        stop = float(stop_loss_price or 0.0)
+        avg = float(avg_buy_price or 0.0)
+    except (TypeError, ValueError):
+        return False
+    return stop > 0 and avg > 0 and stop < avg
+
+
+def is_profit_protection_stop(stop_loss_price: float | int | None, avg_buy_price: float | int | None) -> bool:
+    """A stop at/above cost basis is a profit/breakeven guard, not a hard loss stop."""
+    try:
+        stop = float(stop_loss_price or 0.0)
+        avg = float(avg_buy_price or 0.0)
+    except (TypeError, ValueError):
+        return False
+    return stop > 0 and avg > 0 and stop >= avg
+
+
 def min_hold_minutes_for_profit_exit(settings: Any, horizon: str) -> int:
     key = str(horizon or TradeHorizon.MID).upper()
     if key == TradeHorizon.SHORT:

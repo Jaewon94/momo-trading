@@ -147,6 +147,46 @@ async def test_take_profit_event_blocks_before_min_hold(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_profit_guard_stop_event_blocks_before_min_hold(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    agent._running = True
+    logs: list[str] = []
+    exit_calls: list[dict] = []
+
+    async def fake_min_hold_reason(_symbol: str, *, stop_loss_price: float, current_price: float) -> str:
+        assert stop_loss_price == 2_037
+        assert current_price == 2_010
+        return "MID 최소 보유 180분 전 수익보호 매도 보류 (현재 25분)"
+
+    async def fake_execute_exit_order(**kwargs):
+        exit_calls.append(kwargs)
+        return SimpleNamespace(success=True, message="ok")
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append(args[2])
+
+    monkeypatch.setattr("agent.trading_agent.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr(agent, "_profit_guard_stop_min_hold_block_reason", fake_min_hold_reason)
+    monkeypatch.setattr(agent, "_execute_exit_order", fake_execute_exit_order)
+    monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
+
+    await agent._on_stop_loss(
+        Event(
+            type=EventType.STOP_LOSS_HIT,
+            data={
+                "symbol": "459550",
+                "name": "알트",
+                "price": 2_010,
+                "stop_loss_price": 2_037,
+            },
+        )
+    )
+
+    assert exit_calls == []
+    assert any("수익보호 스탑 이탈 보류" in message for message in logs)
+
+
+@pytest.mark.asyncio
 async def test_persist_open_position_thresholds_does_not_loosen_stop_loss(monkeypatch) -> None:
     agent = TradingAgent(broker_adapter=StubBrokerAdapter())
     trade_result = SimpleNamespace(ai_stop_loss_price=10_800, ai_target_price=12_000)
@@ -188,6 +228,116 @@ async def test_persist_open_position_thresholds_does_not_loosen_stop_loss(monkey
     assert protected == {"stop_loss": 10_800, "take_profit": 12_500}
     assert trade_result.ai_stop_loss_price == 10_800
     assert trade_result.ai_target_price == 12_500
+    assert session.flushed == 1
+    assert session.committed == 1
+
+
+@pytest.mark.asyncio
+async def test_persist_open_position_thresholds_blocks_profit_guard_stop_before_breakeven(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    trade_result = SimpleNamespace(
+        entry_price=2_035,
+        ai_stop_loss_price=1_972,
+        ai_target_price=2_220,
+        strategy_type="STABLE_SHORT",
+        notes='{"trade_horizon":"MID","active_stop_loss":1972}',
+    )
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.flushed = 0
+            self.committed = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def flush(self) -> None:
+            self.flushed += 1
+
+        async def commit(self) -> None:
+            self.committed += 1
+
+    session = FakeSession()
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_open_buy(self, _symbol: str):
+            return trade_result
+
+    monkeypatch.setattr("agent.trading_agent.AsyncSessionLocal", lambda: session)
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("agent.trading_agent.settings.BREAKEVEN_TRIGGER_PCT_MID", 1.5)
+
+    protected = await agent._persist_open_position_thresholds(
+        "459550",
+        {"stop_loss": 2_037, "take_profit": 2_250},
+        current_price=2_050,
+        horizon="MID",
+    )
+
+    assert protected == {"stop_loss": 1_972, "take_profit": 2_250}
+    assert trade_result.ai_stop_loss_price == 1_972
+    assert trade_result.ai_target_price == 2_250
+    assert session.flushed == 1
+    assert session.committed == 1
+
+
+@pytest.mark.asyncio
+async def test_persist_open_position_thresholds_repairs_bad_profit_stop_from_notes(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    trade_result = SimpleNamespace(
+        entry_price=2_035,
+        ai_stop_loss_price=2_037,
+        ai_target_price=2_220,
+        strategy_type="STABLE_SHORT",
+        notes='{"trade_horizon":"MID","active_stop_loss":1972}',
+    )
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.flushed = 0
+            self.committed = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def flush(self) -> None:
+            self.flushed += 1
+
+        async def commit(self) -> None:
+            self.committed += 1
+
+    session = FakeSession()
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_open_buy(self, _symbol: str):
+            return trade_result
+
+    monkeypatch.setattr("agent.trading_agent.AsyncSessionLocal", lambda: session)
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("agent.trading_agent.settings.BREAKEVEN_TRIGGER_PCT_MID", 1.5)
+
+    protected = await agent._persist_open_position_thresholds(
+        "459550",
+        {"stop_loss": 2_037, "take_profit": 2_250},
+        current_price=2_050,
+        horizon="MID",
+    )
+
+    assert protected["stop_loss"] == 1_972
+    assert trade_result.ai_stop_loss_price == 1_972
+    assert trade_result.ai_target_price == 2_250
     assert session.flushed == 1
     assert session.committed == 1
 

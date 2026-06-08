@@ -40,6 +40,8 @@ from trading.models import OrderRequest
 from scheduler.jobs.forward_return_label_job import forward_return_label_job
 from strategy.trade_horizon import TradeHorizon
 from strategy.position_exit_policy import (
+    is_loss_protective_stop,
+    is_profit_protection_stop,
     strategic_exit_min_hold_block_reason,
     trade_horizon_from_result,
     trade_notes_dict,
@@ -1477,7 +1479,27 @@ class TradingScheduler:
 
                 # 손절/익절
                 if not should_sell and pnl_rate <= stop_loss_pct:
-                    reason = f"손절 도달 ({pnl_rate:+.1f}%, 기준 {stop_loss_pct:+.1f}%)"
+                    default_loss_stop_pct = self._default_stop_loss_pct(horizon)
+                    profit_guard_stop = is_profit_protection_stop(th.stop_loss, h.avg_buy_price)
+                    if profit_guard_stop and pnl_rate > default_loss_stop_pct:
+                        min_hold_reason = (
+                            self._strategic_exit_min_hold_block_reason(
+                                tr,
+                                horizon=horizon,
+                                exit_scope="profit",
+                                observed_at=current_dt,
+                            )
+                            if tr
+                            else None
+                        )
+                        reason = (
+                            f"수익보호 스탑 이탈 ({pnl_rate:+.1f}%, 기준 {stop_loss_pct:+.1f}%)"
+                        )
+                        if min_hold_reason:
+                            alerts.append(f"👀 {h.name}({symbol}): {reason} — {min_hold_reason}")
+                            continue
+                    else:
+                        reason = f"손절 도달 ({pnl_rate:+.1f}%, 기준 {stop_loss_pct:+.1f}%)"
                     defer_sell, defer_reason = self._should_defer_soft_stop(
                         symbol,
                         pnl_rate=pnl_rate,
@@ -2706,8 +2728,12 @@ class TradingScheduler:
                     active_stop_loss = float(data.get("active_stop_loss") or 0.0)
                     pnl_rate = float(data.get("pnl_rate") or 0.0)
                     horizon = self._trade_horizon_from_result(trade_result) if trade_result else TradeHorizon.MID
+                    avg_price = float(getattr(h, "avg_buy_price", 0.0) or data.get("avg_price") or 0.0)
                     protective_stop = (
-                        (active_stop_loss > 0 and current_price <= active_stop_loss)
+                        (
+                            is_loss_protective_stop(active_stop_loss, avg_price)
+                            and current_price <= active_stop_loss
+                        )
                         or pnl_rate <= self._default_stop_loss_pct(horizon)
                     )
                     if trade_result and not protective_stop:

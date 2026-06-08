@@ -1732,6 +1732,73 @@ async def test_holdings_check_executes_sell_and_triggers_rescan(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
+async def test_holdings_check_blocks_profit_guard_stop_before_mid_min_hold(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    logs: list[str] = []
+    observed_at = datetime(2026, 6, 8, 10, 21)
+    holding = SimpleNamespace(symbol="459550", name="알트", quantity=1800, avg_buy_price=2_035)
+    trade_result = SimpleNamespace(
+        stock_symbol="459550",
+        strategy_type="STABLE_SHORT",
+        ai_stop_loss_price=2_037,
+        ai_target_price=2_250,
+        notes='{"trade_horizon":"MID","active_stop_loss":1972}',
+        entry_at=observed_at - timedelta(minutes=25),
+    )
+
+    async def fake_get_holdings() -> list:
+        return [holding]
+
+    async def fake_update_realtime_subscriptions() -> None:
+        return None
+
+    async def fake_fetch_current_price(_symbol: str) -> float:
+        return 2_010
+
+    async def fake_place_market_sell(*_args, **_kwargs):
+        pytest.fail("profit-guard stop before MID min hold must not sell")
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append(args[2])
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def get_all_open(self):
+            return [trade_result]
+
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_automated_trading_session", lambda *_args: True)
+    monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
+    monkeypatch.setattr(scheduler, "_update_realtime_subscriptions", fake_update_realtime_subscriptions)
+    monkeypatch.setattr(scheduler, "_fetch_current_price", fake_fetch_current_price)
+    monkeypatch.setattr(scheduler, "_place_market_sell", fake_place_market_sell)
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("util.time_util.now_kst", lambda: observed_at)
+    monkeypatch.setattr(
+        "realtime.event_detector.event_detector.get_thresholds",
+        lambda _symbol: SimpleNamespace(stop_loss=2_037, take_profit=2_250, trailing_stop_pct=0.0),
+    )
+    monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr("scheduler.scheduler.settings.DEFAULT_STOP_LOSS_PCT_MID", -4.0)
+    monkeypatch.setattr("scheduler.scheduler.settings.MIN_HOLD_MINUTES_BEFORE_PROFIT_EXIT_MID", 180, raising=False)
+    monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
+
+    await scheduler._holdings_check()
+
+    assert any("수익보호 스탑 이탈" in message for message in logs)
+    assert any("MID 최소 보유 180분" in message for message in logs)
+
+
+@pytest.mark.asyncio
 async def test_holdings_check_does_not_complete_when_sell_confirmation_fails(monkeypatch) -> None:
     scheduler = TradingScheduler()
     logs: list[str] = []

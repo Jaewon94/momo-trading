@@ -9,6 +9,7 @@
 5. Fix forward-return labeling priority so recent decisions can be benchmarked even when old rows are still waiting for market data.
 6. Preserve trade notes through pending-confirm recovery because those notes carry horizon and active threshold metadata.
 7. Restore persisted open-position exit thresholds on startup before scanning so a restart does not temporarily remove realtime stop/take controls.
+8. Treat stop prices at/above average buy price as breakeven/profit-guard stops, not hard loss-protective stops. Apply MID/LONG minimum-hold guards to those exits unless the default loss stop is actually breached.
 
 ## Rationale
 
@@ -18,6 +19,7 @@
 - Automated trading best practice supports layered controls. Stop-loss, broker reconciliation, position limits, and kill-switch behavior should stay active.
 - Leveraged/inverse ETFs and cash/bond-like ETFs do not match the user's stated bull-market equity momentum intent.
 - The live `082800` recovery showed that losing `notes` can reclassify a LONG position as SHORT in admin and exit logic fallbacks. That metadata needs to be treated as part of the trade contract, not transient UI detail.
+- The live `459550` MID trade was closed at 10:21 for -45,000 KRW after a `HOLD` reanalysis raised `stop_loss` to 2,037, above its 2,035 average buy price. The fast holdings guard then treated that profit-guard threshold as a hard stop and sold at 2,010. That proves minimum-hold protection must distinguish loss stops from breakeven/profit stops.
 
 ## Deferred
 
@@ -32,3 +34,4 @@
 - Minimum holding-time guards can delay profitable exits; hard stop-loss and reconciliation exits are therefore preserved.
 - Keyword-based product filtering can miss or over-filter unusual ETF names; this is intentionally conservative for new BUYs only.
 - Startup threshold restoration only restores persisted AI stop/take/trailing values for confirmed open BUY rows; positions without persisted thresholds still rely on normal review/scan paths.
+- A stop above cost basis can still execute after the minimum hold window or when the position breaches the horizon default loss stop; this preserves risk controls while preventing immediate profit-guard churn.

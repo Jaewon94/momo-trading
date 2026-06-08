@@ -39,8 +39,11 @@ from strategy.signal import TradeSignal
 from strategy.stable_short import StableShortStrategy
 from strategy.trade_horizon import TradeHorizon, decide_trade_horizon
 from strategy.position_exit_policy import (
+    is_loss_protective_stop,
+    is_profit_protection_stop,
     strategic_exit_min_hold_block_reason,
     trade_horizon_from_result,
+    trade_notes_dict,
 )
 from services.news_signal_service import news_signal_service
 from trading.adapters.base import BrokerAdapter
@@ -144,6 +147,45 @@ class TradingAgent:
             )
         except Exception as exc:
             logger.warning("익절 최소 보유시간 확인 실패 ({}): {}", symbol, str(exc))
+            return None
+
+    async def _profit_guard_stop_min_hold_block_reason(
+        self,
+        symbol: str,
+        *,
+        stop_loss_price: float,
+        current_price: float,
+    ) -> str | None:
+        try:
+            from repositories.trade_result_repository import TradeResultRepository
+            from util.time_util import now_kst
+
+            async with AsyncSessionLocal() as session:
+                repo = TradeResultRepository(session)
+                trade_result = await repo.get_open_buy(symbol)
+            if not trade_result:
+                return None
+
+            entry_price = self._optional_float(getattr(trade_result, "entry_price", None)) or 0.0
+            if not is_profit_protection_stop(stop_loss_price, entry_price):
+                return None
+
+            horizon = trade_horizon_from_result(trade_result)
+            default_stop_pct = self._default_stop_loss_pct(horizon)
+            if entry_price > 0 and current_price > 0:
+                pnl_rate = (current_price - entry_price) / entry_price * 100
+                if pnl_rate <= default_stop_pct:
+                    return None
+
+            return strategic_exit_min_hold_block_reason(
+                trade_result,
+                settings=settings,
+                horizon=horizon,
+                exit_scope="profit",
+                observed_at=now_kst(),
+            )
+        except Exception as exc:
+            logger.warning("수익보호 스탑 최소 보유시간 확인 실패 ({}): {}", symbol, str(exc))
             return None
 
     def _resolve_name(self, symbol: str) -> str:
@@ -1057,21 +1099,27 @@ class TradingAgent:
             ]
             active_thresholds = {}
             if is_holding:
+                holding_horizon = decide_trade_horizon(
+                    strategy_type=strategy_type,
+                    trigger=str(stock_info.get("trigger", "")),
+                    change_rate=float(price_resp.data.get("change_rate", 0.0) if price_resp.data else 0.0),
+                    confidence=float(analysis.get("confidence", 0.0) or 0.0),
+                    market_regime=self._market_regime,
+                )
                 active_thresholds = self._apply_trade_thresholds(
                     symbol,
                     analysis,
                     {},
                     current_price=current_price,
-                    horizon=decide_trade_horizon(
-                        strategy_type=strategy_type,
-                        trigger=str(stock_info.get("trigger", "")),
-                        change_rate=float(price_resp.data.get("change_rate", 0.0) if price_resp.data else 0.0),
-                        confidence=float(analysis.get("confidence", 0.0) or 0.0),
-                        market_regime=self._market_regime,
-                    ),
+                    horizon=holding_horizon,
                     preserve_tighter_stop_loss=True,
                 )
-                protected_thresholds = await self._persist_open_position_thresholds(symbol, active_thresholds)
+                protected_thresholds = await self._persist_open_position_thresholds(
+                    symbol,
+                    active_thresholds,
+                    current_price=current_price,
+                    horizon=holding_horizon,
+                )
                 if protected_thresholds != active_thresholds:
                     active_thresholds = protected_thresholds
                     event_detector.set_thresholds(symbol, **active_thresholds)
@@ -2495,7 +2543,14 @@ class TradingAgent:
             )
         return kwargs
 
-    async def _persist_open_position_thresholds(self, symbol: str, thresholds: dict[str, float]) -> dict[str, float]:
+    async def _persist_open_position_thresholds(
+        self,
+        symbol: str,
+        thresholds: dict[str, float],
+        *,
+        current_price: float = 0.0,
+        horizon: str | None = None,
+    ) -> dict[str, float]:
         stop_loss = self._optional_float(thresholds.get("stop_loss"))
         take_profit = self._optional_float(thresholds.get("take_profit"))
         if (not stop_loss or stop_loss <= 0) and (not take_profit or take_profit <= 0):
@@ -2513,11 +2568,39 @@ class TradingAgent:
                     return protected_thresholds
 
                 changed = False
+                entry_price = self._optional_float(getattr(trade_result, "entry_price", None)) or 0.0
+                resolved_horizon = str(horizon or trade_horizon_from_result(trade_result)).upper()
                 if stop_loss and stop_loss > 0:
                     current_stop = self._optional_float(
                         getattr(trade_result, "ai_stop_loss_price", None)
                     ) or 0.0
-                    if current_stop <= 0 or stop_loss >= current_stop:
+                    notes_stop = self._optional_float(
+                        trade_notes_dict(trade_result).get("active_stop_loss")
+                    ) or 0.0
+                    profit_guard_stop = is_profit_protection_stop(stop_loss, entry_price)
+                    if (
+                        profit_guard_stop
+                        and not self._allow_profit_protection_stop(
+                            entry_price=entry_price,
+                            current_price=current_price,
+                            horizon=resolved_horizon,
+                        )
+                    ):
+                        fallback_stop = 0.0
+                        if is_loss_protective_stop(current_stop, entry_price):
+                            fallback_stop = current_stop
+                        elif is_loss_protective_stop(notes_stop, entry_price):
+                            fallback_stop = notes_stop
+
+                        protected_thresholds["stop_loss"] = fallback_stop
+                        if fallback_stop > 0:
+                            if current_stop != fallback_stop:
+                                trade_result.ai_stop_loss_price = fallback_stop
+                                changed = True
+                        elif current_stop > 0:
+                            trade_result.ai_stop_loss_price = None
+                            changed = True
+                    elif current_stop <= 0 or stop_loss >= current_stop:
                         trade_result.ai_stop_loss_price = stop_loss
                         changed = True
                     elif current_stop > 0:
@@ -2532,6 +2615,32 @@ class TradingAgent:
         except Exception as exc:
             logger.warning("보유 포지션 임계값 DB 반영 실패 {}: {}", normalized, str(exc))
         return protected_thresholds
+
+    @staticmethod
+    def _allow_profit_protection_stop(
+        *,
+        entry_price: float,
+        current_price: float,
+        horizon: str,
+    ) -> bool:
+        if entry_price <= 0 or current_price <= 0:
+            return False
+        pnl_rate = (current_price - entry_price) / entry_price * 100
+        trigger_pct = {
+            TradeHorizon.SHORT: float(getattr(settings, "BREAKEVEN_TRIGGER_PCT_SHORT", 1.0) or 1.0),
+            TradeHorizon.MID: float(getattr(settings, "BREAKEVEN_TRIGGER_PCT_MID", 1.5) or 1.5),
+            TradeHorizon.LONG: float(getattr(settings, "BREAKEVEN_TRIGGER_PCT_LONG", 2.0) or 2.0),
+        }.get(str(horizon or TradeHorizon.MID).upper(), 1.5)
+        return pnl_rate >= trigger_pct
+
+    @staticmethod
+    def _default_stop_loss_pct(horizon: str) -> float:
+        key = str(horizon or TradeHorizon.MID).upper()
+        if key == TradeHorizon.SHORT:
+            return float(getattr(settings, "DEFAULT_STOP_LOSS_PCT_SHORT", -3.0) or -3.0)
+        if key == TradeHorizon.LONG:
+            return float(getattr(settings, "DEFAULT_STOP_LOSS_PCT_LONG", -6.0) or -6.0)
+        return float(getattr(settings, "DEFAULT_STOP_LOSS_PCT_MID", -4.0) or -4.0)
 
     @staticmethod
     def _stop_loss_risk_bounds(horizon_key: str) -> tuple[float | None, float | None]:
@@ -3176,6 +3285,22 @@ class TradingAgent:
 
         try:
             name = event.data.get("name") or self._resolve_name(symbol)
+            min_hold_reason = await self._profit_guard_stop_min_hold_block_reason(
+                symbol,
+                stop_loss_price=float(stop_loss or 0.0),
+                current_price=float(price or 0.0),
+            )
+            if min_hold_reason:
+                logger.info("수익보호 스탑 이탈 보류: {} {} — {}", name, symbol, min_hold_reason)
+                await activity_logger.log(
+                    ActivityType.EVENT, ActivityPhase.PROGRESS,
+                    f"👀 수익보호 스탑 이탈 보류: {name}({symbol}) — {min_hold_reason} "
+                    f"(현재가: {price:,.0f}원, 기준: {stop_loss:,.0f}원)",
+                    symbol=symbol,
+                    detail={**event.data, "symbol": symbol, "min_hold_blocked": True},
+                )
+                return
+
             logger.warning("손절선 도달: {} {} (현재가: {:,.0f}, 손절: {:,.0f})", name, symbol, price, stop_loss)
             await activity_logger.log(
                 ActivityType.EVENT, ActivityPhase.PROGRESS,
