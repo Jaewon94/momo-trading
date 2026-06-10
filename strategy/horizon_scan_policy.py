@@ -69,7 +69,7 @@ def horizon_scan_profile(value: str | None) -> HorizonScanProfile:
             preferred_change_max_pct=_float_setting("HORIZON_MID_PREFERRED_CHANGE_MAX_PCT", 14.0),
             prompt_focus=(
                 "중기 후보: 20~120일 추세, 눌림 후 회복, 거래량 유지, "
-                "7~30일 뉴스/공시 맥락을 함께 봅니다."
+                "최근 7일 뉴스/공시 맥락을 함께 봅니다."
             ),
         )
     return HorizonScanProfile(

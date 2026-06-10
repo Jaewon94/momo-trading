@@ -49,6 +49,18 @@
       "type": "verification_run",
       "status": "passed",
       "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T16:10:00+09:00",
+      "type": "documentation_consistency",
+      "status": "completed",
+      "summary": "Aligned MID prompt/report wording with the actual 168h recent-news window."
+    },
+    {
+      "at": "2026-06-10T16:11:33+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
     }
   ]
 }
