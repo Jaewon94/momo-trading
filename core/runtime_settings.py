@@ -97,6 +97,41 @@ MUTABLE_SETTINGS = [
     "MIN_EDGE_TO_COST_RATIO_SHORT",
     "MIN_EDGE_TO_COST_RATIO_MID",
     "MIN_EDGE_TO_COST_RATIO_LONG",
+    "SCANNER_MAX_CANDIDATES",
+    "SCANNER_AGGRESSIVE_MIN_CHANGE_PCT",
+    "SCANNER_AGGRESSIVE_MAX_CHANGE_PCT",
+    "SCANNER_AGGRESSIVE_MIN_SCORE",
+    "HORIZON_SCAN_ENABLED",
+    "HORIZON_SCAN_MID_ENABLED",
+    "HORIZON_SCAN_MID_HOUR",
+    "HORIZON_SCAN_MID_MINUTE",
+    "HORIZON_SCAN_LONG_ENABLED",
+    "HORIZON_SCAN_LONG_DAY_OF_WEEK",
+    "HORIZON_SCAN_LONG_HOUR",
+    "HORIZON_SCAN_LONG_MINUTE",
+    "HORIZON_SHORT_MAX_CANDIDATES",
+    "HORIZON_MID_MAX_CANDIDATES",
+    "HORIZON_LONG_MAX_CANDIDATES",
+    "HORIZON_SHORT_SELECTED_MAX",
+    "HORIZON_MID_SELECTED_MAX",
+    "HORIZON_LONG_SELECTED_MAX",
+    "HORIZON_SHORT_NEWS_PRESSURE_CANDIDATES",
+    "HORIZON_MID_NEWS_PRESSURE_CANDIDATES",
+    "HORIZON_LONG_NEWS_PRESSURE_CANDIDATES",
+    "HORIZON_SHORT_NEWS_LOOKBACK_HOURS",
+    "HORIZON_MID_NEWS_LOOKBACK_HOURS",
+    "HORIZON_LONG_NEWS_LOOKBACK_HOURS",
+    "HORIZON_SHORT_NEWS_PROMPT_ITEMS",
+    "HORIZON_MID_NEWS_PROMPT_ITEMS",
+    "HORIZON_LONG_NEWS_PROMPT_ITEMS",
+    "HORIZON_SHORT_DAILY_CANDLE_COUNT",
+    "HORIZON_MID_DAILY_CANDLE_COUNT",
+    "HORIZON_LONG_DAILY_CANDLE_COUNT",
+    "HORIZON_SHORT_PREFERRED_CHANGE_MAX_PCT",
+    "HORIZON_MID_PREFERRED_CHANGE_MIN_PCT",
+    "HORIZON_MID_PREFERRED_CHANGE_MAX_PCT",
+    "HORIZON_LONG_PREFERRED_CHANGE_MIN_PCT",
+    "HORIZON_LONG_PREFERRED_CHANGE_MAX_PCT",
     "MIN_HOLD_MINUTES_BEFORE_PROFIT_EXIT_SHORT",
     "MIN_HOLD_MINUTES_BEFORE_PROFIT_EXIT_MID",
     "MIN_HOLD_MINUTES_BEFORE_PROFIT_EXIT_LONG",
@@ -248,6 +283,51 @@ def coerce_runtime_setting_value(key: str, value: Any) -> Any:
         if key == "INTRADAY_RESCAN_INTERVAL_MIN":
             if normalized_int < 1 or normalized_int > 60:
                 raise HTTPException(status_code=400, detail=f"{key} must be between 1 and 60")
+        if key in {"HORIZON_SCAN_MID_HOUR", "HORIZON_SCAN_LONG_HOUR"}:
+            if normalized_int < 0 or normalized_int > 23:
+                raise HTTPException(status_code=400, detail=f"{key} must be between 0 and 23")
+        if key in {"HORIZON_SCAN_MID_MINUTE", "HORIZON_SCAN_LONG_MINUTE"}:
+            if normalized_int < 0 or normalized_int > 59:
+                raise HTTPException(status_code=400, detail=f"{key} must be between 0 and 59")
+        if key in {
+            "SCANNER_MAX_CANDIDATES",
+            "HORIZON_SHORT_MAX_CANDIDATES",
+            "HORIZON_MID_MAX_CANDIDATES",
+            "HORIZON_LONG_MAX_CANDIDATES",
+        }:
+            if normalized_int < 1 or normalized_int > 300:
+                raise HTTPException(status_code=400, detail=f"{key} must be between 1 and 300")
+        if key in {
+            "HORIZON_SHORT_SELECTED_MAX",
+            "HORIZON_MID_SELECTED_MAX",
+            "HORIZON_LONG_SELECTED_MAX",
+            "HORIZON_SHORT_NEWS_PROMPT_ITEMS",
+            "HORIZON_MID_NEWS_PROMPT_ITEMS",
+            "HORIZON_LONG_NEWS_PROMPT_ITEMS",
+        }:
+            if normalized_int < 1 or normalized_int > 15:
+                raise HTTPException(status_code=400, detail=f"{key} must be between 1 and 15")
+        if key in {
+            "HORIZON_SHORT_NEWS_PRESSURE_CANDIDATES",
+            "HORIZON_MID_NEWS_PRESSURE_CANDIDATES",
+            "HORIZON_LONG_NEWS_PRESSURE_CANDIDATES",
+        }:
+            if normalized_int < 0 or normalized_int > 100:
+                raise HTTPException(status_code=400, detail=f"{key} must be between 0 and 100")
+        if key in {
+            "HORIZON_SHORT_NEWS_LOOKBACK_HOURS",
+            "HORIZON_MID_NEWS_LOOKBACK_HOURS",
+            "HORIZON_LONG_NEWS_LOOKBACK_HOURS",
+        }:
+            if normalized_int < 1 or normalized_int > 2160:
+                raise HTTPException(status_code=400, detail=f"{key} must be between 1 and 2160")
+        if key in {
+            "HORIZON_SHORT_DAILY_CANDLE_COUNT",
+            "HORIZON_MID_DAILY_CANDLE_COUNT",
+            "HORIZON_LONG_DAILY_CANDLE_COUNT",
+        }:
+            if normalized_int < 20 or normalized_int > 400:
+                raise HTTPException(status_code=400, detail=f"{key} must be between 20 and 400")
         if key == "LOSS_STREAK_RECOVERY_MAX_DAILY_BUYS":
             if normalized_int < 0 or normalized_int > 50:
                 raise HTTPException(status_code=400, detail=f"{key} must be between 0 and 50")
@@ -278,6 +358,18 @@ def coerce_runtime_setting_value(key: str, value: Any) -> Any:
         if key == "AGGRESSIVE_EXPOSURE_MIN_CONFIDENCE":
             if normalized_float < 0 or normalized_float > 1:
                 raise HTTPException(status_code=400, detail=f"{key} must be between 0 and 1")
+        if key in {
+            "SCANNER_AGGRESSIVE_MIN_CHANGE_PCT",
+            "SCANNER_AGGRESSIVE_MAX_CHANGE_PCT",
+            "SCANNER_AGGRESSIVE_MIN_SCORE",
+            "HORIZON_SHORT_PREFERRED_CHANGE_MAX_PCT",
+            "HORIZON_MID_PREFERRED_CHANGE_MIN_PCT",
+            "HORIZON_MID_PREFERRED_CHANGE_MAX_PCT",
+            "HORIZON_LONG_PREFERRED_CHANGE_MIN_PCT",
+            "HORIZON_LONG_PREFERRED_CHANGE_MAX_PCT",
+        }:
+            if normalized_float < -50 or normalized_float > 100:
+                raise HTTPException(status_code=400, detail=f"{key} must be between -50 and 100")
         if key == "LOSS_STREAK_RECOVERY_SIZE_MULTIPLIER":
             if normalized_float <= 0 or normalized_float > 1:
                 raise HTTPException(status_code=400, detail=f"{key} must be between 0 and 1")
@@ -325,6 +417,12 @@ def coerce_runtime_setting_value(key: str, value: Any) -> Any:
     if key == "ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE":
         normalized = str(value or "").upper().strip()
         if normalized not in {"OFF", "REPORT_ONLY", "BLOCK_BUY", "KILL_SWITCH"}:
+            return _SKIP
+        return normalized
+
+    if key == "HORIZON_SCAN_LONG_DAY_OF_WEEK":
+        normalized = str(value or "").lower().strip()
+        if normalized not in {"mon", "tue", "wed", "thu", "fri"}:
             return _SKIP
         return normalized
 

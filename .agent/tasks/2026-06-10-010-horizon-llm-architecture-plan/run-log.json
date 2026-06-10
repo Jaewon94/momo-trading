@@ -1,0 +1,72 @@
+{
+  "schema_version": "momo.run-log.v1",
+  "task_id": "2026-06-10-010-horizon-llm-architecture-plan",
+  "events": [
+    {
+      "at": "2026-06-10T14:14:52+09:00",
+      "type": "task_started",
+      "status": "created",
+      "summary": "Task artifact created."
+    },
+    {
+      "at": "2026-06-10T14:21:20+09:00",
+      "type": "code_audit",
+      "status": "complete",
+      "summary": "Reviewed horizon routing, trading agent LLM flow, scanner, news context, prompts, LLM factory, and runtime settings."
+    },
+    {
+      "at": "2026-06-10T14:22:00+09:00",
+      "type": "external_research",
+      "status": "complete",
+      "summary": "Reviewed QuantConnect modular framework docs, OpenAI structured output docs, OpenDART financial data docs, and finance LLM/NLP papers."
+    },
+    {
+      "at": "2026-06-10T14:22:30+09:00",
+      "type": "verification",
+      "status": "blocked",
+      "summary": "Runtime integrity check failed due to one stale pending confirmation and one broker-missing open buy; no runtime DB mutation performed in this planning task."
+    },
+    {
+      "at": "2026-06-10T14:22:45+09:00",
+      "type": "planning",
+      "status": "complete",
+      "summary": "Documented horizon-specific LLM architecture plan and phased rollout path."
+    },
+    {
+      "at": "2026-06-10T14:23:11+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T14:23:21+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T14:23:52+09:00",
+      "type": "verification_env",
+      "status": "testing",
+      "summary": "Initial verify used system Python without pytest and left the task in failed state; resetting to testing before rerunning with .venv313."
+    },
+    {
+      "at": "2026-06-10T14:24:03+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T14:24:35+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T14:25:15+09:00",
+      "type": "final_report",
+      "status": "completed",
+      "summary": "Planning task completed with architecture plan and final report; runtime integrity issue documented as separate operational work."
+    }
+  ]
+}

@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from strategy.trade_horizon import TradeHorizon
+
 
 _COMPLEX_PRODUCT_KEYWORDS = (
     "인버스",
@@ -68,17 +70,21 @@ class CandidateScoringService:
         aggressive_min_change_pct: float | None = None,
         aggressive_max_change_pct: float | None = None,
         aggressive_min_score: float | None = None,
+        horizon: str | None = None,
     ) -> list[dict[str, Any]]:
         candidates: dict[str, _Candidate] = {}
         risk_key = str(risk_appetite or "MODERATE").upper()
+        horizon_key = str(horizon or TradeHorizon.SHORT).upper()
+        if horizon_key not in {TradeHorizon.SHORT, TradeHorizon.MID, TradeHorizon.LONG}:
+            horizon_key = TradeHorizon.SHORT
         cooldown_set = {str(symbol).strip() for symbol in (cooldown_symbols or set()) if str(symbol).strip()}
         news_pressure = {
             str(symbol).strip(): float(value or 0.0)
             for symbol, value in (news_pressure_by_symbol or {}).items()
             if str(symbol).strip()
         }
-        preferred_min = self._positive_or_none(preferred_change_min_pct)
-        preferred_max = self._positive_or_none(preferred_change_max_pct)
+        preferred_min = self._float_or_none(preferred_change_min_pct)
+        preferred_max = self._float_or_none(preferred_change_max_pct)
         aggressive_min = self._positive_or_default(aggressive_min_change_pct, 3.0)
         aggressive_max = self._positive_or_default(aggressive_max_change_pct, 18.0)
         aggressive_score = self._positive_or_default(aggressive_min_score, 45.0)
@@ -102,9 +108,7 @@ class CandidateScoringService:
                 candidate.reasons.append("급등 상위")
                 candidate.reason_codes.add("SURGE_RANK")
             if "drop_data" in candidate.sources:
-                candidate.score -= 10.0
-                candidate.reasons.append("급락 감시")
-                candidate.reason_codes.add("DROP_WATCH")
+                self._apply_drop_source_score(candidate, horizon=horizon_key)
 
             candidate.score += min(max(candidate.change_rate, -30.0), 30.0)
             candidate.score += min(candidate.volume / 1_000_000, 20.0)
@@ -164,7 +168,9 @@ class CandidateScoringService:
                         aggressive_min_change_pct=aggressive_min,
                         aggressive_max_change_pct=aggressive_max,
                         aggressive_min_score=aggressive_score,
+                        horizon=horizon_key,
                     ),
+                    "target_horizon_hint": horizon_key,
                     "reason_codes": sorted(item.reason_codes),
                     "news_negative_pressure": pressure,
                     "reasons": item.reasons[:4],
@@ -181,8 +187,11 @@ class CandidateScoringService:
         aggressive_min_change_pct: float = 3.0,
         aggressive_max_change_pct: float = 18.0,
         aggressive_min_score: float = 45.0,
+        horizon: str = TradeHorizon.SHORT,
     ) -> str:
         if candidate.hold_candidate or not candidate.buyable or not candidate.policy_buy_eligible:
+            return "STABLE_SHORT"
+        if horizon in {TradeHorizon.MID, TradeHorizon.LONG}:
             return "STABLE_SHORT"
         if news_pressure >= 0.5:
             return "STABLE_SHORT"
@@ -203,6 +212,22 @@ class CandidateScoringService:
         ):
             return "AGGRESSIVE_SHORT"
         return "STABLE_SHORT"
+
+    @staticmethod
+    def _apply_drop_source_score(candidate: _Candidate, *, horizon: str) -> None:
+        if horizon == TradeHorizon.LONG:
+            candidate.score += 8.0
+            candidate.reasons.append("장기 눌림 후보")
+            candidate.reason_codes.add("LONG_PULLBACK_WATCH")
+            return
+        if horizon == TradeHorizon.MID:
+            candidate.score += 2.0
+            candidate.reasons.append("중기 눌림 감시")
+            candidate.reason_codes.add("MID_PULLBACK_WATCH")
+            return
+        candidate.score -= 10.0
+        candidate.reasons.append("급락 감시")
+        candidate.reason_codes.add("DROP_WATCH")
 
     @staticmethod
     def _apply_product_policy(candidate: _Candidate, *, risk_appetite: str) -> None:
@@ -330,6 +355,15 @@ class CandidateScoringService:
         except (TypeError, ValueError):
             return None
         return parsed if parsed > 0 else None
+
+    @staticmethod
+    def _float_or_none(value: float | int | str | None) -> float | None:
+        if value is None:
+            return None
+        try:
+            return float(str(value).replace(",", ""))
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _positive_or_default(value: float | int | str | None, default: float) -> float:

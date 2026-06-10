@@ -13,11 +13,13 @@ def test_deterministic_prompt_context_formats_tier1_precheck() -> None:
         portfolio_snapshot={"cash": 1_000_000, "holding_symbols": []},
         market_regime="SIDEWAYS",
         dynamic_limits={"min_buy_quantity": 2},
+        target_horizon="MID",
     )
 
     assert "deterministic_stage: TIER1_PRECHECK" in context
     assert "chart_signal: BULLISH / confidence 72%" in context
     assert "min_buy_cost: 140,000원" in context
+    assert "target_horizon_hint: MID" in context
 
 
 def test_deterministic_prompt_context_formats_tier2_precheck_rr_ratio() -> None:
@@ -38,6 +40,7 @@ def test_deterministic_prompt_context_formats_tier2_precheck_rr_ratio() -> None:
         dynamic_limits={"min_buy_quantity": 1},
         active_rules={"validation_flags": {"require_stop_loss_logging": True}},
         buying_power={"success": True, "max_qty": 10},
+        target_horizon="LONG",
     )
 
     assert "deterministic_stage: TIER2_PRECHECK" in context
@@ -46,3 +49,4 @@ def test_deterministic_prompt_context_formats_tier2_precheck_rr_ratio() -> None:
     assert "code_rr_ratio: 2.00" in context
     assert "stop_loss_required: True" in context
     assert "buying_power_max_qty: 10" in context
+    assert "target_horizon_hint: LONG" in context

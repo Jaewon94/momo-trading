@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
 from repositories.news_item_repository import NewsItemRepository
+from strategy.horizon_scan_policy import horizon_scan_profile, normalize_scan_horizon
 from trading.symbols import normalize_krx_symbol
 from util.time_util import ensure_kst, now_kst
 
@@ -25,11 +26,23 @@ class NewsContextService:
         symbol: str,
         name: str | None = None,
         max_items: int | None = None,
+        horizon: str | None = None,
+        lookback_hours: int | None = None,
     ) -> dict[str, Any]:
         normalized_symbol = normalize_krx_symbol(symbol)
-        item_limit = max(int(max_items or self._MAX_PROMPT_ITEMS), 1)
-        lookback_hours = max(int(settings.NEWS_LOOKBACK_HOURS or 24), 1)
-        cutoff = now_kst() - timedelta(hours=lookback_hours)
+        horizon_key = normalize_scan_horizon(horizon) if horizon else ""
+        profile = horizon_scan_profile(horizon_key) if horizon_key else None
+        item_limit = max(int(max_items or (profile.news_prompt_items if profile else self._MAX_PROMPT_ITEMS)), 1)
+        resolved_lookback_hours = max(
+            int(
+                lookback_hours
+                or (profile.news_lookback_hours if profile else None)
+                or settings.NEWS_LOOKBACK_HOURS
+                or 24
+            ),
+            1,
+        )
+        cutoff = now_kst() - timedelta(hours=resolved_lookback_hours)
         repo = NewsItemRepository(session)
 
         direct_items = await repo.get_recent(
@@ -63,16 +76,17 @@ class NewsContextService:
         items = matched_items[:item_limit]
         if not items:
             prompt = (
-                f"### 최근 뉴스 보조 컨텍스트\n"
-                f"- 최근 {lookback_hours}시간 내 직접 연결된 뉴스 없음\n"
+                f"### {horizon_key + ' ' if horizon_key else '최근 '}뉴스 보조 컨텍스트\n"
+                f"- 최근 {resolved_lookback_hours}시간 내 직접 연결된 뉴스 없음\n"
                 f"- 뉴스 판단: 중립. 차트, 수급, 리스크:보상, 매매 상황을 우선 판단하세요.\n"
                 f"- 신뢰도 보정 가이드: 뉴스만으로 신뢰도를 올리거나 낮추지 마세요."
             )
             return {
                 "available": False,
                 "symbol": normalized_symbol,
+                "horizon": horizon_key or None,
                 "match_source": "none",
-                "lookback_hours": lookback_hours,
+                "lookback_hours": resolved_lookback_hours,
                 "tone": "NO_RECENT_NEWS",
                 "confidence_hint": 0.0,
                 "items": [],
@@ -95,7 +109,8 @@ class NewsContextService:
             positive_count=positive_count,
         )
         prompt = self._build_prompt(
-            lookback_hours=lookback_hours,
+            horizon=horizon_key,
+            lookback_hours=resolved_lookback_hours,
             items=formatted_items,
             tone=tone,
             negative_pressure=negative_pressure,
@@ -104,8 +119,9 @@ class NewsContextService:
         return {
             "available": True,
             "symbol": normalized_symbol,
+            "horizon": horizon_key or None,
             "match_source": match_source,
-            "lookback_hours": lookback_hours,
+            "lookback_hours": resolved_lookback_hours,
             "tone": tone,
             "negative_pressure": negative_pressure,
             "negative_count": negative_count,
@@ -213,6 +229,7 @@ class NewsContextService:
     @staticmethod
     def _build_prompt(
         *,
+        horizon: str,
         lookback_hours: int,
         items: list[dict[str, Any]],
         tone: str,
@@ -220,7 +237,7 @@ class NewsContextService:
         confidence_hint: float,
     ) -> str:
         lines = [
-            "### 최근 뉴스 보조 컨텍스트",
+            f"### {horizon + ' ' if horizon else '최근 '}뉴스 보조 컨텍스트",
             "- 뉴스 역할: 차트/수급/리스크 판단을 보조합니다. 뉴스만으로 BUY/SELL을 결정하지 마세요.",
             f"- 관측 범위: 최근 {lookback_hours}시간, 최대 {len(items)}건",
             f"- 뉴스 보조 판단: {tone} | 부정 압력 {negative_pressure:.2f} | 신뢰도 힌트 {confidence_hint:+.2f}",

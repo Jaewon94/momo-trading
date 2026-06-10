@@ -15,6 +15,8 @@ from services.activity_logger import activity_logger
 from services.candidate_scoring_service import candidate_scoring_service
 from services.decision_event_service import decision_event_service
 from services.news_signal_service import news_signal_service
+from strategy.horizon_scan_policy import horizon_scan_profile, normalize_scan_horizon
+from strategy.trade_horizon import TradeHorizon
 from trading.adapters.base import BrokerAdapter
 from trading.broker_factory import get_broker_adapter
 from trading.enums import ActivityPhase, ActivityType
@@ -157,14 +159,22 @@ class MarketScanner:
 
         return candidates
 
-    async def scan(self, cycle_id: str | None = None, dynamic_limits: dict | None = None) -> dict:
+    async def scan(
+        self,
+        cycle_id: str | None = None,
+        dynamic_limits: dict | None = None,
+        *,
+        horizon: str | None = None,
+    ) -> dict:
         """시장 스캔 + 종목 선별 통합 실행"""
-        logger.debug("시장 스캔 시작")
+        scan_horizon = normalize_scan_horizon(horizon)
+        scan_profile = horizon_scan_profile(scan_horizon)
+        logger.debug("시장 스캔 시작 ({})", scan_profile.label)
         timer = activity_logger.timer()
 
         await activity_logger.log(
             ActivityType.SCAN, ActivityPhase.START,
-            "\U0001f4e1 시장 스캔 중... 거래량/등락 상위 종목 조회",
+            f"\U0001f4e1 {scan_horizon} 시장 스캔 중... 거래량/등락 상위 종목 조회",
             cycle_id=cycle_id,
         )
 
@@ -199,8 +209,8 @@ class MarketScanner:
 
         data_elapsed = activity_logger.elapsed_ms(timer)
         logger.debug("MCP 데이터 수집 완료: {}ms", data_elapsed)
-        scanner_policy = await self._build_scanner_policy()
-        max_candidates = max(int(getattr(settings, "SCANNER_MAX_CANDIDATES", 30) or 30), 1)
+        scanner_policy = await self._build_scanner_policy(scan_horizon)
+        max_candidates = scan_profile.max_candidates
 
         scored_candidates = candidate_scoring_service.score_candidates(
             volume_rank=volume_rank,
@@ -216,8 +226,12 @@ class MarketScanner:
             aggressive_min_score=getattr(settings, "SCANNER_AGGRESSIVE_MIN_SCORE", 45.0),
             preferred_change_min_pct=scanner_policy.get("preferred_change_min_pct"),
             preferred_change_max_pct=scanner_policy.get("preferred_change_max_pct"),
+            horizon=scan_horizon,
         )
-        news_pressure_by_symbol = await self._get_candidate_news_pressures(scored_candidates)
+        news_pressure_by_symbol = await self._get_candidate_news_pressures(
+            scored_candidates,
+            horizon=scan_horizon,
+        )
         if news_pressure_by_symbol:
             scored_candidates = candidate_scoring_service.score_candidates(
                 volume_rank=volume_rank,
@@ -234,11 +248,13 @@ class MarketScanner:
                 aggressive_min_score=getattr(settings, "SCANNER_AGGRESSIVE_MIN_SCORE", 45.0),
                 preferred_change_min_pct=scanner_policy.get("preferred_change_min_pct"),
                 preferred_change_max_pct=scanner_policy.get("preferred_change_max_pct"),
+                horizon=scan_horizon,
             )
         await self._record_scored_candidate_events(
             cycle_id=cycle_id,
             scored_candidates=scored_candidates,
             available_cash=available_cash,
+            horizon=scan_horizon,
         )
 
         # 2. AI 시장 분석 + 종목 선별 (통합 1회 호출)
@@ -267,6 +283,10 @@ class MarketScanner:
             performance_summary=performance_summary,
             scanner_policy=self._format_scanner_policy(scanner_policy),
             scored_candidates=self._format_scored_candidates(scored_candidates),
+            scan_horizon=scan_horizon,
+            scan_horizon_label=scan_profile.label,
+            horizon_focus=scan_profile.prompt_focus,
+            max_selected=scan_profile.max_selected,
         )
 
         try:
@@ -298,6 +318,8 @@ class MarketScanner:
             )
             for item in selected:
                 symbol = str(item.get("symbol", "") or "").strip()
+                item.setdefault("target_horizon_hint", scan_horizon)
+                item.setdefault("scan_horizon", scan_horizon)
                 market_data = market_data_lookup.get(symbol)
                 if not market_data:
                     continue
@@ -321,6 +343,7 @@ class MarketScanner:
                 scored_candidates,
                 volume_rank=volume_rank,
                 surge_data=surge_data,
+                max_candidates=min(max(scan_profile.max_candidates, 30), 60),
             )
 
             logger.info(
@@ -352,6 +375,8 @@ class MarketScanner:
                 cycle_id=cycle_id,
                 detail={
                     "selected_count": len(selected),
+                    "scan_horizon": scan_horizon,
+                    "scan_horizon_label": scan_profile.label,
                     "selected": selected,
                     "monitor_candidates": monitor_candidates,
                     "scored_candidates": scored_candidates,
@@ -370,6 +395,8 @@ class MarketScanner:
 
             return {
                 "selected": selected,
+                "scan_horizon": scan_horizon,
+                "scan_horizon_label": scan_profile.label,
                 "monitor_candidates": monitor_candidates,
                 "market_summary": parsed.get("market_analysis", ""),
                 "market_regime": parsed.get("market_regime", ""),
@@ -395,8 +422,10 @@ class MarketScanner:
             )
             return {"selected": [], "market_summary": "스캔 실패", "available_cash": available_cash}
 
-    async def _build_scanner_policy(self) -> dict:
-        """현재 손실 복구/중장기 운용 방향을 스캐너 후보 정책으로 변환한다."""
+    async def _build_scanner_policy(self, horizon: str | None = None) -> dict:
+        """현재 손실 복구/호라이즌 운용 방향을 스캐너 후보 정책으로 변환한다."""
+        scan_horizon = normalize_scan_horizon(horizon)
+        scan_profile = horizon_scan_profile(scan_horizon)
         consecutive_losses = await self._get_consecutive_losses()
         max_losses = int(getattr(settings, "MAX_CONSECUTIVE_LOSSES", 0) or 0)
         recovery_mode = str(
@@ -414,11 +443,20 @@ class MarketScanner:
         preferred_max = (
             probation_max
             if probation_active and probation_max > 0
-            else _MID_LONG_PREFERRED_MAX_CHANGE_PCT
+            else scan_profile.preferred_change_max_pct
         )
+        if not probation_active:
+            preferred_min = scan_profile.preferred_change_min_pct
 
         return {
-            "mid_long_bias": True,
+            "scan_horizon": scan_horizon,
+            "scan_horizon_label": scan_profile.label,
+            "horizon_focus": scan_profile.prompt_focus,
+            "max_candidates": scan_profile.max_candidates,
+            "max_selected": scan_profile.max_selected,
+            "news_pressure_candidates": scan_profile.news_pressure_candidates,
+            "news_lookback_hours": scan_profile.news_lookback_hours,
+            "mid_long_bias": scan_horizon in {TradeHorizon.MID, TradeHorizon.LONG},
             "recovery_mode": recovery_mode,
             "probation_active": probation_active,
             "consecutive_losses": consecutive_losses,
@@ -583,6 +621,8 @@ class MarketScanner:
                     "scanner_score": scored.get("score"),
                     "scanner_sources": scored.get("sources", []),
                     "scanner_reason_codes": scored.get("reason_codes", []),
+                    "target_horizon_hint": scanner_policy.get("scan_horizon") or TradeHorizon.SHORT,
+                    "scan_horizon": scanner_policy.get("scan_horizon") or TradeHorizon.SHORT,
                     "news_negative_pressure": scored.get("news_negative_pressure"),
                     "policy_buy_eligible": True,
                     "strategy_alignment": "DETERMINISTIC_FALLBACK",
@@ -673,11 +713,20 @@ class MarketScanner:
             logger.debug("최근 후보 cooldown 조회 실패: {}", str(exc))
             return set()
 
-    async def _get_candidate_news_pressures(self, scored_candidates: list[dict]) -> dict[str, float]:
+    async def _get_candidate_news_pressures(
+        self,
+        scored_candidates: list[dict],
+        *,
+        horizon: str | None = None,
+    ) -> dict[str, float]:
         """후보 top-N에 대해서만 뉴스 부정 압력을 계산한다."""
+        scan_horizon = normalize_scan_horizon(horizon)
+        scan_profile = horizon_scan_profile(scan_horizon)
+        if scan_profile.news_pressure_candidates <= 0:
+            return {}
         symbols = [
             str(item.get("symbol") or "").strip()
-            for item in scored_candidates[:8]
+            for item in scored_candidates[:scan_profile.news_pressure_candidates]
             if str(item.get("symbol") or "").strip()
         ]
         if not symbols:
@@ -690,7 +739,7 @@ class MarketScanner:
                     result = await news_signal_service.evaluate_gate(
                         session,
                         symbol=symbol,
-                        horizon="MID",
+                        horizon=scan_horizon,
                     )
                     pressure = float(result.get("negative_pressure") or 0.0)
                     if pressure > 0:
@@ -733,14 +782,27 @@ class MarketScanner:
         return "\n".join(lines)
 
     def _format_scanner_policy(self, policy: dict) -> str:
+        scan_horizon = str(policy.get("scan_horizon") or "SHORT").upper()
+        if scan_horizon == TradeHorizon.LONG:
+            operating_direction = "운용 방향: 장기 후보는 급등 추격보다 구조적 추세, 장기 가격 위치, 뉴스/공시 논거를 우선"
+        elif scan_horizon == TradeHorizon.MID:
+            operating_direction = "운용 방향: 중기 후보는 눌림 후 회복, 거래량 지속, 며칠 이상 유지 가능한 뉴스/테마 논거를 우선"
+        else:
+            operating_direction = "운용 방향: 단기 후보는 장중 유동성, 거래량, 최근 뉴스 리스크, 명확한 손절/익절 계획을 우선"
         lines = [
-            "운용 방향: 초단기/단기 비중 축소, MID/LONG 심층 분석 우선",
+            f"스캔 호라이즌: {scan_horizon} ({policy.get('scan_horizon_label', '')})",
+            f"호라이즌 기준: {policy.get('horizon_focus', '')}",
+            operating_direction,
             "전략 의미: STABLE_SHORT/AGGRESSIVE_SHORT는 legacy 실행·위험 프로파일이며 보유기간 자체가 아님",
-            f"결정론 1차 후보 폭: 최대 {int(getattr(settings, 'SCANNER_MAX_CANDIDATES', 30) or 30)}개 점수화 후 LLM 선별",
+            f"결정론 1차 후보 폭: 최대 {int(policy.get('max_candidates') or getattr(settings, 'SCANNER_MAX_CANDIDATES', 30) or 30)}개 점수화 후 LLM 선별",
+            f"LLM 최종 선정 상한: 최대 {int(policy.get('max_selected') or 8)}개",
+            f"뉴스 부정압력 검사: 상위 {int(policy.get('news_pressure_candidates') or 0)}개 / 최근 {int(policy.get('news_lookback_hours') or 0)}시간",
             f"선호 등락률 상한: +{float(policy.get('preferred_change_max_pct') or 0.0):.2f}%",
             "상품 정책: 인버스/레버리지/현금성/채권형 상품은 신규 BUY 제외, 방어형 ETF는 공격 성향에서 감점",
             "AGGRESSIVE_SHORT 사용: 상승 모멘텀+거래량 확인 후보 중 Deterministic strategy=AGGRESSIVE_SHORT인 경우만 허용",
         ]
+        if policy.get("preferred_change_min_pct") is not None:
+            lines.append(f"선호 등락률 하한: {float(policy.get('preferred_change_min_pct') or 0.0):+.2f}%")
         if bool(policy.get("probation_active")):
             min_change = policy.get("preferred_change_min_pct")
             max_change = policy.get("preferred_change_max_pct")
@@ -794,6 +856,7 @@ class MarketScanner:
         cycle_id: str | None,
         scored_candidates: list[dict],
         available_cash: float,
+        horizon: str | None = None,
     ) -> None:
         """Deterministic scanner 후보군을 benchmark용 decision event로 남긴다."""
         for rank, item in enumerate(scored_candidates[:8], 1):
@@ -815,6 +878,7 @@ class MarketScanner:
                     reason=", ".join(str(reason) for reason in item.get("reasons", [])[:4]),
                     metadata={
                         "rank": rank,
+                        "scan_horizon": normalize_scan_horizon(horizon),
                         "available_cash": available_cash,
                         "sources": item.get("sources", []),
                         "buyable": buyable,

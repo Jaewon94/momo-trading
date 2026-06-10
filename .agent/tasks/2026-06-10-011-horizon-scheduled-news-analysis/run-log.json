@@ -1,0 +1,66 @@
+{
+  "schema_version": "momo.run-log.v1",
+  "task_id": "2026-06-10-011-horizon-scheduled-news-analysis",
+  "events": [
+    {
+      "at": "2026-06-10T14:38:03+09:00",
+      "type": "task_started",
+      "status": "created",
+      "summary": "Task artifact created."
+    },
+    {
+      "at": "2026-06-10T15:02:20+09:00",
+      "type": "implementation",
+      "status": "completed",
+      "summary": "Added horizon scan profiles, MID daily/LONG weekly scheduler jobs, horizon-aware scanner/news/TradingAgent routing, runtime settings, docs, and tests."
+    },
+    {
+      "at": "2026-06-10T15:02:20+09:00",
+      "type": "verification",
+      "status": "passed",
+      "summary": "Focused pytest passed: 189 scanner/news/trading/scheduler/settings tests and 18 admin API tests."
+    },
+    {
+      "at": "2026-06-10T15:02:55+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T15:03:11+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T15:06:16+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T15:06:25+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T15:08:00+09:00",
+      "type": "operational_check",
+      "status": "failed",
+      "summary": "Runtime integrity check failed: trading is FULL/AUTONOMOUS and order reconciliation has one stale DB pending order missing from broker open buys."
+    },
+    {
+      "at": "2026-06-10T15:10:26+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T15:10:42+09:00",
+      "type": "final_report",
+      "status": "completed",
+      "summary": "Code implementation and test verification completed; restart deferred because runtime integrity is failing."
+    }
+  ]
+}

@@ -727,7 +727,15 @@ async def test_run_trading_cycle_returns_zeroed_results_when_snapshot_runtime_er
 
     result = await agent._run_trading_cycle()
 
-    assert result == {"scanned": 0, "analyzed": 0, "signals": 0, "executed": 0, "selected_symbols": []}
+    assert result == {
+        "scan_horizon": "SHORT",
+        "scan_horizon_label": "SHORT frequent",
+        "scanned": 0,
+        "analyzed": 0,
+        "signals": 0,
+        "executed": 0,
+        "selected_symbols": [],
+    }
     assert agent.last_cycle_time == _kst_time(9, 5)
     assert [event.type for event in events] == [EventType.AGENT_CYCLE_START]
     assert any("계좌 조회 실패" in args[2] for args, _kwargs in logs)
@@ -755,6 +763,7 @@ async def test_run_trading_cycle_completes_cleanly_when_scan_selects_no_candidat
         }
 
     async def fake_scan(*args, **kwargs) -> dict:
+        assert kwargs.get("horizon") == "SHORT"
         return {"selected": []}
 
     monkeypatch.setattr("agent.trading_agent.llm_factory.start_session", lambda: None)
@@ -769,7 +778,15 @@ async def test_run_trading_cycle_completes_cleanly_when_scan_selects_no_candidat
 
     result = await agent._run_trading_cycle()
 
-    assert result == {"scanned": 0, "analyzed": 0, "signals": 0, "executed": 0, "selected_symbols": []}
+    assert result == {
+        "scan_horizon": "SHORT",
+        "scan_horizon_label": "SHORT frequent",
+        "scanned": 0,
+        "analyzed": 0,
+        "signals": 0,
+        "executed": 0,
+        "selected_symbols": [],
+    }
     assert agent.last_cycle_time == _kst_time(9, 6)
     assert agent._daily_start_balance == 2_000_000
     assert [event.type for event in events] == [EventType.AGENT_CYCLE_START]
@@ -850,6 +867,7 @@ async def test_run_trading_cycle_caches_scan_metadata_before_analysis(monkeypatc
     assert result["signals"] == 1
     assert result["executed"] == 0
     assert result["selected_symbols"] == [("005930", "KRX")]
+    assert result["scan_horizon"] == "SHORT"
     assert agent._symbol_names == {"005930": "삼성전자"}
     assert agent._market_regime == "BULLISH"
     assert agent._market_context == "market-context"

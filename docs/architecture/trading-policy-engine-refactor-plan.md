@@ -39,7 +39,7 @@ Task: `2026-06-10-002-policy-governance-refactor`
 
 | Policy area | Current owner | Decision/effect today | Risk |
 | --- | --- | --- | --- |
-| 시장 후보 폭 | `agent/market_scanner.py`, `services/candidate_scoring_service.py` | broker ranking을 모아 `SCANNER_MAX_CANDIDATES`만큼 점수화하고, LLM이 selected를 고른 뒤 deterministic policy가 보정한다. | 후보 정책, recovery/probation 정책, LLM 선별 정책이 한 흐름에 섞여 있다. |
+| 시장 후보 폭 | `agent/market_scanner.py`, `services/candidate_scoring_service.py`, `strategy/horizon_scan_policy.py` | broker ranking을 모아 horizon별 후보 수만큼 점수화하고, LLM이 selected를 고른 뒤 deterministic policy가 보정한다. | 후보 정책, recovery/probation 정책, LLM 선별 정책이 한 흐름에 섞여 있다. |
 | Tier1 전처리 | `services/pre_analysis_gate_service.py` | 현금 부족, 데이터 부족, 강한 bearish 후보를 Tier1 전에 skip한다. | BUY 후보 제거 정책인데 전체 policy trace와 결합되지 않는다. |
 | Tier1 fast gate | `services/deterministic_tier1_fast_gate_service.py` | 점수 기반으로 Tier1 LLM 호출을 HOLD skip한다. 공격 성향에서 threshold를 완화한다. | risk appetite를 자체 해석하므로 exposure/risk layer와 해석이 달라질 수 있다. |
 | Tier2 전 최종 deterministic gate | `services/deterministic_final_gate_service.py` | confidence, RR, stop loss, buying power로 Tier2 전 차단한다. | RR과 broker buying power가 risk manager와 일부 중복된다. |

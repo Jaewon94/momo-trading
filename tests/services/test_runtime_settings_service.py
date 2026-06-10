@@ -138,3 +138,15 @@ async def test_runtime_settings_service_validates_all_updates_before_mutating_se
 
     assert settings.LLM_PROVIDER_TIER1 == original_provider
     assert settings.CODEX_TIMEOUT_SEC_TIER1 == original_timeout
+
+
+def test_runtime_settings_horizon_values_are_validated() -> None:
+    from core.runtime_settings import coerce_runtime_setting_value, is_skipped_runtime_setting_value
+
+    assert coerce_runtime_setting_value("HORIZON_MID_MAX_CANDIDATES", 60) == 60
+    assert coerce_runtime_setting_value("HORIZON_SCAN_LONG_DAY_OF_WEEK", "fri") == "fri"
+    assert is_skipped_runtime_setting_value(
+        coerce_runtime_setting_value("HORIZON_SCAN_LONG_DAY_OF_WEEK", "sun")
+    )
+    with pytest.raises(HTTPException):
+        coerce_runtime_setting_value("HORIZON_LONG_NEWS_LOOKBACK_HOURS", 0)

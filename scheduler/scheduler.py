@@ -38,6 +38,7 @@ from trading.broker_factory import get_broker_adapter
 from trading.enums import ActivityPhase, ActivityType, Market, OrderSide, OrderType
 from trading.models import OrderRequest
 from scheduler.jobs.forward_return_label_job import forward_return_label_job
+from strategy.horizon_scan_policy import normalize_weekday
 from strategy.trade_horizon import TradeHorizon
 from strategy.position_exit_policy import (
     PARTIAL_TAKE_PROFIT_MARKER,
@@ -804,6 +805,36 @@ class TradingScheduler:
                 coalesce=True,
             )
 
+            if bool(getattr(settings, "HORIZON_SCAN_ENABLED", True)):
+                if bool(getattr(settings, "HORIZON_SCAN_MID_ENABLED", True)):
+                    self.scheduler.add_job(
+                        self._mid_horizon_scan,
+                        "cron",
+                        hour=int(getattr(settings, "HORIZON_SCAN_MID_HOUR", 10) or 10),
+                        minute=int(getattr(settings, "HORIZON_SCAN_MID_MINUTE", 20) or 20),
+                        day_of_week="mon-fri",
+                        id="horizon_mid_scan",
+                        name="중기 호라이즌 일일 스캔",
+                        misfire_grace_time=600,
+                        max_instances=1,
+                        coalesce=True,
+                    )
+                if bool(getattr(settings, "HORIZON_SCAN_LONG_ENABLED", True)):
+                    self.scheduler.add_job(
+                        self._long_horizon_scan,
+                        "cron",
+                        hour=int(getattr(settings, "HORIZON_SCAN_LONG_HOUR", 10) or 10),
+                        minute=int(getattr(settings, "HORIZON_SCAN_LONG_MINUTE", 40) or 40),
+                        day_of_week=normalize_weekday(
+                            getattr(settings, "HORIZON_SCAN_LONG_DAY_OF_WEEK", "wed")
+                        ),
+                        id="horizon_long_scan",
+                        name="장기 호라이즌 주간 스캔",
+                        misfire_grace_time=1800,
+                        max_instances=1,
+                        coalesce=True,
+                    )
+
         if include_news_jobs:
             self.scheduler.add_job(
                 self._news_poll,
@@ -1226,6 +1257,98 @@ class TradingScheduler:
             )
         except Exception as e:
             logger.error("장중 재스캔 오류: {}", str(e))
+
+    async def _refresh_scan_subscriptions_from_cycle_result(self, result: dict) -> int:
+        """Cycle result의 감시 후보와 현재 보유종목으로 WebSocket 구독을 갱신한다."""
+        selected = result.get("monitor_symbols") or result.get("selected_symbols", [])
+        if not selected:
+            return 0
+
+        from trading.account_manager import account_manager
+        from realtime.stream_manager import SubscriptionPriority, SubscriptionRequest, stream_manager
+
+        holdings = await account_manager.get_holdings()
+        holding_symbols = [(h.symbol, "KRX") for h in holdings if h.symbol]
+
+        subscription_requests = {}
+        for item in selected:
+            if isinstance(item, (tuple, list)) and len(item) >= 2:
+                symbol, market = item[0], item[1]
+            elif isinstance(item, dict):
+                symbol, market = item.get("symbol"), item.get("market", "KRX")
+            else:
+                continue
+            symbol = normalize_krx_symbol(symbol)
+            if not symbol:
+                continue
+            subscription_requests[symbol] = SubscriptionRequest(
+                symbol=symbol,
+                market=market or "KRX",
+                priority=SubscriptionPriority.NEW_CANDIDATE,
+            )
+        subscription_requests.update({
+            normalize_krx_symbol(s): SubscriptionRequest(
+                symbol=normalize_krx_symbol(s),
+                market=m,
+                priority=SubscriptionPriority.HELD_POSITION,
+            )
+            for s, m in holding_symbols
+            if normalize_krx_symbol(s)
+        })
+        all_symbols = list(subscription_requests.values())
+        if all_symbols:
+            await stream_manager.update_subscriptions(all_symbols)
+        return len(all_symbols)
+
+    async def _horizon_scan(self, horizon: str) -> None:
+        """중기/장기 전용 스캔을 실행한다. 주문 정책은 TradingAgent 내부 기존 경로를 사용한다."""
+        from agent.trading_agent import trading_agent
+        from scheduler.market_calendar import market_calendar
+        from services.activity_logger import activity_logger
+        from util.time_util import now_kst
+
+        horizon_key = str(horizon or TradeHorizon.MID).upper()
+        if market_calendar.is_krx_holiday():
+            return
+        if not market_calendar.is_krx_trading_hours():
+            logger.info("{} horizon scan skipped: outside KRX trading hours", horizon_key)
+            return
+        if not settings.TRADING_ENABLED:
+            logger.info("TRADING_ENABLED=false → {} horizon 스캔/AI 매매 사이클 스킵", horizon_key)
+            await activity_logger.log(
+                ActivityType.SCHEDULE,
+                ActivityPhase.SKIP,
+                f"TRADING_ENABLED=false → {horizon_key} horizon 스캔/AI 매매 사이클 스킵",
+            )
+            return
+
+        logger.debug("=== {} horizon 스캔 시작 ({}) ===", horizon_key, now_kst().strftime("%H:%M"))
+        await activity_logger.log(
+            ActivityType.SCHEDULE,
+            ActivityPhase.PROGRESS,
+            f"\U0001f50d {horizon_key} horizon 스캔 시작 — 뉴스/차트 기반 후보 재평가",
+        )
+
+        try:
+            result = await trading_agent.run_cycle(scan_horizon=horizon_key)
+            subscription_count = 0
+            if not result.get("skipped"):
+                subscription_count = await self._refresh_scan_subscriptions_from_cycle_result(result)
+            await activity_logger.log(
+                ActivityType.SCHEDULE,
+                ActivityPhase.PROGRESS,
+                f"\u2705 {horizon_key} horizon 스캔 완료 — 분석 {result.get('analyzed', 0)}건, "
+                f"매매 {result.get('executed', 0)}건, 감시 {subscription_count}종목",
+                detail=result,
+            )
+        except Exception as e:
+            logger.error("{} horizon 스캔 오류: {}", horizon_key, str(e))
+
+    async def _mid_horizon_scan(self) -> None:
+        await self._horizon_scan(TradeHorizon.MID)
+
+    async def _long_horizon_scan(self) -> None:
+        await self._horizon_scan(TradeHorizon.LONG)
 
     async def _update_realtime_subscriptions(self) -> None:
         """보유종목 WebSocket 구독 갱신 (임계값은 AI가 설정)"""

@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from services.candidate_scoring_service import CandidateScoringService
+from strategy.trade_horizon import TradeHorizon
 
 
 def test_candidate_scoring_service_ranks_buyable_candidates_and_marks_holdings() -> None:
@@ -219,3 +220,48 @@ def test_candidate_scoring_service_deprioritizes_defensive_etfs_in_aggressive_mo
     assert result[0]["policy_buy_eligible"] is True
     assert result[0]["strategy_type_hint"] == "STABLE_SHORT"
     assert "DEFENSIVE_PRODUCT_DEPRIORITIZED" in result[0]["reason_codes"]
+
+
+def test_candidate_scoring_service_marks_pullbacks_by_horizon() -> None:
+    service = CandidateScoringService()
+
+    short_result = service.score_candidates(
+        volume_rank=[],
+        surge_data=[],
+        drop_data=[
+            {"symbol": "000660", "name": "SK하이닉스", "price": 180000, "change_rate": -4.3, "volume": 1800000},
+        ],
+        holdings=[],
+        available_cash=300000,
+        max_candidates=1,
+        horizon=TradeHorizon.SHORT,
+    )
+    mid_result = service.score_candidates(
+        volume_rank=[],
+        surge_data=[],
+        drop_data=[
+            {"symbol": "000660", "name": "SK하이닉스", "price": 180000, "change_rate": -4.3, "volume": 1800000},
+        ],
+        holdings=[],
+        available_cash=300000,
+        max_candidates=1,
+        horizon=TradeHorizon.MID,
+    )
+    long_result = service.score_candidates(
+        volume_rank=[],
+        surge_data=[],
+        drop_data=[
+            {"symbol": "000660", "name": "SK하이닉스", "price": 180000, "change_rate": -4.3, "volume": 1800000},
+        ],
+        holdings=[],
+        available_cash=300000,
+        max_candidates=1,
+        horizon=TradeHorizon.LONG,
+    )
+
+    assert short_result[0]["target_horizon_hint"] == "SHORT"
+    assert "DROP_WATCH" in short_result[0]["reason_codes"]
+    assert mid_result[0]["target_horizon_hint"] == "MID"
+    assert "MID_PULLBACK_WATCH" in mid_result[0]["reason_codes"]
+    assert long_result[0]["target_horizon_hint"] == "LONG"
+    assert "LONG_PULLBACK_WATCH" in long_result[0]["reason_codes"]

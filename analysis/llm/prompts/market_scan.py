@@ -1,7 +1,7 @@
 """Tier 1: 시장 스캔 + 종목 선정 프롬프트 — 시장 국면 판단 + 전략 배정 통합"""
 
 MARKET_SCAN_SYSTEM = """당신은 한국 주식 시장(KOSPI/KOSDAQ) 전문 스크리너입니다.
-주어진 시장 데이터만을 분석하여 중기/장기 스윙 중심의 심층 분석 후보 종목을 선별하고 실행 프로파일을 배정합니다.
+주어진 시장 데이터와 스캔 호라이즌에 맞춰 심층 분석 후보 종목을 선별하고 실행 프로파일을 배정합니다.
 
 ## 분석 프레임워크
 반드시 아래 순서로 분석하세요:
@@ -39,6 +39,8 @@ MARKET_SCAN_SYSTEM = """당신은 한국 주식 시장(KOSPI/KOSDAQ) 전문 스�
 MARKET_SCAN_PROMPT = """## 시장 데이터
 
 현재 시각: {current_time} | 매수 마감까지: {minutes_until_cutoff}분
+스캔 호라이즌: {scan_horizon} ({scan_horizon_label})
+호라이즌 초점: {horizon_focus}
 총 평가자산: {total_asset:,.0f}원 | 투자 가용 현금: {available_cash:,.0f}원 | 종목당 최대: {max_per_stock:,.0f}원
 보유 종목 수: {holding_count}개
 {rotation_hint}
@@ -66,7 +68,8 @@ MARKET_SCAN_PROMPT = """## 시장 데이터
 
 ---
 
-위 데이터를 분석하여 시장 국면을 판단하고, **심층 분석할 종목 3~8개**를 직접 선정하세요.
+위 데이터를 분석하여 시장 국면을 판단하고, **심층 분석할 종목 최대 {max_selected}개**를 직접 선정하세요.
+선정 사유는 반드시 현재 스캔 호라이즌({scan_horizon})의 초점에 맞춰 작성하세요.
 각 종목에 적합한 실행 프로파일(STABLE_SHORT/AGGRESSIVE_SHORT)을 배정하세요.
 BUY 후보는 현재 스캐너 정책과 Deterministic 후보 점수의 policy_eligible을 따라야 합니다.
 Deterministic strategy가 STABLE_SHORT인 종목을 AGGRESSIVE_SHORT로 올리지 마세요.

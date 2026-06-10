@@ -6,7 +6,7 @@ from agent.trading_agent import TradingAgent
 from models.trade_result import TradeResult
 from strategy.signal import TradeSignal
 from trading.enums import Market, OrderSide, OrderType, SignalAction
-from trading.models import AccountBalance, Candle, CurrentPrice, HoldingInfo, OrderRequest, OrderResult
+from trading.models import AccountBalance, Candle, CurrentPrice, HoldingInfo, MCPResponse, OrderRequest, OrderResult
 from util.time_util import now_kst
 
 
@@ -91,6 +91,46 @@ async def test_trading_agent_fetches_market_data_via_broker_adapter() -> None:
         ("daily", "005930", 60),
         ("intraday", "005930", "5"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_trading_agent_fetches_horizon_sized_daily_candles() -> None:
+    adapter = FakeBrokerAdapter()
+    agent = TradingAgent(broker_adapter=adapter)
+
+    await agent._fetch_symbol_market_data("005930", daily_count=240)
+
+    assert ("daily", "005930", 240) in adapter.calls
+
+
+def test_trading_agent_prefers_mid_long_scan_hint_for_candidate_horizon() -> None:
+    agent = TradingAgent(broker_adapter=FakeBrokerAdapter())
+    price_resp = MCPResponse(success=True, data={"change_rate": 1.0})
+
+    horizon, source = agent._decide_candidate_horizon(
+        stock_info={"target_horizon_hint": "LONG"},
+        strategy_type="STABLE_SHORT",
+        price_resp=price_resp,
+        analysis={"confidence": 0.5},
+    )
+
+    assert horizon == "LONG"
+    assert source == "scan_profile"
+
+
+def test_trading_agent_does_not_force_short_hint_as_trade_horizon() -> None:
+    agent = TradingAgent(broker_adapter=FakeBrokerAdapter())
+    price_resp = MCPResponse(success=True, data={"change_rate": 1.0})
+
+    horizon, source = agent._decide_candidate_horizon(
+        stock_info={"target_horizon_hint": "SHORT"},
+        strategy_type="STABLE_SHORT",
+        price_resp=price_resp,
+        analysis={"confidence": 0.5},
+    )
+
+    assert horizon == "MID"
+    assert source == "trade_horizon_decider"
 
 
 class FakeTrendBrokerAdapter:

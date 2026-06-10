@@ -75,7 +75,18 @@ def _classify(key: str) -> tuple[str, PolicyScope | str, str, str]:
         return "order_submission", PolicyScope.ORDER_SUBMISSION, "high", "Can enable, disable, or route order submission."
     if key.startswith("ADMIN_"):
         return "admin_safety", "ADMIN", "medium", "Controls protected admin write confirmation behavior."
-    if key in {"SCHEDULER_ENABLED", "INTRADAY_RESCAN_INTERVAL_MIN"}:
+    if key in {
+        "SCHEDULER_ENABLED",
+        "INTRADAY_RESCAN_INTERVAL_MIN",
+        "HORIZON_SCAN_ENABLED",
+        "HORIZON_SCAN_MID_ENABLED",
+        "HORIZON_SCAN_MID_HOUR",
+        "HORIZON_SCAN_MID_MINUTE",
+        "HORIZON_SCAN_LONG_ENABLED",
+        "HORIZON_SCAN_LONG_DAY_OF_WEEK",
+        "HORIZON_SCAN_LONG_HOUR",
+        "HORIZON_SCAN_LONG_MINUTE",
+    }:
         return "scheduler", "SCHEDULER", "medium", "Controls cycle scheduling and scan cadence."
     if key in {"POST_LIQUIDATION_BUY_BLOCK_ENABLED", "DAY_TRADING_ONLY"}:
         return "session_safety", PolicyScope.ORDER_SUBMISSION, "high", "Controls end-of-day and session buy eligibility."
@@ -147,6 +158,14 @@ def _classify(key: str) -> tuple[str, PolicyScope | str, str, str]:
 
     if key.startswith("DETERMINISTIC_TIER1_FAST_GATE_") or key.startswith("TIER1_FAST_GATE_"):
         return "deterministic_tier1_fast_gate", PolicyScope.CANDIDATE, "medium", "Controls pre-LLM Tier1 skip decisions."
+
+    if (
+        key.startswith("SCANNER_")
+        or key.startswith("HORIZON_SHORT_")
+        or key.startswith("HORIZON_MID_")
+        or key.startswith("HORIZON_LONG_")
+    ):
+        return "candidate_scoring", PolicyScope.CANDIDATE, "medium", "Controls horizon-specific pre-LLM candidate breadth, filters, and evidence windows."
 
     if key.startswith("TIER1_ANALYSIS_CACHE_") or key == "TIER1_LLM_TIMEOUT_SEC":
         return "tier1_analysis", PolicyScope.CANDIDATE, "medium", "Controls Tier1 analysis caching or timeout behavior."

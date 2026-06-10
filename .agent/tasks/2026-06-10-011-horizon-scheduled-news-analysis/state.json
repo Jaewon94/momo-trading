@@ -1,0 +1,37 @@
+{
+  "schema_version": "momo.task.v1",
+  "task_id": "2026-06-10-011-horizon-scheduled-news-analysis",
+  "status": "testing",
+  "title": "Horizon scheduled news-aware analysis",
+  "repo": "momo-trading",
+  "risk_level": "medium",
+  "task_type": "engineering",
+  "priority": "normal",
+  "primary_runtime": "codex",
+  "created_at": "2026-06-10T14:38:03+09:00",
+  "updated_at": "2026-06-10T15:10:42+09:00",
+  "approval": {
+    "required": false,
+    "status": "not_required"
+  },
+  "checks": {
+    "diff_check": "passed",
+    "py_compile": "passed",
+    "secret_scan": "passed",
+    "task_harness": "passed",
+    "markdown_links": "passed",
+    "docs_consistency": "passed",
+    "harness_tests": "passed",
+    "runtime_integrity": "failed"
+  },
+  "artifacts": {
+    "brief": ".agent/tasks/2026-06-10-011-horizon-scheduled-news-analysis/brief.md",
+    "state": ".agent/tasks/2026-06-10-011-horizon-scheduled-news-analysis/state.json",
+    "run_log": ".agent/tasks/2026-06-10-011-horizon-scheduled-news-analysis/run-log.json",
+    "test_plan": ".agent/tasks/2026-06-10-011-horizon-scheduled-news-analysis/test-plan.md",
+    "decision_record": ".agent/tasks/2026-06-10-011-horizon-scheduled-news-analysis/decision-record.md",
+    "quality_scorecard": ".agent/tasks/2026-06-10-011-horizon-scheduled-news-analysis/quality-scorecard.md",
+    "final_report": ".agent/tasks/2026-06-10-011-horizon-scheduled-news-analysis/final-report.md"
+  },
+  "errors": []
+}

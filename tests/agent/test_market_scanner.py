@@ -155,8 +155,9 @@ async def test_market_scanner_uses_broker_adapter_for_scan(monkeypatch) -> None:
     async def fake_cooldown_symbols() -> set[str]:
         return set()
 
-    async def fake_news_pressures(candidates) -> dict[str, float]:
+    async def fake_news_pressures(candidates, *, horizon=None) -> dict[str, float]:
         assert candidates
+        assert horizon == "SHORT"
         return {"005930": 0.1}
 
     monkeypatch.setattr("agent.market_scanner.activity_logger.log", fake_log)
@@ -169,8 +170,10 @@ async def test_market_scanner_uses_broker_adapter_for_scan(monkeypatch) -> None:
     result = await scanner.scan(cycle_id="cycle-1")
 
     assert result["provider"] == "fake-provider"
+    assert result["scan_horizon"] == "SHORT"
     assert result["available_cash"] == 900_000
     assert result["selected"][0]["symbol"] == "005930"
+    assert result["selected"][0]["target_horizon_hint"] == "SHORT"
     assert result["selected"][0]["change_rate"] == 1.2
     assert result["selected"][0]["scanner_score"] == result["scored_candidates"][0]["score"]
     assert result["scored_candidates"][0]["symbol"] == "005930"
@@ -241,7 +244,7 @@ async def test_market_scanner_filters_probation_overheat_and_adds_policy_candida
     async def fake_cooldown_symbols() -> set[str]:
         return set()
 
-    async def fake_news_pressures(candidates) -> dict[str, float]:
+    async def fake_news_pressures(candidates, *, horizon=None) -> dict[str, float]:
         return {}
 
     async def fake_consecutive_losses() -> int:
@@ -264,6 +267,7 @@ async def test_market_scanner_filters_probation_overheat_and_adds_policy_candida
     assert "BUY 후보 필수 조건: 전일대비 +2.00%~+10.00%" in captured_prompt["prompt"]
     assert [item["symbol"] for item in result["selected"]] == ["005930"]
     assert result["selected"][0]["strategy_type"] == "STABLE_SHORT"
+    assert result["selected"][0]["target_horizon_hint"] == "SHORT"
     assert result["selected"][0]["strategy_alignment"] == "DETERMINISTIC_FALLBACK"
     assert result["scanner_policy"]["probation_active"] is True
     assert "011000" not in [item["symbol"] for item in result["selected"]]
@@ -274,6 +278,66 @@ async def test_market_scanner_filters_probation_overheat_and_adds_policy_candida
     overheat = next(item for item in result["scored_candidates"] if item["symbol"] == "011000")
     assert overheat["policy_buy_eligible"] is False
     assert "POLICY_CHANGE_OVER_MAX" in overheat["reason_codes"]
+
+
+@pytest.mark.asyncio
+async def test_market_scanner_mid_horizon_uses_mid_policy(monkeypatch) -> None:
+    scanner = MarketScanner(broker_adapter=FakeScannerBrokerAdapter())
+    captured_prompt: dict[str, str] = {}
+    observed_news_horizon: list[str | None] = []
+
+    async def fake_log(*args, **kwargs) -> None:
+        return None
+
+    async def fake_record_event(**kwargs) -> None:
+        return None
+
+    async def fake_generate_tier1(*args, **kwargs) -> tuple[str, str]:
+        captured_prompt["prompt"] = args[0]
+        return (
+            """
+            {
+              "selected": [
+                {
+                  "symbol": "035720",
+                  "name": "카카오",
+                  "strategy_type": "STABLE_SHORT",
+                  "reason": "중기 거래량 회복",
+                  "direction": "BUY"
+                }
+              ],
+              "market_analysis": "중기 회복 후보 중심",
+              "market_regime": "SIDEWAYS"
+            }
+            """,
+            "fake-provider",
+        )
+
+    async def fake_performance_summary() -> str:
+        return "매매 이력 없음"
+
+    async def fake_cooldown_symbols() -> set[str]:
+        return set()
+
+    async def fake_news_pressures(candidates, *, horizon=None) -> dict[str, float]:
+        observed_news_horizon.append(horizon)
+        return {}
+
+    monkeypatch.setattr("agent.market_scanner.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.market_scanner.llm_factory.generate_tier1", fake_generate_tier1)
+    monkeypatch.setattr("agent.market_scanner.decision_event_service.record_event", fake_record_event)
+    monkeypatch.setattr(scanner, "_get_performance_summary", fake_performance_summary)
+    monkeypatch.setattr(scanner, "_get_recent_candidate_cooldown_symbols", fake_cooldown_symbols)
+    monkeypatch.setattr(scanner, "_get_candidate_news_pressures", fake_news_pressures)
+
+    result = await scanner.scan(cycle_id="cycle-mid", horizon="MID")
+
+    assert result["scan_horizon"] == "MID"
+    assert result["scanner_policy"]["max_candidates"] == 60
+    assert result["selected"][0]["target_horizon_hint"] == "MID"
+    assert result["selected"][0]["scan_horizon"] == "MID"
+    assert "스캔 호라이즌: MID" in captured_prompt["prompt"]
+    assert observed_news_horizon == ["MID"]
 
 
 def test_market_data_lookup_includes_raw_rank_rows() -> None:

@@ -20,6 +20,7 @@ class DeterministicPromptContextService:
         portfolio_snapshot: dict | None,
         market_regime: str,
         dynamic_limits: dict | None = None,
+        target_horizon: str | None = None,
     ) -> str:
         holding_symbols = [
             normalize_krx_symbol(item)
@@ -39,7 +40,9 @@ class DeterministicPromptContextService:
             f"- deterministic_stage: TIER1_PRECHECK",
             f"- strategy_type: {strategy_type}",
             "- strategy_semantics: STABLE_SHORT/AGGRESSIVE_SHORT are legacy execution/risk profile names, not target holding horizons.",
-            "- horizon_policy: Prefer MID/LONG decisions; SHORT is only for rare, high-confidence tactical momentum exceptions.",
+            "- horizon_policy: Respect target_horizon_hint when supplied; if unspecified, prefer MID/LONG unless a high-confidence tactical exception exists.",
+            f"- target_horizon_hint: {str(target_horizon or 'UNSPECIFIED').upper()}",
+            "- target_horizon_guidance: If MID/LONG is supplied, evaluate the thesis on that horizon rather than same-day scalp noise.",
             "- allowed_scan_action: For non-held KRX cash equities, evaluate BUY or HOLD only; SELL only applies to already-held positions.",
             f"- market_regime: {str(market_regime or 'UNKNOWN').upper()}",
             f"- is_holding: {is_holding}",
@@ -62,6 +65,7 @@ class DeterministicPromptContextService:
         dynamic_limits: dict | None = None,
         active_rules: dict | None = None,
         buying_power: dict | None = None,
+        target_horizon: str | None = None,
     ) -> str:
         active_rules = active_rules or {}
         validation_flags = active_rules.get("validation_flags", {})
@@ -92,7 +96,9 @@ class DeterministicPromptContextService:
             "- deterministic_stage: TIER2_PRECHECK",
             f"- strategy_type: {strategy_type}",
             "- strategy_semantics: STABLE_SHORT/AGGRESSIVE_SHORT are legacy execution/risk profile names, not target holding horizons.",
-            "- horizon_policy: Prefer MID/LONG decisions; SHORT is only for rare, high-confidence tactical momentum exceptions.",
+            "- horizon_policy: Respect target_horizon_hint when supplied; if unspecified, prefer MID/LONG unless a high-confidence tactical exception exists.",
+            f"- target_horizon_hint: {str(target_horizon or 'UNSPECIFIED').upper()}",
+            "- target_horizon_guidance: If MID/LONG is supplied, validate target, stop, and hold thesis on that horizon before approving.",
             "- allowed_scan_action: For non-held KRX cash equities, evaluate BUY or HOLD only; SELL only applies to already-held positions.",
             f"- market_regime: {str(market_regime or 'UNKNOWN').upper()}",
             f"- is_holding: {is_holding}",

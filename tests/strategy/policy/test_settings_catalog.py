@@ -32,6 +32,8 @@ def test_policy_settings_catalog_classifies_key_policy_owners() -> None:
             "CANDIDATE",
             "medium",
         ),
+        "HORIZON_SCAN_LONG_DAY_OF_WEEK": ("scheduler", "SCHEDULER", "medium"),
+        "HORIZON_MID_MAX_CANDIDATES": ("candidate_scoring", "CANDIDATE", "medium"),
         "NEWS_GATE_ROLLOUT_MODE": ("news_gate", "BUY", "medium"),
     }
 

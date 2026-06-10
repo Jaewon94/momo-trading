@@ -88,6 +88,48 @@ async def test_news_context_service_falls_back_to_domestic_name_match(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_news_context_service_uses_horizon_profile_window(monkeypatch):
+    from services.news_context_service import NewsContextService
+
+    monkeypatch.setattr("services.news_context_service.settings.HORIZON_MID_NEWS_LOOKBACK_HOURS", 168)
+    monkeypatch.setattr("services.news_context_service.settings.HORIZON_MID_NEWS_PROMPT_ITEMS", 5)
+    monkeypatch.setattr("services.news_context_service.settings.NEWS_MAX_ITEMS_PER_SYMBOL", 20)
+
+    async with TestAsyncSessionLocal() as session:
+        session.add(NewsItem(
+            source_code="KRX",
+            source_name="한국거래소",
+            source_tier="A",
+            region="KR",
+            official=True,
+            language="ko",
+            title="삼성전자 중기 공급계약 공시",
+            summary="중기 수주 모멘텀 점검",
+            published_at=now_kst() - timedelta(hours=100),
+            sentiment_label="POSITIVE",
+            sentiment_score=0.8,
+            impact_score=0.8,
+            trust_score=0.95,
+            symbols_csv=",005930,",
+            dedupe_hash="news-context-mid-horizon-1",
+        ))
+        await session.commit()
+
+        result = await NewsContextService().build_for_symbol(
+            session,
+            symbol="005930",
+            name="삼성전자",
+            horizon="MID",
+        )
+
+    assert result["available"] is True
+    assert result["horizon"] == "MID"
+    assert result["lookback_hours"] == 168
+    assert "### MID 뉴스 보조 컨텍스트" in result["prompt"]
+    assert "최근 168시간" in result["prompt"]
+
+
+@pytest.mark.asyncio
 async def test_news_context_service_returns_neutral_prompt_without_recent_news(monkeypatch):
     from services.news_context_service import NewsContextService
 

@@ -567,7 +567,7 @@ async def test_scheduler_on_startup_schedules_post_market_check_outside_trading_
     )
 
 
-def test_scheduler_setup_jobs_registers_expected_job_ids() -> None:
+def test_scheduler_setup_jobs_registers_expected_job_ids(monkeypatch) -> None:
     scheduler = TradingScheduler()
     job_ids: list[str] = []
 
@@ -576,6 +576,9 @@ def test_scheduler_setup_jobs_registers_expected_job_ids() -> None:
             job_ids.append(kwargs["id"])
 
     scheduler.scheduler = FakeScheduler()
+    monkeypatch.setattr("scheduler.scheduler.settings.HORIZON_SCAN_ENABLED", True)
+    monkeypatch.setattr("scheduler.scheduler.settings.HORIZON_SCAN_MID_ENABLED", True)
+    monkeypatch.setattr("scheduler.scheduler.settings.HORIZON_SCAN_LONG_ENABLED", True)
 
     scheduler._setup_jobs()
 
@@ -584,6 +587,8 @@ def test_scheduler_setup_jobs_registers_expected_job_ids() -> None:
         "market_open_scan",
         "intraday_rescan",
         "intraday_rescan_interval",
+        "horizon_mid_scan",
+        "horizon_long_scan",
         "news_poll_trading",
         "news_poll_off_hours",
         "news_translation_backfill",
@@ -1506,6 +1511,38 @@ async def test_intraday_rescan_refreshes_subscriptions_when_new_symbols_exist(mo
         ("000660", "KRX", "NEW_CANDIDATE"),
         ("035720", "KRX", "HELD_POSITION"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_mid_horizon_scan_passes_mid_horizon_and_refreshes_subscriptions(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    observed: dict[str, object] = {}
+
+    async def fake_log(*args, **kwargs) -> None:
+        return None
+
+    async def fake_run_cycle(*, scan_horizon=None, **_kwargs) -> dict:
+        observed["scan_horizon"] = scan_horizon
+        return {"selected_symbols": [("005930", "KRX")], "analyzed": 1, "executed": 0}
+
+    async def fake_get_holdings() -> list:
+        return [SimpleNamespace(symbol="000660")]
+
+    async def fake_update_subscriptions(symbols) -> None:
+        observed["subscription_count"] = len(symbols)
+
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_holiday", lambda: False)
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.trading_agent.trading_agent.run_cycle", fake_run_cycle)
+    monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
+    monkeypatch.setattr("realtime.stream_manager.stream_manager.update_subscriptions", fake_update_subscriptions)
+
+    await scheduler._mid_horizon_scan()
+
+    assert observed["scan_horizon"] == TradeHorizon.MID
+    assert observed["subscription_count"] == 2
 
 
 @pytest.mark.asyncio

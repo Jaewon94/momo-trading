@@ -35,6 +35,7 @@ from services.tier1_analysis_cache_service import tier1_analysis_cache_service
 from strategy.aggressive_short import AggressiveShortStrategy
 from strategy.base import strategy_profile_metadata
 from strategy.exposure_policy import ExposureAlignmentDecision, resolve_aggressive_exposure_alignment
+from strategy.horizon_scan_policy import horizon_scan_profile, normalize_scan_horizon
 from strategy.policy.engine import TradingPolicyEngine
 from strategy.policy.trace import (
     with_policy_trace,
@@ -331,6 +332,7 @@ class TradingAgent:
         self,
         manual_provider_override: str | None = None,
         manual_model_override: str | None = None,
+        scan_horizon: str | None = None,
     ) -> dict:
         """에이전트 1회 실행 사이클 — 장중이면 매매, 장외면 리뷰"""
         if runtime_reconfiguration_service.is_reconfiguring():
@@ -358,10 +360,13 @@ class TradingAgent:
                         )
                         self._last_cycle_time = now_kst()
                         return {"skipped": True, "reason": "buy_cutoff"}
-                return await self._run_trading_cycle(
-                    manual_provider_override=manual_provider_override,
-                    manual_model_override=manual_model_override,
-                )
+                trading_cycle_kwargs = {
+                    "manual_provider_override": manual_provider_override,
+                    "manual_model_override": manual_model_override,
+                }
+                if scan_horizon is not None:
+                    trading_cycle_kwargs["scan_horizon"] = scan_horizon
+                return await self._run_trading_cycle(**trading_cycle_kwargs)
             else:
                 return await self._run_after_hours_cycle(
                     manual_provider_override=manual_provider_override,
@@ -396,25 +401,36 @@ class TradingAgent:
         self,
         manual_provider_override: str | None = None,
         manual_model_override: str | None = None,
+        scan_horizon: str | None = None,
     ) -> dict:
         """장중 사이클: 스캔 → 분석 → 매매"""
+        scan_horizon_key = normalize_scan_horizon(scan_horizon)
+        scan_profile = horizon_scan_profile(scan_horizon_key)
         # 사용 중인 provider가 Claude인 경우 세션 시작, 아니면 no-op
         llm_factory.start_session()
 
         cycle_id = activity_logger.start_cycle()
         cycle_timer = activity_logger.timer()
 
-        logger.info("=== Agent 장중 사이클 시작 ===")
+        logger.info("=== Agent 장중 사이클 시작 ({}) ===", scan_profile.label)
         await event_bus.publish(Event(
             type=EventType.AGENT_CYCLE_START, source="trading_agent",
         ))
         await activity_logger.log(
             ActivityType.CYCLE, ActivityPhase.START,
-            "\U0001f504 장중 매매 사이클 시작",
+            f"\U0001f504 장중 매매 사이클 시작 ({scan_horizon_key})",
             cycle_id=cycle_id,
         )
 
-        results = {"scanned": 0, "analyzed": 0, "signals": 0, "executed": 0, "selected_symbols": []}
+        results = {
+            "scan_horizon": scan_horizon_key,
+            "scan_horizon_label": scan_profile.label,
+            "scanned": 0,
+            "analyzed": 0,
+            "signals": 0,
+            "executed": 0,
+            "selected_symbols": [],
+        }
 
         # AI 자율 한도 결정
         dynamic_limits = None
@@ -474,7 +490,11 @@ class TradingAgent:
                 )
 
             # 1. 시장 스캔 + 종목 선별 (통합 1회 LLM 호출)
-            scan_result = await market_scanner.scan(cycle_id=cycle_id, dynamic_limits=dynamic_limits)
+            scan_result = await market_scanner.scan(
+                cycle_id=cycle_id,
+                dynamic_limits=dynamic_limits,
+                horizon=scan_horizon_key,
+            )
             candidates = scan_result.get("selected", [])
             results["scanned"] = len(candidates)
 
@@ -623,11 +643,13 @@ class TradingAgent:
     async def _fetch_symbol_market_data(
         self,
         symbol: str,
+        daily_count: int = 60,
     ) -> tuple[MCPResponse, MCPResponse, MCPResponse]:
         """브로커 어댑터를 통해 종목 분석용 시세/차트 데이터를 조회한다."""
+        resolved_daily_count = max(int(daily_count or 60), 20)
         quote_result, daily_result, minute_result = await asyncio.gather(
             self._broker_adapter.get_current_price(symbol, Market.KRX),
-            self._broker_adapter.get_daily_candles(symbol, count=60, market=Market.KRX),
+            self._broker_adapter.get_daily_candles(symbol, count=resolved_daily_count, market=Market.KRX),
             self._broker_adapter.get_intraday_candles(symbol, interval="5", market=Market.KRX),
             return_exceptions=True,
         )
@@ -757,6 +779,40 @@ class TradingAgent:
             )
         return order_result
 
+    @staticmethod
+    def _target_horizon_hint(stock_info: dict) -> str | None:
+        """Return scanner-supplied target horizon only when a candidate explicitly has one."""
+        raw = (
+            stock_info.get("target_horizon_hint")
+            or stock_info.get("scan_horizon")
+            or stock_info.get("target_horizon")
+        )
+        if raw is None or str(raw).strip() == "":
+            return None
+        return normalize_scan_horizon(str(raw))
+
+    def _decide_candidate_horizon(
+        self,
+        *,
+        stock_info: dict,
+        strategy_type: str,
+        price_resp: MCPResponse,
+        analysis: dict,
+    ) -> tuple[str, str]:
+        """Use MID/LONG scanner intent when explicit; otherwise keep the existing horizon decider."""
+        hinted_horizon = self._target_horizon_hint(stock_info)
+        if hinted_horizon in {TradeHorizon.MID, TradeHorizon.LONG}:
+            return hinted_horizon, "scan_profile"
+
+        decided = decide_trade_horizon(
+            strategy_type=strategy_type,
+            trigger=str(stock_info.get("trigger", "")),
+            change_rate=float(price_resp.data.get("change_rate", 0.0) if price_resp.data else 0.0),
+            confidence=float(analysis.get("confidence", 0.0) or 0.0),
+            market_regime=self._market_regime,
+        )
+        return decided, "trade_horizon_decider"
+
     async def _analyze_and_trade(
         self, stock_info: dict, cycle_id: str,
         dynamic_limits: dict | None = None,
@@ -770,6 +826,9 @@ class TradingAgent:
         symbol = stock_info.get("symbol", "")
         name = stock_info.get("name", symbol)
         strategy_type = stock_info.get("strategy_type", "STABLE_SHORT")
+        target_horizon_hint = self._target_horizon_hint(stock_info)
+        analysis_horizon = target_horizon_hint or TradeHorizon.SHORT
+        analysis_horizon_profile = horizon_scan_profile(analysis_horizon)
 
         # 종목명 캐시 갱신
         if symbol and name and name != symbol:
@@ -822,7 +881,13 @@ class TradingAgent:
         except Exception:
             pass
 
-        price_resp, daily_resp, minute_resp = await self._fetch_symbol_market_data(symbol)
+        if analysis_horizon_profile.daily_candle_count == 60:
+            price_resp, daily_resp, minute_resp = await self._fetch_symbol_market_data(symbol)
+        else:
+            price_resp, daily_resp, minute_resp = await self._fetch_symbol_market_data(
+                symbol,
+                daily_count=analysis_horizon_profile.daily_candle_count,
+            )
 
         current_price = 0
         if price_resp.success and price_resp.data:
@@ -1008,13 +1073,19 @@ class TradingAgent:
             logger.warning("피드백 컨텍스트 빌드 실패: {}", str(e))
 
         news_context_payload: dict = {}
-        news_context_text = "### 최근 뉴스 보조 컨텍스트\n- 뉴스 컨텍스트 조회 전. 뉴스는 중립으로 간주하세요."
+        news_context_text = (
+            f"### {analysis_horizon} 뉴스 보조 컨텍스트\n"
+            "- 뉴스 컨텍스트 조회 전. 뉴스는 중립으로 간주하세요."
+        )
         try:
             async with AsyncSessionLocal() as session:
                 news_context_payload = await news_context_service.build_for_symbol(
                     session,
                     symbol=symbol,
                     name=name,
+                    horizon=analysis_horizon,
+                    max_items=analysis_horizon_profile.news_prompt_items,
+                    lookback_hours=analysis_horizon_profile.news_lookback_hours,
                 )
                 news_context_text = str(news_context_payload.get("prompt") or news_context_text)
         except Exception as e:
@@ -1026,7 +1097,7 @@ class TradingAgent:
                 "items": [],
             }
             news_context_text = (
-                "### 최근 뉴스 보조 컨텍스트\n"
+                f"### {analysis_horizon} 뉴스 보조 컨텍스트\n"
                 "- 뉴스 컨텍스트 조회 실패. 뉴스는 중립으로 간주하고 차트/수급 중심으로 판단하세요."
             )
 
@@ -1080,23 +1151,28 @@ class TradingAgent:
             )
 
             analysis = await self._tier1_analysis(
-                symbol, name, current_price, chart_result,
-            price_resp.data or {}, feedback_context,
-            market_context=self._market_context,
-            trading_context=self._trading_context,
-            news_context=news_context_text,
-            deterministic_context=deterministic_prompt_context_service.build_tier1_context(
-                symbol=symbol,
-                strategy_type=strategy_type,
-                current_price=current_price,
-                chart_result=chart_result,
-                portfolio_snapshot=portfolio_snapshot,
-                market_regime=self._market_regime,
-                dynamic_limits=dynamic_limits,
-            ),
-            cycle_id=cycle_id,
-            manual_provider_override=manual_provider_override,
-            manual_model_override=manual_model_override,
+                symbol,
+                name,
+                current_price,
+                chart_result,
+                price_resp.data or {},
+                feedback_context,
+                market_context=self._market_context,
+                trading_context=self._trading_context,
+                news_context=news_context_text,
+                deterministic_context=deterministic_prompt_context_service.build_tier1_context(
+                    symbol=symbol,
+                    strategy_type=strategy_type,
+                    current_price=current_price,
+                    chart_result=chart_result,
+                    portfolio_snapshot=portfolio_snapshot,
+                    market_regime=self._market_regime,
+                    dynamic_limits=dynamic_limits,
+                    target_horizon=target_horizon_hint,
+                ),
+                cycle_id=cycle_id,
+                manual_provider_override=manual_provider_override,
+                manual_model_override=manual_model_override,
             )
             t1_elapsed = activity_logger.elapsed_ms(t1_timer)
             if cache_allowed:
@@ -1310,6 +1386,7 @@ class TradingAgent:
                 confidence=analysis.get("confidence"),
                 metadata={
                     **final_gate.detail,
+                    "target_horizon_hint": target_horizon_hint,
                     "policy_trace": with_policy_trace({}, final_gate_policy)["policy_trace"],
                     "tier1_analysis": {
                         "recommendation": analysis.get("recommendation"),
@@ -1322,12 +1399,11 @@ class TradingAgent:
             return result
 
         if analysis.get("recommendation") == "BUY":
-            pre_horizon = decide_trade_horizon(
+            pre_horizon, pre_horizon_source = self._decide_candidate_horizon(
+                stock_info=stock_info,
                 strategy_type=strategy_type,
-                trigger=str(stock_info.get("trigger", "")),
-                change_rate=float(price_resp.data.get("change_rate", 0.0) if price_resp.data else 0.0),
-                confidence=float(analysis.get("confidence", 0.0) or 0.0),
-                market_regime=self._market_regime,
+                price_resp=price_resp,
+                analysis=analysis,
             )
             tier1_cost_eval = self.policy_engine.evaluate_tier1_cost_gate(
                 analysis=analysis,
@@ -1364,6 +1440,8 @@ class TradingAgent:
                     confidence=analysis.get("confidence"),
                     metadata={
                         **tier1_cost_gate,
+                        "target_horizon_hint": target_horizon_hint,
+                        "horizon_decision_source": pre_horizon_source,
                         "policy_trace": with_policy_trace({}, tier1_cost_policy)["policy_trace"],
                         "tier1_analysis": {
                             "recommendation": analysis.get("recommendation"),
@@ -1382,12 +1460,11 @@ class TradingAgent:
             f"\U0001f9e0 [{name}] Tier2 최종 검토 시작",
             cycle_id=cycle_id, symbol=symbol,
         )
-        projected_horizon = decide_trade_horizon(
+        projected_horizon, horizon_decision_source = self._decide_candidate_horizon(
+            stock_info=stock_info,
             strategy_type=strategy_type,
-            trigger=str(stock_info.get("trigger", "")),
-            change_rate=float(price_resp.data.get("change_rate", 0.0) if price_resp.data else 0.0),
-            confidence=float(analysis.get("confidence", 0.0) or 0.0),
-            market_regime=self._market_regime,
+            price_resp=price_resp,
+            analysis=analysis,
         )
 
         final = await self._tier2_review(
@@ -1410,6 +1487,7 @@ class TradingAgent:
                 dynamic_limits=dynamic_limits,
                 active_rules=self._active_trading_rules,
                 buying_power=stock_info.get("_buying_power"),
+                target_horizon=target_horizon_hint,
             ),
             cycle_id=cycle_id,
             manual_provider_override=manual_provider_override,
@@ -1441,6 +1519,9 @@ class TradingAgent:
                 "suggested_quantity": final.get("suggested_quantity"),
                 "entry_price": final.get("entry_price"),
                 "target_price": final.get("target_price"),
+                "trade_horizon": projected_horizon,
+                "target_horizon_hint": target_horizon_hint,
+                "horizon_decision_source": horizon_decision_source,
             },
             llm_provider=final.get("provider"),
             llm_tier="TIER2",
@@ -1468,6 +1549,9 @@ class TradingAgent:
 
             metadata = strategy_profile_metadata(strategy_type)
             metadata["trade_horizon"] = trade_horizon
+            metadata["scan_horizon"] = stock_info.get("scan_horizon") or target_horizon_hint
+            metadata["target_horizon_hint"] = target_horizon_hint
+            metadata["horizon_decision_source"] = horizon_decision_source
             signal = TradeSignal(
                 symbol=symbol,
                 stock_id=stock_info.get("stock_id", ""),
@@ -1500,6 +1584,8 @@ class TradingAgent:
                 "symbol": symbol,
                 "stock_id": stock_info.get("stock_id", ""),
                 "current_price": current_price,
+                "target_horizon_hint": target_horizon_hint,
+                "horizon_decision_source": horizon_decision_source,
             }
 
             if not strategy:
@@ -1523,6 +1609,7 @@ class TradingAgent:
             )
 
             # Tier 2에서 제안한 값이 있으면 적용
+            signal.metadata = signal.metadata or {}
             if final.get("suggested_quantity"):
                 signal.suggested_quantity = final["suggested_quantity"]
             if final.get("entry_price"):
@@ -1533,6 +1620,9 @@ class TradingAgent:
                 signal.stop_loss_price = final["stop_loss_price"]
             if "trade_horizon" not in signal.metadata:
                 signal.metadata["trade_horizon"] = projected_horizon
+            signal.metadata.setdefault("scan_horizon", stock_info.get("scan_horizon") or target_horizon_hint)
+            signal.metadata.setdefault("target_horizon_hint", target_horizon_hint)
+            signal.metadata.setdefault("horizon_decision_source", horizon_decision_source)
             if signal.action == SignalAction.BUY and signal.suggested_price:
                 trade_horizon = str(signal.metadata.get("trade_horizon") or projected_horizon)
                 if not final.get("stop_loss_price"):
@@ -1802,6 +1892,9 @@ class TradingAgent:
             "strategy_type": strategy_type,
             **strategy_profile_metadata(strategy_type),
             "stock_name": name,
+            "scan_horizon": stock_info.get("scan_horizon"),
+            "target_horizon_hint": target_horizon_hint,
+            "horizon_decision_source": (signal.metadata or {}).get("horizon_decision_source"),
             "trade_horizon": (signal.metadata or {}).get("trade_horizon"),
             "chart_signal_direction": (chart_result.signal_summary or {}).get("direction"),
             "chart_signal_confidence": (chart_result.signal_summary or {}).get("confidence"),
@@ -1815,6 +1908,8 @@ class TradingAgent:
             "news_threshold": news_gate.get("threshold") if news_gate else None,
             "news_top_contributors": (news_gate.get("contributors") or [])[:3] if news_gate else None,
             "news_context_available": bool(news_context_payload.get("available")),
+            "news_context_horizon": news_context_payload.get("horizon"),
+            "news_context_lookback_hours": news_context_payload.get("lookback_hours"),
             "news_context_match_source": news_context_payload.get("match_source"),
             "news_context_tone": news_context_payload.get("tone"),
             "news_context_negative_pressure": news_context_payload.get("negative_pressure"),

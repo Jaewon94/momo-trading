@@ -51,7 +51,13 @@ POLICY_REGISTRY: tuple[PolicyRegistryEntry, ...] = (
         priority=8,
         scope="SESSION",
         description="Scheduler enabled/running state and recurring job controls.",
-        settings=("SCHEDULER_ENABLED",),
+        settings=(
+            "SCHEDULER_ENABLED",
+            "INTRADAY_RESCAN_INTERVAL_MIN",
+            "HORIZON_SCAN_ENABLED",
+            "HORIZON_SCAN_MID_HOUR",
+            "HORIZON_SCAN_LONG_DAY_OF_WEEK",
+        ),
         required_tests=("tests/scheduler/test_scheduler_runtime_paths.py",),
     ),
     PolicyRegistryEntry(
@@ -59,8 +65,19 @@ POLICY_REGISTRY: tuple[PolicyRegistryEntry, ...] = (
         priority=10,
         scope=PolicyScope.CANDIDATE,
         description="Scanner candidate breadth, ranking, and selected-symbol evidence.",
-        settings=("SCANNER_MAX_CANDIDATES",),
-        required_tests=("tests/services/test_candidate_scoring_service.py",),
+        settings=(
+            "SCANNER_MAX_CANDIDATES",
+            "HORIZON_SHORT_MAX_CANDIDATES",
+            "HORIZON_MID_MAX_CANDIDATES",
+            "HORIZON_LONG_MAX_CANDIDATES",
+            "HORIZON_MID_NEWS_LOOKBACK_HOURS",
+            "HORIZON_LONG_DAILY_CANDLE_COUNT",
+        ),
+        required_tests=(
+            "tests/strategy/test_horizon_scan_policy.py",
+            "tests/services/test_candidate_scoring_service.py",
+            "tests/agent/test_market_scanner.py",
+        ),
     ),
     PolicyRegistryEntry(
         owner="pre_analysis_gate",
@@ -123,8 +140,8 @@ POLICY_REGISTRY: tuple[PolicyRegistryEntry, ...] = (
         priority=56,
         scope=PolicyScope.CANDIDATE,
         description="News polling, enrichment, runtime health, and prompt context evidence.",
-        settings=("NEWS_POLL_ENABLED", "NEWS_CONTEXT_LOOKBACK_HOURS"),
-        required_tests=("tests/services/test_news_signal_service.py",),
+        settings=("NEWS_POLL_ENABLED", "NEWS_LOOKBACK_HOURS"),
+        required_tests=("tests/services/test_news_signal_service.py", "tests/services/test_news_context_service.py"),
     ),
     PolicyRegistryEntry(
         owner="exposure_alignment",
