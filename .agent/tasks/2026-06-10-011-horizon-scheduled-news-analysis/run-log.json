@@ -61,6 +61,30 @@
       "type": "final_report",
       "status": "completed",
       "summary": "Code implementation and test verification completed; restart deferred because runtime integrity is failing."
+    },
+    {
+      "at": "2026-06-10T15:48:01+09:00",
+      "type": "post_restart_revalidation",
+      "status": "fixed",
+      "summary": "Post-restart review found Tier1 stock analysis system prompt was still MID/LONG-centric; changed it to respect target_horizon_hint for SHORT/MID/LONG."
+    },
+    {
+      "at": "2026-06-10T15:50:00+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T15:50:09+09:00",
+      "type": "final_revalidation",
+      "status": "completed",
+      "summary": "Final focused tests, admin/policy tests, py_compile, task harness, health check, and settings verification completed; runtime integrity still fails on the pre-existing stale pending order."
+    },
+    {
+      "at": "2026-06-10T15:50:32+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
     }
   ]
 }

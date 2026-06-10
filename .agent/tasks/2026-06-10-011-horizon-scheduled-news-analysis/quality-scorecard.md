@@ -8,7 +8,7 @@
 ## Implementation Quality
 
 - Status: pass
-- Notes: Horizon-specific scan profiles are centralized in `strategy/horizon_scan_policy.py`; existing policy/risk/order path remains authoritative.
+- Notes: Horizon-specific scan profiles are centralized in `strategy/horizon_scan_policy.py`; existing policy/risk/order path remains authoritative. Post-restart review also corrected the Tier1 stock analysis prompt so SHORT/MID/LONG candidates respect `target_horizon_hint`.
 
 ## Test Quality
 
@@ -18,4 +18,4 @@
 ## Operational Safety
 
 - Status: partial
-- Notes: No broker reset, runtime DB mutation, migration, or production order action was run. Runtime integrity check failed with one stale DB pending order missing from broker open buys while trading is `FULL`/`AUTONOMOUS`, so restart is deferred.
+- Notes: No broker reset, runtime DB mutation, forced migration, or production order action was run. Restart was performed after explicit user request. Runtime integrity still fails with one stale DB pending order missing from broker open buys while trading is `FULL`/`AUTONOMOUS`.

@@ -1,14 +1,16 @@
 """Tier 1: fast stock analysis prompt with structured output."""
 
-STOCK_ANALYSIS_SYSTEM = """당신은 한국 주식 시장 중기/장기 스윙 중심 애널리스트입니다.
+STOCK_ANALYSIS_SYSTEM = """당신은 한국 주식 시장 호라이즌별 트레이딩 애널리스트입니다.
 주어진 데이터만을 근거로 분석하며, 데이터에 없는 정보는 추측하지 않습니다.
 
 ## 판단 프레임워크
 - 추세/시그널, 거래량, 리스크:보상, 뉴스 리스크, 과거 피드백을 빠르게 종합하세요.
 - 내부 추론을 길게 쓰지 말고, 최종 JSON만 간결하게 출력하세요.
 - BULL/THEME 국면은 리스크:보상 1.3:1 이상, SIDEWAYS/BEAR 국면은 1.5:1 이상을 선호하세요.
-- 기본 판단은 MID/LONG 보유 가능성을 우선하고, SHORT 전술 진입은 강한 모멘텀과 명확한 손절/익절 계획이 있는 예외로만 다루세요.
-- 호라이즌 의미: SHORT=전술/인트라데이 예외, MID=며칠~수주 스윙, LONG=수주 이상 포지션입니다.
+- Deterministic 사전 판단의 target_horizon_hint가 SHORT/MID/LONG으로 제공되면 해당 호라이즌을 우선하세요.
+- target_horizon_hint가 UNSPECIFIED이면 MID/LONG 보유 가능성을 우선하고, SHORT 전술 진입은 강한 모멘텀과 명확한 손절/익절 계획이 있는 예외로만 다루세요.
+- 호라이즌 의미: SHORT=전술/인트라데이, MID=며칠~수주 스윙, LONG=수주 이상 포지션입니다.
+- SHORT 후보는 장중 유동성, 거래량, 최근 뉴스 리스크, 빠른 손절/익절 계획을 엄격히 검증하세요.
 - MID/LONG 후보는 당일 몇 시간짜리 수익실현이 아니라, 일봉 추세·거래량 지속·테마/뉴스 논거가 며칠 이상 유지될 수 있는지 평가하세요.
 
 ## 과매수 재해석 원칙
@@ -53,7 +55,7 @@ STOCK_ANALYSIS_PROMPT = """## 종목 분석 요청: {stock_name} ({symbol})
 ### 차트 패턴
 {chart_patterns}
 
-### 최근 일봉 데이터 (최근 20일)
+### 최근 일봉/추세 데이터
 {daily_data}
 
 ### 재무 정보 (있는 경우)

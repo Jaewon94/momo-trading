@@ -14,6 +14,7 @@
 - 뉴스 컨텍스트는 horizon별 lookback과 prompt item 수를 사용한다. 기본값은 SHORT 24시간, MID 7일, LONG 30일이다.
 - TradingAgent 분석 경로에 `target_horizon_hint`를 전달해 중기/장기 후보가 단기 기준으로 과도하게 재분류되지 않도록 했다.
 - SHORT 스캔에 남아 있던 기존 중장기 편향 문구를 제거하고, SHORT/MID/LONG별 운용 방향이 각각 다르게 전달되도록 고쳤다.
+- 재시작 후 재검증에서 Tier1 주식 분석 시스템 프롬프트가 여전히 중기/장기 중심으로 고정된 문제를 발견했고, `target_horizon_hint`가 있으면 SHORT/MID/LONG 해당 호라이즌을 우선하도록 수정했다.
 - 런타임 설정, 정책 레지스트리, 설정 카탈로그, `.env.example`, 아키텍처 문서를 함께 갱신했다.
 
 ## Verification
@@ -33,6 +34,9 @@ Focused test results:
 - `189 passed in 34.78s`
 - `18 passed in 1.34s`
 - `4 passed in 0.65s`
+- `65 passed in 1.25s`
+- Final post-fix run: `190 passed in 24.32s`
+- Final admin/settings/policy run: `22 passed in 1.18s`
 
 Task harness note:
 
@@ -64,4 +68,15 @@ Result: failed.
 
 ## Restart Status
 
-재시작하지 않았다. 현재 서비스가 `FULL`/`AUTONOMOUS` 상태이고 주문 정합성 검증이 실패했기 때문에, 재시작은 stale pending-order 정리 또는 명시적 위험 수용 이후에 진행해야 한다.
+재시작 완료. 처음 백그라운드 `nohup` 방식은 PID가 유지되지 않아 API가 내려갔고, 이후 `tmux` 세션에서 포그라운드 실행 방식으로 다시 기동했다.
+
+현재 확인 상태:
+
+- health: healthy
+- scheduler: running
+- agent: running
+- 새 스케줄 등록: 중기 호라이즌 일일 스캔, 장기 호라이즌 주간 스캔
+- market_session: NXT 애프터마켓
+- market_session_auto_trading: false
+
+다만 runtime integrity는 계속 실패한다. stale pending-order 정리 또는 별도 운영 복구가 필요하다.
