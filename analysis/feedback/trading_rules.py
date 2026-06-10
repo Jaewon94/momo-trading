@@ -14,8 +14,8 @@ from util.time_util import now_kst
 # ──────────────────────────────────────────────
 SAFETY_BOUNDS: dict[str, tuple[float, float]] = {
     "min_confidence": (0.50, 0.75),
-    "stop_loss_pct": (-8.0, -1.0),
-    "take_profit_pct": (2.0, 15.0),
+    "stop_loss_pct": (-12.0, -1.0),
+    "take_profit_pct": (2.0, 20.0),
     "rr_floor": (0.8, 3.0),
     # 토글 (0=off, 1=on)
     "revalidate_rr_ratio": (0.0, 1.0),

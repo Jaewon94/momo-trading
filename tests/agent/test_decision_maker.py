@@ -930,6 +930,96 @@ def test_decision_maker_marks_remaining_lot_after_partial_take_profit() -> None:
     assert "PARTIAL_TAKE_PROFIT_DONE" in open_buy.notes
 
 
+def test_decision_maker_marks_remaining_lot_after_partial_stop_loss() -> None:
+    open_buy = FakeTradeResultRecord(
+        id="buy-1",
+        stock_symbol="005930",
+        stock_name="삼성전자",
+        side="BUY",
+        strategy_type="MOMENTUM",
+        entry_price=70_000,
+        quantity=10,
+        entry_at=datetime(2026, 5, 5, 9, 30),
+        exit_price=0.0,
+        pnl=0.0,
+        return_pct=0.0,
+        is_win=False,
+        hold_days=0,
+        exit_reason="",
+        exit_at=None,
+        notes='{"trade_horizon":"MID"}',
+    )
+
+    result = DecisionMaker._apply_sell_fill_to_open_buys(
+        FakeSession(),
+        [open_buy],
+        symbol="005930",
+        filled_qty=5,
+        filled_price=65_000,
+        exit_reason="PARTIAL_STOP_LOSS",
+        closed_at=datetime(2026, 5, 5, 10, 30),
+    )
+
+    assert result["partial_exit"] is True
+    assert result["applied_quantity"] == 5
+    assert open_buy.quantity == 5
+    assert "PARTIAL_STOP_LOSS_DONE" in open_buy.notes
+
+
+def test_decision_maker_marks_remaining_lot_when_partial_fill_closes_first_lot_exactly() -> None:
+    first = FakeTradeResultRecord(
+        id="buy-1",
+        stock_symbol="005930",
+        stock_name="삼성전자",
+        side="BUY",
+        strategy_type="MOMENTUM",
+        entry_price=70_000,
+        quantity=5,
+        entry_at=datetime(2026, 5, 5, 9, 30),
+        exit_price=0.0,
+        pnl=0.0,
+        return_pct=0.0,
+        is_win=False,
+        hold_days=0,
+        exit_reason="",
+        exit_at=None,
+        notes='{"trade_horizon":"MID"}',
+    )
+    second = FakeTradeResultRecord(
+        id="buy-2",
+        stock_symbol="005930",
+        stock_name="삼성전자",
+        side="BUY",
+        strategy_type="MOMENTUM",
+        entry_price=71_000,
+        quantity=5,
+        entry_at=datetime(2026, 5, 5, 9, 45),
+        exit_price=0.0,
+        pnl=0.0,
+        return_pct=0.0,
+        is_win=False,
+        hold_days=0,
+        exit_reason="",
+        exit_at=None,
+        notes='{"trade_horizon":"MID"}',
+    )
+
+    result = DecisionMaker._apply_sell_fill_to_open_buys(
+        FakeSession(),
+        [first, second],
+        symbol="005930",
+        filled_qty=5,
+        filled_price=65_000,
+        exit_reason="PARTIAL_STOP_LOSS",
+        closed_at=datetime(2026, 5, 5, 10, 30),
+    )
+
+    assert result["partial_exit"] is True
+    assert first.exit_reason == "PARTIAL_STOP_LOSS"
+    assert second.exit_at is None
+    assert "PARTIAL_STOP_LOSS_DONE" in second.notes
+
+
 @pytest.mark.asyncio
 async def test_decision_maker_adjusts_sell_fill_when_broker_holding_disappeared() -> None:
     adapter = FakeBrokerAdapter(OrderResult(success=True, order_id="ORD-SELL", message="ok"))

@@ -313,6 +313,90 @@
       "type": "verification_run",
       "status": "passed",
       "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T08:31:41+09:00",
+      "type": "implementation",
+      "status": "completed",
+      "summary": "Investigated why MID positions could sell after 180 minutes. External sources and local logs indicate 180 minutes is an intraday trading guard, not a medium-horizon contract. Updating MID/LONG non-protective exit guards to 1440/2880 minutes while preserving hard stop-loss and broker safety controls."
+    },
+    {
+      "at": "2026-06-10T08:34:20+09:00",
+      "type": "verification",
+      "status": "passed",
+      "summary": ".venv313/bin/python -m pytest tests/strategy/test_position_exit_policy.py tests/analysis/test_holdings_review_prompt.py tests/api/test_admin_settings_routes.py::test_admin_settings_updates_horizon_min_hold_controls tests/scheduler/test_scheduler_runtime_paths.py::test_partial_take_profit_blocks_mid_position_before_min_hold tests/scheduler/test_scheduler_runtime_paths.py::test_trailing_profit_guard_blocks_mid_position_before_min_hold tests/scheduler/test_scheduler_runtime_paths.py::test_holdings_check_blocks_profit_guard_stop_before_mid_min_hold tests/scheduler/test_scheduler_runtime_paths.py::test_holdings_check_blocks_tight_loss_stop_before_mid_soft_stop_min_hold tests/agent/test_trading_agent_cycles.py::test_tight_loss_stop_event_blocks_before_soft_stop_min_hold -q passed: 11 passed."
+    },
+    {
+      "at": "2026-06-10T08:35:00+09:00",
+      "type": "verification",
+      "status": "passed",
+      "summary": ".venv313/bin/python -m pytest tests/agent/test_trading_agent_cycles.py tests/scheduler/test_scheduler_runtime_paths.py tests/analysis/test_holdings_review_prompt.py tests/analysis/test_overnight_hold_prompt.py tests/analysis/test_stock_analysis_prompt.py tests/strategy/test_trade_horizon.py tests/strategy/test_position_exit_policy.py tests/services/test_holdings_review_cache_service.py tests/services/test_holdings_precheck_service.py -q passed: 162 passed."
+    },
+    {
+      "at": "2026-06-10T08:35:30+09:00",
+      "type": "verification",
+      "status": "passed",
+      "summary": ".venv313/bin/python -m pytest tests/api/test_admin_settings_routes.py tests/api/test_admin_settings_validation.py tests/services/test_runtime_settings_service.py -q passed: 43 passed. python scripts/check_task_harness.py --strict-current passed."
+    },
+    {
+      "at": "2026-06-10T08:35:00+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T08:35:28+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T09:01:37+09:00",
+      "type": "implementation",
+      "status": "completed",
+      "summary": "Implemented MID/LONG exit redesign: widened default stop/take/profit/trailing thresholds, added staged partial stop-loss with PARTIAL_STOP_LOSS_DONE markers, aligned realtime stop-loss events with staged policy, constrained ADD_BUY to scale-in candidate conditions, and updated LLM prompts/runtime settings."
+    },
+    {
+      "at": "2026-06-10T09:01:37+09:00",
+      "type": "verification",
+      "status": "passed",
+      "summary": ".venv313/bin/python -m pytest focused staged-exit/settings suite passed: 24 passed."
+    },
+    {
+      "at": "2026-06-10T09:01:37+09:00",
+      "type": "verification",
+      "status": "passed",
+      "summary": ".venv313/bin/python -m pytest expanded agent/scheduler/strategy/API/analysis suite passed: 269 passed in 35.13s."
+    },
+    {
+      "at": "2026-06-10T09:03:28+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T09:05:45+09:00",
+      "type": "restart",
+      "status": "passed",
+      "summary": "Restarted service in tmux session momo-trading-server after the MID/LONG staged-exit and ADD_BUY guard changes. Health OK, scheduler_running=true, agent_running=true, trading_enabled=true, autonomy=AUTONOMOUS, effective_order_submission_mode=FULL, market_session=KRX_NXT."
+    },
+    {
+      "at": "2026-06-10T09:06:20+09:00",
+      "type": "runtime_settings",
+      "status": "passed",
+      "summary": "Applied live runtime settings that had persisted older partial/trailing values: MID/LONG partial take profit 8%/12%, trailing activation 8%/12%, trailing drawdown 4%/6%. Confirmed live defaults: stop MID/LONG -7%/-10%, take MID/LONG +12%/+18%, partial stop-loss enabled with 50%/33% first reduction."
+    },
+    {
+      "at": "2026-06-10T09:08:30+09:00",
+      "type": "runtime_check",
+      "status": "passed",
+      "summary": "Post-restart runtime integrity OK: pending orders 0, broker_pending 0, db_pending 0, broker/DB mismatches 0, unpaired sells 0, broker untracked holdings 0. Admin status still shows a historical 2026-06-09 order WARN for 디에스케이 partial-profit confirmation failure, but current reconciliation is clean."
+    },
+    {
+      "at": "2026-06-10T09:09:48+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
     }
   ]
 }

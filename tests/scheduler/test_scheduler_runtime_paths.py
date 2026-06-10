@@ -710,7 +710,7 @@ def test_partial_take_profit_blocks_mid_position_before_min_hold(monkeypatch) ->
     monkeypatch.setattr("scheduler.scheduler.settings.POSITION_EXIT_MANAGEMENT_ENABLED", True)
     monkeypatch.setattr("scheduler.scheduler.settings.PARTIAL_TAKE_PROFIT_ENABLED", True)
     monkeypatch.setattr("scheduler.scheduler.settings.PARTIAL_TAKE_PROFIT_PCT_MID", 5.0)
-    monkeypatch.setattr("scheduler.scheduler.settings.MIN_HOLD_MINUTES_BEFORE_PROFIT_EXIT_MID", 180, raising=False)
+    monkeypatch.setattr("scheduler.scheduler.settings.MIN_HOLD_MINUTES_BEFORE_PROFIT_EXIT_MID", 1440, raising=False)
 
     should_sell, quantity, reason = scheduler._should_partial_take_profit(
         tr=trade_result,
@@ -721,7 +721,7 @@ def test_partial_take_profit_blocks_mid_position_before_min_hold(monkeypatch) ->
 
     assert should_sell is False
     assert quantity == 0
-    assert "MID 최소 보유 180분" in reason
+    assert "MID 최소 보유 1440분" in reason
 
 
 def test_breakeven_and_scale_in_are_horizon_aware(monkeypatch) -> None:
@@ -764,18 +764,18 @@ def test_preserve_tighter_stop_loss_keeps_existing_active_stop() -> None:
 
 def test_default_exit_thresholds_are_horizon_aware(monkeypatch) -> None:
     monkeypatch.setattr("scheduler.scheduler.settings.DEFAULT_STOP_LOSS_PCT_SHORT", -3.0)
-    monkeypatch.setattr("scheduler.scheduler.settings.DEFAULT_STOP_LOSS_PCT_MID", -4.0)
-    monkeypatch.setattr("scheduler.scheduler.settings.DEFAULT_STOP_LOSS_PCT_LONG", -6.0)
+    monkeypatch.setattr("scheduler.scheduler.settings.DEFAULT_STOP_LOSS_PCT_MID", -7.0)
+    monkeypatch.setattr("scheduler.scheduler.settings.DEFAULT_STOP_LOSS_PCT_LONG", -10.0)
     monkeypatch.setattr("scheduler.scheduler.settings.DEFAULT_TAKE_PROFIT_PCT_SHORT", 5.0)
-    monkeypatch.setattr("scheduler.scheduler.settings.DEFAULT_TAKE_PROFIT_PCT_MID", 8.0)
-    monkeypatch.setattr("scheduler.scheduler.settings.DEFAULT_TAKE_PROFIT_PCT_LONG", 12.0)
+    monkeypatch.setattr("scheduler.scheduler.settings.DEFAULT_TAKE_PROFIT_PCT_MID", 12.0)
+    monkeypatch.setattr("scheduler.scheduler.settings.DEFAULT_TAKE_PROFIT_PCT_LONG", 18.0)
 
     assert TradingScheduler._default_stop_loss_pct(TradeHorizon.SHORT) == pytest.approx(-3.0)
-    assert TradingScheduler._default_stop_loss_pct(TradeHorizon.MID) == pytest.approx(-4.0)
-    assert TradingScheduler._default_stop_loss_pct(TradeHorizon.LONG) == pytest.approx(-6.0)
+    assert TradingScheduler._default_stop_loss_pct(TradeHorizon.MID) == pytest.approx(-7.0)
+    assert TradingScheduler._default_stop_loss_pct(TradeHorizon.LONG) == pytest.approx(-10.0)
     assert TradingScheduler._default_take_profit_pct(TradeHorizon.SHORT) == pytest.approx(5.0)
-    assert TradingScheduler._default_take_profit_pct(TradeHorizon.MID) == pytest.approx(8.0)
-    assert TradingScheduler._default_take_profit_pct(TradeHorizon.LONG) == pytest.approx(12.0)
+    assert TradingScheduler._default_take_profit_pct(TradeHorizon.MID) == pytest.approx(12.0)
+    assert TradingScheduler._default_take_profit_pct(TradeHorizon.LONG) == pytest.approx(18.0)
 
 
 def test_trailing_profit_guard_waits_for_activation_then_sells_on_drawdown(monkeypatch) -> None:
@@ -851,7 +851,7 @@ def test_trailing_profit_guard_blocks_mid_position_before_min_hold(monkeypatch) 
     monkeypatch.setattr("scheduler.scheduler.settings.TRAILING_PROFIT_ACTIVATE_PCT_MID", 5.0)
     monkeypatch.setattr("scheduler.scheduler.settings.TRAILING_PROFIT_DRAWDOWN_PCT_MID", 2.0)
     monkeypatch.setattr("scheduler.scheduler.settings.RISK_APPETITE", "CONSERVATIVE")
-    monkeypatch.setattr("scheduler.scheduler.settings.MIN_HOLD_MINUTES_BEFORE_PROFIT_EXIT_MID", 180, raising=False)
+    monkeypatch.setattr("scheduler.scheduler.settings.MIN_HOLD_MINUTES_BEFORE_PROFIT_EXIT_MID", 1440, raising=False)
 
     scheduler._evaluate_trailing_profit_guard(
         symbol="005930",
@@ -872,7 +872,7 @@ def test_trailing_profit_guard_blocks_mid_position_before_min_hold(monkeypatch) 
 
     assert should_sell is False
     assert detail["min_hold_blocked"] is True
-    assert "MID 최소 보유 180분" in reason
+    assert "MID 최소 보유 1440분" in reason
 
 
 @pytest.mark.asyncio
@@ -1789,13 +1789,13 @@ async def test_holdings_check_blocks_profit_guard_stop_before_mid_min_hold(monke
     )
     monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
     monkeypatch.setattr("scheduler.scheduler.settings.DEFAULT_STOP_LOSS_PCT_MID", -4.0)
-    monkeypatch.setattr("scheduler.scheduler.settings.MIN_HOLD_MINUTES_BEFORE_PROFIT_EXIT_MID", 180, raising=False)
+    monkeypatch.setattr("scheduler.scheduler.settings.MIN_HOLD_MINUTES_BEFORE_PROFIT_EXIT_MID", 1440, raising=False)
     monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
 
     await scheduler._holdings_check()
 
     assert any("수익보호 스탑 이탈" in message for message in logs)
-    assert any("MID 최소 보유 180분" in message for message in logs)
+    assert any("MID 최소 보유 1440분" in message for message in logs)
 
 
 @pytest.mark.asyncio
@@ -1856,21 +1856,23 @@ async def test_holdings_check_blocks_tight_loss_stop_before_mid_soft_stop_min_ho
     )
     monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
     monkeypatch.setattr("scheduler.scheduler.settings.DEFAULT_STOP_LOSS_PCT_MID", -4.0)
-    monkeypatch.setattr("scheduler.scheduler.settings.MIN_HOLD_MINUTES_BEFORE_SOFT_STOP_EXIT_MID", 60, raising=False)
+    monkeypatch.setattr("scheduler.scheduler.settings.MIN_HOLD_MINUTES_BEFORE_SOFT_STOP_EXIT_MID", 1440, raising=False)
     monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
 
     await scheduler._holdings_check()
 
     assert any("소프트 손절 보류" in message for message in logs)
-    assert any("MID 최소 보유 60분" in message for message in logs)
+    assert any("MID 최소 보유 1440분" in message for message in logs)
 
 
 @pytest.mark.asyncio
-async def test_holdings_check_allows_default_hard_stop_before_soft_stop_min_hold(monkeypatch) -> None:
+async def test_holdings_check_partially_reduces_mid_default_stop_before_deep_breach(monkeypatch) -> None:
     scheduler = TradingScheduler()
     logs: list[str] = []
     released: list[str] = []
+    removed_levels: list[str] = []
     placed_orders: list[dict] = []
+    confirmed_orders: list[dict] = []
     observed_at = datetime(2026, 6, 8, 10, 21)
     holding = SimpleNamespace(symbol="005930", name="삼성전자", quantity=10, avg_buy_price=10_000)
     trade_result = SimpleNamespace(
@@ -1895,7 +1897,8 @@ async def test_holdings_check_allows_default_hard_stop_before_soft_stop_min_hold
         placed_orders.append({"symbol": symbol, "quantity": quantity})
         return OrderResult(success=True, order_id="SELL-HARD-STOP", message="ok")
 
-    async def fake_track_scheduler_sell_confirmation(**_kwargs) -> bool:
+    async def fake_track_scheduler_sell_confirmation(**kwargs) -> bool:
+        confirmed_orders.append(kwargs)
         return True
 
     async def fake_acquire_sell(_symbol: str) -> bool:
@@ -1937,18 +1940,20 @@ async def test_holdings_check_allows_default_hard_stop_before_soft_stop_min_hold
     )
     monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
     monkeypatch.setattr("scheduler.scheduler.settings.DEFAULT_STOP_LOSS_PCT_MID", -4.0)
-    monkeypatch.setattr("scheduler.scheduler.settings.MIN_HOLD_MINUTES_BEFORE_SOFT_STOP_EXIT_MID", 60, raising=False)
+    monkeypatch.setattr("scheduler.scheduler.settings.MIN_HOLD_MINUTES_BEFORE_SOFT_STOP_EXIT_MID", 1440, raising=False)
     monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
     monkeypatch.setattr("agent.trading_agent.trading_agent._acquire_sell", fake_acquire_sell)
     monkeypatch.setattr("agent.trading_agent.trading_agent._release_sell", released.append)
-    monkeypatch.setattr("realtime.event_detector.event_detector.remove_levels", lambda _symbol: None)
+    monkeypatch.setattr("realtime.event_detector.event_detector.remove_levels", removed_levels.append)
     monkeypatch.setattr("asyncio.create_task", lambda coro: coro.close())
 
     await scheduler._holdings_check()
 
-    assert placed_orders == [{"symbol": "005930", "quantity": 10}]
+    assert placed_orders == [{"symbol": "005930", "quantity": 5}]
+    assert confirmed_orders[0]["exit_reason"] == "PARTIAL_STOP_LOSS"
+    assert removed_levels == []
     assert released == ["005930"]
-    assert any("손절 도달" in message for message in logs)
+    assert any("1차 손실축소" in message for message in logs)
     assert not any("소프트 손절 보류" in message for message in logs)
 
 
@@ -2593,9 +2598,9 @@ async def test_collect_holdings_data_builds_prompt_payload_for_valid_holding(mon
     assert round(holdings_data[0]["pnl_rate"], 2) == round((73_000 - 70_000) / 70_000 * 100, 2)
     assert holdings_data[0]["trade_horizon"] == "MID"
     assert holdings_data[0]["max_hold_days"] == 15
-    assert holdings_data[0]["min_hold_minutes_before_review_exit"] == 120
-    assert holdings_data[0]["min_hold_minutes_before_profit_exit"] == 180
-    assert holdings_data[0]["min_hold_minutes_before_soft_stop_exit"] == 60
+    assert holdings_data[0]["min_hold_minutes_before_review_exit"] == 1440
+    assert holdings_data[0]["min_hold_minutes_before_profit_exit"] == 1440
+    assert holdings_data[0]["min_hold_minutes_before_soft_stop_exit"] == 1440
     assert holdings_data[0]["active_stop_loss"] == 68_500
     assert holdings_data[0]["active_take_profit"] == 74_500
     assert holdings_data[0]["news_context_available"] is True
@@ -3422,7 +3427,15 @@ async def test_intraday_holdings_review_queues_add_buy_followup(monkeypatch) -> 
 
     async def fake_collect_holdings_data(_sellable):
         return (
-            [{"symbol": "005930", "stock_name": "삼성전자", "strategy_type": "N/A"}],
+            [
+                {
+                    "symbol": "005930",
+                    "stock_name": "삼성전자",
+                    "strategy_type": "N/A",
+                    "pnl_rate": -1.5,
+                    "active_stop_loss": 68_000,
+                }
+            ],
             {"005930": (holding, trade_result, 72_000)},
             [],
         )
@@ -3436,7 +3449,7 @@ async def test_intraday_holdings_review_queues_add_buy_followup(monkeypatch) -> 
     async def fake_log(*args, **kwargs) -> None:
         logs.append(args[2])
 
-    async def fake_analyze_and_trade(**kwargs):
+    async def fake_analyze_and_trade(*args, **kwargs):
         return None
 
     class DummyTask:

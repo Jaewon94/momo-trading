@@ -19,6 +19,7 @@ from repositories.trade_result_repository import TradeResultRepository
 from services.activity_logger import activity_logger
 from services.decision_event_service import decision_event_service
 from services.pending_trade_note_utils import with_pending_partial_note
+from strategy.position_exit_policy import PARTIAL_STOP_LOSS_MARKER, PARTIAL_TAKE_PROFIT_MARKER
 from strategy.signal import TradeSignal
 from trading.adapters.base import BrokerAdapter
 from trading.broker_factory import get_broker_adapter
@@ -622,6 +623,22 @@ class DecisionMaker:
         )
 
     @staticmethod
+    def _partial_exit_marker(exit_reason: str) -> str | None:
+        reason = str(exit_reason or "").upper()
+        if reason == "PARTIAL_TAKE_PROFIT":
+            return PARTIAL_TAKE_PROFIT_MARKER
+        if reason == "PARTIAL_STOP_LOSS":
+            return PARTIAL_STOP_LOSS_MARKER
+        return None
+
+    @staticmethod
+    def _append_note_marker(open_buy: TradeResult, marker: str) -> None:
+        notes = str(getattr(open_buy, "notes", "") or "")
+        if marker in notes:
+            return
+        open_buy.notes = f"{notes} | {marker}" if notes else marker
+
+    @staticmethod
     def _calculate_hold_days(closed_at, entry_at) -> int:
         if not entry_at:
             return 0
@@ -721,11 +738,17 @@ class DecisionMaker:
         exit_reason: str,
         closed_at,
     ) -> dict[str, int | float | bool]:
+        initial_open_qty = sum(
+            int(getattr(open_buy, "quantity", 0) or 0)
+            for open_buy in open_buys
+            if getattr(open_buy, "exit_at", None) is None
+        )
         remaining_to_close = max(int(filled_qty or 0), 0)
         closed_lot_count = 0
         total_pnl = 0.0
         total_return_pct = 0.0
         partial_exit = False
+        marker = cls._partial_exit_marker(exit_reason)
 
         for open_buy in open_buys:
             if remaining_to_close <= 0:
@@ -743,11 +766,8 @@ class DecisionMaker:
                 target = cls._build_partial_close_clone(open_buy, close_qty=close_qty, symbol=symbol)
                 session.add(target)
                 open_buy.quantity = lot_qty - close_qty
-                if str(exit_reason or "").upper() == "PARTIAL_TAKE_PROFIT":
-                    notes = str(getattr(open_buy, "notes", "") or "")
-                    marker = "PARTIAL_TAKE_PROFIT_DONE"
-                    if marker not in notes:
-                        open_buy.notes = f"{notes} | {marker}" if notes else marker
+                if marker:
+                    cls._append_note_marker(open_buy, marker)
 
             entry_price = float(getattr(open_buy, "entry_price", 0.0) or 0.0)
             pnl = (filled_price - entry_price) * close_qty
@@ -765,6 +785,16 @@ class DecisionMaker:
             total_return_pct += round(return_pct, 2)
             closed_lot_count += 1
             remaining_to_close -= close_qty
+
+        position_partial_exit = 0 < max(int(filled_qty or 0), 0) < initial_open_qty
+        if marker and position_partial_exit:
+            partial_exit = True
+            for open_buy in open_buys:
+                if (
+                    getattr(open_buy, "exit_at", None) is None
+                    and int(getattr(open_buy, "quantity", 0) or 0) > 0
+                ):
+                    cls._append_note_marker(open_buy, marker)
 
         applied_quantity = max(int(filled_qty or 0), 0) - max(remaining_to_close, 0)
         remaining_open_quantity = sum(

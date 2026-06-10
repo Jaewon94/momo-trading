@@ -13,22 +13,22 @@ class StableShortStrategy:
     안정형 스윙 실행 프로파일 (legacy: STABLE_SHORT)
     - 대상: 대형 우량주, ETF (변동성 낮은 종목)
     - 기본 보유 기간: 중기, 필요 시 장기
-    - 손절: -4%, 익절: +8% (기본값, 시장 국면별 동적 조정)
+    - 손절: -7%, 익절: +12% (기본값, 시장 국면별 동적 조정)
     - 판단: AI recommendation + confidence 기반
     """
 
     strategy_type = "STABLE_SHORT"
 
     REGIME_PARAMS = {
-        "BULL":  {"stop_loss_pct": -4.0, "take_profit_pct": 10.0},
-        "THEME": {"stop_loss_pct": -5.0, "take_profit_pct": 12.0},
-        "BEAR":  {"stop_loss_pct": -3.5, "take_profit_pct": 6.0},
+        "BULL":  {"stop_loss_pct": -7.0, "take_profit_pct": 14.0},
+        "THEME": {"stop_loss_pct": -8.0, "take_profit_pct": 16.0},
+        "BEAR":  {"stop_loss_pct": -5.0, "take_profit_pct": 8.0},
     }
 
     def __init__(
         self,
-        stop_loss_pct: float = -4.0,
-        take_profit_pct: float = 8.0,
+        stop_loss_pct: float = -7.0,
+        take_profit_pct: float = 12.0,
         min_confidence: float = 0.58,
     ):
         self.stop_loss_pct = stop_loss_pct

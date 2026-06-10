@@ -42,6 +42,7 @@ from strategy.position_exit_policy import (
     is_loss_protective_stop,
     is_profit_protection_stop,
     soft_loss_stop_min_hold_block_reason,
+    staged_stop_loss_exit_decision,
     strategic_exit_min_hold_block_reason,
     trade_horizon_from_result,
     trade_notes_dict,
@@ -696,6 +697,7 @@ class TradingAgent:
         symbol: str,
         expected_price: float,
         exit_reason: str,
+        quantity: int | None = None,
     ):
         """보유 수량 기준 시장가 매도 실행"""
         symbol = normalize_krx_symbol(symbol)
@@ -706,6 +708,10 @@ class TradingAgent:
         )
         if not holding or holding.quantity <= 0:
             return None
+        sell_quantity = int(holding.quantity if quantity is None else quantity)
+        sell_quantity = min(max(sell_quantity, 0), int(holding.quantity))
+        if sell_quantity <= 0:
+            return None
 
         order_result = await self._broker_adapter.place_order(
             OrderRequest(
@@ -713,7 +719,7 @@ class TradingAgent:
                 market=Market.KRX,
                 side=OrderSide.SELL,
                 order_type=OrderType.MARKET,
-                quantity=holding.quantity,
+                quantity=sell_quantity,
             )
         )
         if order_result.success and order_result.order_id:
@@ -721,7 +727,7 @@ class TradingAgent:
                 symbol=symbol,
                 side="SELL",
                 order_id=order_result.order_id,
-                quantity=holding.quantity,
+                quantity=sell_quantity,
                 expected_price=expected_price,
                 exit_reason=exit_reason,
             )
@@ -1332,12 +1338,20 @@ class TradingAgent:
             f"\U0001f9e0 [{name}] Tier2 최종 검토 시작",
             cycle_id=cycle_id, symbol=symbol,
         )
+        projected_horizon = decide_trade_horizon(
+            strategy_type=strategy_type,
+            trigger=str(stock_info.get("trigger", "")),
+            change_rate=float(price_resp.data.get("change_rate", 0.0) if price_resp.data else 0.0),
+            confidence=float(analysis.get("confidence", 0.0) or 0.0),
+            market_regime=self._market_regime,
+        )
 
         final = await self._tier2_review(
             symbol, name, current_price, strategy_type, analysis,
             feedback_context=feedback_context,
             chart_result=chart_result,
             dynamic_limits=dynamic_limits,
+            trade_horizon=projected_horizon,
             market_context=self._market_context,
             trading_context=self._trading_context,
             news_context=news_context_text,
@@ -1396,17 +1410,20 @@ class TradingAgent:
         if final.get("suggested_quantity") and final.get("entry_price"):
             t2_action = final.get("action", analysis.get("recommendation", "BUY"))
             action = SignalAction.BUY if t2_action.upper() in ("BUY", "CAUTIOUS BUY") else SignalAction.SELL
+            trade_horizon = projected_horizon
 
             stop_loss_price = final.get("stop_loss_price")
-            if not stop_loss_price and strategy:
-                sl_pct = getattr(strategy, "stop_loss_pct", None) or -3
+            if not stop_loss_price:
+                sl_pct = self._default_stop_loss_pct(trade_horizon)
                 stop_loss_price = final["entry_price"] * (1 + sl_pct / 100)
 
             target_price = final.get("target_price")
-            if not target_price and strategy:
-                tp_pct = getattr(strategy, "take_profit_pct", None) or 5
+            if not target_price:
+                tp_pct = self._default_take_profit_pct(trade_horizon)
                 target_price = final["entry_price"] * (1 + tp_pct / 100)
 
+            metadata = strategy_profile_metadata(strategy_type)
+            metadata["trade_horizon"] = trade_horizon
             signal = TradeSignal(
                 symbol=symbol,
                 stock_id=stock_info.get("stock_id", ""),
@@ -1420,14 +1437,7 @@ class TradingAgent:
                 strategy_type=strategy_type,
                 reason=final.get("reason", "Tier2 승인"),
                 confidence=analysis.get("confidence", 0.7),
-                metadata=strategy_profile_metadata(strategy_type),
-            )
-            signal.metadata["trade_horizon"] = decide_trade_horizon(
-                strategy_type=strategy_type,
-                trigger=str(stock_info.get("trigger", "")),
-                change_rate=float(price_resp.data.get("change_rate", 0.0) if price_resp.data else 0.0),
-                confidence=float(analysis.get("confidence", 0.0) or 0.0),
-                market_regime=self._market_regime,
+                metadata=metadata,
             )
 
             result["signal"] = True
@@ -1478,17 +1488,25 @@ class TradingAgent:
             if final.get("stop_loss_price"):
                 signal.stop_loss_price = final["stop_loss_price"]
             if "trade_horizon" not in signal.metadata:
-                signal.metadata["trade_horizon"] = decide_trade_horizon(
-                    strategy_type=strategy_type,
-                    trigger=str(stock_info.get("trigger", "")),
-                    change_rate=float(price_resp.data.get("change_rate", 0.0) if price_resp.data else 0.0),
-                    confidence=float(analysis.get("confidence", 0.0) or 0.0),
-                    market_regime=self._market_regime,
-                )
+                signal.metadata["trade_horizon"] = projected_horizon
+            if signal.action == SignalAction.BUY and signal.suggested_price:
+                trade_horizon = str(signal.metadata.get("trade_horizon") or projected_horizon)
+                if not final.get("stop_loss_price"):
+                    sl_pct = self._default_stop_loss_pct(trade_horizon)
+                    signal.stop_loss_price = signal.suggested_price * (1 + sl_pct / 100)
+                if not final.get("target_price"):
+                    tp_pct = self._default_take_profit_pct(trade_horizon)
+                    signal.target_price = signal.suggested_price * (1 + tp_pct / 100)
 
         # AI가 결정한 손절/익절/트레일링 스탑을 event_detector에 설정
+        threshold_tier2 = dict(final or {})
+        if signal.action == SignalAction.BUY:
+            if signal.stop_loss_price and not threshold_tier2.get("stop_loss_price"):
+                threshold_tier2["stop_loss_price"] = signal.stop_loss_price
+            if signal.target_price and not threshold_tier2.get("target_price"):
+                threshold_tier2["target_price"] = signal.target_price
         active_thresholds = self._apply_trade_thresholds(
-            symbol, analysis, final,
+            symbol, analysis, threshold_tier2,
             current_price=current_price,
             horizon=(signal.metadata or {}).get("trade_horizon"),
         )
@@ -2652,8 +2670,17 @@ class TradingAgent:
         if key == TradeHorizon.SHORT:
             return float(getattr(settings, "DEFAULT_STOP_LOSS_PCT_SHORT", -3.0) or -3.0)
         if key == TradeHorizon.LONG:
-            return float(getattr(settings, "DEFAULT_STOP_LOSS_PCT_LONG", -6.0) or -6.0)
-        return float(getattr(settings, "DEFAULT_STOP_LOSS_PCT_MID", -4.0) or -4.0)
+            return float(getattr(settings, "DEFAULT_STOP_LOSS_PCT_LONG", -10.0) or -10.0)
+        return float(getattr(settings, "DEFAULT_STOP_LOSS_PCT_MID", -7.0) or -7.0)
+
+    @staticmethod
+    def _default_take_profit_pct(horizon: str) -> float:
+        key = str(horizon or TradeHorizon.MID).upper()
+        if key == TradeHorizon.SHORT:
+            return float(getattr(settings, "DEFAULT_TAKE_PROFIT_PCT_SHORT", 5.0) or 5.0)
+        if key == TradeHorizon.LONG:
+            return float(getattr(settings, "DEFAULT_TAKE_PROFIT_PCT_LONG", 18.0) or 18.0)
+        return float(getattr(settings, "DEFAULT_TAKE_PROFIT_PCT_MID", 12.0) or 12.0)
 
     @staticmethod
     def _stop_loss_risk_bounds(horizon_key: str) -> tuple[float | None, float | None]:
@@ -2661,18 +2688,18 @@ class TradingAgent:
         bounds = {
             "CONSERVATIVE": {
                 TradeHorizon.SHORT: (1.8, 2.8),
-                TradeHorizon.MID: (2.0, 3.5),
-                TradeHorizon.LONG: (2.5, 4.5),
+                TradeHorizon.MID: (4.0, 7.0),
+                TradeHorizon.LONG: (6.0, 10.0),
             },
             "MODERATE": {
                 TradeHorizon.SHORT: (2.4, 3.5),
-                TradeHorizon.MID: (2.5, 4.0),
-                TradeHorizon.LONG: (3.5, 5.5),
+                TradeHorizon.MID: (5.0, 8.0),
+                TradeHorizon.LONG: (7.0, 11.0),
             },
             "AGGRESSIVE": {
                 TradeHorizon.SHORT: (3.0, 5.0),
-                TradeHorizon.MID: (3.0, 5.0),
-                TradeHorizon.LONG: (4.0, 6.5),
+                TradeHorizon.MID: (6.0, 9.5),
+                TradeHorizon.LONG: (8.0, 14.0),
             },
         }
         return bounds.get(appetite, bounds["CONSERVATIVE"]).get(horizon_key, (None, None))
@@ -2989,6 +3016,7 @@ class TradingAgent:
         feedback_context: str = "",
         chart_result: ChartAnalysisResult | None = None,
         dynamic_limits: dict | None = None,
+        trade_horizon: str | None = None,
         market_context: str = "",
         trading_context: str = "",
         news_context: str = "",
@@ -3030,6 +3058,7 @@ class TradingAgent:
         holding_quantities = snap.get("holding_quantities") or {}
         is_holding = normalized_symbol in holding_symbols
         holding_quantity = int(holding_quantities.get(normalized_symbol, 0) or 0)
+        resolved_horizon = str(trade_horizon or TradeHorizon.MID).upper()
 
         prompt = FINAL_REVIEW_PROMPT.format(
             tier1_analysis=json.dumps(tier1_analysis, ensure_ascii=False, indent=2),
@@ -3042,8 +3071,8 @@ class TradingAgent:
             max_amount=max_amount or 0,
             holding_count=snap.get("holding_count") or 0,
             position_pct=position_pct or 0,
-            stop_loss_pct=getattr(strategy, "stop_loss_pct", None) or -3,
-            take_profit_pct=getattr(strategy, "take_profit_pct", None) or 5,
+            stop_loss_pct=self._default_stop_loss_pct(resolved_horizon),
+            take_profit_pct=self._default_take_profit_pct(resolved_horizon),
             max_hold_days=5,
             max_position_pct=20,
             feedback_context=feedback_context or "매매 이력 없음",
@@ -3281,6 +3310,71 @@ class TradingAgent:
             finally:
                 self._analyzing.discard(symbol)
 
+    async def _staged_stop_loss_event_plan(
+        self,
+        symbol: str,
+        *,
+        current_price: float,
+    ) -> dict:
+        plan = {
+            "blocked": False,
+            "quantity": None,
+            "exit_reason": "STOP_LOSS",
+            "reason": "",
+        }
+        try:
+            async with AsyncSessionLocal() as session:
+                repo = TradeResultRepository(session)
+                trade_result = await repo.get_open_buy(symbol)
+            if not trade_result:
+                return plan
+
+            holdings = await self._broker_adapter.get_holdings()
+            holding = next(
+                (item for item in holdings if normalize_krx_symbol(item.symbol) == symbol),
+                None,
+            )
+            if not holding or int(getattr(holding, "quantity", 0) or 0) <= 0:
+                return plan
+
+            avg_price = (
+                self._optional_float(getattr(holding, "avg_buy_price", None))
+                or self._optional_float(getattr(trade_result, "entry_price", None))
+                or 0.0
+            )
+            if avg_price <= 0 or current_price <= 0:
+                return plan
+
+            horizon = trade_horizon_from_result(trade_result)
+            default_stop_pct = self._default_stop_loss_pct(horizon)
+            pnl_rate = (current_price - avg_price) / avg_price * 100
+            if pnl_rate > default_stop_pct:
+                return plan
+
+            staged = staged_stop_loss_exit_decision(
+                settings=settings,
+                tr=trade_result,
+                horizon=horizon,
+                pnl_rate=pnl_rate,
+                holding_quantity=int(holding.quantity),
+                default_stop_loss_pct=default_stop_pct,
+            )
+            if staged.action == "hold":
+                return {**plan, "blocked": True, "reason": staged.reason}
+            if staged.action == "partial":
+                return {
+                    **plan,
+                    "quantity": staged.quantity,
+                    "exit_reason": "PARTIAL_STOP_LOSS",
+                    "reason": staged.reason,
+                }
+            if staged.reason:
+                return {**plan, "reason": staged.reason}
+            return plan
+        except Exception as exc:
+            logger.warning("손절 이벤트 분할청산 계획 확인 실패 ({}): {}", symbol, str(exc))
+            return plan
+
     async def _on_stop_loss(self, event: Event) -> None:
         """손절선 도달 → 즉시 매도"""
         if not self._running:
@@ -3314,13 +3408,32 @@ class TradingAgent:
                 )
                 return
 
+            event_plan = await self._staged_stop_loss_event_plan(
+                symbol,
+                current_price=float(price or 0.0),
+            )
+            if event_plan.get("blocked"):
+                logger.info("손절 이벤트 보류: {} {} — {}", name, symbol, event_plan["reason"])
+                await activity_logger.log(
+                    ActivityType.EVENT, ActivityPhase.PROGRESS,
+                    f"👀 손절 이벤트 보류: {name}({symbol}) — {event_plan['reason']}",
+                    symbol=symbol,
+                    detail={**event.data, "symbol": symbol, "staged_stop_loss_blocked": True},
+                )
+                return
+
+            exit_reason = str(event_plan.get("exit_reason") or "STOP_LOSS")
+            sell_quantity = event_plan.get("quantity")
+            staged_reason = str(event_plan.get("reason") or "")
+            action_text = "분할 손실축소" if exit_reason == "PARTIAL_STOP_LOSS" else "즉시 매도 실행"
             logger.warning("손절선 도달: {} {} (현재가: {:,.0f}, 손절: {:,.0f})", name, symbol, price, stop_loss)
             await activity_logger.log(
                 ActivityType.EVENT, ActivityPhase.PROGRESS,
-                f"\U0001f6a8 손절선 도달: {name}({symbol}) — 즉시 매도 실행 "
-                f"(현재가: {price:,.0f}원, 손절: {stop_loss:,.0f}원)",
+                f"\U0001f6a8 손절선 도달: {name}({symbol}) — {action_text} "
+                f"(현재가: {price:,.0f}원, 손절: {stop_loss:,.0f}원)"
+                + (f" — {staged_reason}" if staged_reason else ""),
                 symbol=symbol,
-                detail={**event.data, "symbol": symbol},
+                detail={**event.data, "symbol": symbol, "exit_reason": exit_reason, "quantity": sell_quantity},
             )
 
             # 즉시 시장가 매도
@@ -3329,7 +3442,8 @@ class TradingAgent:
                     resp = await self._execute_exit_order(
                         symbol=symbol,
                         expected_price=price,
-                        exit_reason="STOP_LOSS",
+                        exit_reason=exit_reason,
+                        quantity=sell_quantity,
                     )
                     if resp:
                         await activity_logger.log(
@@ -3338,7 +3452,7 @@ class TradingAgent:
                             f"({'성공' if resp.success else '실패: ' + (resp.message or '')})",
                             symbol=symbol,
                         )
-                        if resp.success:
+                        if resp.success and exit_reason != "PARTIAL_STOP_LOSS":
                             event_detector.remove_levels(symbol)
                 except Exception as e:
                     logger.error("손절 매도 실패 ({}): {}", symbol, str(e))

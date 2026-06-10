@@ -142,8 +142,8 @@ def _overnight_loss_threshold_pct(trade_result, config) -> float:
     if horizon_key == "SHORT":
         return float(getattr(config, "DEFAULT_STOP_LOSS_PCT_SHORT", -3.0) or -3.0)
     if horizon_key == "LONG":
-        return float(getattr(config, "DEFAULT_STOP_LOSS_PCT_LONG", -6.0) or -6.0)
-    return float(getattr(config, "DEFAULT_STOP_LOSS_PCT_MID", -4.0) or -4.0)
+        return float(getattr(config, "DEFAULT_STOP_LOSS_PCT_LONG", -10.0) or -10.0)
+    return float(getattr(config, "DEFAULT_STOP_LOSS_PCT_MID", -7.0) or -7.0)
 
 
 def _get_max_hold_days_for_trade(trade_result, config) -> int:

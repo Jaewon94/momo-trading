@@ -361,6 +361,31 @@ async def test_trading_agent_executes_exit_order_via_broker_adapter(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_trading_agent_executes_partial_exit_order_quantity(monkeypatch) -> None:
+    adapter = FakePortfolioBrokerAdapter()
+    agent = TradingAgent(broker_adapter=adapter)
+    recorded: dict = {}
+
+    async def fake_confirm_and_record(**kwargs) -> None:
+        recorded.update(kwargs)
+
+    monkeypatch.setattr("agent.trading_agent.decision_maker.confirm_and_record", fake_confirm_and_record)
+
+    result = await agent._execute_exit_order(
+        symbol="005930",
+        expected_price=71_000,
+        exit_reason="PARTIAL_STOP_LOSS",
+        quantity=2,
+    )
+
+    assert result is not None
+    assert result.success is True
+    assert adapter.requests[0].quantity == 2
+    assert recorded["quantity"] == 2
+    assert recorded["exit_reason"] == "PARTIAL_STOP_LOSS"
+
+
+@pytest.mark.asyncio
 async def test_trading_agent_rejects_invalid_balance_snapshot(monkeypatch) -> None:
     agent = TradingAgent(broker_adapter=InvalidBalanceBrokerAdapter())
 

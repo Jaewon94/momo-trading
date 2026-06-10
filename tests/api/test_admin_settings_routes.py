@@ -253,6 +253,43 @@ async def test_admin_settings_updates_llm_runtime_controls(client):
     assert payload["CODEX_REASONING_EFFORT_TIER2"] == "high"
 
 
+async def test_admin_settings_updates_horizon_min_hold_controls(client):
+    response = await client.put(
+        "/api/v1/admin/settings",
+        json={
+            "MIN_HOLD_MINUTES_BEFORE_PROFIT_EXIT_MID": 1440,
+            "MIN_HOLD_MINUTES_BEFORE_REVIEW_EXIT_MID": 1440,
+            "MIN_HOLD_MINUTES_BEFORE_SOFT_STOP_EXIT_MID": 1440,
+            "MIN_HOLD_MINUTES_BEFORE_PROFIT_EXIT_LONG": 2880,
+            "MIN_HOLD_MINUTES_BEFORE_REVIEW_EXIT_LONG": 2880,
+            "MIN_HOLD_MINUTES_BEFORE_SOFT_STOP_EXIT_LONG": 2880,
+            "PARTIAL_STOP_LOSS_ENABLED": True,
+            "PARTIAL_STOP_LOSS_SIZE_PCT_MID": 50.0,
+            "PARTIAL_STOP_LOSS_SIZE_PCT_LONG": 33.0,
+            "PARTIAL_STOP_LOSS_FULL_EXIT_EXTRA_PCT_MID": 2.5,
+            "PARTIAL_STOP_LOSS_FULL_EXIT_EXTRA_PCT_LONG": 4.0,
+        },
+    )
+
+    assert response.status_code == 200
+
+    settings_response = await client.get("/api/v1/admin/settings")
+
+    assert settings_response.status_code == 200
+    payload = settings_response.json()["data"]
+    assert payload["MIN_HOLD_MINUTES_BEFORE_PROFIT_EXIT_MID"] == 1440
+    assert payload["MIN_HOLD_MINUTES_BEFORE_REVIEW_EXIT_MID"] == 1440
+    assert payload["MIN_HOLD_MINUTES_BEFORE_SOFT_STOP_EXIT_MID"] == 1440
+    assert payload["MIN_HOLD_MINUTES_BEFORE_PROFIT_EXIT_LONG"] == 2880
+    assert payload["MIN_HOLD_MINUTES_BEFORE_REVIEW_EXIT_LONG"] == 2880
+    assert payload["MIN_HOLD_MINUTES_BEFORE_SOFT_STOP_EXIT_LONG"] == 2880
+    assert payload["PARTIAL_STOP_LOSS_ENABLED"] is True
+    assert payload["PARTIAL_STOP_LOSS_SIZE_PCT_MID"] == 50.0
+    assert payload["PARTIAL_STOP_LOSS_SIZE_PCT_LONG"] == 33.0
+    assert payload["PARTIAL_STOP_LOSS_FULL_EXIT_EXTRA_PCT_MID"] == 2.5
+    assert payload["PARTIAL_STOP_LOSS_FULL_EXIT_EXTRA_PCT_LONG"] == 4.0
+
+
 async def test_admin_settings_persists_across_runtime_reload(client):
     from core.config import settings
     from services.runtime_settings_service import runtime_settings_service

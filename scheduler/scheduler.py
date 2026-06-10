@@ -40,12 +40,15 @@ from trading.models import OrderRequest
 from scheduler.jobs.forward_return_label_job import forward_return_label_job
 from strategy.trade_horizon import TradeHorizon
 from strategy.position_exit_policy import (
+    PARTIAL_TAKE_PROFIT_MARKER,
     is_loss_protective_stop,
     is_profit_protection_stop,
     min_hold_minutes_for_profit_exit,
     min_hold_minutes_for_review_exit,
     min_hold_minutes_for_soft_stop_exit,
+    note_has_marker,
     soft_loss_stop_min_hold_block_reason,
+    staged_stop_loss_exit_decision,
     strategic_exit_min_hold_block_reason,
     trade_horizon_from_result,
     trade_notes_dict,
@@ -243,7 +246,7 @@ class TradingScheduler:
 
     @staticmethod
     def _note_has_marker(tr, marker: str) -> bool:
-        return marker in str(getattr(tr, "notes", "") or "")
+        return note_has_marker(tr, marker)
 
     @staticmethod
     def _strategic_exit_min_hold_block_reason(
@@ -285,8 +288,8 @@ class TradingScheduler:
         if key == TradeHorizon.SHORT:
             return float(getattr(settings, "PARTIAL_TAKE_PROFIT_PCT_SHORT", 1.5) or 1.5)
         if key == TradeHorizon.LONG:
-            return float(getattr(settings, "PARTIAL_TAKE_PROFIT_PCT_LONG", 5.0) or 5.0)
-        return float(getattr(settings, "PARTIAL_TAKE_PROFIT_PCT_MID", 3.0) or 3.0)
+            return float(getattr(settings, "PARTIAL_TAKE_PROFIT_PCT_LONG", 12.0) or 12.0)
+        return float(getattr(settings, "PARTIAL_TAKE_PROFIT_PCT_MID", 8.0) or 8.0)
 
     @staticmethod
     def _partial_take_profit_size_pct(horizon: str) -> float:
@@ -312,8 +315,8 @@ class TradingScheduler:
         if key == TradeHorizon.SHORT:
             return float(getattr(settings, "DEFAULT_STOP_LOSS_PCT_SHORT", -3.0) or -3.0)
         if key == TradeHorizon.LONG:
-            return float(getattr(settings, "DEFAULT_STOP_LOSS_PCT_LONG", -6.0) or -6.0)
-        return float(getattr(settings, "DEFAULT_STOP_LOSS_PCT_MID", -4.0) or -4.0)
+            return float(getattr(settings, "DEFAULT_STOP_LOSS_PCT_LONG", -10.0) or -10.0)
+        return float(getattr(settings, "DEFAULT_STOP_LOSS_PCT_MID", -7.0) or -7.0)
 
     @staticmethod
     def _default_take_profit_pct(horizon: str) -> float:
@@ -321,8 +324,8 @@ class TradingScheduler:
         if key == TradeHorizon.SHORT:
             return float(getattr(settings, "DEFAULT_TAKE_PROFIT_PCT_SHORT", 5.0) or 5.0)
         if key == TradeHorizon.LONG:
-            return float(getattr(settings, "DEFAULT_TAKE_PROFIT_PCT_LONG", 12.0) or 12.0)
-        return float(getattr(settings, "DEFAULT_TAKE_PROFIT_PCT_MID", 8.0) or 8.0)
+            return float(getattr(settings, "DEFAULT_TAKE_PROFIT_PCT_LONG", 18.0) or 18.0)
+        return float(getattr(settings, "DEFAULT_TAKE_PROFIT_PCT_MID", 12.0) or 12.0)
 
     @staticmethod
     def _trailing_profit_activate_pct(horizon: str) -> float:
@@ -330,8 +333,8 @@ class TradingScheduler:
         if key == TradeHorizon.SHORT:
             return float(getattr(settings, "TRAILING_PROFIT_ACTIVATE_PCT_SHORT", 2.0) or 2.0)
         if key == TradeHorizon.LONG:
-            return float(getattr(settings, "TRAILING_PROFIT_ACTIVATE_PCT_LONG", 5.0) or 5.0)
-        return float(getattr(settings, "TRAILING_PROFIT_ACTIVATE_PCT_MID", 3.0) or 3.0)
+            return float(getattr(settings, "TRAILING_PROFIT_ACTIVATE_PCT_LONG", 12.0) or 12.0)
+        return float(getattr(settings, "TRAILING_PROFIT_ACTIVATE_PCT_MID", 8.0) or 8.0)
 
     @staticmethod
     def _trailing_profit_drawdown_pct(horizon: str) -> float:
@@ -339,9 +342,9 @@ class TradingScheduler:
         if key == TradeHorizon.SHORT:
             base = float(getattr(settings, "TRAILING_PROFIT_DRAWDOWN_PCT_SHORT", 1.0) or 1.0)
         elif key == TradeHorizon.LONG:
-            base = float(getattr(settings, "TRAILING_PROFIT_DRAWDOWN_PCT_LONG", 3.0) or 3.0)
+            base = float(getattr(settings, "TRAILING_PROFIT_DRAWDOWN_PCT_LONG", 6.0) or 6.0)
         else:
-            base = float(getattr(settings, "TRAILING_PROFIT_DRAWDOWN_PCT_MID", 1.8) or 1.8)
+            base = float(getattr(settings, "TRAILING_PROFIT_DRAWDOWN_PCT_MID", 4.0) or 4.0)
         appetite = str(getattr(settings, "RISK_APPETITE", "CONSERVATIVE") or "CONSERVATIVE").upper()
         if appetite == "AGGRESSIVE":
             return base + 0.4
@@ -369,7 +372,7 @@ class TradingScheduler:
     ) -> tuple[bool, int, str]:
         if not bool(getattr(settings, "POSITION_EXIT_MANAGEMENT_ENABLED", True)):
             return False, 0, ""
-        if self._note_has_marker(tr, "PARTIAL_TAKE_PROFIT_DONE"):
+        if self._note_has_marker(tr, PARTIAL_TAKE_PROFIT_MARKER):
             return False, 0, ""
         horizon = self._trade_horizon_from_result(tr)
         trigger_pct = self._partial_take_profit_threshold_pct(horizon)
@@ -1550,6 +1553,24 @@ class TradingScheduler:
                             f"(얕은 이탈, 다음 점검까지 보류)"
                         )
                         continue
+                    if tr and not profit_guard_stop and pnl_rate <= default_loss_stop_pct:
+                        staged_decision = staged_stop_loss_exit_decision(
+                            settings=settings,
+                            tr=tr,
+                            horizon=horizon,
+                            pnl_rate=pnl_rate,
+                            holding_quantity=int(h.quantity),
+                            default_stop_loss_pct=default_loss_stop_pct,
+                        )
+                        if staged_decision.action == "hold":
+                            alerts.append(f"👀 {h.name}({symbol}): {staged_decision.reason}")
+                            continue
+                        if staged_decision.action == "partial":
+                            sell_quantity = staged_decision.quantity
+                            exit_reason = "PARTIAL_STOP_LOSS"
+                            reason = staged_decision.reason
+                        elif staged_decision.reason:
+                            reason = f"{reason} — {staged_decision.reason}"
                     should_sell = True
                     if defer_reason == "confirmed":
                         reason += " — 2회 연속 확인"
@@ -2904,19 +2925,42 @@ class TradingScheduler:
                         )
 
                 elif action == "ADD_BUY":
+                    pnl_rate = float(data.get("pnl_rate") or 0.0)
+                    active_stop_loss = float(data.get("active_stop_loss") or 0.0)
+                    scale_reason = (
+                        self._scale_in_candidate_reason(
+                            tr=trade_result,
+                            pnl_rate=pnl_rate,
+                            current_price=current_price,
+                            active_stop_loss=active_stop_loss,
+                        )
+                        if trade_result
+                        else None
+                    )
+                    if not scale_reason:
+                        log_lines.append(
+                            f"  - {stock_name}({symbol}): ADD_BUY 보류 — "
+                            f"눌림 추가매수 조건 미충족 — {reason} (AI {conf:.2f})"
+                        )
+                        continue
                     # trading_agent 파이프라인으로 연계 (Tier1→Tier2 검증)
                     strategy_type = data.get("strategy_type", "STABLE_SHORT")
                     if strategy_type == "N/A":
                         strategy_type = "STABLE_SHORT"
                     asyncio.create_task(
                         trading_agent._analyze_and_trade(
-                            symbol=symbol, name=stock_name,
-                            strategy_type=strategy_type,
+                            {
+                                "symbol": symbol,
+                                "name": stock_name,
+                                "strategy_type": strategy_type,
+                                "trigger": "HOLDINGS_REVIEW_ADD_BUY",
+                            },
+                            activity_logger.start_cycle(),
                         )
                     )
                     log_lines.append(
                         f"  - {stock_name}({symbol}): ADD_BUY → 분석 파이프라인 진행 — "
-                        f"{reason} (AI {conf:.2f})"
+                        f"{scale_reason} — {reason} (AI {conf:.2f})"
                     )
 
                 elif action in {"SELL", "PARTIAL_SELL"} and not settings.TRADING_ENABLED:

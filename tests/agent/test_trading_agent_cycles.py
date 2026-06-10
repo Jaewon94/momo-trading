@@ -116,7 +116,7 @@ async def test_take_profit_event_blocks_before_min_hold(monkeypatch) -> None:
     exit_calls: list[dict] = []
 
     async def fake_min_hold_reason(_symbol: str) -> str:
-        return "MID 최소 보유 180분 전 수익보호 매도 보류 (현재 20분)"
+        return "MID 최소 보유 1440분 전 수익보호 매도 보류 (현재 20분)"
 
     async def fake_execute_exit_order(**kwargs):
         exit_calls.append(kwargs)
@@ -156,7 +156,7 @@ async def test_profit_guard_stop_event_blocks_before_min_hold(monkeypatch) -> No
     async def fake_min_hold_reason(_symbol: str, *, stop_loss_price: float, current_price: float) -> str:
         assert stop_loss_price == 2_037
         assert current_price == 2_010
-        return "MID 최소 보유 180분 전 수익보호 매도 보류 (현재 25분)"
+        return "MID 최소 보유 1440분 전 수익보호 매도 보류 (현재 25분)"
 
     async def fake_execute_exit_order(**kwargs):
         exit_calls.append(kwargs)
@@ -215,7 +215,7 @@ async def test_tight_loss_stop_event_blocks_before_soft_stop_min_hold(monkeypatc
     monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
     monkeypatch.setattr("util.time_util.now_kst", lambda: observed_at)
     monkeypatch.setattr("agent.trading_agent.settings.DEFAULT_STOP_LOSS_PCT_MID", -4.0)
-    monkeypatch.setattr("agent.trading_agent.settings.MIN_HOLD_MINUTES_BEFORE_SOFT_STOP_EXIT_MID", 60, raising=False)
+    monkeypatch.setattr("agent.trading_agent.settings.MIN_HOLD_MINUTES_BEFORE_SOFT_STOP_EXIT_MID", 1440, raising=False)
 
     reason = await agent._stop_loss_min_hold_block_reason(
         "005930",
@@ -225,7 +225,7 @@ async def test_tight_loss_stop_event_blocks_before_soft_stop_min_hold(monkeypatc
 
     assert reason is not None
     assert "소프트 손절 보류" in reason
-    assert "MID 최소 보유 60분" in reason
+    assert "MID 최소 보유 1440분" in reason
 
 
 @pytest.mark.asyncio
@@ -385,10 +385,7 @@ async def test_persist_open_position_thresholds_repairs_bad_profit_stop_from_not
 
 
 def test_apply_trade_thresholds_caps_mid_horizon_stop_loss_in_moderate_risk(monkeypatch) -> None:
-    """MODERATE / MID 호라이즌은 최대 -4.0% 손실폭으로 캡되어야 한다.
-
-    5/27 mid-long 매매에서 -7~8% stop이 통과한 패턴을 다시 허용하지 않기 위함.
-    """
+    """MODERATE / MID 호라이즌은 최대 -8.0% 손실폭으로 캡되어야 한다."""
     agent = TradingAgent(broker_adapter=StubBrokerAdapter())
     applied: dict[str, float] = {}
 
@@ -400,20 +397,20 @@ def test_apply_trade_thresholds_caps_mid_horizon_stop_loss_in_moderate_risk(monk
 
     thresholds = agent._apply_trade_thresholds(
         "005930",
-        # AI가 -7.9% stop을 줘도 -4.0%로 좁혀져야 한다.
-        {"target_price": 14_500, "stop_loss_price": 12_180},
+        # AI가 -10% 이상 stop을 줘도 -8.0%로 좁혀져야 한다.
+        {"target_price": 14_500, "stop_loss_price": 11_800},
         {},
         current_price=13_220,
         horizon="MID",
     )
 
     assert thresholds == applied
-    # 13220 * (1 - 0.04) = 12691.2
-    assert abs(thresholds["stop_loss"] - 12_691.2) < 0.5
+    # 13220 * (1 - 0.08) = 12162.4
+    assert abs(thresholds["stop_loss"] - 12_162.4) < 0.5
 
 
 def test_apply_trade_thresholds_caps_long_horizon_stop_loss_in_conservative_risk(monkeypatch) -> None:
-    """CONSERVATIVE / LONG 호라이즌은 최대 -4.5% 손실폭으로 캡되어야 한다."""
+    """CONSERVATIVE / LONG 호라이즌은 최대 -10.0% 손실폭으로 캡되어야 한다."""
     agent = TradingAgent(broker_adapter=StubBrokerAdapter())
     applied: dict[str, float] = {}
 
@@ -425,16 +422,16 @@ def test_apply_trade_thresholds_caps_long_horizon_stop_loss_in_conservative_risk
 
     thresholds = agent._apply_trade_thresholds(
         "005930",
-        # AI가 -8% stop을 줘도 -4.5%로 좁혀져야 한다.
-        {"target_price": 220_000, "stop_loss_price": 184_000},
+        # AI가 -12% stop을 줘도 -10.0%로 좁혀져야 한다.
+        {"target_price": 220_000, "stop_loss_price": 176_000},
         {},
         current_price=200_000,
         horizon="LONG",
     )
 
     assert thresholds == applied
-    # 200000 * (1 - 0.045) = 191000
-    assert abs(thresholds["stop_loss"] - 191_000) < 1.0
+    # 200000 * (1 - 0.10) = 180000
+    assert abs(thresholds["stop_loss"] - 180_000) < 1.0
 
 
 def test_apply_scan_thresholds_clamps_sensitive_monitoring_values(monkeypatch) -> None:
