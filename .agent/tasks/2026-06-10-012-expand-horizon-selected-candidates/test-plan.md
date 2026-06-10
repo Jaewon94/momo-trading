@@ -29,6 +29,7 @@ python scripts/check_runtime_integrity.py --days 7
   - `HORIZON_SHORT_SELECTED_MAX=10`, `HORIZON_MID_SELECTED_MAX=12`, `HORIZON_LONG_SELECTED_MAX=12`
 - Health confirmed through `/api/v1/health`: `healthy`.
 - System status confirmed scheduler/agent are running; current session is `NXT_AFTER`, so automatic regular-session trading is disabled by broker/session policy.
+- Post-restart check confirmed `/api/v1/health` is `healthy`, scheduler/agent are running, selected caps remain `SHORT=10 MID=12 LONG=12`, and runtime integrity remains `OK`.
 
 ## Manual Checks
 

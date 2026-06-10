@@ -41,6 +41,7 @@
 - Runtime integrity: pass
 - `git diff --check`: pass
 - Health API: `healthy`
+- Post-restart health/API/runtime integrity: pass
 
 ## 운영 상태
 
@@ -48,3 +49,4 @@
 - scheduler와 agent는 실행 중이다.
 - 현재 세션은 `NXT_AFTER`라 정규 자동매매는 비활성이다.
 - 최근 주문 경고 이력은 남아 있으나, 최신 runtime integrity 기준 pending/reconciliation 불일치는 없다.
+- 재시작 후에도 selected caps는 `SHORT=10`, `MID=12`, `LONG=12`로 유지된다.
