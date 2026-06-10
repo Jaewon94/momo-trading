@@ -1,0 +1,48 @@
+{
+  "schema_version": "momo.run-log.v1",
+  "task_id": "2026-06-10-013-news-intelligence-governance",
+  "events": [
+    {
+      "at": "2026-06-10T16:53:10+09:00",
+      "type": "task_started",
+      "status": "created",
+      "summary": "Task artifact created."
+    },
+    {
+      "at": "2026-06-10T16:59:33+09:00",
+      "type": "implementation",
+      "status": "in_progress",
+      "summary": "Centralized news policy, drafted governance docs, and recorded after-hours LLM research guardrails. No broker, DB, migration, or order-placement command was run."
+    },
+    {
+      "at": "2026-06-10T17:01:15+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T17:01:29+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T17:03:05+09:00",
+      "type": "verification_note",
+      "status": "testing",
+      "summary": "The prior standard verify failures were harness-environment/reporting issues: system python lacked pytest, then final-report.md was required after terminal state mutation. Focused pytest, py_compile, runtime integrity, diff check, docs consistency, and strict harness checks passed separately."
+    },
+    {
+      "at": "2026-06-10T17:03:19+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T17:08:26+09:00",
+      "type": "verification_run",
+      "status": "completed",
+      "summary": "Focused tests, standard harness verification, markdown links, runtime integrity, and restart verification passed. Service is running in tmux session momo-trading-live."
+    }
+  ]
+}

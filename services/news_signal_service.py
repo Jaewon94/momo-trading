@@ -10,36 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.config import settings
 from repositories.news_item_repository import NewsItemRepository
 from scheduler.market_calendar import market_calendar
+from strategy.news_intelligence_policy import news_horizon_policy, news_severity_keywords
 from trading.symbols import normalize_krx_symbol
 from util.time_util import ensure_kst, now_kst
 
 
 class NewsSignalService:
-    _HORIZON_PROFILE = {
-        "SHORT": {"threshold_multiplier": 0.9, "freshness_multiplier": 0.7},
-        "MID": {"threshold_multiplier": 1.0, "freshness_multiplier": 1.0},
-        "LONG": {"threshold_multiplier": 1.12, "freshness_multiplier": 1.35},
-    }
-    _SEVERITY_KEYWORDS: tuple[tuple[str, float], ...] = (
-        ("회계 조사", 1.35),
-        ("investigation", 1.35),
-        ("fraud", 1.35),
-        ("분식", 1.35),
-        ("부도", 1.3),
-        ("default", 1.3),
-        ("거래정지", 1.25),
-        ("suspension", 1.25),
-        ("실적 경고", 1.18),
-        ("profit warning", 1.18),
-        ("guidance cut", 1.18),
-        ("리콜", 1.15),
-        ("recall", 1.15),
-        ("공급 차질", 1.15),
-        ("supply disruption", 1.15),
-        ("demand warning", 1.12),
-        ("정정 공시", 1.08),
-    )
-
     async def evaluate_gate(
         self,
         session: AsyncSession,
@@ -56,11 +32,11 @@ class NewsSignalService:
             symbol=symbol,
         )
 
-        horizon_key = str(horizon or "MID").upper()
-        profile = self._HORIZON_PROFILE.get(horizon_key, self._HORIZON_PROFILE["MID"])
+        profile = news_horizon_policy(horizon or "MID")
+        horizon_key = profile.horizon
         now = now_kst()
         cutoff = now - timedelta(hours=max(int(settings.NEWS_LOOKBACK_HOURS or 24), 1))
-        halflife_hours = max(float(settings.NEWS_FRESHNESS_HALFLIFE_HOURS or 8.0), 0.1) * float(profile["freshness_multiplier"])
+        halflife_hours = max(float(settings.NEWS_FRESHNESS_HALFLIFE_HOURS or 8.0), 0.1) * profile.freshness_multiplier
         contributors: list[dict[str, Any]] = []
 
         for item in items:
@@ -85,7 +61,7 @@ class NewsSignalService:
         source_diversity_boost = min(1.0 + max(distinct_sources - 1, 0) * 0.08, 1.24)
         negative_pressure = weighted_negative_pressure * source_diversity_boost
 
-        threshold = float(settings.NEWS_NEGATIVE_BLOCK_THRESHOLD or 0.75) * float(profile["threshold_multiplier"])
+        threshold = float(settings.NEWS_NEGATIVE_BLOCK_THRESHOLD or 0.75) * profile.threshold_multiplier
         approved = negative_pressure < threshold
         headlines = [str(item.get("headline") or "") for item in contributors[:3] if str(item.get("headline") or "").strip()]
         return {
@@ -208,7 +184,7 @@ class NewsSignalService:
     def _severity_multiplier(self, headline: str) -> float:
         text = str(headline or "").lower()
         severity = 1.0
-        for keyword, weight in self._SEVERITY_KEYWORDS:
+        for keyword, weight in news_severity_keywords():
             if keyword.lower() in text:
                 severity = max(severity, weight)
         return severity

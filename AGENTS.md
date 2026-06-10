@@ -48,6 +48,7 @@ python scripts/task_harness.py start \
 - Follow [docs/workflows/code-commit-harness.md](docs/workflows/code-commit-harness.md) for implementation and commit readiness.
 - Before edits, identify whether the change touches broker actions, runtime DB, migrations, liquidation, order placement, credentials, or CI/CD.
 - For trading policy changes, first follow [docs/workflows/trading-policy-change-checklist.md](docs/workflows/trading-policy-change-checklist.md) and keep [docs/architecture/trading-policy-governance.md](docs/architecture/trading-policy-governance.md) aligned.
+- For news, disclosure, web context, or LLM research changes, keep [docs/architecture/news-intelligence-governance.md](docs/architecture/news-intelligence-governance.md) and `strategy/news_intelligence_policy.py` aligned.
 - If a change touches buy/sell gates, risk profile behavior, holding horizon, runtime settings, or LLM prompt trading semantics, record the policy owner and behavior impact in the task artifacts before implementation.
 - Before commit approval is requested, run `python scripts/task_harness.py verify <task-id>`.
 - Use `python scripts/change_harness.py <paths...>` to classify risk, reviewers, and focused checks for code changes.

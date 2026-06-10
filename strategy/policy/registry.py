@@ -139,9 +139,19 @@ POLICY_REGISTRY: tuple[PolicyRegistryEntry, ...] = (
         owner="news_intel",
         priority=56,
         scope=PolicyScope.CANDIDATE,
-        description="News polling, enrichment, runtime health, and prompt context evidence.",
-        settings=("NEWS_POLL_ENABLED", "NEWS_LOOKBACK_HOURS"),
-        required_tests=("tests/services/test_news_signal_service.py", "tests/services/test_news_context_service.py"),
+        description="News polling, enrichment, horizon policy, after-hours research guardrails, and prompt context evidence.",
+        settings=(
+            "NEWS_POLL_ENABLED",
+            "NEWS_LOOKBACK_HOURS",
+            "HORIZON_SHORT_NEWS_LOOKBACK_HOURS",
+            "HORIZON_MID_NEWS_LOOKBACK_HOURS",
+            "HORIZON_LONG_NEWS_LOOKBACK_HOURS",
+        ),
+        required_tests=(
+            "tests/strategy/test_news_intelligence_policy.py",
+            "tests/services/test_news_signal_service.py",
+            "tests/services/test_news_context_service.py",
+        ),
     ),
     PolicyRegistryEntry(
         owner="exposure_alignment",

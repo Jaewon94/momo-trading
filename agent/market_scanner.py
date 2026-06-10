@@ -16,6 +16,7 @@ from services.candidate_scoring_service import candidate_scoring_service
 from services.decision_event_service import decision_event_service
 from services.news_signal_service import news_signal_service
 from strategy.horizon_scan_policy import horizon_scan_profile, normalize_scan_horizon
+from strategy.news_intelligence_policy import news_horizon_policy
 from strategy.trade_horizon import TradeHorizon
 from trading.adapters.base import BrokerAdapter
 from trading.broker_factory import get_broker_adapter
@@ -721,12 +722,12 @@ class MarketScanner:
     ) -> dict[str, float]:
         """후보 top-N에 대해서만 뉴스 부정 압력을 계산한다."""
         scan_horizon = normalize_scan_horizon(horizon)
-        scan_profile = horizon_scan_profile(scan_horizon)
-        if scan_profile.news_pressure_candidates <= 0:
+        news_policy = news_horizon_policy(scan_horizon)
+        if news_policy.pressure_candidates <= 0:
             return {}
         symbols = [
             str(item.get("symbol") or "").strip()
-            for item in scored_candidates[:scan_profile.news_pressure_candidates]
+            for item in scored_candidates[:news_policy.pressure_candidates]
             if str(item.get("symbol") or "").strip()
         ]
         if not symbols:

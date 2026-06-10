@@ -15,6 +15,7 @@ momo-trading은 국내 주식 자동 매매와 운영 대시보드를 위한 Fas
 - `admin/static/js/`: 관리자 UI state/rendering
 - `tests/`: Python unit/API tests and frontend state tests
 - `.agent/`: 작업 컨텍스트와 하네스 artifact
+- 뉴스/공시 판단 정책은 `strategy/news_intelligence_policy.py`와 `docs/architecture/news-intelligence-governance.md`를 함께 본다.
 
 ## Common Commands
 

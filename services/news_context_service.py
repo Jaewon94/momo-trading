@@ -9,7 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
 from repositories.news_item_repository import NewsItemRepository
-from strategy.horizon_scan_policy import horizon_scan_profile, normalize_scan_horizon
+from strategy.horizon_scan_policy import normalize_scan_horizon
+from strategy.news_intelligence_policy import news_horizon_policy
 from trading.symbols import normalize_krx_symbol
 from util.time_util import ensure_kst, now_kst
 
@@ -31,12 +32,12 @@ class NewsContextService:
     ) -> dict[str, Any]:
         normalized_symbol = normalize_krx_symbol(symbol)
         horizon_key = normalize_scan_horizon(horizon) if horizon else ""
-        profile = horizon_scan_profile(horizon_key) if horizon_key else None
-        item_limit = max(int(max_items or (profile.news_prompt_items if profile else self._MAX_PROMPT_ITEMS)), 1)
+        profile = news_horizon_policy(horizon_key) if horizon_key else None
+        item_limit = max(int(max_items or (profile.prompt_items if profile else self._MAX_PROMPT_ITEMS)), 1)
         resolved_lookback_hours = max(
             int(
                 lookback_hours
-                or (profile.news_lookback_hours if profile else None)
+                or (profile.lookback_hours if profile else None)
                 or settings.NEWS_LOOKBACK_HOURS
                 or 24
             ),
