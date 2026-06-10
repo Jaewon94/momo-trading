@@ -3,6 +3,12 @@
 This document defines how trading policy layers should be ordered and reviewed so
 new strategy changes do not silently conflict with older controls.
 
+Detailed refactor design:
+[Trading Policy Engine Refactor Plan](trading-policy-engine-refactor-plan.md)
+
+Before changing trading policy code, prompts, or runtime settings, use:
+[Trading Policy Change Checklist](../workflows/trading-policy-change-checklist.md)
+
 ## Policy Priority
 
 1. Hard safety controls
@@ -60,6 +66,9 @@ horizon, order placement, end-of-day handling, or broker reconciliation should:
 - When a policy layer mutates a `TradeSignal` directly, its return value must
   still describe the mutation. Callers should not have to infer changes by
   comparing object state before and after the call.
+- Keep the policy owner, priority, runtime settings, and focused tests aligned
+  with the refactor plan. If a new setting or gate cannot be assigned to an
+  owner, treat that as a design gap before implementation.
 
 ## Runtime Settings Review
 

@@ -1,0 +1,66 @@
+{
+  "schema_version": "momo.run-log.v1",
+  "task_id": "2026-06-10-002-policy-governance-refactor",
+  "events": [
+    {
+      "at": "2026-06-10T11:45:38+09:00",
+      "type": "task_started",
+      "status": "created",
+      "summary": "Task artifact created."
+    },
+    {
+      "at": "2026-06-10T11:53:00+09:00",
+      "type": "research_and_mapping",
+      "status": "researching",
+      "summary": "Reviewed external policy governance sources and mapped current scanner, gate, risk, order submission, holding, prompt, and runtime settings owners."
+    },
+    {
+      "at": "2026-06-10T11:54:00+09:00",
+      "type": "docs_updated",
+      "status": "planning",
+      "summary": "Added trading policy engine refactor plan and policy change checklist; linked future agent instructions to the checklist."
+    },
+    {
+      "at": "2026-06-10T11:56:37+09:00",
+      "type": "final_report_added",
+      "status": "testing",
+      "summary": "Added final report after verification exposed missing terminal-task report and system Python pytest issue."
+    },
+    {
+      "at": "2026-06-10T11:55:41+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T11:55:48+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T11:57:25+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T11:57:38+09:00",
+      "type": "task_completed",
+      "status": "completed",
+      "summary": "Policy governance refactor plan and checklist completed; standard harness verification passed with .venv313."
+    },
+    {
+      "at": "2026-06-10T11:58:21+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T11:58:26+09:00",
+      "type": "task_completed",
+      "status": "completed",
+      "summary": "Final verification rerun after report wording update; task remains completed."
+    }
+  ]
+}
