@@ -343,6 +343,45 @@ async def test_admin_settings_rejects_invalid_loss_streak_recovery_multiplier(cl
 
 
 @pytest.mark.asyncio
+async def test_admin_settings_accepts_aggressive_exposure_alignment_settings(client):
+    payload = await _confirmed_runtime_settings_payload(
+        client,
+        {
+            "AGGRESSIVE_EXPOSURE_ALIGNMENT_ENABLED": "true",
+            "AGGRESSIVE_TARGET_EXPOSURE_PCT": "30",
+            "AGGRESSIVE_MIN_BUY_ORDER_KRW": "25000000",
+            "AGGRESSIVE_EXPOSURE_MIN_CONFIDENCE": "0.7",
+        },
+    )
+    response = await client.put(
+        "/api/v1/admin/settings",
+        json=payload,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["AGGRESSIVE_EXPOSURE_ALIGNMENT_ENABLED"]["new"] is True
+    assert payload["AGGRESSIVE_TARGET_EXPOSURE_PCT"]["new"] == 30.0
+    assert payload["AGGRESSIVE_MIN_BUY_ORDER_KRW"]["new"] == 25_000_000
+    assert payload["AGGRESSIVE_EXPOSURE_MIN_CONFIDENCE"]["new"] == 0.7
+
+
+@pytest.mark.asyncio
+async def test_admin_settings_rejects_invalid_aggressive_exposure_confidence(client):
+    payload = await _confirmed_runtime_settings_payload(
+        client,
+        {"AGGRESSIVE_EXPOSURE_MIN_CONFIDENCE": 1.5},
+    )
+    response = await client.put(
+        "/api/v1/admin/settings",
+        json=payload,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "AGGRESSIVE_EXPOSURE_MIN_CONFIDENCE must be between 0 and 1"
+
+
+@pytest.mark.asyncio
 async def test_admin_settings_normalizes_empty_news_model_to_default(client, monkeypatch):
     monkeypatch.setattr("api.routes.admin.settings.NEWS_LLM_MODEL", "qwen2.5:14b")
 

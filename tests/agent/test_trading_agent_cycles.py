@@ -9,6 +9,8 @@ from analysis.chart_analyzer import ChartAnalysisResult
 from agent.trading_agent import TradingAgent
 from core.events import Event, EventType
 from services.tier1_analysis_cache_service import tier1_analysis_cache_service
+from strategy.signal import TradeSignal
+from trading.enums import SignalAction, SignalUrgency
 from trading.models import BuyingPowerInfo
 
 
@@ -57,6 +59,94 @@ def test_apply_trade_thresholds_returns_active_risk_values(monkeypatch) -> None:
     assert thresholds["take_profit"] == 12_500
     assert thresholds["stop_loss"] == 10_615
     assert thresholds["trailing_stop_pct"] == 4.0
+
+
+@pytest.mark.asyncio
+async def test_aggressive_exposure_alignment_raises_buy_quantity_and_logs(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    logs = []
+    signal = TradeSignal(
+        symbol="005930",
+        stock_id="005930",
+        action=SignalAction.BUY,
+        strength=0.7,
+        confidence=0.7,
+        suggested_price=100_000,
+        suggested_quantity=50,
+        target_price=112_000,
+        stop_loss_price=93_000,
+        urgency=SignalUrgency.IMMEDIATE,
+        strategy_type="AGGRESSIVE_SHORT",
+        reason="test",
+        metadata={"trade_horizon": "MID"},
+    )
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append((args, kwargs))
+
+    monkeypatch.setattr("agent.trading_agent.settings.RISK_APPETITE", "AGGRESSIVE")
+    monkeypatch.setattr("agent.trading_agent.settings.AGGRESSIVE_EXPOSURE_ALIGNMENT_ENABLED", True)
+    monkeypatch.setattr("agent.trading_agent.settings.AGGRESSIVE_TARGET_EXPOSURE_PCT", 25.0)
+    monkeypatch.setattr("agent.trading_agent.settings.AGGRESSIVE_MIN_BUY_ORDER_KRW", 20_000_000)
+    monkeypatch.setattr("agent.trading_agent.settings.AGGRESSIVE_EXPOSURE_MIN_CONFIDENCE", 0.65)
+    monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
+
+    decision = await agent._apply_aggressive_exposure_alignment(
+        signal=signal,
+        portfolio_snapshot={
+            "cash": 400_000_000,
+            "total_asset": 500_000_000,
+            "stock_value": 25_000_000,
+            "current_exposure_pct": 5.0,
+        },
+        dynamic_limits={"max_single_order_krw": 50_000_000, "max_position_pct": 15.0},
+        market_regime="BULL",
+        cycle_id="cycle-exposure",
+        stock_name="삼성전자",
+    )
+
+    assert decision.applied is True
+    assert signal.suggested_quantity == 200
+    assert signal.metadata["exposure_alignment"]["applied"] is True
+    assert any("공격적 노출 보정" in args[2] for args, _kwargs in logs)
+
+
+@pytest.mark.asyncio
+async def test_aggressive_exposure_alignment_does_not_raise_low_confidence(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    signal = TradeSignal(
+        symbol="005930",
+        stock_id="005930",
+        action=SignalAction.BUY,
+        strength=0.6,
+        confidence=0.6,
+        suggested_price=100_000,
+        suggested_quantity=50,
+        urgency=SignalUrgency.IMMEDIATE,
+        strategy_type="AGGRESSIVE_SHORT",
+        reason="test",
+    )
+
+    monkeypatch.setattr("agent.trading_agent.settings.RISK_APPETITE", "AGGRESSIVE")
+    monkeypatch.setattr("agent.trading_agent.settings.AGGRESSIVE_EXPOSURE_MIN_CONFIDENCE", 0.65)
+
+    decision = await agent._apply_aggressive_exposure_alignment(
+        signal=signal,
+        portfolio_snapshot={
+            "cash": 400_000_000,
+            "total_asset": 500_000_000,
+            "stock_value": 25_000_000,
+            "current_exposure_pct": 5.0,
+        },
+        dynamic_limits={"max_single_order_krw": 50_000_000, "max_position_pct": 15.0},
+        market_regime="BULL",
+        cycle_id="cycle-exposure",
+        stock_name="삼성전자",
+    )
+
+    assert decision.applied is False
+    assert decision.reason == "confidence_below_floor"
+    assert signal.suggested_quantity == 50
 
 
 def test_apply_trade_thresholds_widens_too_tight_stop_loss_by_risk_appetite(monkeypatch) -> None:

@@ -142,6 +142,53 @@ class RiskManager:
             return await complete(result)
 
         total_amount = price * quantity
+        initial_quantity = int(quantity)
+        quantity_adjustments: list[dict] = []
+
+        def record_quantity_adjustment(
+            *,
+            stage: str,
+            previous_quantity: int,
+            adjusted_quantity: int,
+            reason: str,
+            **extra,
+        ) -> None:
+            item = {
+                "stage": stage,
+                "previous_quantity": int(previous_quantity),
+                "adjusted_quantity": int(adjusted_quantity),
+                "reason": reason,
+            }
+            item.update(extra)
+            quantity_adjustments.append(item)
+
+        def adjusted_result(
+            *,
+            reason: str,
+            adjusted_quantity: int,
+            previous_quantity: int | None = None,
+            stage: str | None = None,
+            **extra,
+        ) -> dict:
+            if stage:
+                record_quantity_adjustment(
+                    stage=stage,
+                    previous_quantity=int(previous_quantity or quantity),
+                    adjusted_quantity=int(adjusted_quantity),
+                    reason=reason,
+                    **extra,
+                )
+            result = {
+                "approved": True,
+                "reason": reason,
+                "adjusted_quantity": int(adjusted_quantity),
+                "previous_quantity": initial_quantity,
+            }
+            if quantity_adjustments:
+                result["adjustments"] = quantity_adjustments
+            if guard_warnings:
+                result["warnings"] = guard_warnings
+            return result
 
         size_multiplier = min(
             [
@@ -159,9 +206,18 @@ class RiskManager:
                     "warnings": guard_warnings,
                 }
                 return await complete(result)
+            previous_qty = quantity
             quantity = adjusted_qty
             total_amount = price * quantity
             signal.suggested_quantity = quantity
+            record_quantity_adjustment(
+                stage="TRADING_GUARD_SIZE_MULTIPLIER",
+                previous_quantity=previous_qty,
+                adjusted_quantity=quantity,
+                reason="트레이딩 가드 수량 배율 적용",
+                multiplier=size_multiplier,
+                trigger=self._primary_warning_trigger(guard_warnings),
+            )
 
         warning_order_caps = [
             int(warning.get("max_order_krw") or 0)
@@ -180,9 +236,18 @@ class RiskManager:
                         "warnings": guard_warnings,
                     }
                     return await complete(result)
+                previous_qty = quantity
                 quantity = adjusted_qty
                 total_amount = price * quantity
                 signal.suggested_quantity = quantity
+                record_quantity_adjustment(
+                    stage="TRADING_GUARD_ORDER_CAP",
+                    previous_quantity=previous_qty,
+                    adjusted_quantity=quantity,
+                    reason="트레이딩 가드 주문 한도 적용",
+                    max_order_krw=warning_max_order,
+                    trigger=self._primary_warning_trigger(guard_warnings),
+                )
 
         # 리스크:보상 비율 검사 (다른 조정 전에 먼저 확인)
         entry = signal.suggested_price or 0
@@ -218,11 +283,12 @@ class RiskManager:
                         result = {"approved": False, "reason": "변동성 사이징 후 최소 수량 미달"}
                         return await complete(result)
                     if sized_qty < quantity:
-                        result = {
-                            "approved": True,
-                            "reason": f"수량 조정 (변동성 리스크): {quantity} → {sized_qty}",
-                            "adjusted_quantity": sized_qty,
-                        }
+                        result = adjusted_result(
+                            reason=f"수량 조정 (변동성 리스크): {quantity} → {sized_qty}",
+                            previous_quantity=quantity,
+                            adjusted_quantity=sized_qty,
+                            stage="VOLATILITY_POSITION_SIZING",
+                        )
                         return await complete(result)
 
         # 단일 주문 금액 한도 (0이면 AI 자율 → 스킵)
@@ -231,11 +297,13 @@ class RiskManager:
             if adjusted_qty < eff_min_qty:
                 result = {"approved": False, "reason": "단일 주문 한도 내에서 최소 수량 미달"}
                 return await complete(result)
-            result = {
-                "approved": True,
-                "reason": f"수량 조정 (한도 초과): {quantity} → {adjusted_qty}",
-                "adjusted_quantity": adjusted_qty,
-            }
+            result = adjusted_result(
+                reason=f"수량 조정 (한도 초과): {quantity} → {adjusted_qty}",
+                previous_quantity=quantity,
+                adjusted_quantity=adjusted_qty,
+                stage="MAX_SINGLE_ORDER_CAP",
+                max_single_order_krw=eff_max_order,
+            )
             return await complete(result)
 
         # 현금 부족 검사 (음수 현금 방어 포함)
@@ -248,11 +316,12 @@ class RiskManager:
             if adjusted_qty < eff_min_qty:
                 result = {"approved": False, "reason": "현금 부족"}
                 return await complete(result)
-            result = {
-                "approved": True,
-                "reason": f"수량 조정 (현금 부족): {quantity} → {adjusted_qty}",
-                "adjusted_quantity": adjusted_qty,
-            }
+            result = adjusted_result(
+                reason=f"수량 조정 (현금 부족): {quantity} → {adjusted_qty}",
+                previous_quantity=quantity,
+                adjusted_quantity=adjusted_qty,
+                stage="CASH_AVAILABLE_CAP",
+            )
             return await complete(result)
 
         # 최소 현금 비중 검사
@@ -266,11 +335,13 @@ class RiskManager:
             if adjusted_qty < eff_min_qty:
                 result = {"approved": False, "reason": "현금 비중 유지 후 최소 수량 미달"}
                 return await complete(result)
-            result = {
-                "approved": True,
-                "reason": f"수량 조정 (현금 비중 유지): {quantity} → {adjusted_qty}",
-                "adjusted_quantity": adjusted_qty,
-            }
+            result = adjusted_result(
+                reason=f"수량 조정 (현금 비중 유지): {quantity} → {adjusted_qty}",
+                previous_quantity=quantity,
+                adjusted_quantity=adjusted_qty,
+                stage="MIN_CASH_RATIO_CAP",
+                min_cash_ratio=eff_min_cash_ratio,
+            )
             return await complete(result)
 
         # 종목 비중 검사
@@ -281,12 +352,25 @@ class RiskManager:
                 if adjusted_qty < eff_min_qty:
                     result = {"approved": False, "reason": "비중 한도 내에서 최소 수량 미달"}
                     return await complete(result)
-                result = {
-                    "approved": True,
-                    "reason": f"수량 조정 (비중 한도): {quantity} → {adjusted_qty}",
-                    "adjusted_quantity": adjusted_qty,
-                }
+                result = adjusted_result(
+                    reason=f"수량 조정 (비중 한도): {quantity} → {adjusted_qty}",
+                    previous_quantity=quantity,
+                    adjusted_quantity=adjusted_qty,
+                    stage="MAX_POSITION_PCT_CAP",
+                    max_position_pct=eff_max_pos_pct,
+                )
                 return await complete(result)
+
+        if quantity_adjustments:
+            result = {
+                "approved": True,
+                "reason": f"리스크 검사 통과 (수량 조정: {initial_quantity} → {quantity})",
+                "adjusted_quantity": quantity,
+                "previous_quantity": initial_quantity,
+                "adjustments": quantity_adjustments,
+                "warnings": guard_warnings,
+            }
+            return await complete(result)
 
         result = {"approved": True, "reason": "리스크 검사 통과", "adjusted_quantity": None}
         return await complete(result)

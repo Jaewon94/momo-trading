@@ -47,6 +47,10 @@ MUTABLE_SETTINGS = [
     "RISK_MULTIPLIER_SHORT",
     "RISK_MULTIPLIER_MID",
     "RISK_MULTIPLIER_LONG",
+    "AGGRESSIVE_EXPOSURE_ALIGNMENT_ENABLED",
+    "AGGRESSIVE_TARGET_EXPOSURE_PCT",
+    "AGGRESSIVE_MIN_BUY_ORDER_KRW",
+    "AGGRESSIVE_EXPOSURE_MIN_CONFIDENCE",
     "POSITION_EXIT_MANAGEMENT_ENABLED",
     "FAST_HOLDINGS_GUARD_ENABLED",
     "FAST_HOLDINGS_GUARD_INTERVAL_MIN",
@@ -250,6 +254,9 @@ def coerce_runtime_setting_value(key: str, value: Any) -> Any:
         if key == "LOSS_STREAK_RECOVERY_MAX_ORDER_KRW":
             if normalized_int < 0 or normalized_int > 10_000_000:
                 raise HTTPException(status_code=400, detail=f"{key} must be between 0 and 10000000")
+        if key == "AGGRESSIVE_MIN_BUY_ORDER_KRW":
+            if normalized_int < 0 or normalized_int > 50_000_000:
+                raise HTTPException(status_code=400, detail=f"{key} must be between 0 and 50000000")
         return normalized_int
 
     if isinstance(current, float):
@@ -264,9 +271,13 @@ def coerce_runtime_setting_value(key: str, value: Any) -> Any:
             "LOSS_STREAK_RECOVERY_MAX_POSITION_PCT",
             "LOSS_STREAK_RECOVERY_MIN_CHANGE_PCT",
             "LOSS_STREAK_RECOVERY_MAX_CHANGE_PCT",
+            "AGGRESSIVE_TARGET_EXPOSURE_PCT",
         }:
             if normalized_float < 0 or normalized_float > 100:
                 raise HTTPException(status_code=400, detail=f"{key} must be between 0 and 100")
+        if key == "AGGRESSIVE_EXPOSURE_MIN_CONFIDENCE":
+            if normalized_float < 0 or normalized_float > 1:
+                raise HTTPException(status_code=400, detail=f"{key} must be between 0 and 1")
         if key == "LOSS_STREAK_RECOVERY_SIZE_MULTIPLIER":
             if normalized_float <= 0 or normalized_float > 1:
                 raise HTTPException(status_code=400, detail=f"{key} must be between 0 and 1")

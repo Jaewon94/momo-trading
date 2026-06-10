@@ -34,6 +34,7 @@ from services.runtime_reconfiguration_service import runtime_reconfiguration_ser
 from services.tier1_analysis_cache_service import tier1_analysis_cache_service
 from strategy.aggressive_short import AggressiveShortStrategy
 from strategy.base import strategy_profile_metadata
+from strategy.exposure_policy import ExposureAlignmentDecision, resolve_aggressive_exposure_alignment
 from strategy.risk_manager import risk_manager
 from strategy.signal import TradeSignal
 from strategy.stable_short import StableShortStrategy
@@ -659,6 +660,12 @@ class TradingAgent:
         snapshot = {
             "cash": balance.cash,
             "total_asset": balance.total_asset,
+            "stock_value": getattr(balance, "stock_value", 0.0),
+            "current_exposure_pct": (
+                (float(getattr(balance, "stock_value", 0.0) or 0.0) / float(balance.total_asset) * 100.0)
+                if float(balance.total_asset or 0.0) > 0
+                else 0.0
+            ),
             "holding_count": len(holdings),
             "today_trade_count": await self._get_today_trade_count(),
             "holding_symbols": holding_symbols,
@@ -1582,10 +1589,22 @@ class TradingAgent:
                 signal.suggested_quantity = holding_qty
                 signal.metadata["sell_quantity_source"] = "HOLDING_SNAPSHOT"
 
+        exposure_decision: ExposureAlignmentDecision | None = None
+        if signal.action == SignalAction.BUY:
+            exposure_decision = await self._apply_aggressive_exposure_alignment(
+                signal=signal,
+                portfolio_snapshot=portfolio_snapshot,
+                dynamic_limits=dynamic_limits,
+                market_regime=self._market_regime,
+                cycle_id=cycle_id,
+                stock_name=name,
+            )
+
         # 5. 리스크 검사
         snap = portfolio_snapshot or {}
         candidate_change_rate = self._optional_float(stock_info.get("change_rate"))
         intraday = getattr(chart_result.trend, "intraday", None) or {}
+        risk_input_quantity = int(signal.suggested_quantity or 0)
         risk_result = await risk_manager.check(
             signal=signal,
             portfolio_cash=snap.get("cash", 0),
@@ -1606,8 +1625,46 @@ class TradingAgent:
             logger.debug("리스크 검사 미통과: {} - {}", symbol, risk_result.get("reason"))
             return result
 
-        if risk_result.get("adjusted_quantity"):
-            signal.suggested_quantity = risk_result["adjusted_quantity"]
+        if risk_result.get("adjusted_quantity") is not None:
+            previous_qty = int(risk_result.get("previous_quantity") or risk_input_quantity)
+            adjusted_qty = int(risk_result["adjusted_quantity"])
+            signal.suggested_quantity = adjusted_qty
+            await activity_logger.log(
+                ActivityType.RISK_CHECK,
+                ActivityPhase.COMPLETE,
+                f"🧮 [{name}] 리스크 수량 조정: {previous_qty}주 → {adjusted_qty}주",
+                cycle_id=cycle_id,
+                symbol=symbol,
+                detail={
+                    "stage": "RISK_MANAGER_ADJUSTMENT",
+                    "previous_quantity": previous_qty,
+                    "adjusted_quantity": adjusted_qty,
+                    "reason": risk_result.get("reason"),
+                    "adjustments": risk_result.get("adjustments"),
+                    "warnings": risk_result.get("warnings"),
+                    "exposure_alignment": (
+                        exposure_decision.__dict__ if exposure_decision else None
+                    ),
+                },
+            )
+        elif int(signal.suggested_quantity or 0) != risk_input_quantity:
+            await activity_logger.log(
+                ActivityType.RISK_CHECK,
+                ActivityPhase.COMPLETE,
+                f"🧮 [{name}] 리스크 수량 변경 감지: "
+                f"{risk_input_quantity}주 → {int(signal.suggested_quantity or 0)}주",
+                cycle_id=cycle_id,
+                symbol=symbol,
+                detail={
+                    "stage": "RISK_MANAGER_SIGNAL_MUTATION",
+                    "previous_quantity": risk_input_quantity,
+                    "adjusted_quantity": int(signal.suggested_quantity or 0),
+                    "risk_result": risk_result,
+                    "exposure_alignment": (
+                        exposure_decision.__dict__ if exposure_decision else None
+                    ),
+                },
+            )
 
         reservation_decision: OrderReservationDecision | None = None
 
@@ -1636,11 +1693,26 @@ class TradingAgent:
                     )
                     return result
                 if max_qty < signal.suggested_quantity:
+                    previous_qty = int(signal.suggested_quantity or 0)
                     logger.info(
                         "[{}] 매수가능수량으로 수량 조정: {}주 → {}주",
-                        symbol, signal.suggested_quantity, max_qty,
+                        symbol, previous_qty, max_qty,
                     )
                     signal.suggested_quantity = max_qty
+                    await activity_logger.log(
+                        ActivityType.RISK_CHECK,
+                        ActivityPhase.COMPLETE,
+                        f"💰 [{name}] 브로커 매수가능수량 조정: {previous_qty}주 → {max_qty}주",
+                        cycle_id=cycle_id,
+                        symbol=symbol,
+                        detail={
+                            "stage": "BROKER_BUYING_POWER_ADJUSTMENT",
+                            "previous_quantity": previous_qty,
+                            "adjusted_quantity": max_qty,
+                            "available_cash": bp.available_cash,
+                            "price": current_price,
+                        },
+                    )
             # 조회 실패 시 → 기존 수량 유지, 브로커가 최종 판단
 
             # 매수 주문 실행 정책 적용 (시장가/슬리피지 가드 지정가)
@@ -1721,6 +1793,7 @@ class TradingAgent:
             "r_squared_60d": (
                 fast_gate.detail.get("r_squared_60d") if fast_gate and fast_gate.detail else None
             ),
+            "exposure_alignment": (signal.metadata or {}).get("exposure_alignment"),
         }
 
         exec_result = await decision_maker.execute(
@@ -1737,6 +1810,69 @@ class TradingAgent:
             order_reservation_ledger.release(reservation_decision.reservation_id, reason="order_not_submitted")
 
         return result
+
+    async def _apply_aggressive_exposure_alignment(
+        self,
+        *,
+        signal: TradeSignal,
+        portfolio_snapshot: dict | None,
+        dynamic_limits: dict | None,
+        market_regime: str,
+        cycle_id: str | None,
+        stock_name: str,
+    ) -> ExposureAlignmentDecision:
+        decision = resolve_aggressive_exposure_alignment(
+            enabled=bool(getattr(settings, "AGGRESSIVE_EXPOSURE_ALIGNMENT_ENABLED", True)),
+            risk_appetite=str(getattr(settings, "RISK_APPETITE", "MODERATE") or "MODERATE"),
+            market_regime=market_regime,
+            action=signal.action,
+            confidence=float(signal.confidence or signal.strength or 0.0),
+            min_confidence=float(getattr(settings, "AGGRESSIVE_EXPOSURE_MIN_CONFIDENCE", 0.65) or 0.0),
+            price=float(signal.suggested_price or 0.0),
+            quantity=int(signal.suggested_quantity or 0),
+            portfolio_snapshot=portfolio_snapshot,
+            dynamic_limits=dynamic_limits,
+            target_exposure_pct=float(getattr(settings, "AGGRESSIVE_TARGET_EXPOSURE_PCT", 25.0) or 0.0),
+            min_order_krw=float(getattr(settings, "AGGRESSIVE_MIN_BUY_ORDER_KRW", 0) or 0.0),
+        )
+        signal.metadata["exposure_alignment"] = {
+            "applied": decision.applied,
+            "reason": decision.reason,
+            "initial_quantity": decision.initial_quantity,
+            "final_quantity": decision.final_quantity,
+            "initial_notional": decision.initial_notional,
+            "final_notional": decision.final_notional,
+            "current_exposure_pct": decision.current_exposure_pct,
+            "target_exposure_pct": decision.target_exposure_pct,
+            "min_order_krw": decision.min_order_krw,
+            "cap_order_krw": decision.cap_order_krw,
+        }
+        if not decision.applied:
+            return decision
+
+        signal.suggested_quantity = decision.final_quantity
+        await activity_logger.log(
+            ActivityType.RISK_CHECK,
+            ActivityPhase.COMPLETE,
+            f"📌 [{stock_name}] 공격적 노출 보정: "
+            f"{decision.initial_quantity}주 → {decision.final_quantity}주 "
+            f"({decision.initial_notional:,.0f}원 → {decision.final_notional:,.0f}원)",
+            cycle_id=cycle_id,
+            symbol=signal.symbol,
+            detail={
+                "stage": "AGGRESSIVE_EXPOSURE_ALIGNMENT",
+                "reason": decision.reason,
+                "current_exposure_pct": decision.current_exposure_pct,
+                "target_exposure_pct": decision.target_exposure_pct,
+                "min_order_krw": decision.min_order_krw,
+                "cap_order_krw": decision.cap_order_krw,
+                "initial_quantity": decision.initial_quantity,
+                "final_quantity": decision.final_quantity,
+                "initial_notional": decision.initial_notional,
+                "final_notional": decision.final_notional,
+            },
+        )
+        return decision
 
     @staticmethod
     def _order_reservation_mode() -> str:

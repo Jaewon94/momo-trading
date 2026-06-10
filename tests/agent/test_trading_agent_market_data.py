@@ -221,6 +221,8 @@ async def test_trading_agent_builds_portfolio_snapshot_from_broker_adapter(monke
     assert snapshot == {
         "cash": 1_200_000,
         "total_asset": 2_000_000,
+        "stock_value": 800_000.0,
+        "current_exposure_pct": 40.0,
         "holding_count": 1,
         "today_trade_count": 2,
         "holding_symbols": ["005930"],

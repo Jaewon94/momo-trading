@@ -560,6 +560,7 @@ class DecisionMaker:
             # 안정성 지표 (gate 미반영, IC 예측력 측정만)
             "ulcer_index_14d": ctx.get("ulcer_index_14d"),
             "r_squared_60d": ctx.get("r_squared_60d"),
+            "exposure_alignment": ctx.get("exposure_alignment"),
         }
         payload = {
             k: v

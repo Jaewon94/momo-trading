@@ -1,0 +1,120 @@
+{
+  "schema_version": "momo.run-log.v1",
+  "task_id": "2026-06-10-001-aggressive-exposure-policy",
+  "events": [
+    {
+      "at": "2026-06-10T11:01:52+09:00",
+      "type": "task_started",
+      "status": "created",
+      "summary": "Task artifact created."
+    },
+    {
+      "at": "2026-06-10T11:04:00+09:00",
+      "type": "diagnosis",
+      "status": "completed",
+      "summary": "Confirmed AGGRESSIVE mode opens cash/order caps but does not own target exposure. BUY quantity can still be reduced or underused by Tier2 sizing, trading guard, volatility sizing, buying-power checks, and missing adjustment observability."
+    },
+    {
+      "at": "2026-06-10T11:08:30+09:00",
+      "type": "implementation",
+      "status": "completed",
+      "summary": "Added aggressive exposure alignment policy, runtime settings, agent integration, exposure metadata in trade notes, and activity logs for exposure/risk/broker quantity adjustments."
+    },
+    {
+      "at": "2026-06-10T11:09:00+09:00",
+      "type": "verification",
+      "status": "failed",
+      "summary": "Initial focused test run failed because two new TradeSignal test fixtures missed required stock_id. Test fixtures were fixed."
+    },
+    {
+      "at": "2026-06-10T11:09:20+09:00",
+      "type": "verification",
+      "status": "passed",
+      "summary": "Focused exposure policy, agent alignment, and runtime settings validation tests passed: 9 passed."
+    },
+    {
+      "at": "2026-06-10T11:09:55+09:00",
+      "type": "verification",
+      "status": "passed",
+      "summary": "Strategy/risk guard suite passed: 31 passed. API/runtime settings suite passed: 45 passed."
+    },
+    {
+      "at": "2026-06-10T11:10:20+09:00",
+      "type": "verification",
+      "status": "failed",
+      "summary": "Agent suite initially failed because portfolio snapshot test expected the old field set. Expected stock_value/current_exposure_pct fields were added to the test."
+    },
+    {
+      "at": "2026-06-10T11:10:45+09:00",
+      "type": "verification",
+      "status": "passed",
+      "summary": "Agent cycle/risk reservation/market data suite passed after updating the portfolio snapshot expectation: 58 passed."
+    },
+    {
+      "at": "2026-06-10T11:10:46+09:00",
+      "type": "implementation",
+      "status": "testing",
+      "summary": "Aggressive exposure policy implementation ready for final verification."
+    },
+    {
+      "at": "2026-06-10T11:14:28+09:00",
+      "type": "governance",
+      "status": "completed",
+      "summary": "Added docs/architecture/trading-policy-governance.md to define policy priority, ownership rules, runtime setting review, and a conflict diagnosis checklist."
+    },
+    {
+      "at": "2026-06-10T11:14:28+09:00",
+      "type": "runtime_integrity",
+      "status": "repaired",
+      "summary": "Runtime integrity check initially found one pre-existing PENDING_CONFIRM BUY for 480370 while broker held 1000 shares; recovered it through existing admin pending-trade reconciliation. Follow-up integrity check returned OK."
+    },
+    {
+      "at": "2026-06-10T11:14:33+09:00",
+      "type": "runtime_integrity",
+      "status": "completed",
+      "summary": "Runtime integrity check initially found one pre-existing PENDING_CONFIRM BUY for 480370 while broker held 1000 shares; recovered it through existing admin pending-trade reconciliation. Follow-up integrity check returned OK."
+    },
+    {
+      "at": "2026-06-10T11:15:16+09:00",
+      "type": "runtime_restart",
+      "status": "testing",
+      "summary": "Implementation and focused verification passed; service restart/live setting verification is in progress before closing the task."
+    },
+    {
+      "at": "2026-06-10T11:33:28+09:00",
+      "type": "runtime_restart",
+      "status": "completed",
+      "summary": "Restarted service, verified healthy AUTONOMOUS/FULL runtime, post-restart cycle, confirmed BUY, and explicit risk adjustment logs."
+    },
+    {
+      "at": "2026-06-10T11:33:43+09:00",
+      "type": "verification_run",
+      "status": "failed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T11:34:05+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T11:34:34+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T11:34:41+09:00",
+      "type": "task_completed",
+      "status": "completed",
+      "summary": "Aggressive exposure alignment and policy conflict observability implemented, verified, restarted, and live-checked."
+    },
+    {
+      "at": "2026-06-10T11:45:02+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    }
+  ]
+}
