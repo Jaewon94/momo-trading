@@ -10,7 +10,6 @@ from loguru import logger
 from core.config import settings
 from core.database import AsyncSessionLocal, run_sqlite_write_with_retry
 from core.events import Event, EventType, event_bus
-from core.order_submission import decide_order_submission
 from core.post_liquidation_guard import POST_LIQUIDATION_BUY_BLOCK_REASON, is_post_liquidation_buy_blocked
 from models.order import Order
 from models.recommendation import Recommendation
@@ -19,6 +18,8 @@ from repositories.trade_result_repository import TradeResultRepository
 from services.activity_logger import activity_logger
 from services.decision_event_service import decision_event_service
 from services.pending_trade_note_utils import with_pending_partial_note
+from strategy.policy.engine import TradingPolicyEngine
+from strategy.policy.trace import trace_dict, with_policy_trace
 from strategy.position_exit_policy import PARTIAL_STOP_LOSS_MARKER, PARTIAL_TAKE_PROFIT_MARKER
 from strategy.signal import TradeSignal
 from trading.adapters.base import BrokerAdapter
@@ -50,6 +51,7 @@ class DecisionMaker:
     def __init__(self, broker_adapter: BrokerAdapter | None = None):
         self._pending_tasks: set[asyncio.Task] = set()
         self._broker_adapter = broker_adapter or get_broker_adapter()
+        self.policy_engine = TradingPolicyEngine()
 
     def has_inflight_confirms(self) -> bool:
         return any(not t.done() for t in self._pending_tasks)
@@ -167,7 +169,15 @@ class DecisionMaker:
                     "order_id": "",
                     "message": message,
                     "blocked_by_pending_confirm": True,
-                    "data": None,
+                    "data": {
+                        "policy_trace": trace_dict(
+                            self.policy_engine.evaluate_order_block(
+                                reason_code="PENDING_BUY_CONFIRM",
+                                reason=message,
+                                side=signal.action.value,
+                            ).decision
+                        ),
+                    },
                 }
                 await event_bus.publish(Event(
                     type=EventType.ORDER_EXECUTED,
@@ -187,9 +197,16 @@ class DecisionMaker:
                 )
                 return result
 
-        submission_decision = decide_order_submission(signal.action.value)
-        if signal.action.value == OrderSide.BUY.value and is_post_liquidation_buy_blocked():
-            block_msg = "장마감 청산 이후 자동 BUY 차단"
+        submission_eval = self.policy_engine.evaluate_order_submission(signal.action.value)
+        submission_decision = submission_eval.value
+        submission_policy = submission_eval.decision
+        post_liquidation_eval = self.policy_engine.evaluate_post_liquidation_buy_block(
+            side=signal.action.value,
+            is_blocked=is_post_liquidation_buy_blocked,
+        )
+        if post_liquidation_eval is not None:
+            block_msg = str(post_liquidation_eval.value["message"])
+            post_liquidation_policy = post_liquidation_eval.decision
             result = {
                 "success": False,
                 "mode": "AUTONOMOUS",
@@ -201,7 +218,8 @@ class DecisionMaker:
                 "data": {
                     "order_submission": {
                         "reason": POST_LIQUIDATION_BUY_BLOCK_REASON,
-                    }
+                    },
+                    "policy_trace": trace_dict(post_liquidation_policy),
                 },
             }
             logger.info("[{}] {}", signal.symbol, block_msg)
@@ -211,8 +229,7 @@ class DecisionMaker:
                 f"⏸️ [{signal.symbol}] {block_msg}",
                 cycle_id=cycle_id, symbol=signal.symbol,
                 confidence=signal.confidence,
-                data=result,
-                source="decision_maker",
+                detail=result,
             )
             await self._record_decision_event(
                 signal,
@@ -236,7 +253,7 @@ class DecisionMaker:
                 "success": False,
                 "order_id": "",
                 "message": skip_msg,
-                "data": submission_decision.as_detail(),
+                "data": with_policy_trace(submission_decision.as_detail(), submission_policy),
             }
             await activity_logger.log(
                 ActivityType.DECISION, ActivityPhase.SKIP,
@@ -280,6 +297,13 @@ class DecisionMaker:
                         "pending_order_id": existing_pending_buy.order_id,
                         "pending_remaining_qty": existing_pending_buy.remaining_qty,
                         "pending_order_price": existing_pending_buy.order_price,
+                        "policy_trace": trace_dict(
+                            self.policy_engine.evaluate_order_block(
+                                reason_code="BROKER_PENDING_BUY",
+                                reason=skip_msg,
+                                side=signal.action.value,
+                            ).decision
+                        ),
                     },
                 }
                 await activity_logger.log(
@@ -311,6 +335,7 @@ class DecisionMaker:
         order_id = order_result.order_id or ""
         is_submitted = order_result.success and bool(order_id)
         order_data = order_result.model_dump(mode="json")
+        order_data["policy_trace"] = trace_dict(submission_policy)
 
         result = {
             "mode": "AUTONOMOUS",

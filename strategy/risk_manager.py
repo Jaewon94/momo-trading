@@ -3,6 +3,7 @@ from loguru import logger
 
 from core.config import settings
 from services.activity_logger import activity_logger
+from strategy.policy.trace import from_risk_result, trace_dict, with_policy_trace
 from strategy.signal import TradeSignal
 from strategy.trading_guard import trading_guard as default_trading_guard
 from strategy.trade_horizon import TradeHorizon
@@ -83,6 +84,15 @@ class RiskManager:
             result.setdefault("effective_max_single_order_krw", eff_max_order)
             result.setdefault("effective_min_cash_ratio", eff_min_cash_ratio)
             result.setdefault("effective_max_position_pct", eff_max_pos_pct)
+            result.setdefault(
+                "policy_trace",
+                trace_dict(
+                    from_risk_result(
+                        result,
+                        input_quantity=int(getattr(signal, "suggested_quantity", 0) or 0),
+                    )
+                ),
+            )
             await self._log_result(symbol, result, today_trade_count, cycle_id)
             return result
 
@@ -209,7 +219,6 @@ class RiskManager:
             previous_qty = quantity
             quantity = adjusted_qty
             total_amount = price * quantity
-            signal.suggested_quantity = quantity
             record_quantity_adjustment(
                 stage="TRADING_GUARD_SIZE_MULTIPLIER",
                 previous_quantity=previous_qty,
@@ -239,7 +248,6 @@ class RiskManager:
                 previous_qty = quantity
                 quantity = adjusted_qty
                 total_amount = price * quantity
-                signal.suggested_quantity = quantity
                 record_quantity_adjustment(
                     stage="TRADING_GUARD_ORDER_CAP",
                     previous_quantity=previous_qty,
@@ -412,7 +420,10 @@ class RiskManager:
             summary,
             cycle_id=cycle_id,
             symbol=symbol,
-            detail=result,
+            detail=with_policy_trace(
+                result,
+                from_risk_result(result, input_quantity=result.get("previous_quantity")),
+            ),
         )
 
 

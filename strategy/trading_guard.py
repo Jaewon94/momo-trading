@@ -9,6 +9,7 @@ from core.database import AsyncSessionLocal
 from models.trade_result import TradeResult
 from services.pnl_truth_service import pnl_truth_service
 from services.runtime_settings_service import runtime_settings_service
+from strategy.policy.types import PolicyEffect, PolicyEffectType
 
 
 class TradingGuard:
@@ -94,15 +95,43 @@ class TradingGuard:
 
     @staticmethod
     async def _block(trigger: str, reason: str) -> dict:
-        if settings.AUTO_RISK_KILL_SWITCH_ENABLED:
-            await runtime_settings_service.update_settings({"TRADING_ENABLED": False})
+        runtime_effects = TradingGuard._runtime_kill_switch_effects(trigger=trigger, reason=reason)
+        await TradingGuard._enforce_runtime_effects(runtime_effects)
         return {
             "approved": False,
             "reason": f"자동 킬스위치: {reason}",
             "trigger": trigger,
             "kill_switched": bool(settings.AUTO_RISK_KILL_SWITCH_ENABLED),
+            "runtime_effects": runtime_effects,
             "warnings": [],
         }
+
+    @staticmethod
+    def _runtime_kill_switch_effects(*, trigger: str, reason: str) -> list[dict]:
+        if not bool(settings.AUTO_RISK_KILL_SWITCH_ENABLED):
+            return []
+        return [
+            PolicyEffect(
+                field="TRADING_ENABLED",
+                before=bool(getattr(settings, "TRADING_ENABLED", True)),
+                after=False,
+                effect_type=PolicyEffectType.SET,
+                reason=f"자동 킬스위치: {reason}",
+                metadata={"trigger": trigger, "owner": "trading_guard"},
+                requires_enforcement=True,
+            ).to_dict()
+        ]
+
+    @staticmethod
+    async def _enforce_runtime_effects(effects: list[dict]) -> None:
+        updates = {
+            str(effect.get("field")): effect.get("after")
+            for effect in effects
+            if bool(effect.get("requires_enforcement", True))
+            and str(effect.get("field") or "") == "TRADING_ENABLED"
+        }
+        if updates:
+            await runtime_settings_service.update_settings(updates)
 
     async def _evaluate_negative_expectancy(self, *, expectancy: float, min_expectancy: float) -> dict:
         mode = str(getattr(settings, "STRATEGY_EXPECTANCY_GUARD_MODE", "REDUCE_SIZE") or "REDUCE_SIZE").upper()

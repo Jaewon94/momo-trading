@@ -1,0 +1,35 @@
+{
+  "schema_version": "momo.task.v1",
+  "task_id": "2026-06-10-007-pure-threshold-policy-split",
+  "status": "completed",
+  "title": "Pure threshold policy split",
+  "repo": "momo-trading",
+  "risk_level": "medium",
+  "task_type": "engineering",
+  "priority": "normal",
+  "primary_runtime": "codex",
+  "created_at": "2026-06-10T12:42:56+09:00",
+  "updated_at": "2026-06-10T12:47:09+09:00",
+  "approval": {
+    "required": false,
+    "status": "not_required"
+  },
+  "checks": {
+    "diff_check": "passed",
+    "py_compile": "passed",
+    "secret_scan": "passed",
+    "task_harness": "passed",
+    "markdown_links": "passed",
+    "docs_consistency": "passed",
+    "harness_tests": "passed"
+  },
+  "artifacts": {
+    "brief": ".agent/tasks/2026-06-10-007-pure-threshold-policy-split/brief.md",
+    "state": ".agent/tasks/2026-06-10-007-pure-threshold-policy-split/state.json",
+    "run_log": ".agent/tasks/2026-06-10-007-pure-threshold-policy-split/run-log.json",
+    "test_plan": ".agent/tasks/2026-06-10-007-pure-threshold-policy-split/test-plan.md",
+    "decision_record": ".agent/tasks/2026-06-10-007-pure-threshold-policy-split/decision-record.md",
+    "quality_scorecard": ".agent/tasks/2026-06-10-007-pure-threshold-policy-split/quality-scorecard.md"
+  },
+  "errors": []
+}

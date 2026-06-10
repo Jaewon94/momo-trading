@@ -9,6 +9,7 @@ from analysis.chart_analyzer import ChartAnalysisResult
 from agent.trading_agent import TradingAgent
 from core.events import Event, EventType
 from services.tier1_analysis_cache_service import tier1_analysis_cache_service
+from strategy.policy.trace import from_risk_result
 from strategy.signal import TradeSignal
 from trading.enums import SignalAction, SignalUrgency
 from trading.models import BuyingPowerInfo
@@ -61,6 +62,27 @@ def test_apply_trade_thresholds_returns_active_risk_values(monkeypatch) -> None:
     assert thresholds["trailing_stop_pct"] == 4.0
 
 
+def test_resolve_trade_thresholds_does_not_touch_event_detector(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+
+    def fail_set_thresholds(*_args, **_kwargs) -> None:
+        raise AssertionError("pure threshold resolver must not write to event detector")
+
+    monkeypatch.setattr("agent.trading_agent.event_detector.set_thresholds", fail_set_thresholds)
+    monkeypatch.setattr("agent.trading_agent.settings.RISK_APPETITE", "MODERATE")
+
+    thresholds = agent._resolve_trade_thresholds(
+        tier1={"target_price": 12_000, "stop_loss_price": 10_500},
+        tier2={"target_price": 12_500, "stop_loss_price": 10_000},
+        current_price=11_000,
+        horizon="SHORT",
+    )
+
+    assert thresholds["take_profit"] == 12_500
+    assert thresholds["stop_loss"] == 10_615
+    assert thresholds["trailing_stop_pct"] == 0.8
+
+
 @pytest.mark.asyncio
 async def test_aggressive_exposure_alignment_raises_buy_quantity_and_logs(monkeypatch) -> None:
     agent = TradingAgent(broker_adapter=StubBrokerAdapter())
@@ -106,9 +128,13 @@ async def test_aggressive_exposure_alignment_raises_buy_quantity_and_logs(monkey
     )
 
     assert decision.applied is True
+    assert signal.suggested_quantity == 50
+    signal.suggested_quantity = decision.final_quantity
     assert signal.suggested_quantity == 200
     assert signal.metadata["exposure_alignment"]["applied"] is True
+    assert signal.metadata["exposure_alignment"]["policy_trace"]["adjusted"] is True
     assert any("공격적 노출 보정" in args[2] for args, _kwargs in logs)
+    assert logs[0][1]["detail"]["policy_trace"]["decisions"][0]["owner"] == "exposure_alignment"
 
 
 @pytest.mark.asyncio
@@ -1622,6 +1648,124 @@ async def test_analyze_and_trade_skips_tier2_when_tier1_cost_gate_blocks_low_edg
     assert decision_events[0]["source"] == "tier1_cost_gate"
     assert decision_events[0]["risk_gate_result"] == "LOW_EDGE_AFTER_COST"
     assert decision_events[0]["tier1_decision"] == "BUY"
+
+
+@pytest.mark.asyncio
+async def test_analyze_and_trade_enforces_risk_adjusted_quantity_before_order(monkeypatch) -> None:
+    agent = TradingAgent(broker_adapter=StubBrokerAdapter())
+    observed: dict = {}
+
+    async def fake_log(*args, **kwargs) -> None:
+        return None
+
+    async def fake_fetch_symbol_market_data(_symbol: str):
+        price_resp = SimpleNamespace(success=True, data={"price": 100.0, "change_rate": 0.0}, error=None)
+        daily_resp = SimpleNamespace(
+            success=True,
+            data={"prices": [{"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1_000}]},
+            error=None,
+        )
+        minute_resp = SimpleNamespace(success=False, data={}, error="no-minute")
+        return price_resp, daily_resp, minute_resp
+
+    async def fake_tier1_analysis(*args, **kwargs) -> dict:
+        return {
+            "recommendation": "BUY",
+            "confidence": 0.9,
+            "reason": "테스트",
+            "target_price": 120.0,
+            "stop_loss_price": 90.0,
+            "provider": "CODEX",
+        }
+
+    async def fake_tier2_review(*args, **kwargs) -> dict:
+        return {
+            "approved": True,
+            "action": "BUY",
+            "reason": "테스트 승인",
+            "suggested_quantity": 500,
+            "entry_price": 100.0,
+            "target_price": 120.0,
+            "stop_loss_price": 90.0,
+            "provider": "CODEX",
+        }
+
+    async def fake_risk_manager(**kwargs):
+        assert kwargs["signal"].suggested_quantity == 500
+        result = {
+            "approved": True,
+            "reason": "수량 조정 (테스트): 500 → 50",
+            "adjusted_quantity": 50,
+            "previous_quantity": 500,
+            "adjustments": [
+                {
+                    "stage": "TEST_PARITY_CAP",
+                    "previous_quantity": 500,
+                    "adjusted_quantity": 50,
+                    "reason": "테스트 수량 제한",
+                }
+            ],
+        }
+        return SimpleNamespace(
+            value=result,
+            decision=from_risk_result(result, input_quantity=kwargs.get("input_quantity")),
+        )
+
+    async def fake_news_gate(**kwargs):
+        return SimpleNamespace(value={"approved": True, "reason": "뉴스 게이트 통과"}, decision=None)
+
+    async def fake_execute(signal, cycle_id=None, analysis_context=None):
+        observed["quantity"] = signal.suggested_quantity
+        observed["cycle_id"] = cycle_id
+        observed["analysis_context"] = analysis_context
+        return {"success": True}
+
+    async def fake_buying_power(_symbol: str, price: float | None = None, market=None) -> BuyingPowerInfo:
+        return BuyingPowerInfo(success=True, max_qty=1_000, available_cash=1_000_000)
+
+    monkeypatch.setattr("agent.trading_agent.settings.COST_GATE_ENABLED", False)
+    monkeypatch.setattr("agent.trading_agent.settings.RISK_APPETITE", "MODERATE")
+    monkeypatch.setattr("agent.trading_agent.activity_logger.log", fake_log)
+    monkeypatch.setattr(agent, "_fetch_symbol_market_data", fake_fetch_symbol_market_data)
+    monkeypatch.setattr(agent, "_tier1_analysis", fake_tier1_analysis)
+    monkeypatch.setattr(agent, "_tier2_review", fake_tier2_review)
+    monkeypatch.setattr(agent, "_apply_trade_thresholds", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(agent.policy_engine, "evaluate_risk_manager", fake_risk_manager)
+    monkeypatch.setattr(agent.policy_engine, "evaluate_news_gate", fake_news_gate)
+    monkeypatch.setattr(agent._broker_adapter, "get_buying_power", fake_buying_power)
+    monkeypatch.setattr("agent.trading_agent.decision_maker.execute", fake_execute)
+    monkeypatch.setattr("agent.trading_agent.tier1_analysis_cache_service.get", lambda _key: None)
+    monkeypatch.setattr("agent.trading_agent.tier1_analysis_cache_service.put", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "agent.trading_agent.deterministic_prompt_context_service.build_tier1_context",
+        lambda **_kwargs: "deterministic context",
+    )
+    monkeypatch.setattr(
+        "agent.trading_agent.deterministic_prompt_context_service.build_tier2_context",
+        lambda **_kwargs: "deterministic tier2 context",
+    )
+    monkeypatch.setattr(
+        "agent.trading_agent.news_context_service.build_for_symbol",
+        lambda *_args, **_kwargs: asyncio.sleep(0, result={"available": False, "prompt": "news context"}),
+    )
+
+    result = await agent._analyze_and_trade(
+        {"symbol": "005930", "name": "삼성전자", "strategy_type": "STABLE_SHORT"},
+        "cycle-risk-adjustment-parity",
+        portfolio_snapshot={
+            "cash": 1_000_000,
+            "total_asset": 1_000_000,
+            "holding_symbols": [],
+            "holding_count": 0,
+            "today_trade_count": 0,
+        },
+        dynamic_limits={"min_buy_quantity": 1, "max_single_order_krw": 100_000_000},
+    )
+
+    assert result["signal"] is True
+    assert result["executed"] is True
+    assert observed["quantity"] == 50
+    assert observed["cycle_id"] == "cycle-risk-adjustment-parity"
 
 
 @pytest.mark.asyncio

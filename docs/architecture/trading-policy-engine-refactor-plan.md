@@ -162,13 +162,23 @@ class PolicyScope(str, Enum):
 - 정책이 내린 block/adjust/allow를 공통 trace로 남긴다.
 - 실제 매매 결과는 바꾸지 않는다.
 
+Status:
+
+- 2026-06-10 implemented initial trace infrastructure in `strategy/policy/`.
+- Existing scanner/LLM/risk/order/exit behavior was not intentionally changed.
+- `policy_trace` is now additive metadata for representative gate/log paths,
+  not a central decision engine yet.
+
 작업:
 
-- `PolicyDecision`, `PolicyEffect`, `PolicyTrace` 타입 추가.
-- `TradingAgent._analyze_and_trade`의 주요 gate 결과를 `PolicyTrace`로 감싸는 adapter 추가.
-- `RiskManager.check` 결과의 `adjustments`와 `ExposureAlignmentDecision`을 같은 trace schema로 변환.
-- event sell path의 stop loss/take profit decision도 같은 trace에 넣는다.
-- 현재 문서와 테스트 fixture를 `tests/strategy/policy/`에 추가한다.
+- Done: `PolicyDecision`, `PolicyEffect`, `PolicyTrace` 타입 추가.
+- Done: `TradingAgent._analyze_and_trade`의 주요 gate 결과를 `PolicyTrace`로 감싸는 adapter 추가.
+- Done: `RiskManager.check` 결과의 `adjustments`와 `ExposureAlignmentDecision`을 같은 trace schema로 변환.
+- Done: event sell path의 stop loss/take profit decision도 같은 trace에 넣는다.
+- Done: 현재 문서와 테스트 fixture를 `tests/strategy/policy/`에 추가한다.
+- Remaining: broker buying-power adjustment, order reservation shadow/enforce,
+  and scanner candidate scoring can be folded into the same trace in a later
+  small patch if needed.
 
 검증:
 
@@ -184,12 +194,20 @@ class PolicyScope(str, Enum):
 
 - runtime setting이 어느 정책 owner에 속하는지 한 곳에서 관리한다.
 
+Status:
+
+- 2026-06-10 implemented metadata-only catalog in
+  `strategy/policy/settings_catalog.py`.
+- Every key in `core.runtime_settings.MUTABLE_SETTINGS` is classified with
+  owner, scope, risk, mutability, source, and notes.
+- Admin API response metadata remains deferred.
+
 작업:
 
-- `strategy/policy/settings_catalog.py`에 setting metadata 추가.
-- 필드: `key`, `owner`, `scope`, `risk`, `default_source`, `mutable`, `validation`, `tests`.
-- `core/runtime_settings.MUTABLE_SETTINGS`와 catalog 불일치 검증 테스트 추가.
-- admin settings 응답에 owner/risk metadata를 붙이는 것은 별도 단계로 둔다.
+- Done: `strategy/policy/settings_catalog.py`에 setting metadata 추가.
+- Done: 필드: `key`, `owner`, `scope`, `risk`, `mutable`, `source`, `notes`.
+- Done: `core.runtime_settings.MUTABLE_SETTINGS`와 catalog 불일치 검증 테스트 추가.
+- Deferred: admin settings 응답에 owner/risk metadata를 붙이는 것은 별도 단계로 둔다.
 
 검증:
 
@@ -203,12 +221,24 @@ class PolicyScope(str, Enum):
 - 기존 gate 함수 호출 순서는 유지하되 `TradingPolicyEngine.evaluate_buy_path`,
   `evaluate_order_submission`, `evaluate_exit_event`로 진입점을 묶는다.
 
+Status:
+
+- 2026-06-10 implemented behavior-preserving facade in
+  `strategy/policy/engine.py`.
+- `TradingAgent` buy-path gate calls now go through `TradingPolicyEngine` for
+  pre-analysis, Tier1 fast gate, final deterministic gate, cost gate, news gate,
+  exposure alignment, and risk manager trace decisions.
+- `DecisionMaker` order-submission policy trace paths now go through the engine
+  facade while preserving order request construction and broker call behavior.
+- Stop-loss/take-profit event trace decisions now use `evaluate_exit_event`.
+- Pure mutation removal remains deferred to Phase 3.
+
 작업:
 
-- `TradingAgent`에서 pre gate, fast gate, final gate, cost gate, news gate,
+- Done: `TradingAgent`에서 pre gate, fast gate, final gate, cost gate, news gate,
   exposure alignment, risk manager 호출을 engine facade 뒤로 이동한다.
-- `DecisionMaker`의 order gate는 `evaluate_order_submission` adapter를 통해 trace를 받는다.
-- event stop/take-profit은 `evaluate_exit_event` adapter를 통해 min-hold/staged exit trace를 받는다.
+- Done: `DecisionMaker`의 order gate는 `evaluate_order_submission` adapter를 통해 trace를 받는다.
+- Done: event stop/take-profit은 `evaluate_exit_event` adapter를 통해 min-hold/staged exit trace를 받는다.
 
 검증:
 
@@ -221,12 +251,34 @@ class PolicyScope(str, Enum):
 
 - 수량/가격/horizon/threshold mutation을 직접 하지 않고 effect로 반환한다.
 
+Status:
+
+- 2026-06-10 implemented Phase 3a for quantity sizing mutation separation.
+- `RiskManager.check` no longer mutates `TradeSignal.suggested_quantity`
+  directly for guard-based quantity reductions; it returns `adjusted_quantity`
+  and adjustment effects for the caller to enforce.
+- Aggressive exposure alignment no longer mutates quantity inside the evaluator
+  helper; `TradingAgent` applies the returned final quantity at the buy-path
+  enforcement point before risk and broker buying-power checks.
+- Final order quantity parity is covered by a focused `_analyze_and_trade`
+  regression test.
+- 2026-06-10 implemented Phase 3c for runtime kill-switch effect split.
+- `TradingGuard` now emits explicit `runtime_effects` for `TRADING_ENABLED=false`
+  and applies them through `_enforce_runtime_effects`, preserving existing
+  kill-switch behavior.
+- 2026-06-10 implemented Phase 3b for trade threshold policy split.
+- `_resolve_trade_thresholds` now computes stop-loss/take-profit/trailing-stop
+  values without writing to `event_detector`; `_enforce_trade_thresholds` owns
+  the write.
+- `_apply_trade_thresholds` remains as a compatibility wrapper that preserves
+  existing caller behavior.
+
 작업:
 
-- `RiskManager.check`에서 `TradeSignal` 직접 mutation 제거.
-- `TradingAgent._apply_aggressive_exposure_alignment`은 effect만 반환하게 변경.
-- `TradingAgent._apply_trade_thresholds`는 threshold policy와 event detector enforcement를 분리.
-- kill switch runtime update는 `RuntimePolicyEffect`로 분리한 뒤 enforcement helper가 실행.
+- Done: `RiskManager.check`에서 guard-based `TradeSignal` quantity 직접 mutation 제거.
+- Done: `TradingAgent._apply_aggressive_exposure_alignment`은 quantity decision/effect를 반환하고 caller가 적용.
+- Done: `TradingAgent._apply_trade_thresholds`는 threshold policy와 event detector enforcement를 분리.
+- Done: kill switch runtime update는 runtime effect로 분리한 뒤 enforcement helper가 실행.
 
 검증:
 
@@ -240,11 +292,20 @@ class PolicyScope(str, Enum):
 
 - 새 정책이 추가될 때 owner, priority, scope, settings, tests를 빠뜨리면 CI에서 잡는다.
 
+Status:
+
+- 2026-06-10 implemented metadata-only registry in
+  `strategy/policy/registry.py`.
+- `docs/architecture/trading-policy-governance.md` now includes a
+  registry-generated policy table.
+- Registry tests cover priority order, settings catalog owner coverage,
+  required test path existence, and governance doc sync.
+
 작업:
 
-- `strategy/policy/registry.py`에 canonical policy order 선언.
-- registry에서 `docs/architecture/trading-policy-governance.md`의 policy owner 표를 생성하거나 검증한다.
-- prompt contract 변경과 deterministic policy 변경의 연계 체크리스트를 추가한다.
+- Done: `strategy/policy/registry.py`에 canonical policy order 선언.
+- Done: registry에서 `docs/architecture/trading-policy-governance.md`의 policy owner 표를 생성/검증한다.
+- Deferred: prompt contract 변경과 deterministic policy 변경의 추가 자동 체크는 별도 CI 확장으로 둔다.
 
 검증:
 

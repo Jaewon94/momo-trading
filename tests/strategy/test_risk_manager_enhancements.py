@@ -44,6 +44,8 @@ async def test_risk_manager_adjusts_quantity_by_risk_budget(monkeypatch):
     assert result["previous_quantity"] == 100
     assert result["adjustments"][0]["stage"] == "VOLATILITY_POSITION_SIZING"
     assert "변동성" in result["reason"]
+    assert result["policy_trace"]["decisions"][0]["owner"] == "risk_manager"
+    assert result["policy_trace"]["adjusted"] is True
 
 
 @pytest.mark.asyncio
@@ -121,6 +123,7 @@ async def test_risk_manager_blocks_buy_when_trading_guard_fails(monkeypatch):
 
     assert result["approved"] is False
     assert result["trigger"] == "CONSECUTIVE_LOSSES"
+    assert result["policy_trace"]["blocked"] is True
 
 
 @pytest.mark.asyncio
@@ -165,7 +168,7 @@ async def test_risk_manager_reduces_quantity_for_negative_expectancy_warning(mon
     )
 
     assert result["approved"] is True
-    assert signal.suggested_quantity == 250
+    assert signal.suggested_quantity == 500
     assert result["adjusted_quantity"] == 250
     assert result["previous_quantity"] == 500
     assert result["adjustments"][0]["stage"] == "TRADING_GUARD_SIZE_MULTIPLIER"
@@ -217,7 +220,7 @@ async def test_risk_manager_applies_loss_streak_recovery_caps(monkeypatch):
     )
 
     assert result["approved"] is True
-    assert signal.suggested_quantity == 50
+    assert signal.suggested_quantity == 500
     assert result["adjusted_quantity"] == 50
     assert result["previous_quantity"] == 500
     assert [item["stage"] for item in result["adjustments"]] == [

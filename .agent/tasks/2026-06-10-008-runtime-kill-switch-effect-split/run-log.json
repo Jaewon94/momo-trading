@@ -1,0 +1,42 @@
+{
+  "schema_version": "momo.run-log.v1",
+  "task_id": "2026-06-10-008-runtime-kill-switch-effect-split",
+  "events": [
+    {
+      "at": "2026-06-10T12:47:37+09:00",
+      "type": "task_started",
+      "status": "created",
+      "summary": "Task artifact created."
+    },
+    {
+      "at": "2026-06-10T12:48:13+09:00",
+      "type": "scope_locked",
+      "status": "implementing",
+      "summary": "Locked Phase 3c to behavior-preserving TradingGuard runtime kill-switch effect/enforcement split."
+    },
+    {
+      "at": "2026-06-10T12:49:39+09:00",
+      "type": "implementation_completed",
+      "status": "testing",
+      "summary": "Separated TradingGuard runtime kill-switch effect construction from runtime settings enforcement without changing kill-switch behavior."
+    },
+    {
+      "at": "2026-06-10T12:49:53+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T12:50:20+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T12:50:26+09:00",
+      "type": "task_completed",
+      "status": "completed",
+      "summary": "Phase 3c runtime kill-switch effect split completed; focused tests, runtime integrity, and standard harness verification passed."
+    }
+  ]
+}

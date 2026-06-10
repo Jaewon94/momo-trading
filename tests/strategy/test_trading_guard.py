@@ -20,9 +20,16 @@ async def test_trading_guard_blocks_buy_on_daily_drawdown(monkeypatch):
     async def fake_expectancy(strategy_type: str) -> float | None:
         return 0.1
 
+    updates = []
+
+    async def fake_update_settings(payload: dict) -> dict:
+        updates.append(payload)
+        return payload
+
     monkeypatch.setattr(guard, "_get_daily_realized_pnl_pct", fake_drawdown)
     monkeypatch.setattr(guard, "_get_consecutive_losses", fake_losses)
     monkeypatch.setattr(guard, "_get_strategy_expectancy", fake_expectancy)
+    monkeypatch.setattr("strategy.trading_guard.runtime_settings_service.update_settings", fake_update_settings)
     monkeypatch.setattr("strategy.trading_guard.settings.AUTO_RISK_KILL_SWITCH_ENABLED", True)
     monkeypatch.setattr("strategy.trading_guard.settings.MAX_DAILY_DRAWDOWN_PCT", 2.5)
     monkeypatch.setattr("strategy.trading_guard.settings.MAX_CONSECUTIVE_LOSSES", 4)
@@ -35,6 +42,11 @@ async def test_trading_guard_blocks_buy_on_daily_drawdown(monkeypatch):
     assert "일손실" in result["reason"]
     assert result["trigger"] == "DAILY_DRAWDOWN"
     assert result["kill_switched"] is True
+    assert updates == [{"TRADING_ENABLED": False}]
+    assert result["runtime_effects"][0]["field"] == "TRADING_ENABLED"
+    assert result["runtime_effects"][0]["before"] is True
+    assert result["runtime_effects"][0]["after"] is False
+    assert result["runtime_effects"][0]["metadata"]["trigger"] == "DAILY_DRAWDOWN"
 
 
 @pytest.mark.asyncio
@@ -58,10 +70,14 @@ async def test_trading_guard_reports_account_equity_drawdown_without_blocking(mo
     async def fake_expectancy(strategy_type: str) -> float | None:
         return 0.1
 
+    async def fake_update_settings(_payload: dict) -> dict:
+        return {}
+
     monkeypatch.setattr(guard, "_get_daily_realized_pnl_pct", fake_realized_drawdown)
     monkeypatch.setattr(guard, "_get_account_equity_drawdown", fake_account_drawdown)
     monkeypatch.setattr(guard, "_get_consecutive_losses", fake_losses)
     monkeypatch.setattr(guard, "_get_strategy_expectancy", fake_expectancy)
+    monkeypatch.setattr("strategy.trading_guard.runtime_settings_service.update_settings", fake_update_settings)
     monkeypatch.setattr("strategy.trading_guard.settings.MAX_DAILY_DRAWDOWN_PCT", 2.5)
     monkeypatch.setattr("strategy.trading_guard.settings.ACCOUNT_EQUITY_DRAWDOWN_GUARD_MODE", "REPORT_ONLY")
     monkeypatch.setattr("strategy.trading_guard.settings.ACCOUNT_EQUITY_DRAWDOWN_BLOCK_BUY_PCT", 0.5)
@@ -114,6 +130,7 @@ async def test_trading_guard_blocks_buy_on_account_equity_drawdown(monkeypatch):
     assert result["approved"] is False
     assert result["trigger"] == "ACCOUNT_EQUITY_DRAWDOWN"
     assert result["kill_switched"] is True
+    assert result["runtime_effects"][0]["field"] == "TRADING_ENABLED"
     assert "계좌 총자산" in result["reason"]
 
 
@@ -205,6 +222,21 @@ def test_trading_guard_blocks_buy_on_selected_llm_cooldown(monkeypatch):
     assert result["action"] == "BLOCK"
     assert "CODEX" in result["reason"]
     assert "timeout" in result["reason"]
+
+
+@pytest.mark.asyncio
+async def test_trading_guard_block_without_kill_switch_has_no_runtime_effect(monkeypatch):
+    async def fail_update_settings(_payload: dict) -> dict:
+        raise AssertionError("runtime settings must not update when kill switch is disabled")
+
+    monkeypatch.setattr("strategy.trading_guard.settings.AUTO_RISK_KILL_SWITCH_ENABLED", False)
+    monkeypatch.setattr("strategy.trading_guard.runtime_settings_service.update_settings", fail_update_settings)
+
+    result = await TradingGuard._block("TEST_TRIGGER", "테스트 차단")
+
+    assert result["approved"] is False
+    assert result["kill_switched"] is False
+    assert result["runtime_effects"] == []
 
 
 @pytest.mark.asyncio

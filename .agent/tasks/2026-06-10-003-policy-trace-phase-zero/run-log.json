@@ -1,0 +1,54 @@
+{
+  "schema_version": "momo.run-log.v1",
+  "task_id": "2026-06-10-003-policy-trace-phase-zero",
+  "events": [
+    {
+      "at": "2026-06-10T12:10:10+09:00",
+      "type": "task_started",
+      "status": "created",
+      "summary": "Task artifact created."
+    },
+    {
+      "at": "2026-06-10T12:11:00+09:00",
+      "type": "scope_locked",
+      "status": "implementing",
+      "summary": "Locked Phase 0 to behavior-preserving policy trace infrastructure and additive metadata only."
+    },
+    {
+      "at": "2026-06-10T12:18:35+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T12:19:00+09:00",
+      "type": "focused_tests",
+      "status": "passed",
+      "summary": "Policy trace, risk manager, decision maker, trading agent, market-data, cost/news gate, risk reservation, and order reservation tests passed: 129 tests."
+    },
+    {
+      "at": "2026-06-10T12:19:00+09:00",
+      "type": "runtime_integrity",
+      "status": "passed",
+      "summary": "Read-only runtime integrity check passed: system OK, order reconciliation OK, pending orders 0."
+    },
+    {
+      "at": "2026-06-10T12:19:00+09:00",
+      "type": "final_report_added",
+      "status": "reporting",
+      "summary": "Added final report and marked remaining Phase 0 gaps."
+    },
+    {
+      "at": "2026-06-10T12:19:41+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T12:19:46+09:00",
+      "type": "task_completed",
+      "status": "completed",
+      "summary": "Phase 0 policy trace infrastructure completed; focused tests, runtime integrity, and standard harness verification passed."
+    }
+  ]
+}

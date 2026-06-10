@@ -35,6 +35,10 @@ from services.tier1_analysis_cache_service import tier1_analysis_cache_service
 from strategy.aggressive_short import AggressiveShortStrategy
 from strategy.base import strategy_profile_metadata
 from strategy.exposure_policy import ExposureAlignmentDecision, resolve_aggressive_exposure_alignment
+from strategy.policy.engine import TradingPolicyEngine
+from strategy.policy.trace import (
+    with_policy_trace,
+)
 from strategy.risk_manager import risk_manager
 from strategy.signal import TradeSignal
 from strategy.stable_short import StableShortStrategy
@@ -70,6 +74,16 @@ class TradingAgent:
             "AGGRESSIVE_SHORT": AggressiveShortStrategy(),
         }
         self._broker_adapter = broker_adapter or get_broker_adapter()
+        self.policy_engine = TradingPolicyEngine(
+            pre_gate_service=pre_analysis_gate_service,
+            fast_gate_service=deterministic_tier1_fast_gate_service,
+            final_gate_service=deterministic_final_gate_service,
+            news_rollout_service=news_gate_rollout_service,
+            news_service=news_signal_service,
+            session_factory=AsyncSessionLocal,
+            exposure_alignment_resolver=resolve_aggressive_exposure_alignment,
+            risk_manager_service=risk_manager,
+        )
         self._running = False
         self._active_trading_rules: dict = {}  # 활성 트레이딩 규칙 (프리마켓에서 로드)
         self._cycle_lock = asyncio.Lock()  # 사이클 동시 실행 방지
@@ -298,14 +312,17 @@ class TradingAgent:
                 model="deterministic_tier1_fast_gate",
                 status="RECORDED",
                 reason=str(getattr(fast_gate, "reason", "") or ""),
-                metadata={
-                    "ai_shadow": True,
-                    "shadow_policy": "TIER1_FAST_GATE",
-                    "would_skip_tier1": bool(getattr(fast_gate, "should_skip_tier1", False)),
-                    "score": getattr(fast_gate, "score", None),
-                    "reason_code": code,
-                    **detail,
-                },
+                metadata=with_policy_trace(
+                    {
+                        "ai_shadow": True,
+                        "shadow_policy": "TIER1_FAST_GATE",
+                        "would_skip_tier1": bool(getattr(fast_gate, "should_skip_tier1", False)),
+                        "score": getattr(fast_gate, "score", None),
+                        "reason_code": code,
+                        **detail,
+                    },
+                    self.policy_engine.decision_from_tier1_fast_gate(fast_gate, mode="SHADOW"),
+                ),
             )
         except Exception as exc:
             logger.debug("Tier1 fast gate shadow decision event 기록 실패 (무시): {}", str(exc))
@@ -845,7 +862,7 @@ class TradingAgent:
         if not daily_df.empty:
             chart_result = chart_analyzer.analyze(daily_df, minute_df)
 
-        pre_gate = pre_analysis_gate_service.evaluate(
+        pre_gate_eval = self.policy_engine.evaluate_pre_analysis_gate(
             symbol=symbol,
             current_price=current_price,
             daily_df=daily_df,
@@ -853,7 +870,9 @@ class TradingAgent:
             portfolio_snapshot=portfolio_snapshot,
             dynamic_limits=dynamic_limits,
         )
+        pre_gate = pre_gate_eval.value
         if not pre_gate.approved:
+            pre_gate_policy = pre_gate_eval.decision
             if pre_gate.code == "INSUFFICIENT_CASH":
                 available_cash = pre_gate.detail.get("available_cash", 0.0)
                 min_buy_cost = pre_gate.detail.get("min_buy_cost", 0.0)
@@ -886,7 +905,10 @@ class TradingAgent:
                 ActivityType.TIER1_ANALYSIS, ActivityPhase.SKIP,
                 message,
                 cycle_id=cycle_id, symbol=symbol,
-                detail={"pre_analysis_gate": pre_gate.code, **pre_gate.detail},
+                detail=with_policy_trace(
+                    {"pre_analysis_gate": pre_gate.code, **pre_gate.detail},
+                    pre_gate_policy,
+                ),
             )
             await ai_skip_metric_service.record(
                 stage="PRE_ANALYSIS_GATE",
@@ -905,7 +927,7 @@ class TradingAgent:
                 final_action="SKIP",
                 reference_price=current_price,
                 reason=message,
-                metadata=pre_gate.detail,
+                metadata=with_policy_trace(pre_gate.detail, pre_gate_policy),
             )
             return result
 
@@ -914,7 +936,8 @@ class TradingAgent:
         fast_gate = None  # IC 분석을 위해 통과한 trade의 notes에도 score를 저장한다
         fast_gate_mode = self._deterministic_tier1_fast_gate_mode()
         if fast_gate_mode != "OFF":
-            fast_gate = deterministic_tier1_fast_gate_service.evaluate(
+            fast_gate_eval = self.policy_engine.evaluate_tier1_fast_gate(
+                mode=fast_gate_mode,
                 symbol=symbol,
                 stock_info=stock_info,
                 current_price=current_price,
@@ -925,6 +948,8 @@ class TradingAgent:
                 market_regime=self._market_regime,
                 ignore_enabled=fast_gate_mode == "SHADOW",
             )
+            fast_gate = fast_gate_eval.value
+            fast_gate_policy = fast_gate_eval.decision
             if fast_gate_mode == "SHADOW":
                 await self._record_tier1_fast_gate_shadow_decision(
                     stock_info=stock_info,
@@ -940,7 +965,10 @@ class TradingAgent:
                     f"(score {fast_gate.score:.1f}) | {fast_gate.reason[:100]}",
                     cycle_id=cycle_id,
                     symbol=symbol,
-                    detail={"deterministic_tier1_fast_gate": fast_gate.code, **fast_gate.detail},
+                    detail=with_policy_trace(
+                        {"deterministic_tier1_fast_gate": fast_gate.code, **fast_gate.detail},
+                        fast_gate_policy,
+                    ),
                     llm_tier="TIER1",
                     confidence=0,
                 )
@@ -961,7 +989,7 @@ class TradingAgent:
                     final_action="HOLD",
                     reference_price=current_price,
                     reason=fast_gate.reason,
-                    metadata=fast_gate.detail,
+                    metadata=with_policy_trace(fast_gate.detail, fast_gate_policy),
                 )
                 return result
 
@@ -1197,7 +1225,7 @@ class TradingAgent:
             confidence=analysis.get("confidence"),
         )
 
-        final_gate = deterministic_final_gate_service.evaluate(
+        final_gate_eval = self.policy_engine.evaluate_final_gate(
             symbol=symbol,
             strategy_type=strategy_type,
             analysis=analysis,
@@ -1208,7 +1236,9 @@ class TradingAgent:
             active_rules=self._active_trading_rules,
             buying_power=stock_info.get("_buying_power"),
         )
+        final_gate = final_gate_eval.value
         if not final_gate.approved:
+            final_gate_policy = final_gate_eval.decision
             if final_gate.code == "CONFIDENCE_GATE":
                 confidence = float(final_gate.detail.get("confidence", 0.0) or 0.0)
                 effective_min_conf = float(final_gate.detail.get("effective_min_confidence", 0.0) or 0.0)
@@ -1254,7 +1284,10 @@ class TradingAgent:
                 activity_type, ActivityPhase.SKIP,
                 message,
                 cycle_id=cycle_id, symbol=symbol,
-                detail={"deterministic_final_gate": final_gate.code, **final_gate.detail},
+                detail=with_policy_trace(
+                    {"deterministic_final_gate": final_gate.code, **final_gate.detail},
+                    final_gate_policy,
+                ),
             )
             await ai_skip_metric_service.record(
                 stage="DETERMINISTIC_FINAL_GATE",
@@ -1277,6 +1310,7 @@ class TradingAgent:
                 confidence=analysis.get("confidence"),
                 metadata={
                     **final_gate.detail,
+                    "policy_trace": with_policy_trace({}, final_gate_policy)["policy_trace"],
                     "tier1_analysis": {
                         "recommendation": analysis.get("recommendation"),
                         "confidence": analysis.get("confidence"),
@@ -1295,17 +1329,19 @@ class TradingAgent:
                 confidence=float(analysis.get("confidence", 0.0) or 0.0),
                 market_regime=self._market_regime,
             )
-            tier1_cost_gate = self._evaluate_tier1_cost_gate(
+            tier1_cost_eval = self.policy_engine.evaluate_tier1_cost_gate(
                 analysis=analysis,
                 current_price=current_price,
                 horizon=pre_horizon,
             )
+            tier1_cost_gate = tier1_cost_eval.value
             if not tier1_cost_gate["approved"]:
+                tier1_cost_policy = tier1_cost_eval.decision
                 await activity_logger.log(
                     ActivityType.RISK_GATE, ActivityPhase.SKIP,
                     f"🚫 [{name}] 비용 게이트 사전 차단: {tier1_cost_gate['reason']}",
                     cycle_id=cycle_id, symbol=symbol,
-                    detail=tier1_cost_gate,
+                    detail=with_policy_trace(tier1_cost_gate, tier1_cost_policy),
                 )
                 await ai_skip_metric_service.record(
                     stage="TIER1_COST_GATE",
@@ -1328,6 +1364,7 @@ class TradingAgent:
                     confidence=analysis.get("confidence"),
                     metadata={
                         **tier1_cost_gate,
+                        "policy_trace": with_policy_trace({}, tier1_cost_policy)["policy_trace"],
                         "tier1_analysis": {
                             "recommendation": analysis.get("recommendation"),
                             "confidence": analysis.get("confidence"),
@@ -1521,23 +1558,26 @@ class TradingAgent:
         # 실행 비용 대비 기대수익(엣지) 게이트
         gate_eval = None
         if signal.action == SignalAction.BUY:
-            gate_eval = self._evaluate_cost_gate(
+            cost_eval = self.policy_engine.evaluate_cost_gate(
                 signal=signal,
                 current_price=current_price,
                 horizon=(signal.metadata or {}).get("trade_horizon"),
             )
+            gate_eval = cost_eval.value
             if not gate_eval["approved"]:
+                cost_policy = cost_eval.decision
                 await activity_logger.log(
                     ActivityType.RISK_GATE, ActivityPhase.SKIP,
                     f"🚫 [{name}] 비용 게이트 차단: {gate_eval['reason']}",
                     cycle_id=cycle_id, symbol=symbol,
-                    detail=gate_eval,
+                    detail=with_policy_trace(gate_eval, cost_policy),
                 )
                 return result
-            news_gate = await self._evaluate_news_gate(
+            news_eval = await self.policy_engine.evaluate_news_gate(
                 symbol=symbol,
                 horizon=(signal.metadata or {}).get("trade_horizon"),
             )
+            news_gate = news_eval.value
             await self._record_news_shadow_decision(
                 symbol=symbol,
                 name=name,
@@ -1548,11 +1588,12 @@ class TradingAgent:
                 cycle_id=cycle_id,
             )
             if not news_gate["approved"] and bool(news_gate.get("blocking_enabled", True)):
+                news_policy = news_eval.decision
                 await activity_logger.log(
                     ActivityType.RISK_GATE, ActivityPhase.SKIP,
                     f"🚫 [{name}] 뉴스 게이트 차단: {news_gate['reason']}",
                     cycle_id=cycle_id, symbol=symbol,
-                    detail=news_gate,
+                    detail=with_policy_trace(news_gate, news_policy),
                 )
                 return result
         else:
@@ -1599,13 +1640,16 @@ class TradingAgent:
                 cycle_id=cycle_id,
                 stock_name=name,
             )
+            if exposure_decision.applied:
+                signal.suggested_quantity = exposure_decision.final_quantity
 
         # 5. 리스크 검사
         snap = portfolio_snapshot or {}
         candidate_change_rate = self._optional_float(stock_info.get("change_rate"))
         intraday = getattr(chart_result.trend, "intraday", None) or {}
         risk_input_quantity = int(signal.suggested_quantity or 0)
-        risk_result = await risk_manager.check(
+        risk_eval = await self.policy_engine.evaluate_risk_manager(
+            input_quantity=risk_input_quantity,
             signal=signal,
             portfolio_cash=snap.get("cash", 0),
             portfolio_budget=snap.get("total_asset", 0),
@@ -1620,6 +1664,7 @@ class TradingAgent:
             intraday_vwap_position=intraday.get("vwap_position"),
             intraday_volume_trend=intraday.get("vol_trend"),
         )
+        risk_result = risk_eval.value
 
         if not risk_result.get("approved"):
             logger.debug("리스크 검사 미통과: {} - {}", symbol, risk_result.get("reason"))
@@ -1629,6 +1674,7 @@ class TradingAgent:
             previous_qty = int(risk_result.get("previous_quantity") or risk_input_quantity)
             adjusted_qty = int(risk_result["adjusted_quantity"])
             signal.suggested_quantity = adjusted_qty
+            risk_policy = risk_eval.decision
             await activity_logger.log(
                 ActivityType.RISK_CHECK,
                 ActivityPhase.COMPLETE,
@@ -1645,9 +1691,11 @@ class TradingAgent:
                     "exposure_alignment": (
                         exposure_decision.__dict__ if exposure_decision else None
                     ),
+                    "policy_trace": with_policy_trace({}, risk_policy)["policy_trace"],
                 },
             )
         elif int(signal.suggested_quantity or 0) != risk_input_quantity:
+            risk_policy = risk_eval.decision
             await activity_logger.log(
                 ActivityType.RISK_CHECK,
                 ActivityPhase.COMPLETE,
@@ -1663,6 +1711,7 @@ class TradingAgent:
                     "exposure_alignment": (
                         exposure_decision.__dict__ if exposure_decision else None
                     ),
+                    "policy_trace": with_policy_trace({}, risk_policy)["policy_trace"],
                 },
             )
 
@@ -1821,20 +1870,13 @@ class TradingAgent:
         cycle_id: str | None,
         stock_name: str,
     ) -> ExposureAlignmentDecision:
-        decision = resolve_aggressive_exposure_alignment(
-            enabled=bool(getattr(settings, "AGGRESSIVE_EXPOSURE_ALIGNMENT_ENABLED", True)),
-            risk_appetite=str(getattr(settings, "RISK_APPETITE", "MODERATE") or "MODERATE"),
-            market_regime=market_regime,
-            action=signal.action,
-            confidence=float(signal.confidence or signal.strength or 0.0),
-            min_confidence=float(getattr(settings, "AGGRESSIVE_EXPOSURE_MIN_CONFIDENCE", 0.65) or 0.0),
-            price=float(signal.suggested_price or 0.0),
-            quantity=int(signal.suggested_quantity or 0),
+        exposure_eval = self.policy_engine.evaluate_exposure_alignment(
+            signal=signal,
             portfolio_snapshot=portfolio_snapshot,
             dynamic_limits=dynamic_limits,
-            target_exposure_pct=float(getattr(settings, "AGGRESSIVE_TARGET_EXPOSURE_PCT", 25.0) or 0.0),
-            min_order_krw=float(getattr(settings, "AGGRESSIVE_MIN_BUY_ORDER_KRW", 0) or 0.0),
+            market_regime=market_regime,
         )
+        decision = exposure_eval.value
         signal.metadata["exposure_alignment"] = {
             "applied": decision.applied,
             "reason": decision.reason,
@@ -1847,10 +1889,14 @@ class TradingAgent:
             "min_order_krw": decision.min_order_krw,
             "cap_order_krw": decision.cap_order_krw,
         }
+        exposure_policy = exposure_eval.decision
+        signal.metadata["exposure_alignment"]["policy_trace"] = with_policy_trace(
+            {},
+            exposure_policy,
+        )["policy_trace"]
         if not decision.applied:
             return decision
 
-        signal.suggested_quantity = decision.final_quantity
         await activity_logger.log(
             ActivityType.RISK_CHECK,
             ActivityPhase.COMPLETE,
@@ -1859,18 +1905,21 @@ class TradingAgent:
             f"({decision.initial_notional:,.0f}원 → {decision.final_notional:,.0f}원)",
             cycle_id=cycle_id,
             symbol=signal.symbol,
-            detail={
-                "stage": "AGGRESSIVE_EXPOSURE_ALIGNMENT",
-                "reason": decision.reason,
-                "current_exposure_pct": decision.current_exposure_pct,
-                "target_exposure_pct": decision.target_exposure_pct,
-                "min_order_krw": decision.min_order_krw,
-                "cap_order_krw": decision.cap_order_krw,
-                "initial_quantity": decision.initial_quantity,
-                "final_quantity": decision.final_quantity,
-                "initial_notional": decision.initial_notional,
-                "final_notional": decision.final_notional,
-            },
+            detail=with_policy_trace(
+                {
+                    "stage": "AGGRESSIVE_EXPOSURE_ALIGNMENT",
+                    "reason": decision.reason,
+                    "current_exposure_pct": decision.current_exposure_pct,
+                    "target_exposure_pct": decision.target_exposure_pct,
+                    "min_order_krw": decision.min_order_krw,
+                    "cap_order_krw": decision.cap_order_krw,
+                    "initial_quantity": decision.initial_quantity,
+                    "final_quantity": decision.final_quantity,
+                    "initial_notional": decision.initial_notional,
+                    "final_notional": decision.final_notional,
+                },
+                exposure_policy,
+            ),
         )
         return decision
 
@@ -2637,6 +2686,38 @@ class TradingAgent:
 
         Tier2 값을 우선 사용하고, 없으면 Tier1 값 사용.
         """
+        thresholds = self._resolve_trade_thresholds(
+            tier1=tier1,
+            tier2=tier2,
+            current_price=current_price,
+            horizon=horizon,
+        )
+
+        if preserve_tighter_stop_loss and "stop_loss" in thresholds:
+            current_thresholds = event_detector.get_thresholds(symbol)
+            current_stop = self._optional_float(getattr(current_thresholds, "stop_loss", None))
+            thresholds = self._resolve_trade_thresholds(
+                tier1=tier1,
+                tier2=tier2,
+                current_price=current_price,
+                horizon=horizon,
+                preserve_tighter_stop_loss=True,
+                current_stop_loss=current_stop,
+            )
+
+        return self._enforce_trade_thresholds(symbol, thresholds)
+
+    def _resolve_trade_thresholds(
+        self,
+        *,
+        tier1: dict,
+        tier2: dict,
+        current_price: float = 0.0,
+        horizon: str | None = None,
+        preserve_tighter_stop_loss: bool = False,
+        current_stop_loss: float | None = None,
+    ) -> dict[str, float]:
+        """Resolve trade thresholds without writing to event detector."""
         kwargs = {}
 
         # stop_loss: Tier2 > Tier1
@@ -2689,8 +2770,7 @@ class TradingAgent:
                     kwargs["trailing_stop_pct"] = default_trailing
 
         if preserve_tighter_stop_loss and "stop_loss" in kwargs:
-            current_thresholds = event_detector.get_thresholds(symbol)
-            current_stop = self._optional_float(getattr(current_thresholds, "stop_loss", None))
+            current_stop = self._optional_float(current_stop_loss)
             proposed_stop = self._optional_float(kwargs.get("stop_loss"))
             if (
                 current_stop is not None
@@ -2701,14 +2781,19 @@ class TradingAgent:
             ):
                 kwargs["stop_loss"] = current_stop
 
-        if kwargs:
-            event_detector.set_thresholds(symbol, **kwargs)
+        return kwargs
+
+    @staticmethod
+    def _enforce_trade_thresholds(symbol: str, thresholds: dict[str, float]) -> dict[str, float]:
+        """Apply resolved trade thresholds to event detector."""
+        if thresholds:
+            event_detector.set_thresholds(symbol, **thresholds)
             logger.info(
                 "AI 손절/익절 설정: {} → {}",
                 symbol,
-                ", ".join(f"{k}={v}" for k, v in kwargs.items()),
+                ", ".join(f"{k}={v}" for k, v in thresholds.items()),
             )
-        return kwargs
+        return thresholds
 
     async def _persist_open_position_thresholds(
         self,
@@ -2842,64 +2927,19 @@ class TradingAgent:
 
     @staticmethod
     def _evaluate_tier1_cost_gate(analysis: dict, current_price: float, horizon: str | None = None) -> dict:
-        if str(analysis.get("recommendation", "") or "").upper() != "BUY":
-            return {"approved": True, "reason": "BUY 추천 아님", "stage": "TIER1_COST_GATE"}
-        signal = TradeSignal(
-            symbol="",
-            stock_id="",
-            action=SignalAction.BUY,
-            strength=float(analysis.get("confidence", 0.0) or 0.0),
-            suggested_price=float(current_price or 0.0),
-            suggested_quantity=1,
-            target_price=float(analysis.get("target_price", 0.0) or 0.0),
-            confidence=float(analysis.get("confidence", 0.0) or 0.0),
+        return TradingPolicyEngine.evaluate_tier1_cost_gate_payload(
+            analysis=analysis,
+            current_price=current_price,
+            horizon=horizon,
         )
-        result = TradingAgent._evaluate_cost_gate(signal, current_price=current_price, horizon=horizon)
-        return {"stage": "TIER1_COST_GATE", **result}
 
     @staticmethod
     def _evaluate_cost_gate(signal: TradeSignal, current_price: float, horizon: str | None = None) -> dict:
-        if not settings.COST_GATE_ENABLED or signal.action != SignalAction.BUY:
-            return {"approved": True, "reason": "비용 게이트 비활성화"}
-
-        entry_price = float(signal.suggested_price or current_price or 0.0)
-        target_price = float(signal.target_price or 0.0)
-        if entry_price <= 0 or target_price <= entry_price:
-            return {"approved": True, "reason": "엣지 계산 불가(보수적 통과)"}
-
-        horizon_key = str(horizon or TradeHorizon.MID).upper()
-        slippage_bps = {
-            TradeHorizon.SHORT: int(settings.ESTIMATED_SLIPPAGE_BPS_SHORT or 0),
-            TradeHorizon.MID: int(settings.ESTIMATED_SLIPPAGE_BPS_MID or 0),
-            TradeHorizon.LONG: int(settings.ESTIMATED_SLIPPAGE_BPS_LONG or 0),
-        }.get(horizon_key, int(settings.ESTIMATED_SLIPPAGE_BPS_MID or 0))
-        min_ratio = {
-            TradeHorizon.SHORT: float(settings.MIN_EDGE_TO_COST_RATIO_SHORT or 1.0),
-            TradeHorizon.MID: float(settings.MIN_EDGE_TO_COST_RATIO_MID or 1.0),
-            TradeHorizon.LONG: float(settings.MIN_EDGE_TO_COST_RATIO_LONG or 1.0),
-        }.get(horizon_key, float(settings.MIN_EDGE_TO_COST_RATIO_MID or 1.0))
-
-        total_cost_bps = (
-            int(settings.ESTIMATED_ENTRY_COST_BPS or 0)
-            + int(settings.ESTIMATED_EXIT_COST_BPS or 0)
-            + slippage_bps
+        return TradingPolicyEngine.evaluate_cost_gate_payload(
+            signal=signal,
+            current_price=current_price,
+            horizon=horizon,
         )
-        edge_bps = ((target_price - entry_price) / entry_price) * 10000
-
-        approved = edge_bps >= (total_cost_bps * min_ratio)
-        return {
-            "approved": approved,
-            "reason": (
-                f"엣지 {edge_bps:.1f}bp < 비용×배수 {total_cost_bps * min_ratio:.1f}bp"
-                if not approved else
-                f"엣지 {edge_bps:.1f}bp >= 비용×배수 {total_cost_bps * min_ratio:.1f}bp"
-            ),
-            "edge_bps": edge_bps,
-            "cost_bps": total_cost_bps,
-            "edge_to_cost_ratio": (edge_bps / total_cost_bps) if total_cost_bps > 0 else None,
-            "min_ratio": min_ratio,
-            "horizon": horizon_key,
-        }
 
     @staticmethod
     def _extract_entry_pattern(chart_result: ChartAnalysisResult | None) -> str | None:
@@ -2915,44 +2955,9 @@ class TradingAgent:
         return trend or None
 
     async def _evaluate_news_gate(self, *, symbol: str, horizon: str | None = None) -> dict:
-        rollout = await news_gate_rollout_service.resolve()
-        if not rollout.evaluate_gate:
-            return {
-                "approved": True,
-                "reason": rollout.reason,
-                "negative_pressure": 0.0,
-                "negative_count": 0,
-                "news_gate_rollout": {
-                    "requested_mode": rollout.requested_mode,
-                    "effective_mode": rollout.effective_mode,
-                    "block_buy": rollout.block_buy,
-                },
-            }
-
-        try:
-            async with AsyncSessionLocal() as session:
-                result = await news_signal_service.evaluate_gate(
-                    session,
-                    symbol=symbol,
-                    horizon=horizon,
-                )
-                result["blocking_enabled"] = rollout.block_buy
-                result["news_gate_rollout"] = {
-                    "requested_mode": rollout.requested_mode,
-                    "effective_mode": rollout.effective_mode,
-                    "block_buy": rollout.block_buy,
-                    "reason": rollout.reason,
-                    **rollout.detail,
-                }
-                return result
-        except Exception as exc:
-            logger.warning("[{}] 뉴스 게이트 평가 실패, 보수적 통과: {}", symbol, str(exc))
-            return {
-                "approved": True,
-                "reason": f"뉴스 게이트 평가 실패: {str(exc)[:80]}",
-                "negative_pressure": 0.0,
-                "negative_count": 0,
-            }
+        return (
+            await self.policy_engine.evaluate_news_gate(symbol=symbol, horizon=horizon)
+        ).value
 
     async def _record_news_shadow_decision(
         self,
@@ -3540,7 +3545,16 @@ class TradingAgent:
                     f"👀 손절 이벤트 보류: {name}({symbol}) — {min_hold_reason} "
                     f"(현재가: {price:,.0f}원, 기준: {stop_loss:,.0f}원)",
                     symbol=symbol,
-                    detail={**event.data, "symbol": symbol, "min_hold_blocked": True},
+                    detail=with_policy_trace(
+                        {**event.data, "symbol": symbol, "min_hold_blocked": True},
+                        self.policy_engine.evaluate_exit_event(
+                            event_type="STOP_LOSS_HIT",
+                            blocked=True,
+                            exit_reason="MIN_HOLD_BLOCK",
+                            reason=min_hold_reason,
+                            metadata={"stop_loss_price": stop_loss, "current_price": price},
+                        ).decision,
+                    ),
                 )
                 return
 
@@ -3554,7 +3568,16 @@ class TradingAgent:
                     ActivityType.EVENT, ActivityPhase.PROGRESS,
                     f"👀 손절 이벤트 보류: {name}({symbol}) — {event_plan['reason']}",
                     symbol=symbol,
-                    detail={**event.data, "symbol": symbol, "staged_stop_loss_blocked": True},
+                    detail=with_policy_trace(
+                        {**event.data, "symbol": symbol, "staged_stop_loss_blocked": True},
+                        self.policy_engine.evaluate_exit_event(
+                            event_type="STOP_LOSS_HIT",
+                            blocked=True,
+                            exit_reason="STAGED_STOP_LOSS_BLOCK",
+                            reason=str(event_plan.get("reason") or ""),
+                            metadata={"stop_loss_price": stop_loss, "current_price": price},
+                        ).decision,
+                    ),
                 )
                 return
 
@@ -3569,7 +3592,16 @@ class TradingAgent:
                 f"(현재가: {price:,.0f}원, 손절: {stop_loss:,.0f}원)"
                 + (f" — {staged_reason}" if staged_reason else ""),
                 symbol=symbol,
-                detail={**event.data, "symbol": symbol, "exit_reason": exit_reason, "quantity": sell_quantity},
+                detail=with_policy_trace(
+                    {**event.data, "symbol": symbol, "exit_reason": exit_reason, "quantity": sell_quantity},
+                    self.policy_engine.evaluate_exit_event(
+                        event_type="STOP_LOSS_HIT",
+                        exit_reason=exit_reason,
+                        quantity=sell_quantity,
+                        reason=staged_reason,
+                        metadata={"stop_loss_price": stop_loss, "current_price": price},
+                    ).decision,
+                ),
             )
 
             # 즉시 시장가 매도
@@ -3620,7 +3652,16 @@ class TradingAgent:
                     f"\U0001f3af 익절선 도달 보류: {name}({symbol}) — {min_hold_reason} "
                     f"(현재가: {price:,.0f}원, 익절: {take_profit:,.0f}원)",
                     symbol=symbol,
-                    detail={**event.data, "symbol": symbol, "min_hold_blocked": True},
+                    detail=with_policy_trace(
+                        {**event.data, "symbol": symbol, "min_hold_blocked": True},
+                        self.policy_engine.evaluate_exit_event(
+                            event_type="TAKE_PROFIT_HIT",
+                            blocked=True,
+                            exit_reason="MIN_HOLD_BLOCK",
+                            reason=min_hold_reason,
+                            metadata={"take_profit_price": take_profit, "current_price": price},
+                        ).decision,
+                    ),
                 )
                 return
 
@@ -3630,7 +3671,15 @@ class TradingAgent:
                 f"\U0001f3af 익절선 도달: {name}({symbol}) — 매도 실행 "
                 f"(현재가: {price:,.0f}원, 익절: {take_profit:,.0f}원)",
                 symbol=symbol,
-                detail={**event.data, "symbol": symbol},
+                detail=with_policy_trace(
+                    {**event.data, "symbol": symbol},
+                    self.policy_engine.evaluate_exit_event(
+                        event_type="TAKE_PROFIT_HIT",
+                        exit_reason="TAKE_PROFIT",
+                        reason="take profit threshold reached",
+                        metadata={"take_profit_price": take_profit, "current_price": price},
+                    ).decision,
+                ),
             )
 
             # 즉시 시장가 매도

@@ -70,6 +70,41 @@ horizon, order placement, end-of-day handling, or broker reconciliation should:
   with the refactor plan. If a new setting or gate cannot be assigned to an
   owner, treat that as a design gap before implementation.
 
+## Policy Registry
+
+The table below is generated from `strategy/policy/registry.py`; update the
+registry first and keep this section in sync.
+
+<!-- POLICY_REGISTRY_START -->
+| Priority | Owner | Scope | Description | Key settings | Required tests |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `admin_safety` | ADMIN | Admin confirmation and protected runtime-operation controls. | - | `tests/api/test_admin_settings_routes.py` |
+| 5 | `session_safety` | SESSION | Market-session and off-hours trading controls. | `DAY_TRADING_ONLY`, `BUY_CUTOFF_HOUR`, `BUY_CUTOFF_MINUTE` | `tests/scheduler/test_scheduler_runtime_paths.py` |
+| 8 | `scheduler` | SESSION | Scheduler enabled/running state and recurring job controls. | `SCHEDULER_ENABLED` | `tests/scheduler/test_scheduler_runtime_paths.py` |
+| 10 | `candidate_scoring` | CANDIDATE | Scanner candidate breadth, ranking, and selected-symbol evidence. | `SCANNER_MAX_CANDIDATES` | `tests/services/test_candidate_scoring_service.py` |
+| 20 | `pre_analysis_gate` | CANDIDATE | Cheap pre-LLM skips for missing data, insufficient cash, and bearish charts. | - | `tests/services/test_pre_analysis_gate_service.py` |
+| 30 | `deterministic_tier1_fast_gate` | CANDIDATE | Deterministic LLM avoidance for clear non-buy scan candidates. | `DETERMINISTIC_TIER1_FAST_GATE_MODE`, `DETERMINISTIC_TIER1_FAST_GATE_ENABLED` | `tests/agent/test_trading_agent_cycles.py` |
+| 35 | `tier1_analysis` | CANDIDATE | Tier1 LLM prompt/runtime contract and cache behavior. | `TIER1_LLM_TIMEOUT_SEC`, `TIER1_PROVIDER`, `TIER1_MODEL` | `tests/agent/test_trading_agent_cycles.py` |
+| 40 | `deterministic_final_gate` | BUY | Tier2-before deterministic validation for confidence, RR, stop loss, and buying power. | - | `tests/services/test_deterministic_final_gate_service.py` |
+| 45 | `tier1_cost_gate` | BUY | Pre-Tier2 execution-cost edge gate. | `COST_GATE_ENABLED`, `ESTIMATED_ENTRY_COST_BPS`, `ESTIMATED_EXIT_COST_BPS` | `tests/agent/test_trading_agent_cost_gate.py` |
+| 50 | `cost_gate` | BUY | Final BUY execution-cost edge gate. | `COST_GATE_ENABLED`, `MIN_EDGE_TO_COST_RATIO_MID` | `tests/agent/test_trading_agent_cost_gate.py` |
+| 55 | `news_gate` | BUY | News-signal negative-pressure BUY gate and rollout mode. | `NEWS_GATE_ENABLED`, `NEWS_GATE_ROLLOUT_MODE`, `NEWS_NEGATIVE_PRESSURE_THRESHOLD` | `tests/agent/test_trading_agent_news_gate.py`, `tests/services/test_news_gate_rollout_service.py` |
+| 56 | `news_intel` | CANDIDATE | News polling, enrichment, runtime health, and prompt context evidence. | `NEWS_POLL_ENABLED`, `NEWS_CONTEXT_LOOKBACK_HOURS` | `tests/services/test_news_signal_service.py` |
+| 60 | `exposure_alignment` | BUY | Risk-appetite target exposure sizing floor before risk manager caps. | `AGGRESSIVE_EXPOSURE_ALIGNMENT_ENABLED`, `AGGRESSIVE_TARGET_EXPOSURE_PCT` | `tests/agent/test_trading_agent_cycles.py` |
+| 65 | `trading_guard` | BUY | Daily drawdown, account equity, loss streak, expectancy, and runtime kill-switch controls. | `MAX_DAILY_DRAWDOWN_PCT`, `MAX_CONSECUTIVE_LOSSES`, `AUTO_RISK_KILL_SWITCH_ENABLED` | `tests/strategy/test_trading_guard.py` |
+| 70 | `risk_manager` | BUY | Final internal sizing caps, RR validation, cash limits, and position limits. | `MAX_DAILY_TRADES`, `MAX_SINGLE_ORDER_KRW`, `MIN_CASH_RATIO`, `MAX_POSITION_PCT` | `tests/strategy/test_risk_manager_enhancements.py` |
+| 72 | `scale_in` | BUY | Scale-in eligibility and additional lot sizing constraints. | `SCALE_IN_ENABLED` | `tests/strategy/policy/test_settings_catalog.py` |
+| 75 | `holding_review` | HOLDING_EXIT | Scheduled holding review prompts and hold/sell decision context. | `HOLDING_REVIEW_ENABLED` | `tests/scheduler/test_scheduler_runtime_paths.py` |
+| 80 | `holding_exit` | HOLDING_EXIT | Stop loss, take profit, min-hold, staged exit, and event-triggered sell policy. | `DEFAULT_STOP_LOSS_PCT_MID`, `DEFAULT_TAKE_PROFIT_PCT_MID` | `tests/strategy/test_position_exit_policy.py`, `tests/agent/test_trading_agent_cycles.py` |
+| 85 | `order_reservation` | ORDER_SUBMISSION | In-cycle BUY cash reservation before final order submission. | `ORDER_RESERVATION_ENFORCEMENT` | `tests/agent/test_order_reservation.py`, `tests/agent/test_trading_agent_risk_reservation.py` |
+| 90 | `order_submission` | ORDER_SUBMISSION | Final order mode, post-liquidation BUY block, and pending order gates. | `TRADING_ENABLED`, `ORDER_SUBMISSION_MODE`, `POST_LIQUIDATION_BUY_BLOCK_ENABLED` | `tests/agent/test_decision_maker.py`, `tests/core/test_post_liquidation_guard.py` |
+| 95 | `broker_reconciliation` | ORDER_SUBMISSION | Broker pending/open-position reconciliation and pending confirm recovery. | `BROKER_PROVIDER` | `tests/scheduler/test_portfolio_sync_job.py`, `tests/scripts/test_check_runtime_integrity.py` |
+| 110 | `llm_runtime` | RUNTIME | LLM provider/model runtime selection, cooldown, and health controls. | `TIER1_PROVIDER`, `TIER2_PROVIDER`, `LLM_RUNTIME_COOLDOWN_SEC` | `tests/services/test_runtime_settings_service.py` |
+| 111 | `manual_llm_runtime` | RUNTIME | Manual provider/model override runtime controls. | `MANUAL_LLM_PROVIDER`, `MANUAL_LLM_MODEL` | `tests/agent/test_trading_agent_cycles.py` |
+| 120 | `recommendation_lifecycle` | RECOMMENDATION | Semi-auto recommendation expiry, approval, and lifecycle controls. | `RECOMMENDATION_EXPIRE_MIN` | `tests/agent/test_decision_maker.py` |
+| 130 | `runtime_settings` | RUNTIME | Mutable runtime setting validation and persisted override lifecycle. | - | `tests/api/test_admin_settings_validation.py`, `tests/services/test_runtime_settings_service.py` |
+<!-- POLICY_REGISTRY_END -->
+
 ## Runtime Settings Review
 
 Runtime settings can outlive code changes. After restart or policy tuning, compare

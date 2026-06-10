@@ -545,6 +545,7 @@ async def test_decision_maker_records_decision_event_when_order_submission_is_bl
     )
 
     assert result["success"] is False
+    assert result["data"]["policy_trace"]["blocked"] is True
     assert len(records) == 1
     assert records[0]["cycle_id"] == "cycle-decision-event"
     assert records[0]["symbol"] == "005930"

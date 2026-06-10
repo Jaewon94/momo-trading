@@ -1,0 +1,48 @@
+{
+  "schema_version": "momo.run-log.v1",
+  "task_id": "2026-06-10-007-pure-threshold-policy-split",
+  "events": [
+    {
+      "at": "2026-06-10T12:42:56+09:00",
+      "type": "task_started",
+      "status": "created",
+      "summary": "Task artifact created."
+    },
+    {
+      "at": "2026-06-10T12:43:27+09:00",
+      "type": "scope_locked",
+      "status": "implementing",
+      "summary": "Locked Phase 3b to behavior-preserving trade threshold calculation/enforcement split."
+    },
+    {
+      "at": "2026-06-10T12:44:46+09:00",
+      "type": "implementation_completed",
+      "status": "testing",
+      "summary": "Separated trade threshold resolution from event-detector enforcement while preserving _apply_trade_thresholds behavior."
+    },
+    {
+      "at": "2026-06-10T12:44:59+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T12:46:29+09:00",
+      "type": "runtime_reconciliation_recovered",
+      "status": "testing",
+      "summary": "Runtime integrity initially failed due one live BUY PENDING_CONFIRM for 244920; ran pending-confirm recovery, recovered 1, and runtime integrity passed afterward."
+    },
+    {
+      "at": "2026-06-10T12:47:02+09:00",
+      "type": "verification_run",
+      "status": "passed",
+      "summary": "Standard harness verification completed."
+    },
+    {
+      "at": "2026-06-10T12:47:09+09:00",
+      "type": "task_completed",
+      "status": "completed",
+      "summary": "Phase 3b threshold policy split completed; focused tests, runtime recovery/integrity, and standard harness verification passed."
+    }
+  ]
+}
