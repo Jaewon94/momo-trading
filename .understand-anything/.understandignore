@@ -1,0 +1,131 @@
+# .understandignore — patterns for files/dirs to exclude from analysis
+# Syntax: same as .gitignore (globs, # comments, ! negation, trailing / for dirs)
+# Lines below are suggestions — uncomment to activate.
+# Use ! prefix to force-include something excluded by defaults.
+#
+# Built-in defaults (always excluded unless negated):
+#   node_modules/, .git/, dist/, build/, obj/, *.lock, *.min.js, etc.
+#
+# --- From .gitignore (uncomment to exclude) ---
+
+# *.py[cod]
+# *$py.class
+# *.so
+# .Python
+# develop-eggs/
+# downloads/
+# eggs/
+# .eggs/
+# lib/
+# lib64/
+# parts/
+# sdist/
+# var/
+# wheels/
+# pip-wheel-metadata/
+# share/python-wheels/
+# *.egg-info/
+# .installed.cfg
+# *.egg
+# MANIFEST
+# *.manifest
+# *.spec
+# .env/
+# .venv*/
+# env/
+# ENV/
+# env.bak/
+# venv.bak/
+# .env
+# .env.*
+# .env.local
+# .env.production
+# !.env.example
+# data/kis_token.json
+# data/kiwoom_token.json
+# .python-version
+# .pip-cache/
+# .claude
+# .serena/
+# .mcp.json
+# CLAUDE.md
+# *_custom_prompt.md
+# compact_custom_prompt.md
+# logs/
+# *.pid
+# !runtime/
+# !runtime/logs/
+# !runtime/pids/
+# !runtime/data/
+# runtime/logs/*
+# runtime/pids/*
+# runtime/data/*.db
+# runtime/data/*.db-wal
+# runtime/data/*.db-shm
+# runtime/data/*.json
+# runtime/data/*.backup-*
+# runtime/data/app.db.backup-*
+# !runtime/logs/.gitkeep
+# !runtime/pids/.gitkeep
+# !runtime/data/.gitkeep
+# runtime/reports/
+# *.db
+# *.sqlite
+# *.sqlite3
+# *.db-journal
+# *.db-wal
+# *.db-shm
+# htmlcov/
+# .tox/
+# .nox/
+# .coverage
+# .coverage.*
+# nosetests.xml
+# coverage.xml
+# *.cover
+# *.py,cover
+# .hypothesis/
+# .pytest_cache/
+# *.swp
+# *.swo
+# *~
+# .ipynb_checkpoints
+# .mypy_cache/
+# .dmypy.json
+# dmypy.json
+# .pyre/
+# .DS_Store
+# .DS_Store?
+# ._*
+# .Spotlight-V100
+# .Trashes
+# ehthumbs.db
+# Thumbs.db
+# *.key
+# *.pem
+# *.crt
+# *.cert
+# tmp/
+# tmp-home/
+# temp/
+# *.tmp
+# *.bak
+# alembic/versions/__pycache__/
+# docker-compose.override.yml
+# .playwright-mcp/
+
+# --- Detected directories (uncomment to exclude) ---
+
+# tests/
+# docs/
+# scripts/
+
+# --- Test file patterns (uncomment to exclude) ---
+
+# *.test.*
+# *.spec.*
+# *.snap
+
+# --- Active exclusions (added by /understand) ---
+.agent/
+.understand-anything/

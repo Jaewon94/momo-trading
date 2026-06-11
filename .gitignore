@@ -169,3 +169,9 @@ docker-compose.override.yml
 # ===== Frontend tooling =====
 node_modules/
 .playwright-mcp/
+
+# ===== Understand-Anything (지식 그래프는 커밋, 로컬 캐시는 제외) =====
+.understand-anything/intermediate/
+.understand-anything/tmp/
+.understand-anything/.trash-*
+.understand-anything/diff-overlay.json
