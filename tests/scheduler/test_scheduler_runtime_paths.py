@@ -604,6 +604,7 @@ def test_scheduler_setup_jobs_registers_expected_job_ids(monkeypatch) -> None:
         "portfolio_sync",
         "weekly_calibration_review",
         "market_data",
+        "daily_ops_report",
         "expire_recommendations",
     }
 

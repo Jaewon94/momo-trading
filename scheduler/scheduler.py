@@ -993,6 +993,21 @@ class TradingScheduler:
                 misfire_grace_time=3600,
             )
 
+            # ── 일일 운영 종합 리포트 (평일 16:40) ──
+            # 매매 funnel·게이트·LLM·에러·뉴스 등 전 기능 운영 데이터를
+            # runtime/reports/daily_ops_*.{json,md}로 집계한다. 장마감 매매
+            # 보고(daily_report)와 별개의 운영 관점 보고서.
+            from scheduler.jobs.daily_ops_report_job import daily_ops_report_job
+            self.scheduler.add_job(
+                daily_ops_report_job,
+                "cron",
+                hour=16, minute=40,
+                day_of_week="mon-fri",
+                id="daily_ops_report",
+                name="일일 운영 종합 리포트",
+                misfire_grace_time=3600,
+            )
+
             # ── 만료 추천 정리 (1시간 간격) ──
             self.scheduler.add_job(
                 self._expire_recommendations,
