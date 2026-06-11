@@ -14,6 +14,10 @@
 
 새 기능, 전략 변경, DB/브로커 영향, 외부 API 변경은 task brief의 Research Gate에 근거를 남긴다.
 
+### Change Impact Map (Optional)
+
+Understand-Anything 지식 그래프(`.understand-anything/knowledge-graph.json`)가 있으면, 고위험 영역(broker, order placement, liquidation, migration)을 수정하기 전에 `/understand-diff`로 변경 영향 범위를 확인할 수 있다. 그래프가 오래되었으면 `/understand`로 갱신한다. 전체 구조 탐색은 `/understand-dashboard`를 사용한다.
+
 ## During Implementation
 
 기본 흐름:

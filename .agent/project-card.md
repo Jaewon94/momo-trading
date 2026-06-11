@@ -15,7 +15,10 @@ momo-trading은 국내 주식 자동 매매와 운영 대시보드를 위한 Fas
 - `admin/static/js/`: 관리자 UI state/rendering
 - `tests/`: Python unit/API tests and frontend state tests
 - `.agent/`: 작업 컨텍스트와 하네스 artifact
+- `.understand-anything/`: Understand-Anything 플러그인이 생성한 코드베이스 지식 그래프 (`/understand`로 갱신, `/understand-dashboard`로 시각화, `/understand-diff`로 변경 영향도 확인)
 - 뉴스/공시 판단 정책은 `strategy/news_intelligence_policy.py`와 `docs/architecture/news-intelligence-governance.md`를 함께 본다.
+- 전체 시스템 개선 우선순위는 `docs/고도화/2026-06-11-service-improvement-roadmap.md`를 본다 (보안 → PnL 데이터 신뢰성 → 가드 ENFORCE 졸업 → 구조 개선 순).
+- 일일 운영 종합 리포트(전 기능 집계 + LLM 코멘터리)는 평일 16:40 자동 생성되어 `runtime/reports/daily_ops_<날짜>.md`에 쌓인다. 병목/개선점 분석 작업은 이 리포트를 먼저 읽는다. 수동 실행: `.venv313/bin/python scripts/dev/run_daily_ops_report.py`
 
 ## Common Commands
 
