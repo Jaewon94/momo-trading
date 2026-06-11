@@ -6,6 +6,17 @@ async def _passthrough_translate_items(items):
     return items
 
 
+def _mock_empty_news_sources(monkeypatch, *service_names):
+    """테스트가 다루지 않는 뉴스 소스를 빈 결과로 모킹해 실제 HTTP 호출을 차단한다."""
+    for name in service_names:
+        async def _fetch(*, limit, _name=name):
+            return []
+        monkeypatch.setattr(
+            f"services.news_polling_service.{name}.fetch_recent_news",
+            _fetch,
+        )
+
+
 @pytest.mark.asyncio
 async def test_news_polling_service_publishes_events_for_created_items(monkeypatch):
     from services.news_polling_service import NewsPollingService
@@ -185,6 +196,8 @@ async def test_news_polling_service_includes_yonhap_when_domestic_media_enabled(
 async def test_news_polling_service_includes_bloomberg_when_foreign_enabled(monkeypatch):
     from services.news_polling_service import NewsPollingService
 
+    _mock_empty_news_sources(monkeypatch, "investing_news_service", "seeking_alpha_news_service")
+
     monkeypatch.setattr("services.news_polling_service.settings.NEWS_POLL_ENABLED", True)
     monkeypatch.setattr("services.news_polling_service.settings.OPEN_DART_API_KEY", "")
     monkeypatch.setattr("services.news_polling_service.settings.NEWS_DOMESTIC_MEDIA_ENABLED", False)
@@ -280,6 +293,8 @@ async def test_news_polling_service_includes_bloomberg_when_foreign_enabled(monk
 async def test_news_polling_service_includes_cnbc_when_foreign_enabled(monkeypatch):
     from services.news_polling_service import NewsPollingService
 
+    _mock_empty_news_sources(monkeypatch, "investing_news_service", "seeking_alpha_news_service")
+
     monkeypatch.setattr("services.news_polling_service.settings.NEWS_POLL_ENABLED", True)
     monkeypatch.setattr("services.news_polling_service.settings.OPEN_DART_API_KEY", "")
     monkeypatch.setattr("services.news_polling_service.settings.NEWS_DOMESTIC_MEDIA_ENABLED", False)
@@ -372,6 +387,8 @@ async def test_news_polling_service_includes_cnbc_when_foreign_enabled(monkeypat
 @pytest.mark.asyncio
 async def test_news_polling_service_includes_nasdaq_when_foreign_enabled(monkeypatch):
     from services.news_polling_service import NewsPollingService
+
+    _mock_empty_news_sources(monkeypatch, "investing_news_service", "seeking_alpha_news_service")
 
     monkeypatch.setattr("services.news_polling_service.settings.NEWS_POLL_ENABLED", True)
     monkeypatch.setattr("services.news_polling_service.settings.OPEN_DART_API_KEY", "")
@@ -503,6 +520,8 @@ async def test_news_polling_service_captures_source_errors(monkeypatch):
 @pytest.mark.asyncio
 async def test_news_polling_service_includes_investing_when_foreign_enabled(monkeypatch):
     from services.news_polling_service import NewsPollingService
+
+    _mock_empty_news_sources(monkeypatch, "nasdaq_news_service", "seeking_alpha_news_service")
     from services.news_runtime_service import news_runtime_service
 
     news_runtime_service.reset()
@@ -701,6 +720,8 @@ async def test_news_polling_service_includes_seeking_alpha_when_foreign_enabled(
 @pytest.mark.asyncio
 async def test_news_polling_service_skips_nasdaq_when_source_disabled(monkeypatch):
     from services.news_polling_service import NewsPollingService
+
+    _mock_empty_news_sources(monkeypatch, "investing_news_service", "seeking_alpha_news_service")
     from services.news_runtime_service import news_runtime_service
 
     news_runtime_service.reset()

@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 from strategy.holding_policy import (
@@ -34,13 +34,15 @@ def _config(**overrides):
 def _trade(horizon: str, *, ai_confidence: float = 0.7, ai_target_price: float = 0.0,
            entry_at: datetime | None = None, strategy_type: str = "STABLE_SHORT"):
     notes = json.dumps({"trade_horizon": horizon})
+    # 고정 날짜를 쓰면 달력이 지나며 보유일이 MAX_HOLD_DAYS를 넘어 테스트가 깨진다.
+    default_entry_at = datetime.now() - timedelta(days=2)
     return SimpleNamespace(
         ai_confidence=ai_confidence,
         ai_target_price=ai_target_price or None,
         strategy_type=strategy_type,
         notes=notes,
-        entry_at=entry_at or datetime(2026, 5, 27, 10, 0),
-        created_at=datetime(2026, 5, 27, 10, 0),
+        entry_at=entry_at or default_entry_at,
+        created_at=default_entry_at,
     )
 
 

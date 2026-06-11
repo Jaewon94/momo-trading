@@ -21,10 +21,11 @@ def test_holdings_precheck_service_keeps_llm_for_loss_sell_reason() -> None:
     )
     settings = SimpleNamespace(MAX_HOLD_DAYS_STABLE=5, MAX_HOLD_DAYS_AGGRESSIVE=3)
 
+    # horizon notes가 없는 STABLE_SHORT는 MID로 추론되어 -7% 임계값이 적용된다.
     decision = service.evaluate(
         holding=holding,
         trade_result=trade_result,
-        current_price=95_000,
+        current_price=92_000,
         settings=settings,
     )
 

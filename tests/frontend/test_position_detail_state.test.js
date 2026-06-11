@@ -74,7 +74,8 @@ describe("position_detail_state", () => {
     expect(state.summaryCards).toHaveLength(3);
     expect(state.summaryCards[0].hero).toContain("2주");
     expect(state.summaryCards[1].hero).toBe("BUY");
-    expect(state.summaryCards[2].metrics[2].value).toContain("0원");
+    expect(state.summaryCards[2].hero).toBe("0원");
+    expect(state.summaryCards[2].heroMeta).toContain("실현 0원");
     expect(state.decisionInsight.hero).toBe("BUY · MID");
     expect(state.decisionInsight.cards[1].hero).toBe("2.99x");
     expect(state.decisionInsight.cards[2].body[0]).toContain("한글 번역 제목");

@@ -306,6 +306,16 @@ async def test_llm_factory_manual_generate_uses_configured_primary_and_fallback(
         LLMProvider.CODEX: codex,
         LLMProvider.CLAUDE_CODE: claude,
     }
+    # MANUAL_LLM_MODEL override가 있으면 _build_provider가 캐시 대신 새 인스턴스를
+    # 생성하므로, 실제 CLI가 실행되지 않도록 생성자 자체를 페이크로 패치한다.
+    monkeypatch.setattr(
+        "analysis.llm.llm_factory.CodexProvider",
+        lambda tier, model_override=None: codex,
+    )
+    monkeypatch.setattr(
+        "analysis.llm.llm_factory.ClaudeCodeProvider",
+        lambda tier, model_override=None: claude,
+    )
 
     result, provider = await factory.generate_manual("hello", default_tier=LLMTier.TIER1)
 
