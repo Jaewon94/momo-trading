@@ -936,7 +936,20 @@ class TradingAgent:
             dynamic_limits=dynamic_limits,
         )
         pre_gate = pre_gate_eval.value
-        if not pre_gate.approved:
+        # BEARISH_PRE_GATE(강한 하락 추세 하드 차단)는 단기 추세 관점이므로 SHORT에만 적용한다.
+        # MID/LONG는 하락 추세 눌림목이 진입 기회일 수 있어 하드 차단 대신 LLM 판단까지 넘긴다.
+        # (현금부족·데이터부족·지표불량 등 다른 차단 사유는 호라이즌 무관하게 유지)
+        pre_gate_bearish_bypass = (
+            not pre_gate.approved
+            and pre_gate.code == "BEARISH_PRE_GATE"
+            and analysis_horizon != TradeHorizon.SHORT
+        )
+        if pre_gate_bearish_bypass:
+            logger.info(
+                "[{}] BEARISH_PRE_GATE 우회 (호라이즌 {} → 단기 하락추세 하드차단 생략, LLM 분석 진행)",
+                symbol, analysis_horizon,
+            )
+        if not pre_gate.approved and not pre_gate_bearish_bypass:
             pre_gate_policy = pre_gate_eval.decision
             if pre_gate.code == "INSUFFICIENT_CASH":
                 available_cash = pre_gate.detail.get("available_cash", 0.0)
@@ -1000,7 +1013,11 @@ class TradingAgent:
 
         fast_gate = None  # IC 분석을 위해 통과한 trade의 notes에도 score를 저장한다
         fast_gate_mode = self._deterministic_tier1_fast_gate_mode()
-        if fast_gate_mode != "OFF":
+        # Fast Gate는 장중 단기 지표(장중 VWAP·장중 거래량·당일 등락률·14:45 막판 매수 차단)로
+        # 채점하므로 SHORT 후보에만 적용한다. MID/LONG는 이런 단기 신호로 거르면 눌림목 진입을
+        # 차단하게 되므로 게이트를 건너뛰고 LLM 분석까지 모두 통과시킨다.
+        # (MID/LONG 스캔은 빈도·후보가 적어 LLM 비용 영향이 미미하다.)
+        if fast_gate_mode != "OFF" and analysis_horizon == TradeHorizon.SHORT:
             fast_gate_eval = self.policy_engine.evaluate_tier1_fast_gate(
                 mode=fast_gate_mode,
                 symbol=symbol,
@@ -1631,6 +1648,25 @@ class TradingAgent:
                 if not final.get("target_price"):
                     tp_pct = self._default_take_profit_pct(trade_horizon)
                     signal.target_price = signal.suggested_price * (1 + tp_pct / 100)
+
+        # 호라이즌 정합: MID/LONG는 AI 손절/익절이 호라이즌 기본보다 타이트/가까우면 기본까지 넓힌다.
+        # (예: MID인데 -3.7% 손절 → -7%로 확대, +7% 익절 → +12%로 확대) SHORT는 그대로 둔다.
+        if signal.action == SignalAction.BUY and signal.suggested_price:
+            _bound_horizon = str((signal.metadata or {}).get("trade_horizon") or projected_horizon)
+            signal.stop_loss_price = self._bound_stop_loss_to_horizon(
+                signal.stop_loss_price, signal.suggested_price, _bound_horizon
+            )
+            signal.target_price = self._bound_take_profit_to_horizon(
+                signal.target_price, signal.suggested_price, _bound_horizon
+            )
+            # 바운딩 결과를 final에도 반영한다. event_detector 임계값(threshold_tier2)과
+            # 기록용 ai_stop_loss_price가 final에서 값을 읽으므로, 여기서 동기화하지 않으면
+            # 실제 손절/익절 트리거는 바운딩 전 AI 원본값을 그대로 쓰게 된다.
+            if isinstance(final, dict):
+                if signal.stop_loss_price:
+                    final["stop_loss_price"] = signal.stop_loss_price
+                if signal.target_price:
+                    final["target_price"] = signal.target_price
 
         # AI가 결정한 손절/익절/트레일링 스탑을 event_detector에 설정
         threshold_tier2 = dict(final or {})
@@ -2997,6 +3033,39 @@ class TradingAgent:
         if key == TradeHorizon.LONG:
             return float(getattr(settings, "DEFAULT_TAKE_PROFIT_PCT_LONG", 18.0) or 18.0)
         return float(getattr(settings, "DEFAULT_TAKE_PROFIT_PCT_MID", 12.0) or 12.0)
+
+    def _bound_stop_loss_to_horizon(
+        self, stop_loss_price: float | None, entry_price: float, horizon: str
+    ) -> float | None:
+        """MID/LONG는 AI 손절이 호라이즌 기본보다 타이트하면 기본 폭까지 넓힌다.
+
+        '중기/장기'로 진입했는데 단기처럼 좁은 손절(예: MID인데 -3.7%)로 관리돼
+        정상 변동성에 조기 손절되는 문제를 막는다. SHORT는 AI 손절을 그대로 둔다.
+        """
+        key = str(horizon or TradeHorizon.MID).upper()
+        if key not in (TradeHorizon.MID, TradeHorizon.LONG):
+            return stop_loss_price
+        if not stop_loss_price or entry_price <= 0:
+            return stop_loss_price
+        default_stop = entry_price * (1 + self._default_stop_loss_pct(key) / 100)
+        # 더 낮은(넓은) 손절가를 채택한다.
+        return min(float(stop_loss_price), default_stop)
+
+    def _bound_take_profit_to_horizon(
+        self, target_price: float | None, entry_price: float, horizon: str
+    ) -> float | None:
+        """MID/LONG는 AI 익절이 호라이즌 기본보다 가까우면 기본까지 넓힌다 (조기 익절 방지).
+
+        SHORT는 AI 익절을 그대로 둔다. 부분 익절·트레일링은 별도로 수익을 보호한다.
+        """
+        key = str(horizon or TradeHorizon.MID).upper()
+        if key not in (TradeHorizon.MID, TradeHorizon.LONG):
+            return target_price
+        if not target_price or entry_price <= 0:
+            return target_price
+        default_target = entry_price * (1 + self._default_take_profit_pct(key) / 100)
+        # 더 높은(먼) 익절가를 채택한다.
+        return max(float(target_price), default_target)
 
     @staticmethod
     def _stop_loss_risk_bounds(horizon_key: str) -> tuple[float | None, float | None]:
