@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timedelta
 
 from core.events import Event, EventType
-from scheduler.scheduler import TradingScheduler
+from scheduler.scheduler import SellConfirmationOutcome, TradingScheduler
 from strategy.trade_horizon import TradeHorizon
 from trading.enums import ActivityPhase, ActivityType, Market, OrderSide, OrderType
 from trading.models import CurrentPrice, OrderResult
@@ -2069,6 +2069,134 @@ async def test_holdings_check_does_not_complete_when_sell_confirmation_fails(mon
     assert rescans == []
     assert any("체결 확인 실패" in message for message in logs)
     assert not any("보유점검 매도 완료" in message for message in logs)
+
+
+@pytest.mark.asyncio
+async def test_track_scheduler_sell_confirmation_returns_pending_for_partial_fill(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    confirmed_orders: list[dict] = []
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeRepo:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def filter_by_one(self, id):
+            assert id == "pending-partial"
+            return SimpleNamespace(
+                status="PENDING_CONFIRM",
+                notes="PENDING_CONFIRM_PARTIAL: filled_qty=28, remaining_qty=987",
+            )
+
+    async def fake_create_pending_record(**kwargs) -> str:
+        return "pending-partial"
+
+    async def fake_confirm_and_record(**kwargs) -> bool:
+        confirmed_orders.append(kwargs)
+        return False
+
+    monkeypatch.setattr("core.database.AsyncSessionLocal", lambda: FakeSession())
+    monkeypatch.setattr("repositories.trade_result_repository.TradeResultRepository", FakeRepo)
+    monkeypatch.setattr("agent.decision_maker.decision_maker._create_pending_record", fake_create_pending_record)
+    monkeypatch.setattr("agent.decision_maker.decision_maker.confirm_and_record", fake_confirm_and_record)
+
+    outcome = await scheduler._track_scheduler_sell_confirmation(
+        holding=SimpleNamespace(name="에이플러스에셋"),
+        response=SimpleNamespace(order_id="0157307"),
+        symbol="244920",
+        quantity=1015,
+        expected_price=10030,
+        exit_reason="HOLDINGS_CHECK",
+    )
+
+    assert outcome.confirmed is False
+    assert outcome.pending is True
+    assert outcome.order_id == "0157307"
+    assert outcome.reason == "partial_fill_pending"
+    assert confirmed_orders[0]["pending_record_id"] == "pending-partial"
+
+
+@pytest.mark.asyncio
+async def test_holdings_check_logs_pending_instead_of_error_for_partial_sell_confirmation(monkeypatch) -> None:
+    scheduler = TradingScheduler()
+    logs: list[tuple] = []
+    removed_levels: list[str] = []
+    released: list[str] = []
+    rescans: list[bool] = []
+    holding = SimpleNamespace(symbol="005930", name="삼성전자", quantity=2, avg_buy_price=70_000)
+
+    async def fake_update_realtime_subscriptions() -> None:
+        return None
+
+    async def fake_get_holdings() -> list:
+        return [holding]
+
+    class FakeBrokerAdapter:
+        async def get_current_price(self, symbol, market):
+            return CurrentPrice(
+                symbol=symbol,
+                market=market,
+                price=73_000,
+                change=0.0,
+                change_rate=0.0,
+                volume=0,
+                timestamp=__import__("datetime").datetime.now(),
+            )
+
+        async def place_order(self, request):
+            return OrderResult(success=True, order_id="SELL-HOLDING-PARTIAL", message="ok")
+
+    async def fake_log(*args, **kwargs) -> None:
+        logs.append((args, kwargs))
+
+    async def fake_acquire_sell(_symbol: str) -> bool:
+        return True
+
+    async def fake_track_scheduler_sell_confirmation(**kwargs) -> SellConfirmationOutcome:
+        return SellConfirmationOutcome(
+            confirmed=False,
+            pending=True,
+            order_id="SELL-HOLDING-PARTIAL",
+            reason="partial_fill_pending",
+        )
+
+    async def fake_trigger_rescan_after_sell() -> None:
+        rescans.append(True)
+
+    monkeypatch.setattr("scheduler.market_calendar.market_calendar.is_krx_trading_hours", lambda: True)
+    monkeypatch.setattr("trading.account_manager.account_manager.get_holdings", fake_get_holdings)
+    monkeypatch.setattr(scheduler, "_update_realtime_subscriptions", fake_update_realtime_subscriptions)
+    monkeypatch.setattr("util.time_util.now_kst", lambda: __import__("datetime").datetime(2026, 4, 2, 14, 0))
+    monkeypatch.setattr("scheduler.scheduler.get_broker_adapter", lambda: FakeBrokerAdapter())
+    monkeypatch.setattr(
+        "realtime.event_detector.event_detector.get_thresholds",
+        lambda _symbol: SimpleNamespace(stop_loss=68_000, take_profit=72_000),
+    )
+    monkeypatch.setattr("scheduler.scheduler.settings.TRADING_ENABLED", True)
+    monkeypatch.setattr("services.activity_logger.activity_logger.log", fake_log)
+    monkeypatch.setattr("agent.trading_agent.trading_agent._acquire_sell", fake_acquire_sell)
+    monkeypatch.setattr("agent.trading_agent.trading_agent._release_sell", released.append)
+    monkeypatch.setattr("realtime.event_detector.event_detector.remove_levels", removed_levels.append)
+    monkeypatch.setattr(scheduler, "_track_scheduler_sell_confirmation", fake_track_scheduler_sell_confirmation)
+    monkeypatch.setattr(scheduler, "_trigger_rescan_after_sell", fake_trigger_rescan_after_sell)
+
+    await scheduler._holdings_check()
+
+    summaries = [args[2] for args, _kwargs in logs]
+    phases = [args[1] for args, _kwargs in logs if args[0] == ActivityType.ORDER]
+
+    assert removed_levels == []
+    assert released == ["005930"]
+    assert rescans == []
+    assert ActivityPhase.ERROR not in phases
+    assert any("체결 확인 보류" in message for message in summaries)
+    assert not any("체결 확인 실패" in message for message in summaries)
 
 
 @pytest.mark.asyncio

@@ -20,6 +20,7 @@
 from collections.abc import Awaitable
 import asyncio
 import copy
+from dataclasses import dataclass
 import time as _time
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -54,6 +55,14 @@ from strategy.position_exit_policy import (
     trade_horizon_from_result,
     trade_notes_dict,
 )
+
+
+@dataclass(frozen=True)
+class SellConfirmationOutcome:
+    confirmed: bool
+    pending: bool = False
+    order_id: str = ""
+    reason: str = ""
 
 
 class TradingScheduler:
@@ -1795,7 +1804,8 @@ class TradingScheduler:
                                 expected_price=current,
                                 exit_reason=exit_reason,
                             )
-                            if confirmed:
+                            outcome = self._coerce_sell_confirmation_outcome(confirmed)
+                            if outcome.confirmed:
                                 alerts.append(
                                     f"✅ {h.name}({symbol}): {reason} → 매도 체결 확인 완료"
                                 )
@@ -1810,6 +1820,25 @@ class TradingScheduler:
                                     # 매도 성공 → 재스캔 트리거
                                     import asyncio
                                     asyncio.create_task(self._trigger_rescan_after_sell())
+                            elif outcome.pending:
+                                alerts.append(
+                                    f"⏳ {h.name}({symbol}): {reason} → 매도 체결 확인 보류"
+                                )
+                                await activity_logger.log(
+                                    ActivityType.ORDER, ActivityPhase.PROGRESS,
+                                    f"⏳ 보유점검 매도 체결 확인 보류: {h.name}({symbol}) "
+                                    f"{sell_quantity}주 — {reason}",
+                                    symbol=symbol,
+                                    detail={
+                                        "action": "SELL_CONFIRM_PENDING",
+                                        "source": "HOLDINGS_CHECK",
+                                        "quantity": int(sell_quantity),
+                                        "price": current,
+                                        "order_id": outcome.order_id or getattr(sell_resp, "order_id", None),
+                                        "exit_reason": exit_reason,
+                                        "reason": outcome.reason,
+                                    },
+                                )
                             else:
                                 alerts.append(
                                     f"⚠️ {h.name}({symbol}): {reason} → 매도 체결 확인 실패/취소"
@@ -2091,7 +2120,13 @@ class TradingScheduler:
                 f"\u274c 장마감 보유 심사 오류: {str(e)[:100]}",
             )
 
-    async def _record_liquidation_sell(self, holding, response, *, exit_reason: str = "FORCE_LIQUIDATION") -> bool:
+    async def _record_liquidation_sell(
+        self,
+        holding,
+        response,
+        *,
+        exit_reason: str = "FORCE_LIQUIDATION",
+    ) -> SellConfirmationOutcome:
         return await self._track_scheduler_sell_confirmation(
             holding=holding,
             response=response,
@@ -2110,7 +2145,7 @@ class TradingScheduler:
         quantity: int,
         expected_price: float,
         exit_reason: str,
-    ) -> bool:
+    ) -> SellConfirmationOutcome:
         order_id = str(getattr(response, "order_id", "") or "")
         if not order_id:
             logger.error(
@@ -2118,7 +2153,12 @@ class TradingScheduler:
                 getattr(holding, "name", ""),
                 symbol,
             )
-            return False
+            return SellConfirmationOutcome(
+                confirmed=False,
+                pending=False,
+                order_id=order_id,
+                reason="missing_order_id",
+            )
 
         from agent.decision_maker import decision_maker
         pending_record_id = await decision_maker._create_pending_record(
@@ -2142,7 +2182,67 @@ class TradingScheduler:
             exit_reason=exit_reason,
             pending_record_id=pending_record_id,
         )
-        return True if confirmed is None else bool(confirmed)
+        if confirmed is None or bool(confirmed):
+            return SellConfirmationOutcome(
+                confirmed=True,
+                pending=False,
+                order_id=order_id,
+                reason="confirmed",
+            )
+
+        pending_outcome = await self._pending_sell_confirmation_outcome(
+            pending_record_id=pending_record_id,
+            order_id=order_id,
+        )
+        if pending_outcome is not None:
+            return pending_outcome
+
+        return SellConfirmationOutcome(
+            confirmed=False,
+            pending=False,
+            order_id=order_id,
+            reason="confirm_failed",
+        )
+
+    @staticmethod
+    def _coerce_sell_confirmation_outcome(value) -> SellConfirmationOutcome:
+        if isinstance(value, SellConfirmationOutcome):
+            return value
+        if value is None:
+            return SellConfirmationOutcome(confirmed=True, reason="legacy_none_success")
+        return SellConfirmationOutcome(confirmed=bool(value), reason="legacy_bool")
+
+    async def _pending_sell_confirmation_outcome(
+        self,
+        *,
+        pending_record_id: str | None,
+        order_id: str,
+    ) -> SellConfirmationOutcome | None:
+        if not pending_record_id:
+            return None
+        try:
+            from core.database import AsyncSessionLocal
+            from repositories.trade_result_repository import TradeResultRepository
+
+            async with AsyncSessionLocal() as session:
+                repo = TradeResultRepository(session)
+                trade = await repo.filter_by_one(id=pending_record_id)
+        except Exception as exc:
+            logger.warning("SELL pending 상태 확인 실패: {} — {}", order_id, str(exc))
+            return None
+
+        if not trade or str(getattr(trade, "status", "") or "") != "PENDING_CONFIRM":
+            return None
+
+        notes = str(getattr(trade, "notes", "") or "")
+        if "PENDING_CONFIRM_PARTIAL" not in notes:
+            return None
+        return SellConfirmationOutcome(
+            confirmed=False,
+            pending=True,
+            order_id=order_id,
+            reason="partial_fill_pending",
+        )
 
     async def _collect_holdings_data(
         self, sellable: list,
@@ -2975,8 +3075,8 @@ class TradingScheduler:
                                 expected_price=current_price,
                                 exit_reason=exit_reason,
                             )
-                            confirmed = True if confirmed is None else bool(confirmed)
-                            if confirmed:
+                            outcome = self._coerce_sell_confirmation_outcome(confirmed)
+                            if outcome.confirmed:
                                 if action == "SELL" or sell_quantity >= int(h.quantity):
                                     event_detector.remove_levels(symbol)
                                 # UI에 개별 매도 표시
@@ -2991,6 +3091,26 @@ class TradingScheduler:
                                 )
                                 # 매도 성공 → 재스캔 트리거
                                 asyncio.create_task(self._trigger_rescan_after_sell())
+                            elif outcome.pending:
+                                await activity_logger.log(
+                                    ActivityType.ORDER, ActivityPhase.PROGRESS,
+                                    f"⏳ 장중 재평가 매도 체결 확인 보류: {stock_name}({symbol}) "
+                                    f"{sell_quantity}주 — {reason}",
+                                    symbol=symbol,
+                                    detail={
+                                        "action": "SELL_CONFIRM_PENDING",
+                                        "source": "INTRADAY_HOLDINGS_REVIEW",
+                                        "quantity": int(sell_quantity),
+                                        "price": current_price,
+                                        "order_id": outcome.order_id or getattr(sell_resp, "order_id", None),
+                                        "exit_reason": exit_reason,
+                                        "reason": outcome.reason,
+                                    },
+                                )
+                                log_lines.append(
+                                    f"  - {stock_name}({symbol}): {action} 매도 체결 확인 보류 "
+                                    f"({sell_quantity}주) — {reason} (AI {conf:.2f})"
+                                )
                             else:
                                 await activity_logger.log(
                                     ActivityType.ORDER, ActivityPhase.ERROR,
@@ -3357,7 +3477,8 @@ class TradingScheduler:
                                 expected_price=current,
                                 exit_reason="GAP_CHECK",
                             )
-                            if confirmed:
+                            outcome = self._coerce_sell_confirmation_outcome(confirmed)
+                            if outcome.confirmed:
                                 alerts.append(f"✅ {h.name}({symbol}): {reason} → 매도 체결 확인 완료")
                                 from realtime.event_detector import event_detector
                                 event_detector.remove_levels(symbol)
@@ -3376,6 +3497,26 @@ class TradingScheduler:
                                         "quantity": int(h.quantity),
                                         "price": current,
                                         "order_id": getattr(sell_resp, "order_id", None),
+                                    },
+                                )
+                            elif outcome.pending:
+                                alerts.append(f"⏳ {h.name}({symbol}): {reason} → 매도 체결 확인 보류")
+                                await activity_logger.log(
+                                    ActivityType.ORDER,
+                                    ActivityPhase.PROGRESS,
+                                    (
+                                        f"⏳ [{h.name}] 갭 체크 매도 체결 확인 보류: "
+                                        f"{reason} — {int(h.quantity)}주"
+                                    ),
+                                    symbol=symbol,
+                                    detail={
+                                        "action": "SELL_CONFIRM_PENDING",
+                                        "source": "GAP_CHECK",
+                                        "reason": reason,
+                                        "quantity": int(h.quantity),
+                                        "price": current,
+                                        "order_id": outcome.order_id or getattr(sell_resp, "order_id", None),
+                                        "pending_reason": outcome.reason,
                                     },
                                 )
                             else:
