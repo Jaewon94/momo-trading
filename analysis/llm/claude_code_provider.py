@@ -197,6 +197,10 @@ class ClaudeCodeProvider:
             *self._model_args(),
             "--max-turns", "1",
             "--effort", self._effort(),
+            # 단발 텍스트 생성 전용 — 도구를 비활성화한다.
+            # 도구를 켜두면 모델이 web_search 등을 호출하며 2턴 이상 소비해
+            # --max-turns 1 한도를 넘겨 error_max_turns로 실패하고 지연(>80s)이 발생한다.
+            "--tools", "",
             "--dangerously-skip-permissions",
         ]
         bare_enabled = self._bare_enabled()
