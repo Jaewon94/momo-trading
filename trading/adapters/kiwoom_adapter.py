@@ -34,7 +34,7 @@ class KiwoomBrokerAdapter(BrokerAdapter):
         supports_overseas_stocks=False,
         supports_paper_trading=True,
         supports_live_trading=True,
-        supports_realtime_quotes=False,
+        supports_realtime_quotes=True,
         supports_order_cancellation=True,
         supports_nxt_quotes=False,
         supports_after_hours_orders=False,
